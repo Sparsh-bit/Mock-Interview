@@ -28,6 +28,12 @@ logger = structlog.get_logger(__name__)
 # The registry — populated lazily to defer heavy imports until needed
 _PROVIDER_REGISTRY: dict[str, type[BaseAIProvider]] = {}
 
+# ─── Application singleton ────────────────────────────────────────────────────
+# Created once in the FastAPI lifespan startup (initialize_ai_provider()) and
+# closed in shutdown (close_ai_provider()) — see app/main.py. This prevents a
+# new httpx.AsyncClient connection pool from being leaked on every request.
+_provider_instance: BaseAIProvider | None = None
+
 
 def _lazy_register() -> None:
     """
@@ -71,10 +77,14 @@ def register_provider(name: str, cls: type[BaseAIProvider]) -> None:
 
 def get_ai_provider() -> BaseAIProvider:
     """
-    FastAPI dependency — returns a configured AI provider instance.
+    FastAPI dependency — returns the application-scoped AI provider singleton.
 
     The provider is determined entirely by the AI_PROVIDER environment variable.
     No service or endpoint should import a concrete provider class.
+
+    The instance is created once (in the FastAPI lifespan startup, via
+    initialize_ai_provider()) and reused for the lifetime of the process —
+    this avoids leaking a new httpx.AsyncClient connection pool on every call.
 
     Usage in endpoints:
         from fastapi import Depends
@@ -97,6 +107,61 @@ def get_ai_provider() -> BaseAIProvider:
                 self._provider = provider
                 self._parser = parser
     """
+    global _provider_instance  # noqa: PLW0603
+
+    if _provider_instance is not None:
+        return _provider_instance
+
+    # Fallback for callers that run before lifespan startup (e.g. tests) —
+    # lazily create and cache the singleton rather than raising, but log it
+    # so an accidental missing initialize_ai_provider() call is visible.
+    logger.warning(
+        "ai_provider_singleton_lazily_created",
+        reason="get_ai_provider() called before initialize_ai_provider() lifespan startup",
+    )
+    _provider_instance = _create_provider()
+    return _provider_instance
+
+
+def initialize_ai_provider() -> BaseAIProvider:
+    """
+    Create and cache the application-scoped AI provider singleton.
+
+    Call once in FastAPI lifespan startup:
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            initialize_ai_provider()
+            yield
+            await close_ai_provider()
+    """
+    global _provider_instance  # noqa: PLW0603
+
+    _provider_instance = _create_provider()
+    logger.info(
+        "ai_provider_initialized",
+        provider=_provider_instance.provider_name,
+        model=_provider_instance.model_name,
+    )
+    return _provider_instance
+
+
+async def close_ai_provider() -> None:
+    """
+    Release the singleton AI provider's resources (e.g. httpx connection pool).
+
+    Call once in FastAPI lifespan shutdown, after initialize_ai_provider()
+    was called at startup.
+    """
+    global _provider_instance  # noqa: PLW0603
+
+    if _provider_instance is not None:
+        await _provider_instance.close()
+        logger.info("ai_provider_closed", provider=_provider_instance.provider_name)
+        _provider_instance = None
+
+
+def _create_provider() -> BaseAIProvider:
+    """Build a new provider instance from the configured AI_PROVIDER setting."""
     if not _PROVIDER_REGISTRY:
         _lazy_register()
 

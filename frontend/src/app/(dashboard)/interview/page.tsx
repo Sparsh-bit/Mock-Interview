@@ -3,18 +3,33 @@
 import { useInterview } from '@/hooks/useInterview';
 import { useTracks } from '@/hooks/useData';
 import { Play, Code2, Loader2, CheckCircle2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 export default function InterviewSetupPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-muted-foreground mt-10 text-center">Loading...</div>}>
+      <InterviewSetup />
+    </Suspense>
+  );
+}
+
+function InterviewSetup() {
   const { startSession } = useInterview();
   const { data: tracks, isLoading: tracksLoading } = useTracks();
+  const searchParams = useSearchParams();
+  const requestedTrackId = searchParams.get('trackId');
   const [selectedTrackId, setSelectedTrackId] = useState<string>('');
 
   useEffect(() => {
-    if (tracks && tracks.length > 0 && !selectedTrackId) {
+    if (!tracks || tracks.length === 0 || selectedTrackId) return;
+
+    if (requestedTrackId && tracks.some((track) => track.id === requestedTrackId)) {
+      setSelectedTrackId(requestedTrackId);
+    } else {
       setSelectedTrackId(tracks[0].id);
     }
-  }, [tracks, selectedTrackId]);
+  }, [tracks, selectedTrackId, requestedTrackId]);
 
   const handleStart = () => {
     if (!selectedTrackId) return;

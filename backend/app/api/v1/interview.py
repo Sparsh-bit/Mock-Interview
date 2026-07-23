@@ -1,14 +1,33 @@
 import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_db
+
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
+from app.db.session import get_db
 from app.models.session import InterviewSession
 from app.services.interview.orchestrator import InterviewOrchestrator
-from pydantic import BaseModel
 
 router = APIRouter()
+
+_interview_start_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_INTERVIEW_PER_HOUR,
+    window_seconds=3600,
+    key_builder=lambda user_id: CacheKeys.rate_limit_interview(user_id),
+    action="starting an interview session",
+)
+
+_ai_answer_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_AI_REQUESTS_PER_MINUTE,
+    window_seconds=60,
+    key_builder=lambda user_id: CacheKeys.rate_limit_ai(user_id),
+    action="submitting an answer",
+)
 
 
 async def _verify_session_ownership(
@@ -31,7 +50,11 @@ class SubmitAnswerRequest(BaseModel):
     question_id: uuid.UUID
     content: str
 
-@router.post("/start", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/start",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_interview_start_rate_limit)],
+)
 async def start_interview_session(
     request: StartSessionRequest,
     current_user: CurrentUser,
@@ -61,7 +84,7 @@ async def get_next_question(
         }
     }
 
-@router.post("/{session_id}/answer")
+@router.post("/{session_id}/answer", dependencies=[Depends(_ai_answer_rate_limit)])
 async def submit_answer(
     session_id: uuid.UUID,
     request: SubmitAnswerRequest,

@@ -59,7 +59,7 @@ export default function TracksPage() {
 
               <div className="mt-6 pt-4 border-t border-border/40">
                 <Link
-                  href="/interview"
+                  href={`/interview?trackId=${track.id}`}
                   className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-all shadow-glow"
                 >
                   <Play className="h-4 w-4" /> Start Track Assessment

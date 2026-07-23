@@ -69,12 +69,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     loader = get_prompt_loader()
     logger.info("prompts_loaded", available=loader.list_prompts())
 
+    # Initialize the AI provider (application-scoped singleton, owns the
+    # underlying httpx.AsyncClient connection pool)
+    from app.services.ai.provider_factory import initialize_ai_provider
+    ai_provider = initialize_ai_provider()
+    logger.info("ai_provider_ready", provider=ai_provider.provider_name, model=ai_provider.model_name)
+
     logger.info("application_ready")
 
     yield  # Application running
 
     # ── Shutdown ─────────────────────────────────────────────────────────
     logger.info("application_shutdown")
+
+    from app.services.ai.provider_factory import close_ai_provider
+    await close_ai_provider()
 
     from app.db.redis import close_redis_pool
     await close_redis_pool()

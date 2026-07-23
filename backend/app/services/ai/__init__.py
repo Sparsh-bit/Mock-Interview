@@ -7,10 +7,21 @@ All AI-related imports in the application should come from this package,
 not from individual sub-modules.
 """
 
-from .base_provider import BaseAIProvider, ProviderError, ProviderMessage, ProviderRequest, ProviderResponse
+from .base_provider import (
+    BaseAIProvider,
+    ProviderError,
+    ProviderMessage,
+    ProviderRequest,
+    ProviderResponse,
+)
 from .json_validator import AIValidationError, JSONValidator
 from .prompt_builder import PromptBuilder
-from .provider_factory import get_ai_provider, register_provider
+from .provider_factory import (
+    close_ai_provider,
+    get_ai_provider,
+    initialize_ai_provider,
+    register_provider,
+)
 from .response_parser import ResponseParser
 
 __all__ = [
@@ -29,4 +40,7 @@ __all__ = [
     # DI factory
     "get_ai_provider",
     "register_provider",
+    # Lifespan lifecycle (call from app/main.py startup/shutdown)
+    "initialize_ai_provider",
+    "close_ai_provider",
 ]
