@@ -1,10 +1,12 @@
-import json
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AIProviderUnavailableError
 from app.events.base import (
     AnswerEvaluatedEvent,
     AnswerEvaluatedPayload,
@@ -12,11 +14,24 @@ from app.events.base import (
     InterviewStartedPayload,
 )
 from app.events.emitter import get_event_emitter
-from app.models.company import QuestionCategory
-from app.models.question import Question, Topic
+from app.models.company import InterviewTrack, QuestionCategory
+from app.models.question import Question, Subtopic, Topic
 from app.models.session import Answer, InterviewSession, Score, SessionStatus
-from app.services.ai.base_provider import ProviderRequest
+from app.prompts.prompt_loader import get_prompt_loader
+from app.services.ai.base_provider import ProviderError, ProviderRequest
+from app.services.ai.json_validator import AIValidationError, JSONValidator
+from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.provider_factory import get_ai_provider
+from app.services.ai.response_parser import ResponseParser
+from app.services.ai.schemas import InterviewerResponse
+
+logger = structlog.get_logger(__name__)
+
+# One evaluation attempt, plus one retry on a malformed/unavailable response —
+# after that, fail closed (AIProviderUnavailableError) rather than silently
+# persist a made-up score. See prompt.md's "Refined Niche" section: scoring
+# must be example-driven and honest, never a fake confident-looking verdict.
+_MAX_EVALUATION_ATTEMPTS = 2
 
 
 class InterviewOrchestrator:
@@ -26,6 +41,8 @@ class InterviewOrchestrator:
         self.db = db
         self.ai = get_ai_provider()
         self.emitter = get_event_emitter()
+        self.prompt_builder = PromptBuilder(get_prompt_loader())
+        self.response_parser = ResponseParser(JSONValidator())
 
     async def start_session(self, user_id: uuid.UUID, track_id: uuid.UUID) -> InterviewSession:
         """Transitions a session from pending to active and selects the first question."""
@@ -53,7 +70,7 @@ class InterviewOrchestrator:
 
         await self.db.flush()
 
-        try:
+        with contextlib.suppress(Exception):
             await self.emitter.emit(InterviewStartedEvent(
                 event_id=uuid.uuid4(),
                 user_id=user_id,
@@ -64,8 +81,6 @@ class InterviewOrchestrator:
                     mode="text",
                 )
             ))
-        except Exception:
-            pass
 
         await self.db.commit()
         await self.db.refresh(session)
@@ -159,14 +174,14 @@ class InterviewOrchestrator:
             {
                 "content": "Explain Java's Memory Model: Heap vs Stack memory, Garbage Collection algorithms, and Metaspace.",
                 "difficulty": QuestionDifficulty.HARD,
-                "type": QuestionType.DEEP_DIVE,
+                "type": QuestionType.CONCEPTUAL,
                 "keywords": ["Heap", "Stack", "Metaspace", "G1GC", "ZGC", "Garbage Collection"],
                 "ideal": "Stack holds method frames and local primitives/references. Heap stores objects. Metaspace stores class metadata. GC reclaims unreferenced heap memory.",
             },
             {
                 "content": "What is the Java Stream API? Explain intermediate vs terminal operations with examples.",
                 "difficulty": QuestionDifficulty.MEDIUM,
-                "type": QuestionType.CODE_SNIPPET,
+                "type": QuestionType.PRACTICAL,
                 "keywords": ["Stream API", "map", "filter", "collect", "Lazy evaluation"],
                 "ideal": "Streams allow functional sequence processing. Intermediate operations (filter, map) are lazy. Terminal operations (collect, count) trigger execution.",
             },
@@ -206,7 +221,12 @@ class InterviewOrchestrator:
         return created_questions[0] if created_questions else None
 
     async def submit_answer(self, session_id: uuid.UUID, question_id: uuid.UUID, content: str) -> dict:
-        """Evaluates an answer using AI and transitions state."""
+        """Evaluates an answer using AI and transitions state.
+
+        Raises AIProviderUnavailableError (mapped to HTTP 503 by the global
+        exception handler) if the AI evaluation cannot be produced after
+        retrying — we never persist a made-up score to mask an AI failure.
+        """
         session = await self.db.get(InterviewSession, session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found.")
@@ -222,66 +242,27 @@ class InterviewOrchestrator:
         await self.db.flush()
 
         question = await self.db.get(Question, question_id)
-
-        eval_prompt = (
-            "Evaluate this interview answer on a 0-10 scale for each dimension.\n"
-            "Return valid JSON only with keys: score_technical, score_communication, "
-            "score_completeness, score_confidence, overall_score, strengths (list), "
-            "weaknesses (list), feedback (string), is_bluffing_detected (boolean).\n\n"
-            f"Question: {question.content if question else 'N/A'}\n"
-            f"Expected concepts: {', '.join(question.expected_keywords) if question and question.expected_keywords else 'N/A'}\n"
-            f"Answer: {content}\n"
-        )
-
-        try:
-            ai_resp = await self.ai.complete(
-                ProviderRequest(
-                    messages=[{"role": "user", "content": eval_prompt}],
-                    json_mode=True,
-                    max_tokens=500
-                )
-            )
-            raw_content = ai_resp.content
-        except Exception:
-            raw_content = ""
-
-        try:
-            result = json.loads(raw_content) if raw_content else {}
-            tech = float(result.get("score_technical", 7.0))
-            comm = float(result.get("score_communication", 7.5))
-            comp = float(result.get("score_completeness", 7.0))
-            conf = float(result.get("score_confidence", 8.0))
-            overall = float(result.get("overall_score", round((tech + comm + comp + conf) / 4, 1)))
-            strengths = result.get("strengths", ["Good effort", "Relevant concepts mentioned"])
-            weaknesses = result.get("weaknesses", [])
-            feedback = result.get("feedback", "Demonstrated clear technical understanding.")
-            is_bluffing = bool(result.get("is_bluffing_detected", False))
-        except Exception:
-            tech = comm = comp = conf = overall = 7.0
-            strengths = ["Solid answer"]
-            weaknesses = []
-            feedback = "Demonstrated clear understanding of the question."
-            is_bluffing = False
+        evaluation, raw_content = await self._evaluate_answer(session, question, content)
 
         score = Score(
             id=uuid.uuid4(),
             answer_id=ans.id,
             session_id=session_id,
-            technical_score=tech,
-            communication_score=comm,
-            completeness_score=comp,
-            confidence_score=conf,
-            overall_score=overall,
-            strengths=strengths,
-            weaknesses=weaknesses,
-            feedback=feedback,
-            is_bluffing_detected=is_bluffing,
+            technical_score=evaluation.technical_score,
+            communication_score=evaluation.communication_score,
+            completeness_score=evaluation.completeness_score,
+            confidence_score=evaluation.confidence_score,
+            overall_score=evaluation.overall_score,
+            strengths=evaluation.strengths,
+            weaknesses=evaluation.weaknesses,
+            feedback=evaluation.feedback,
+            is_bluffing_detected=evaluation.is_bluffing_detected,
             raw_evaluation={"raw_response": raw_content},
         )
         self.db.add(score)
         await self.db.commit()
 
-        try:
+        with contextlib.suppress(Exception):
             await self.emitter.emit(AnswerEvaluatedEvent(
                 event_id=uuid.uuid4(),
                 user_id=session.user_id,
@@ -289,21 +270,97 @@ class InterviewOrchestrator:
                 payload=AnswerEvaluatedPayload(
                     answer_id=ans.id,
                     question_id=question_id,
-                    overall_score=overall,
-                    technical_score=tech,
-                    communication_score=comm,
-                    is_bluffing_detected=is_bluffing,
+                    overall_score=evaluation.overall_score,
+                    technical_score=evaluation.technical_score,
+                    communication_score=evaluation.communication_score,
+                    is_bluffing_detected=evaluation.is_bluffing_detected,
                     evaluation_time_ms=0,
                 )
             ))
-        except Exception:
-            pass
 
         return {
-            "technical_score": tech,
-            "communication_score": comm,
-            "feedback": feedback
+            "technical_score": evaluation.technical_score,
+            "communication_score": evaluation.communication_score,
+            "completeness_score": evaluation.completeness_score,
+            "confidence_score": evaluation.confidence_score,
+            "overall_score": evaluation.overall_score,
+            "strengths": evaluation.strengths,
+            "weaknesses": evaluation.weaknesses,
+            "feedback": evaluation.feedback,
+            "is_bluffing_detected": evaluation.is_bluffing_detected,
         }
+
+    async def _evaluate_answer(
+        self, session: InterviewSession, question: Question | None, content: str
+    ):
+        """
+        Evaluate a candidate's answer via the `interviewer` prompt template,
+        with a validation-driven schema check and one retry on a malformed
+        or unavailable AI response. See app/prompts/interviewer.md for the
+        full contract this depends on.
+
+        Returns (AnswerEvaluation, raw_response_text).
+        """
+        track_name = "Unknown Track"
+        if session.track_id:
+            track = await self.db.get(InterviewTrack, session.track_id)
+            if track:
+                track_name = track.name
+
+        topic_name = "General"
+        subtopic_name = ""
+        difficulty_level = question.difficulty if question else "medium"
+        if question:
+            topic = await self.db.get(Topic, question.topic_id)
+            if topic:
+                topic_name = topic.name
+            if question.subtopic_id:
+                subtopic = await self.db.get(Subtopic, question.subtopic_id)
+                if subtopic:
+                    subtopic_name = subtopic.name
+
+        user_content = (
+            f"Question asked: {question.content if question else 'N/A'}\n\n"
+            f"Expected concepts: "
+            f"{', '.join(question.expected_keywords) if question and question.expected_keywords else 'N/A'}\n\n"
+            f"Candidate's answer:\n{content}"
+        )
+
+        messages = self.prompt_builder.chat(
+            system_template="interviewer",
+            user_content=user_content,
+            track_name=track_name,
+            topic_name=topic_name,
+            subtopic_name=subtopic_name,
+            difficulty_level=difficulty_level,
+            question_count=str(session.questions_asked or 1),
+            time_limit_minutes="5",
+            candidate_experience_years="not specified",
+        )
+
+        last_raw_content = ""
+        for attempt in range(_MAX_EVALUATION_ATTEMPTS):
+            try:
+                ai_resp = await self.ai.complete(
+                    ProviderRequest(messages=messages, json_mode=True, max_tokens=800)
+                )
+            except ProviderError:
+                logger.warning(
+                    "ai_evaluation_provider_error", session_id=str(session.id), attempt=attempt
+                )
+                continue
+
+            last_raw_content = ai_resp.content
+            try:
+                parsed = self.response_parser.parse(ai_resp.content, InterviewerResponse)
+                return parsed.evaluation, last_raw_content
+            except AIValidationError:
+                logger.warning(
+                    "ai_evaluation_validation_failed", session_id=str(session.id), attempt=attempt
+                )
+                continue
+
+        raise AIProviderUnavailableError(provider=self.ai.provider_name)
 
     async def complete_session(self, session_id: uuid.UUID):
         session = await self.db.get(InterviewSession, session_id)

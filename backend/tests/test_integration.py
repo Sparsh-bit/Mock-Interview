@@ -167,6 +167,72 @@ class TestInterviewEndpoints:
         assert "session_id" in data
         assert data["status"] == "active"
 
+    async def test_submit_answer_real_ai_evaluation(
+        self, async_client: AsyncClient, auth_headers: dict, db_session
+    ):
+        """
+        End-to-end: start a session, fetch a question, submit an answer, and
+        confirm the response is a REAL AI-scored evaluation (not the old
+        hardcoded heuristic fallback) -- exercises the full
+        PromptBuilder -> GLMProvider -> ResponseParser -> Pydantic pipeline
+        against the live configured AI provider.
+        """
+        company = Company(name="TestCo", slug=f"testco-{uuid.uuid4().hex[:6]}", description="Test")
+        db_session.add(company)
+        await db_session.flush()
+
+        track = InterviewTrack(
+            company_id=company.id,
+            name="Test Track",
+            slug=f"test-track-{uuid.uuid4().hex[:6]}",
+            description="Test track",
+        )
+        db_session.add(track)
+        await db_session.commit()
+
+        start_resp = await async_client.post(
+            "/api/v1/interview/start",
+            json={"track_id": str(track.id)},
+            headers=auth_headers,
+        )
+        assert start_resp.status_code == 201
+        session_id = start_resp.json()["session_id"]
+
+        next_resp = await async_client.get(
+            f"/api/v1/interview/{session_id}/next", headers=auth_headers
+        )
+        assert next_resp.status_code == 200
+        question = next_resp.json()["question"]
+        assert question is not None
+
+        answer_resp = await async_client.post(
+            f"/api/v1/interview/{session_id}/answer",
+            json={
+                "question_id": question["id"],
+                "content": (
+                    "HashMap is not synchronized and allows one null key and multiple "
+                    "null values, making it faster than Hashtable which is synchronized "
+                    "and does not allow nulls. ConcurrentHashMap offers thread safety "
+                    "via bucket-level locking instead of locking the whole map."
+                ),
+            },
+            headers=auth_headers,
+        )
+        assert answer_resp.status_code == 200, answer_resp.text
+        data = answer_resp.json()
+
+        for key in (
+            "technical_score", "communication_score", "completeness_score",
+            "confidence_score", "overall_score", "strengths", "weaknesses",
+            "feedback", "is_bluffing_detected",
+        ):
+            assert key in data, f"missing '{key}' in evaluation response"
+
+        assert 0.0 <= data["overall_score"] <= 10.0
+        assert isinstance(data["feedback"], str) and len(data["feedback"]) > 0
+        assert isinstance(data["strengths"], list)
+        assert isinstance(data["weaknesses"], list)
+
     async def test_get_next_question_no_session(self, async_client: AsyncClient, auth_headers: dict):
         """A nonexistent (or not-owned) session must 404, not silently return an empty question."""
         fake_id = uuid.uuid4()

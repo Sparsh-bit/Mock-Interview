@@ -26,6 +26,12 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 
+
+def _orjson_dumps(value: object) -> str:
+    """orjson.dumps returns bytes; SQLAlchemy's json_serializer must return str."""
+    return orjson.dumps(value).decode("utf-8")
+
+
 # ─── Engine ───────────────────────────────────────────────────────────────────
 
 engine = create_async_engine(
@@ -35,7 +41,7 @@ engine = create_async_engine(
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
     pool_pre_ping=True,
-    json_serializer=orjson.dumps,
+    json_serializer=_orjson_dumps,
     json_deserializer=orjson.loads,
 )
 

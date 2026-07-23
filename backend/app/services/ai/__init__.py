@@ -23,6 +23,7 @@ from .provider_factory import (
     register_provider,
 )
 from .response_parser import ResponseParser
+from .schemas import AnswerEvaluation, InterviewerResponse, InterviewState
 
 __all__ = [
     # Base types
@@ -37,6 +38,10 @@ __all__ = [
     # Parsing and building
     "PromptBuilder",
     "ResponseParser",
+    # Response schemas
+    "AnswerEvaluation",
+    "InterviewState",
+    "InterviewerResponse",
     # DI factory
     "get_ai_provider",
     "register_provider",

@@ -79,7 +79,7 @@ async def get_next_question(
         "question": {
             "id": question.id,
             "content": question.content,
-            "type": question.type,
+            "type": question.question_type,
             "difficulty": question.difficulty
         }
     }

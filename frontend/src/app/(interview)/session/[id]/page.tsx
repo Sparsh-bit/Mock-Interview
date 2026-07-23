@@ -14,7 +14,14 @@ export default function LiveSessionPage() {
 
   const { data, isLoading, refetch } = useNextQuestion(sessionId);
   const [answer, setAnswer] = useState('');
-  const [feedback, setFeedback] = useState<{tech: number, comm: number, fb: string} | null>(null);
+  const [feedback, setFeedback] = useState<{
+    tech: number;
+    comm: number;
+    fb: string;
+    strengths: string[];
+    weaknesses: string[];
+    bluffing: boolean;
+  } | null>(null);
 
   const handleSubmit = async () => {
     if (!answer.trim() || !data?.question) return;
@@ -23,7 +30,14 @@ export default function LiveSessionPage() {
       { sessionId, questionId: data.question.id, content: answer },
       {
         onSuccess: (res) => {
-          setFeedback({ tech: res.technical_score, comm: res.communication_score, fb: res.feedback });
+          setFeedback({
+            tech: res.technical_score,
+            comm: res.communication_score,
+            fb: res.feedback,
+            strengths: res.strengths ?? [],
+            weaknesses: res.weaknesses ?? [],
+            bluffing: res.is_bluffing_detected,
+          });
         },
         onError: (err: Error) => {
           toast.error(err.message || 'Failed to submit answer.');
@@ -105,6 +119,33 @@ export default function LiveSessionPage() {
                     </div>
                   </div>
                   <p className="text-sm leading-relaxed text-foreground/80">{feedback.fb}</p>
+
+                  {feedback.bluffing && (
+                    <p className="mt-3 text-xs font-semibold text-amber-400">
+                      This answer sounded confident but may not be fully accurate — review the gaps below.
+                    </p>
+                  )}
+
+                  {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {feedback.strengths.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400 mb-1.5">Strengths</p>
+                          <ul className="space-y-1 text-sm text-foreground/80 list-disc list-inside">
+                            {feedback.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {feedback.weaknesses.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-orange-400 mb-1.5">Gaps</p>
+                          <ul className="space-y-1 text-sm text-foreground/80 list-disc list-inside">
+                            {feedback.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <button
                     onClick={handleNext}

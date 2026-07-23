@@ -36,7 +36,17 @@ export function useInterview() {
         question_id: questionId,
         content
       });
-      return response.data as { technical_score: number; communication_score: number; feedback: string };
+      return response.data as {
+        technical_score: number;
+        communication_score: number;
+        completeness_score: number;
+        confidence_score: number;
+        overall_score: number;
+        strengths: string[];
+        weaknesses: string[];
+        feedback: string;
+        is_bluffing_detected: boolean;
+      };
     }
   });
 
