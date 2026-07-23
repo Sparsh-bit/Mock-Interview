@@ -29,6 +29,20 @@ services:
       timeout: 3s
       retries: 5
 
+  # Self-hosted Piston — sandboxed code execution for the coding round.
+  # Language runtimes (java/python/c++/sqlite) are installed after first start
+  # via: backend/scripts/install_piston_runtimes.sh
+  piston:
+    image: ghcr.io/engineer-man/piston:latest
+    privileged: true
+    ports:
+      - "2000:2000"
+    volumes:
+      - piston_data:/piston
+    tmpfs:
+      - /tmp:exec
+
 volumes:
   postgres_data:
   redis_data:
+  piston_data:

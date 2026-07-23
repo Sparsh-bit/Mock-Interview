@@ -132,6 +132,13 @@ class Settings(BaseSettings):
     # ── Rate limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
+    RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
+
+    # ── Code execution (self-hosted Piston) ───────────────────────────────
+    PISTON_BASE_URL: str = Field(
+        default="http://localhost:2000/api/v2",
+        description="Piston code-execution API base URL (self-hosted via docker-compose)",
+    )
 
     # ── Sentry (error tracking, optional) ─────────────────────────────────
     SENTRY_DSN: str = Field(default="", description="Sentry DSN for error tracking")
