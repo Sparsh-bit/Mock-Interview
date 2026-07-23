@@ -43,6 +43,11 @@ export function useAuth() {
     );
 
     return () => subscription.unsubscribe();
+    // Intentionally mount-once: `supabase` is a fresh client each render (not
+    // memoized) and `router` is stable per Next.js App Router guarantees, so
+    // neither belongs in this dependency array without re-subscribing on
+    // every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signIn = async (email: string, password: string) => {

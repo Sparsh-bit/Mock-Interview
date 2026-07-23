@@ -47,7 +47,7 @@ export default function LiveSessionPage() {
       <div className="flex min-h-screen items-center justify-center bg-background p-6">
         <div className="text-center glass p-10 rounded-2xl max-w-md border-border/50">
           <h2 className="text-2xl font-bold mb-4">Interview Complete!</h2>
-          <p className="text-muted-foreground mb-8">You've reached the end of this track. Generating your final report...</p>
+          <p className="text-muted-foreground mb-8">You&apos;ve reached the end of this track. Generating your final report...</p>
           <button
             onClick={() => completeSession.mutate(sessionId)}
             className="bg-primary text-primary-foreground px-6 py-3 rounded-xl font-bold w-full"

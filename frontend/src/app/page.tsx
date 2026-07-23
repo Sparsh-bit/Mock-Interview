@@ -153,8 +153,8 @@ export default function LandingPage() {
 
           <p className="mx-auto mt-8 max-w-2xl text-lg text-muted-foreground">
             Practice Cognizant, TCS, Infosys, and Wipro interviews with an AI interviewer
-            that adapts in real time — probing deeper when you're strong, simplifying
-            when you struggle, and detecting when you're bluffing.
+            that adapts in real time — probing deeper when you&apos;re strong, simplifying
+            when you struggle, and detecting when you&apos;re bluffing.
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
