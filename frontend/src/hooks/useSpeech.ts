@@ -97,29 +97,89 @@ export function useSpeechRecognition() {
 }
 
 /**
+/**
+ * Ranks an available voice for interview narration. Higher = better.
+ * The browser default on macOS Chrome is often a low-quality/compact voice,
+ * so we explicitly prefer the natural network/enhanced voices that are
+ * actually pleasant to listen to.
+ */
+function scoreVoice(v: SpeechSynthesisVoice): number {
+  const name = v.name.toLowerCase();
+  const isEnglish = v.lang?.toLowerCase().startsWith('en');
+  if (!isEnglish) return -1;
+  let score = 0;
+  if (v.lang.toLowerCase() === 'en-us') score += 3;
+  else if (v.lang.toLowerCase().startsWith('en')) score += 1;
+  // High-quality network voice Chrome exposes on macOS/desktop.
+  if (name.includes('google')) score += 10;
+  // macOS downloadable natural voices.
+  if (name.includes('premium') || name.includes('enhanced') || name.includes('natural')) score += 8;
+  // Microsoft "Online (Natural)" voices on Edge/Windows.
+  if (name.includes('natural') || name.includes('online')) score += 6;
+  // Decent built-in macOS voices, in rough quality order.
+  for (const [i, good] of ['samantha', 'ava', 'allison', 'alex', 'victoria'].entries()) {
+    if (name.includes(good)) score += 5 - i * 0.5;
+  }
+  // Penalize known novelty/robotic voices.
+  if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|superstar|trinoids|whisper|wobble|zarvox/.test(name)) {
+    score -= 20;
+  }
+  return score;
+}
+
+/**
  * Text-to-speech via the browser's SpeechSynthesis API. Used to read the
- * interviewer's question aloud in voice mode.
+ * interviewer's question aloud in voice mode. Auto-selects the best-sounding
+ * installed voice and lets the caller override it.
  */
 export function useSpeechSynthesis() {
   const [supported, setSupported] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voiceURI, setVoiceURI] = useState<string | null>(null);
 
   useEffect(() => {
-    setSupported(typeof window !== 'undefined' && 'speechSynthesis' in window);
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    setSupported(true);
+
+    const loadVoices = () => {
+      const all = window.speechSynthesis.getVoices().filter((v) => v.lang?.toLowerCase().startsWith('en'));
+      if (!all.length) return;
+      const ranked = [...all].sort((a, b) => scoreVoice(b) - scoreVoice(a));
+      setVoices(ranked);
+      // Only auto-pick if the user hasn't chosen one yet.
+      setVoiceURI((current) => current ?? ranked[0]?.voiceURI ?? null);
+    };
+
+    loadVoices();
+    // Voices load asynchronously in most browsers.
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
 
-  const speak = useCallback((text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'en-US';
-    utter.rate = 1.0;
-    utter.pitch = 1.0;
-    utter.onstart = () => setSpeaking(true);
-    utter.onend = () => setSpeaking(false);
-    utter.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utter);
-  }, []);
+  const speak = useCallback(
+    (text: string) => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      const chosen =
+        window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) ?? null;
+      if (chosen) {
+        utter.voice = chosen;
+        utter.lang = chosen.lang;
+      } else {
+        utter.lang = 'en-US';
+      }
+      // Slightly slower + natural pitch reads more clearly for an interviewer.
+      utter.rate = 0.95;
+      utter.pitch = 1.0;
+      utter.onstart = () => setSpeaking(true);
+      utter.onend = () => setSpeaking(false);
+      utter.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(utter);
+    },
+    [voiceURI]
+  );
 
   const cancel = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -127,5 +187,5 @@ export function useSpeechSynthesis() {
     setSpeaking(false);
   }, []);
 
-  return { supported, speaking, speak, cancel };
+  return { supported, speaking, speak, cancel, voices, voiceURI, setVoiceURI };
 }

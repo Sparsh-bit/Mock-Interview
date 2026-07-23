@@ -325,6 +325,32 @@ export default function LiveSessionPage() {
             </div>
           </div>
 
+          {/* Voice picker — Chrome's default voice on macOS is poor; let the
+              candidate choose a better installed voice and preview it. */}
+          {!isCoding && tts.supported && tts.voices.length > 0 && (
+            <div className="mb-4 flex items-center gap-2">
+              <label className="text-xs text-muted-foreground">Voice</label>
+              <select
+                value={tts.voiceURI ?? ''}
+                onChange={(e) => tts.setVoiceURI(e.target.value)}
+                className="flex-1 rounded-lg border border-border bg-surface-elevated px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                {tts.voices.map((v) => (
+                  <option key={v.voiceURI} value={v.voiceURI}>
+                    {v.name} ({v.lang})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => tts.speak('Hi, I will be your interviewer today. Let us begin.')}
+                className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Preview
+              </button>
+            </div>
+          )}
+
           {isCoding ? (
             <CodingWorkspace
               disabled={!!feedback}
