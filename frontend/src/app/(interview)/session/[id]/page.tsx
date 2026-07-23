@@ -4,14 +4,17 @@ import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Send, StopCircle, ArrowRight, CheckCircle2, AlertTriangle, Sparkles } from 'lucide-react';
+import { Loader2, Send, StopCircle, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, Mic, MicOff, Volume2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
 import type { CodeLanguage } from '@/hooks/useCode';
+import { useSpeechRecognition, useSpeechSynthesis } from '@/hooks/useSpeech';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+import { cn } from '@/lib/utils';
 
 interface Feedback {
   tech: number;
@@ -64,8 +67,36 @@ export default function LiveSessionPage() {
   const { data, isLoading, refetch } = useNextQuestion(sessionId);
   const [answer, setAnswer] = useState('');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [voiceMode, setVoiceMode] = useState(false);
+
+  const stt = useSpeechRecognition();
+  const tts = useSpeechSynthesis();
 
   const isCoding = data?.question?.type === 'coding';
+  const questionText = data?.question?.content;
+
+  // In voice mode, read each new question aloud once it loads.
+  useEffect(() => {
+    if (voiceMode && questionText && tts.supported && !feedback) {
+      tts.speak(questionText);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questionText, voiceMode]);
+
+  // Feed finalized speech-to-text into the answer box.
+  useEffect(() => {
+    if (stt.transcript) setAnswer(stt.transcript);
+  }, [stt.transcript]);
+
+  const toggleMic = () => {
+    if (stt.listening) {
+      stt.stop();
+    } else {
+      stt.reset();
+      setAnswer('');
+      stt.start();
+    }
+  };
 
   const submitContent = (content: string) => {
     if (!content.trim() || !data?.question) return;
@@ -94,6 +125,9 @@ export default function LiveSessionPage() {
   const handleNext = () => {
     setAnswer('');
     setFeedback(null);
+    stt.stop();
+    stt.reset();
+    tts.cancel();
     refetch();
   };
 
@@ -258,7 +292,33 @@ export default function LiveSessionPage() {
             <span className="text-sm font-semibold text-muted-foreground">
               {isCoding ? 'Your Solution' : 'Your Answer'}
             </span>
-            {isCoding && <Badge variant="violet">Coding round</Badge>}
+            <div className="flex items-center gap-2">
+              {isCoding && <Badge variant="violet">Coding round</Badge>}
+              {!isCoding && tts.supported && questionText && (
+                <button
+                  onClick={() => (tts.speaking ? tts.cancel() : tts.speak(questionText))}
+                  title="Read question aloud"
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                    tts.speaking ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <Volume2 className="h-3 w-3" /> {tts.speaking ? 'Speaking…' : 'Hear question'}
+                </button>
+              )}
+              {!isCoding && stt.supported && (
+                <button
+                  onClick={() => setVoiceMode((v) => !v)}
+                  title="Toggle voice mode"
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                    voiceMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <Mic className="h-3 w-3" /> Voice {voiceMode ? 'on' : 'off'}
+                </button>
+              )}
+            </div>
           </div>
 
           {isCoding ? (
@@ -272,13 +332,13 @@ export default function LiveSessionPage() {
           ) : (
             <>
               <textarea
-                value={answer}
+                value={stt.listening && stt.interim ? `${answer} ${stt.interim}`.trim() : answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 disabled={!!feedback || submitAnswer.isPending}
-                placeholder="Type your answer here as if you were speaking to an interviewer…"
+                placeholder={voiceMode ? 'Tap the mic and speak your answer…' : 'Type your answer here as if you were speaking to an interviewer…'}
                 className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
               />
-              <div className="mt-3 flex items-center justify-between">
+              <div className="mt-3 flex items-center justify-between gap-3">
                 {submitAnswer.isPending ? (
                   <AIWorkingIndicator />
                 ) : (
@@ -286,9 +346,20 @@ export default function LiveSessionPage() {
                     {wordCount} {wordCount === 1 ? 'word' : 'words'}
                   </span>
                 )}
-                <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
-                  <Send className="h-4 w-4" /> Submit Answer
-                </Button>
+                <div className="flex items-center gap-2">
+                  {voiceMode && stt.supported && (
+                    <Button
+                      variant={stt.listening ? 'destructive' : 'secondary'}
+                      onClick={toggleMic}
+                      disabled={!!feedback || submitAnswer.isPending}
+                    >
+                      {stt.listening ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Speak</>}
+                    </Button>
+                  )}
+                  <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
+                    <Send className="h-4 w-4" /> Submit Answer
+                  </Button>
+                </div>
               </div>
             </>
           )}
