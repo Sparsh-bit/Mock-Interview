@@ -101,15 +101,11 @@ async def start_quiz(
     """Generate a fresh AI quiz and return questions without the answer key."""
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.models.company import InterviewTrack, QuestionCategory  # noqa: PLC0415
     from app.models.question import Topic  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
-    from app.services.ai.base_provider import ProviderError, ProviderRequest  # noqa: PLC0415
-    from app.services.ai.json_validator import AIValidationError, JSONValidator  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
-    from app.services.ai.provider_factory import get_ai_provider  # noqa: PLC0415
-    from app.services.ai.response_parser import ResponseParser  # noqa: PLC0415
     from app.services.ai.schemas import QuizGeneration  # noqa: PLC0415
 
     track_name = "Cognizant Digital Nurture — Java FSE"
@@ -131,8 +127,6 @@ async def start_quiz(
             topics_str = ", ".join(topics)
 
     builder = PromptBuilder(get_prompt_loader())
-    parser = ResponseParser(JSONValidator())
-    ai = get_ai_provider()
 
     company = (request.company or "").strip() or "a general tech company (Cognizant Digital Nurture style)"
     focus = (request.topic or "").strip() or "(no specific topic — use the track's default topic areas below)"
@@ -147,31 +141,19 @@ async def start_quiz(
         focus=focus,
     )
 
-    # Budget tokens to the quiz size (~300 tokens/question + buffer). The
-    # free-tier model is slow and occasionally returns empty content, so we
-    # allow up to 3 attempts before giving up.
+    # Budget tokens to the quiz size (~300 tokens/question + buffer). Tries the
+    # primary then fallback provider, retrying each; the free-tier model is slow
+    # and occasionally returns empty content, so a non-empty question list is
+    # required (raises AIProviderUnavailableError if all attempts fail).
     max_tokens = min(300 * request.count + 600, 8000)
-    quiz: QuizGeneration | None = None
-    for attempt in range(3):
-        try:
-            resp = await ai.complete(
-                ProviderRequest(messages=messages, json_mode=True, max_tokens=max_tokens)
-            )
-        except ProviderError:
-            logger.warning("quiz_gen_provider_error", attempt=attempt)
-            continue
-        try:
-            parsed = parser.parse(resp.content, QuizGeneration)
-            if parsed.questions:
-                quiz = parsed
-                break
-            logger.warning("quiz_gen_empty", attempt=attempt)
-        except AIValidationError:
-            logger.warning("quiz_gen_validation_failed", attempt=attempt)
-            continue
-
-    if quiz is None or not quiz.questions:
-        raise AIProviderUnavailableError(provider=ai.provider_name)
+    quiz, _ = await generate_structured(
+        QuizGeneration,
+        messages,
+        max_tokens=max_tokens,
+        attempts_per_provider=2,
+        is_valid=lambda q: bool(q.questions),
+        context="quiz_generation",
+    )
 
     quiz_id = str(uuid.uuid4())
     public_questions: list[QuizOption] = []

@@ -18,20 +18,17 @@ from app.models.company import InterviewTrack, QuestionCategory
 from app.models.question import Question, Subtopic, Topic
 from app.models.session import Answer, InterviewSession, Score, SessionStatus
 from app.prompts.prompt_loader import get_prompt_loader
-from app.services.ai.base_provider import ProviderError, ProviderRequest
-from app.services.ai.json_validator import AIValidationError, JSONValidator
+from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
-from app.services.ai.provider_factory import get_ai_provider
-from app.services.ai.response_parser import ResponseParser
 from app.services.ai.schemas import GeneratedQuestion, InterviewerResponse
 
 logger = structlog.get_logger(__name__)
 
-# One evaluation attempt, plus one retry on a malformed/unavailable response —
-# after that, fail closed (AIProviderUnavailableError) rather than silently
-# persist a made-up score. See prompt.md's "Refined Niche" section: scoring
-# must be example-driven and honest, never a fake confident-looking verdict.
-_MAX_EVALUATION_ATTEMPTS = 2
+# The free-tier reasoning model intermittently returns empty content, so we
+# allow a few attempts before failing closed with AIProviderUnavailableError
+# rather than silently persisting a made-up score. See prompt.md's "Refined
+# Niche": scoring must be example-driven and honest, never a fake verdict.
+_MAX_EVALUATION_ATTEMPTS = 3
 
 
 class InterviewOrchestrator:
@@ -39,10 +36,8 @@ class InterviewOrchestrator:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.ai = get_ai_provider()
         self.emitter = get_event_emitter()
         self.prompt_builder = PromptBuilder(get_prompt_loader())
-        self.response_parser = ResponseParser(JSONValidator())
 
     async def start_session(self, user_id: uuid.UUID, track_id: uuid.UUID) -> InterviewSession:
         """Transitions a session from pending to active and selects the first question."""
@@ -194,23 +189,18 @@ class InterviewOrchestrator:
             candidate_experience_years="not specified",
         )
 
-        parsed: GeneratedQuestion | None = None
-        for attempt in range(2):
-            try:
-                resp = await self.ai.complete(
-                    ProviderRequest(messages=messages, json_mode=True, max_tokens=700)
-                )
-            except ProviderError:
-                logger.warning("question_gen_provider_error", session_id=str(session.id), attempt=attempt)
-                continue
-            try:
-                parsed = self.response_parser.parse(resp.content, GeneratedQuestion)
-                break
-            except AIValidationError:
-                logger.warning("question_gen_validation_failed", session_id=str(session.id), attempt=attempt)
-                continue
-
-        if parsed is None or not parsed.content.strip():
+        # Best-effort: generation failing (both providers) is not fatal — the
+        # caller falls back to DB selection — so we swallow the unavailable error.
+        try:
+            parsed, _ = await generate_structured(
+                GeneratedQuestion,
+                messages,
+                max_tokens=700,
+                attempts_per_provider=1,
+                is_valid=lambda q: bool(q.content.strip()),
+                context="question_generation",
+            )
+        except AIProviderUnavailableError:
             return None
 
         topic = await self._get_or_create_topic(session.track_id, parsed.topic_name)
@@ -537,29 +527,16 @@ class InterviewOrchestrator:
             candidate_experience_years="not specified",
         )
 
-        last_raw_content = ""
-        for attempt in range(_MAX_EVALUATION_ATTEMPTS):
-            try:
-                ai_resp = await self.ai.complete(
-                    ProviderRequest(messages=messages, json_mode=True, max_tokens=800)
-                )
-            except ProviderError:
-                logger.warning(
-                    "ai_evaluation_provider_error", session_id=str(session.id), attempt=attempt
-                )
-                continue
-
-            last_raw_content = ai_resp.content
-            try:
-                parsed = self.response_parser.parse(ai_resp.content, InterviewerResponse)
-                return parsed, last_raw_content
-            except AIValidationError:
-                logger.warning(
-                    "ai_evaluation_validation_failed", session_id=str(session.id), attempt=attempt
-                )
-                continue
-
-        raise AIProviderUnavailableError(provider=self.ai.provider_name)
+        # Tries primary then fallback provider, retrying each; raises
+        # AIProviderUnavailableError (HTTP 503) only if all fail — we never
+        # persist a fabricated score.
+        return await generate_structured(
+            InterviewerResponse,
+            messages,
+            max_tokens=1200,
+            attempts_per_provider=_MAX_EVALUATION_ATTEMPTS,
+            context="answer_evaluation",
+        )
 
     async def complete_session(self, session_id: uuid.UUID):
         session = await self.db.get(InterviewSession, session_id)

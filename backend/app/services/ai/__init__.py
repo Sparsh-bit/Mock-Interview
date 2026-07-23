@@ -19,6 +19,7 @@ from .prompt_builder import PromptBuilder
 from .provider_factory import (
     close_ai_provider,
     get_ai_provider,
+    get_ai_providers,
     initialize_ai_provider,
     register_provider,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "ReportGeneratorResponse",
     # DI factory
     "get_ai_provider",
+    "get_ai_providers",
     "register_provider",
     # Lifespan lifecycle (call from app/main.py startup/shutdown)
     "initialize_ai_provider",

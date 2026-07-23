@@ -144,17 +144,15 @@ async def generate_report(
     """
     from fastapi import HTTPException  # noqa: PLC0415
 
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.models.company import Company, InterviewTrack  # noqa: PLC0415
     from app.models.question import Question, Topic  # noqa: PLC0415
     from app.models.report import Report  # noqa: PLC0415
     from app.models.session import Answer, InterviewSession, Score  # noqa: PLC0415
     from app.models.user import Profile  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
-    from app.services.ai.base_provider import ProviderError, ProviderRequest  # noqa: PLC0415
-    from app.services.ai.json_validator import AIValidationError, JSONValidator  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
-    from app.services.ai.provider_factory import get_ai_provider  # noqa: PLC0415
-    from app.services.ai.response_parser import ResponseParser  # noqa: PLC0415
     from app.services.ai.schemas import ReportGeneratorResponse  # noqa: PLC0415
 
     # Verify session
@@ -206,8 +204,6 @@ async def generate_report(
         duration_minutes = max(1, int((session.completed_at - session.started_at).total_seconds() // 60))
 
     prompt_builder = PromptBuilder(get_prompt_loader())
-    response_parser = ResponseParser(JSONValidator())
-    ai = get_ai_provider()
 
     transcript_lines = []
     for ans, question, score, topic_name in transcript_rows:
@@ -231,24 +227,20 @@ async def generate_report(
         session_duration_minutes=str(duration_minutes),
     )
 
+    # Tries primary then fallback provider; if all fail we degrade to a
+    # heuristic score-only report below rather than 503-ing the candidate.
     ai_report: ReportGeneratorResponse | None = None
     last_raw_content = ""
-    for attempt in range(2):
-        try:
-            ai_resp = await ai.complete(
-                ProviderRequest(messages=messages, json_mode=True, max_tokens=3000)
-            )
-        except ProviderError:
-            logger.warning("ai_report_provider_error", session_id=str(session_id), attempt=attempt)
-            continue
-
-        last_raw_content = ai_resp.content
-        try:
-            ai_report = response_parser.parse(ai_resp.content, ReportGeneratorResponse)
-            break
-        except AIValidationError:
-            logger.warning("ai_report_validation_failed", session_id=str(session_id), attempt=attempt)
-            continue
+    try:
+        ai_report, last_raw_content = await generate_structured(
+            ReportGeneratorResponse,
+            messages,
+            max_tokens=3000,
+            attempts_per_provider=2,
+            context="report_generation",
+        )
+    except AIProviderUnavailableError:
+        logger.warning("ai_report_unavailable_using_heuristic", session_id=str(session_id))
 
     if ai_report is not None:
         report = Report(

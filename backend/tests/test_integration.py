@@ -50,9 +50,13 @@ async def _setup_schema():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    # Clean up by dropping all tables after all tests
+    # Drop the whole schema rather than Base.metadata.drop_all: if the DB was
+    # migrated via Alembic (explicitly-named FK constraints), metadata.drop_all
+    # fails trying to drop constraints it doesn't know the names of. A schema
+    # drop is agnostic to how the tables were created.
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
 
 
 @pytest.fixture

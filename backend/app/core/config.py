@@ -90,7 +90,15 @@ class Settings(BaseSettings):
     # ── AI Provider ───────────────────────────────────────────────────────
     AI_PROVIDER: str = Field(
         default="glm",
-        description="Active AI provider: glm | nvidia | openai | anthropic | gemini | local",
+        description="Primary AI provider: glm | nvidia | openai | anthropic | gemini | local",
+    )
+    AI_FALLBACK_PROVIDER: str = Field(
+        default="nvidia",
+        description=(
+            "Secondary provider tried when the primary fails or returns "
+            "unusable output. Empty string disables fallback. Must differ "
+            "from AI_PROVIDER and have its own API key configured."
+        ),
     )
 
     # GLM — ZhipuAI's own API (default provider)

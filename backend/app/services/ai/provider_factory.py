@@ -28,11 +28,14 @@ logger = structlog.get_logger(__name__)
 # The registry — populated lazily to defer heavy imports until needed
 _PROVIDER_REGISTRY: dict[str, type[BaseAIProvider]] = {}
 
-# ─── Application singleton ────────────────────────────────────────────────────
-# Created once in the FastAPI lifespan startup (initialize_ai_provider()) and
-# closed in shutdown (close_ai_provider()) — see app/main.py. This prevents a
-# new httpx.AsyncClient connection pool from being leaked on every request.
-_provider_instance: BaseAIProvider | None = None
+# ─── Application singletons ───────────────────────────────────────────────────
+# An ordered list of providers: [primary, fallback?]. Created once in the
+# FastAPI lifespan startup (initialize_ai_provider()) and closed in shutdown
+# (close_ai_provider()) — see app/main.py. Holding them process-wide avoids
+# leaking a new httpx.AsyncClient connection pool on every request; the ordered
+# list lets AI calls fall back to the second provider when the first fails
+# (see services/ai/generate.py).
+_providers: list[BaseAIProvider] = []
 
 
 def _lazy_register() -> None:
@@ -108,25 +111,34 @@ def get_ai_provider() -> BaseAIProvider:
                 self._provider = provider
                 self._parser = parser
     """
-    global _provider_instance  # noqa: PLW0603
+    return get_ai_providers()[0]
 
-    if _provider_instance is not None:
-        return _provider_instance
 
-    # Fallback for callers that run before lifespan startup (e.g. tests) —
-    # lazily create and cache the singleton rather than raising, but log it
-    # so an accidental missing initialize_ai_provider() call is visible.
+def get_ai_providers() -> list[BaseAIProvider]:
+    """
+    Return the ordered provider chain [primary, fallback?].
+
+    AI calls try the primary first and fall back to the next on failure
+    (see services/ai/generate.py). Lazily built if called before lifespan
+    startup (e.g. in tests), logged so a missing init is visible.
+    """
+    global _providers  # noqa: PLW0603
+
+    if _providers:
+        return _providers
+
     logger.warning(
-        "ai_provider_singleton_lazily_created",
-        reason="get_ai_provider() called before initialize_ai_provider() lifespan startup",
+        "ai_providers_lazily_created",
+        reason="get_ai_providers() called before initialize_ai_provider() lifespan startup",
     )
-    _provider_instance = _create_provider()
-    return _provider_instance
+    _providers = _build_provider_chain()
+    return _providers
 
 
 def initialize_ai_provider() -> BaseAIProvider:
     """
-    Create and cache the application-scoped AI provider singleton.
+    Create and cache the application-scoped AI provider chain (primary +
+    optional fallback).
 
     Call once in FastAPI lifespan startup:
         @asynccontextmanager
@@ -135,59 +147,71 @@ def initialize_ai_provider() -> BaseAIProvider:
             yield
             await close_ai_provider()
     """
-    global _provider_instance  # noqa: PLW0603
+    global _providers  # noqa: PLW0603
 
-    _provider_instance = _create_provider()
+    _providers = _build_provider_chain()
     logger.info(
-        "ai_provider_initialized",
-        provider=_provider_instance.provider_name,
-        model=_provider_instance.model_name,
+        "ai_providers_initialized",
+        chain=[p.provider_name for p in _providers],
+        primary_model=_providers[0].model_name if _providers else None,
     )
-    return _provider_instance
+    return _providers[0]
 
 
 async def close_ai_provider() -> None:
     """
-    Release the singleton AI provider's resources (e.g. httpx connection pool).
-
-    Call once in FastAPI lifespan shutdown, after initialize_ai_provider()
-    was called at startup.
+    Release every provider's resources (e.g. httpx connection pools).
+    Call once in FastAPI lifespan shutdown.
     """
-    global _provider_instance  # noqa: PLW0603
+    global _providers  # noqa: PLW0603
 
-    if _provider_instance is not None:
-        await _provider_instance.close()
-        logger.info("ai_provider_closed", provider=_provider_instance.provider_name)
-        _provider_instance = None
+    for p in _providers:
+        try:
+            await p.close()
+            logger.info("ai_provider_closed", provider=p.provider_name)
+        except Exception:  # noqa: BLE001 — best-effort cleanup
+            logger.warning("ai_provider_close_failed", provider=p.provider_name)
+    _providers = []
 
 
-def _create_provider() -> BaseAIProvider:
-    """Build a new provider instance from the configured AI_PROVIDER setting."""
+def _build_provider_chain() -> list[BaseAIProvider]:
+    """
+    Build [primary] + [fallback] from settings. The fallback is included only
+    when configured, distinct from the primary, and successfully constructible
+    (e.g. its API key is set) — a missing/broken fallback never blocks startup.
+    """
+    from app.core.config import settings  # noqa: PLC0415
+
+    chain: list[BaseAIProvider] = [_create_provider(settings.AI_PROVIDER)]
+
+    fallback_name = (settings.AI_FALLBACK_PROVIDER or "").lower().strip()
+    primary_name = settings.AI_PROVIDER.lower().strip()
+    if fallback_name and fallback_name != primary_name:
+        try:
+            chain.append(_create_provider(fallback_name))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ai_fallback_provider_unavailable", provider=fallback_name, error=str(exc))
+
+    return chain
+
+
+def _create_provider(provider_name: str) -> BaseAIProvider:
+    """Build a single provider instance by name."""
     if not _PROVIDER_REGISTRY:
         _lazy_register()
 
-    # Import here to avoid circular import at module level
-    from app.core.config import settings  # noqa: PLC0415
-
-    name = settings.AI_PROVIDER.lower().strip()
+    name = provider_name.lower().strip()
 
     if name not in _PROVIDER_REGISTRY:
         available = sorted(_PROVIDER_REGISTRY.keys())
         raise ValueError(
-            f"Unknown AI provider '{name}'. "
-            f"Available: {available}. "
-            f"Check the AI_PROVIDER setting in your .env file."
+            f"Unknown AI provider '{name}'. Available: {available}. "
+            f"Check the AI_PROVIDER / AI_FALLBACK_PROVIDER settings in your .env file."
         )
 
     provider_cls = _PROVIDER_REGISTRY[name]
     instance = _build_provider(name, provider_cls)
-
-    logger.debug(
-        "ai_provider_created",
-        provider=name,
-        model=instance.model_name,
-    )
-
+    logger.debug("ai_provider_created", provider=name, model=instance.model_name)
     return instance
 
 
