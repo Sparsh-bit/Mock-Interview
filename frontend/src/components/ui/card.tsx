@@ -35,8 +35,12 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
     return (
       <motion.div
         ref={ref}
-        className={cn(cardVariants({ variant, padding }), className)}
-        whileHover={hoverable ? { y: -4, borderColor: 'hsl(var(--primary) / 0.4)' } : undefined}
+        className={cn(
+          cardVariants({ variant, padding }),
+          hoverable && 'transition-colors duration-300 hover:border-primary/40',
+          className
+        )}
+        whileHover={hoverable ? { y: -4 } : undefined}
         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         {...props}
       >

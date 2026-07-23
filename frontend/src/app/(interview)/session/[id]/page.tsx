@@ -266,7 +266,11 @@ export default function LiveSessionPage() {
             className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface/50 p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
           />
           <div className="mt-3 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground/70">{wordCount} {wordCount === 1 ? 'word' : 'words'}</span>
+            <span className="text-xs text-muted-foreground/70">
+              {submitAnswer.isPending
+                ? 'AI is evaluating your answer — this can take up to a minute…'
+                : `${wordCount} ${wordCount === 1 ? 'word' : 'words'}`}
+            </span>
             <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
               <Send className="h-4 w-4" /> Submit Answer
             </Button>
