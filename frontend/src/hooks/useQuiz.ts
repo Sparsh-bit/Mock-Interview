@@ -1,5 +1,10 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
+
+export interface BankTopic {
+  topic: string;
+  count: number;
+}
 
 export interface QuizQuestion {
   id: string;
@@ -55,6 +60,17 @@ export function useQuiz() {
     },
   });
 
+  const startBankQuiz = useMutation({
+    mutationFn: async (opts: { topic?: string; count: number; minutes: number }) => {
+      const res = await api.post('/api/v1/quiz/bank/start', {
+        topic: opts.topic || null,
+        count: opts.count,
+        minutes: opts.minutes,
+      });
+      return res.data as StartQuizResponse;
+    },
+  });
+
   const submitQuiz = useMutation({
     mutationFn: async (opts: { quizId: string; answers: Record<string, number> }) => {
       const res = await api.post(`/api/v1/quiz/${opts.quizId}/submit`, { answers: opts.answers });
@@ -62,5 +78,16 @@ export function useQuiz() {
     },
   });
 
-  return { startQuiz, submitQuiz };
+  return { startQuiz, startBankQuiz, submitQuiz };
+}
+
+export function useBankTopics() {
+  return useQuery({
+    queryKey: ['quiz', 'bank-topics'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/quiz/bank/topics');
+      return res.data as BankTopic[];
+    },
+    staleTime: 30 * 60 * 1000,
+  });
 }

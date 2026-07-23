@@ -14,6 +14,7 @@ POST /quiz/{quiz_id}/submit — grade the candidate's selected options and retur
 from __future__ import annotations
 
 import json
+import random
 import uuid
 
 import structlog
@@ -180,6 +181,89 @@ async def start_quiz(
         ttl=_QUIZ_TTL_SECONDS,
     )
 
+    return StartQuizResponse(quiz_id=quiz_id, minutes=request.minutes, questions=public_questions)
+
+
+# ─── Curated instant bank (no AI) ───────────────────────────────────────────
+
+
+class BankTopic(BaseModel):
+    topic: str
+    count: int
+
+
+class StartBankQuizRequest(BaseModel):
+    topic: str | None = None  # None = mix across all topics
+    count: int = Field(default=8, ge=3, le=30)
+    minutes: int = Field(default=10, ge=1, le=60)
+
+
+@router.get("/bank/topics", response_model=list[BankTopic])
+async def bank_topics(current_user: CurrentUser):
+    """List curated bank topics and how many questions each has."""
+    from app.data.quiz_bank import QUIZ_BANK  # noqa: PLC0415
+
+    return [BankTopic(topic=t, count=len(qs)) for t, qs in QUIZ_BANK.items()]
+
+
+@router.post("/bank/start", response_model=StartQuizResponse)
+async def start_bank_quiz(
+    request: StartBankQuizRequest,
+    current_user: CurrentUser,
+    redis: Redis = Depends(get_redis),
+):
+    """
+    Start a quiz from the curated bank — instant, no AI. Randomly samples
+    questions (and shuffles each question's options) so repeats vary, then
+    reuses the same Redis answer-key + /quiz/{id}/submit grading path.
+    """
+    from app.data.quiz_bank import QUIZ_BANK  # noqa: PLC0415
+
+    # Build the candidate pool.
+    if request.topic and request.topic in QUIZ_BANK:
+        pool = [{**q, "topic": request.topic} for q in QUIZ_BANK[request.topic]]
+    else:
+        pool = [{**q, "topic": t} for t, qs in QUIZ_BANK.items() for q in qs]
+
+    if not pool:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No questions in the bank.")
+
+    sample = random.sample(pool, min(request.count, len(pool)))
+
+    quiz_id = str(uuid.uuid4())
+    public_questions: list[QuizOption] = []
+    answer_key: dict[str, dict] = {}
+    for q in sample:
+        qid = str(uuid.uuid4())
+        # Shuffle options each attempt, tracking where the correct one lands.
+        indexed = list(enumerate(q["options"]))
+        random.shuffle(indexed)
+        shuffled_options = [opt for _, opt in indexed]
+        new_correct = next(i for i, (orig, _) in enumerate(indexed) if orig == q["correct_index"])
+
+        public_questions.append(
+            QuizOption(
+                id=qid,
+                question=q["question"],
+                options=shuffled_options,
+                topic=q["topic"],
+                difficulty=q.get("difficulty", "medium"),
+            )
+        )
+        answer_key[qid] = {
+            "question": q["question"],
+            "options": shuffled_options,
+            "correct_index": new_correct,
+            "explanation": q.get("explanation", ""),
+            "topic": q["topic"],
+        }
+
+    await cache_set(
+        redis,
+        f"quiz:answers:{quiz_id}",
+        json.dumps({"user_id": str(current_user.user_id), "key": answer_key}),
+        ttl=_QUIZ_TTL_SECONDS,
+    )
     return StartQuizResponse(quiz_id=quiz_id, minutes=request.minutes, questions=public_questions)
 
 
