@@ -35,6 +35,21 @@ class AnswerEvaluation(BaseModel):
     missed_concepts: list[str] = Field(default_factory=list)
 
 
+class CommunicationEvaluation(BaseModel):
+    """Matches the output of app/prompts/communication_evaluator.md."""
+
+    clarity_score: float = Field(ge=0.0, le=10.0)
+    structure_score: float = Field(ge=0.0, le=10.0)
+    confidence_score: float = Field(ge=0.0, le=10.0)
+    conciseness_score: float = Field(ge=0.0, le=10.0)
+    overall_score: float = Field(ge=0.0, le=10.0)
+    pace_feedback: str = ""
+    filler_feedback: str = ""
+    feedback: str
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+
+
 class QuizQuestion(BaseModel):
     """A single MCQ from app/prompts/quiz_generator.md."""
 
