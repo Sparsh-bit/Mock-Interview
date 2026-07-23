@@ -7,25 +7,25 @@ import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-semibold ' +
-    'transition-colors ease-out-expo disabled:pointer-events-none disabled:opacity-50 ' +
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium ' +
+    'transition-all ease-out-expo disabled:pointer-events-none disabled:opacity-40 ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ' +
     'focus-visible:ring-offset-background',
   {
     variants: {
       variant: {
         primary:
-          'bg-primary text-primary-foreground shadow-glow hover:shadow-glow-lg',
+          'bg-primary text-primary-foreground shadow-btn-primary hover:bg-primary/90',
         secondary:
-          'glass text-foreground hover:border-primary/40',
+          'bg-secondary text-secondary-foreground hover:bg-accent',
         ghost: 'text-muted-foreground hover:text-foreground hover:bg-secondary',
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
-        outline: 'border border-border bg-transparent hover:bg-secondary',
+        outline: 'border border-border bg-surface-elevated text-foreground hover:bg-secondary',
       },
       size: {
-        sm: 'h-9 px-3.5 text-xs',
-        md: 'h-11 px-5',
-        lg: 'h-12 px-7 text-base',
+        sm: 'h-9 px-4 text-[13px]',
+        md: 'h-11 px-6 text-sm',
+        lg: 'h-12 px-8 text-base',
         icon: 'h-10 w-10 shrink-0 p-0',
       },
     },

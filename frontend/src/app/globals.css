@@ -4,64 +4,67 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Design System Tokens ───────────────────────────────────────────────── */
+/* ─── Design System Tokens — Light, Apple-inspired ───────────────────────────
+   Clean light surfaces, near-black text, a single restrained blue accent,
+   soft diffuse shadows (never glows), generous whitespace. Values chosen to
+   echo apple.com / macOS System Settings. ------------------------------------ */
 
 @layer base {
   :root {
-    /* Background hierarchy */
-    --background: 220 13% 5%;
-    --surface: 222 14% 8%;
-    --surface-elevated: 222 13% 11%;
-    --surface-overlay: 222 12% 14%;
+    /* Background hierarchy — grouped light-grey page, white cards */
+    --background: 240 20% 99%;        /* near-white page */
+    --surface: 240 24% 96%;           /* #f4f4f7 grouped fills */
+    --surface-elevated: 0 0% 100%;    /* white cards */
+    --surface-overlay: 0 0% 100%;
 
     /* Foreground hierarchy */
-    --foreground: 210 40% 96%;
-    --muted: 217 19% 27%;
-    --muted-foreground: 215 16% 57%;
+    --foreground: 240 6% 10%;         /* #1a1a1c near-black */
+    --muted: 240 10% 90%;
+    --muted-foreground: 240 4% 46%;   /* #6e6e73 Apple secondary grey */
 
     /* Component tokens */
-    --card: 222 14% 8%;
-    --card-foreground: 210 40% 96%;
-    --popover: 222 14% 8%;
-    --popover-foreground: 210 40% 96%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 10%;
 
-    /* Brand accent — electric blue */
-    --primary: 213 94% 68%;
-    --primary-foreground: 220 13% 5%;
+    /* Brand accent — Apple blue #0071e3 */
+    --primary: 211 100% 45%;
+    --primary-foreground: 0 0% 100%;
 
-    /* Secondary */
-    --secondary: 217 19% 14%;
-    --secondary-foreground: 210 40% 96%;
+    /* Secondary — light grey fill (secondary buttons/chips) */
+    --secondary: 240 20% 94%;
+    --secondary-foreground: 240 6% 10%;
 
-    /* Accent */
-    --accent: 217 19% 14%;
-    --accent-foreground: 210 40% 96%;
+    /* Accent (hover fills) */
+    --accent: 240 24% 95%;
+    --accent-foreground: 240 6% 10%;
 
-    /* Semantic */
+    /* Semantic — tuned for legibility on light backgrounds */
     --destructive: 0 72% 51%;
-    --destructive-foreground: 210 40% 96%;
-    --success: 142 71% 45%;
-    --success-foreground: 220 13% 5%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 220 13% 5%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 145 63% 42%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 90% 48%;
+    --warning-foreground: 0 0% 100%;
 
-    /* Borders */
-    --border: 217 19% 17%;
-    --input: 217 19% 17%;
-    --ring: 213 94% 68%;
+    /* Borders — hairline #d2d2d7 */
+    --border: 240 9% 85%;
+    --input: 240 9% 85%;
+    --ring: 211 100% 45%;
 
-    /* Radius — Apple-leaning, generous and soft */
-    --radius: 1rem;
-    --radius-sm: 0.625rem;
-    --radius-lg: 1.5rem;
-    --radius-xl: 2rem;
+    /* Radius — Apple card/control curvature */
+    --radius: 0.875rem;
+    --radius-sm: 0.5rem;
+    --radius-lg: 1.25rem;
+    --radius-xl: 1.75rem;
 
-    /* Secondary accent glows — sparingly used for depth/variety, not primary UI color */
-    --accent-violet: 262 83% 68%;
-    --accent-cyan: 189 94% 62%;
-    --accent-emerald: 152 69% 52%;
+    /* Secondary accents — restrained, used sparingly for category/stat variety */
+    --accent-violet: 245 58% 62%;     /* #5e5ce6 indigo */
+    --accent-cyan: 199 89% 64%;       /* #5ac8fa */
+    --accent-emerald: 145 63% 45%;    /* #34c759 */
 
-    /* Motion — Apple-style spring-flavored eases, used via .ease-* utilities below */
+    /* Motion — subtle, physical, Apple-leaning */
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-in-out-smooth: cubic-bezier(0.65, 0, 0.35, 1);
@@ -80,6 +83,8 @@
 
   html {
     @apply scroll-smooth;
+    /* Force light form controls / scrollbars regardless of OS dark mode. */
+    color-scheme: light;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -87,58 +92,60 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-inter);
-    font-feature-settings: 'rlig' 1, 'calt' 1, 'ss01' 1;
+    /* Prefer the platform's SF Pro on Apple devices, Inter elsewhere. */
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+      var(--font-inter), system-ui, sans-serif;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
     min-height: 100vh;
   }
 
-  /* Focus visible — accessibility */
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
   }
 
-  /* Custom scrollbar */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
 
   ::-webkit-scrollbar-track {
-    background: hsl(var(--background));
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
+    background: hsl(240 6% 80%);
     border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background: hsl(240 5% 68%);
+    background-clip: content-box;
   }
 
-  /* Selection */
   ::selection {
-    background: hsl(var(--primary) / 0.25);
+    background: hsl(var(--primary) / 0.18);
     color: hsl(var(--foreground));
   }
 }
 
-/* ─── Typography ─────────────────────────────────────────────────────────── */
+/* ─── Typography — large, tight display headings; comfortable body ────────── */
 
 @layer base {
-  h1 { @apply text-4xl font-bold tracking-[-0.02em] leading-[1.1]; }
-  h2 { @apply text-3xl font-bold tracking-[-0.02em] leading-[1.15]; }
-  h3 { @apply text-2xl font-semibold tracking-[-0.015em] leading-[1.2]; }
-  h4 { @apply text-xl font-semibold tracking-[-0.01em]; }
-  h5 { @apply text-lg font-medium; }
+  h1 { @apply text-4xl font-semibold tracking-[-0.022em] leading-[1.08]; }
+  h2 { @apply text-3xl font-semibold tracking-[-0.021em] leading-[1.1]; }
+  h3 { @apply text-2xl font-semibold tracking-[-0.019em] leading-[1.15]; }
+  h4 { @apply text-xl font-semibold tracking-[-0.014em]; }
+  h5 { @apply text-lg font-medium tracking-[-0.01em]; }
   h6 { @apply text-base font-medium; }
   p  { @apply leading-7; }
 
   code {
     font-family: var(--font-jetbrains-mono);
-    @apply text-sm bg-secondary px-1.5 py-0.5 rounded text-primary;
+    @apply text-[0.85em] bg-secondary px-1.5 py-0.5 rounded-md text-foreground;
   }
 }
 
@@ -153,185 +160,100 @@
 /* ─── Utility Classes ────────────────────────────────────────────────────── */
 
 @layer utilities {
-  /* Glass effect */
+  /* Card surface — white, hairline border, soft diffuse shadow (Apple card). */
   .glass {
-    background: hsl(var(--surface) / 0.72);
-    backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid hsl(var(--border) / 0.8);
+    background: hsl(var(--surface-elevated));
+    border: 1px solid hsl(var(--border) / 0.7);
+    box-shadow: 0 1px 2px hsl(240 6% 10% / 0.04), 0 8px 24px hsl(240 6% 10% / 0.05);
   }
 
-  /* Aurora / mesh-glow background — layered radial glows for hero sections.
-     Multiple accent hues (blue/violet/cyan) at low opacity, blurred heavily. */
-  .aurora-bg {
+  /* Frosted translucent bar — for sticky headers / navbars only. */
+  .frosted {
+    background: hsl(0 0% 100% / 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+  }
+
+  /* Hero wash — extremely subtle light tint for hero sections (not an aurora). */
+  .hero-wash {
     position: relative;
     isolation: isolate;
   }
 
-  .aurora-bg::before {
+  .hero-wash::before {
     content: '';
     position: absolute;
-    inset: -20%;
+    inset: 0;
     z-index: -1;
     background:
-      radial-gradient(circle at 20% 20%, hsl(var(--primary) / 0.25), transparent 40%),
-      radial-gradient(circle at 80% 15%, hsl(var(--accent-violet) / 0.22), transparent 42%),
-      radial-gradient(circle at 50% 80%, hsl(var(--accent-cyan) / 0.15), transparent 45%);
-    filter: blur(60px);
+      radial-gradient(60% 50% at 50% 0%, hsl(var(--primary) / 0.06), transparent 70%);
     pointer-events: none;
   }
 
-  /* Multi-hue glow border used for premium CTA cards / highlighted states */
-  .glow-border-multi {
-    position: relative;
-  }
-
-  .glow-border-multi::after {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    z-index: -1;
-    border-radius: inherit;
-    background: linear-gradient(
-      135deg,
-      hsl(var(--primary) / 0.6),
-      hsl(var(--accent-violet) / 0.5),
-      hsl(var(--accent-cyan) / 0.4)
-    );
-    opacity: 0;
-    transition: opacity 0.3s var(--ease-out-expo);
-  }
-
-  .glow-border-multi:hover::after {
-    opacity: 1;
-  }
-
   .glass-hover {
-    @apply glass transition-all duration-200;
+    @apply glass ease-out-expo transition-all duration-300;
   }
 
   .glass-hover:hover {
-    background: hsl(var(--surface-elevated) / 0.9);
-    border-color: hsl(var(--primary) / 0.3);
-    box-shadow: 0 0 24px hsl(var(--primary) / 0.1);
+    box-shadow: 0 2px 4px hsl(240 6% 10% / 0.05), 0 16px 40px hsl(240 6% 10% / 0.08);
   }
 
-  /* Gradient text */
+  /* Gradient text — restrained blue→indigo, for hero accent words only. */
   .gradient-text {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, hsl(var(--primary)) 0%, #a78bfa 100%);
+    background-image: linear-gradient(120deg, hsl(211 100% 48%), hsl(245 58% 58%));
   }
 
   .gradient-text-blue {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
+    background-image: linear-gradient(120deg, hsl(211 100% 48%), hsl(199 89% 52%));
   }
 
-  /* Glow effects */
-  .glow {
-    box-shadow: 0 0 40px hsl(var(--primary) / 0.15);
-  }
-
-  .glow-hover {
-    @apply transition-shadow duration-300;
-  }
-
-  .glow-hover:hover {
-    box-shadow: 0 0 40px hsl(var(--primary) / 0.25);
-  }
-
-  /* Noise texture overlay */
-  .noise-overlay::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    opacity: 0.03;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-    pointer-events: none;
-  }
-
-  /* Grid pattern */
-  .grid-bg {
-    background-image: linear-gradient(hsl(var(--primary) / 0.05) 1px, transparent 1px),
-      linear-gradient(to right, hsl(var(--primary) / 0.05) 1px, transparent 1px);
-    background-size: 48px 48px;
-  }
-
-  /* Shimmer loading */
+  /* Shimmer loading (light) */
   .shimmer {
     background: linear-gradient(
       90deg,
-      hsl(var(--muted)) 0%,
-      hsl(var(--surface-elevated)) 50%,
-      hsl(var(--muted)) 100%
+      hsl(var(--surface)) 0%,
+      hsl(240 20% 92%) 50%,
+      hsl(var(--surface)) 100%
     );
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
   }
 
-  /* Score color helpers */
-  .score-excellent { @apply text-emerald-400; }
-  .score-good { @apply text-blue-400; }
-  .score-average { @apply text-yellow-400; }
-  .score-poor { @apply text-red-400; }
-
-  /* Interview-specific */
-  .interview-panel {
-    @apply glass rounded-xl border border-border/50;
-  }
-
-  .question-card {
-    @apply bg-surface-elevated border border-border rounded-lg p-6;
-    transition: border-color 0.2s;
-  }
+  /* Score color helpers (darker for light bg) */
+  .score-excellent { @apply text-emerald-600; }
+  .score-good { @apply text-blue-600; }
+  .score-average { @apply text-amber-600; }
+  .score-poor { @apply text-red-600; }
 }
 
 /* ─── Component Overrides ────────────────────────────────────────────────── */
 
 @layer components {
-  /* Pill badge */
   .badge-outline {
     @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full;
     @apply border border-border text-muted-foreground;
   }
 
-  /* Difficulty badges */
+  /* Difficulty badges — soft tinted fills with darker legible text. */
   .badge-easy {
-    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
-    @apply bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
+    @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
   }
 
   .badge-medium {
-    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
-    @apply bg-yellow-500/10 text-yellow-400 border border-yellow-500/20;
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
+    @apply bg-amber-50 text-amber-700 border border-amber-200;
   }
 
   .badge-hard {
-    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
-    @apply bg-red-500/10 text-red-400 border border-red-500/20;
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
+    @apply bg-red-50 text-red-700 border border-red-200;
   }
 
-  /* Stat card */
-  .stat-card {
-    @apply glass rounded-xl p-6;
-    @apply transition-all duration-200 hover:scale-[1.01];
-  }
-
-  /* Section header */
   .section-label {
     @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
-  }
-
-  /* Sidebar nav item */
-  .nav-item {
-    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium;
-    @apply text-muted-foreground transition-all duration-150;
-  }
-
-  .nav-item:hover {
-    @apply bg-accent text-foreground;
-  }
-
-  .nav-item.active {
-    @apply bg-primary/10 text-primary;
   }
 }

@@ -123,7 +123,7 @@ export default function ReportDetailPage() {
           disabled={toggleShare.isPending}
           className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all ${
             report.is_shared
-              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600'
               : 'border-border bg-surface text-muted-foreground hover:bg-secondary'
           }`}
         >
@@ -134,7 +134,7 @@ export default function ReportDetailPage() {
 
       {/* Header Banner */}
       <motion.div variants={fadeUp}>
-        <Card className="aurora-bg relative overflow-hidden border-primary/20 p-8">
+        <Card className="hero-wash relative overflow-hidden border-primary/20 p-8">
           <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
             <div>
               <div className="mb-3 flex items-center gap-3">
@@ -159,7 +159,7 @@ export default function ReportDetailPage() {
         <motion.div variants={fadeUp}>
           <Card className="h-full border-emerald-500/20 p-6">
             <div className="mb-4 flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
               <h3 className="text-base font-bold">Key Strengths</h3>
             </div>
             <ul className="space-y-2.5">
@@ -176,7 +176,7 @@ export default function ReportDetailPage() {
         <motion.div variants={fadeUp}>
           <Card className="h-full border-yellow-500/20 p-6">
             <div className="mb-4 flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-yellow-400" />
+              <TrendingUp className="h-5 w-5 text-amber-600" />
               <h3 className="text-base font-bold">Areas for Growth</h3>
             </div>
             <ul className="space-y-2.5">
@@ -239,7 +239,7 @@ export default function ReportDetailPage() {
                   </span>
                   {qa.missing_concepts.length > 0 && (
                     <p className="text-xs text-foreground/80">
-                      <span className="font-semibold text-yellow-400">Missing: </span>
+                      <span className="font-semibold text-amber-600">Missing: </span>
                       {qa.missing_concepts.join(', ')}
                     </p>
                   )}
@@ -272,9 +272,9 @@ export default function ReportDetailPage() {
                   </div>
                   <h4 className="text-sm font-bold">{item.topic}</h4>
                   <div className="flex items-center gap-4 text-xs">
-                    <span>Current: <strong className="text-yellow-400">{item.current_score}</strong></span>
+                    <span>Current: <strong className="text-amber-600">{item.current_score}</strong></span>
                     <span>→</span>
-                    <span>Target: <strong className="text-emerald-400">{item.target_score}</strong></span>
+                    <span>Target: <strong className="text-emerald-600">{item.target_score}</strong></span>
                   </div>
                   {item.resources && item.resources.length > 0 && (
                     <div className="border-t border-border/40 pt-2">

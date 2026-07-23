@@ -25,7 +25,7 @@ type FormData = z.infer<typeof schema>;
 
 export default function LoginPage() {
   return (
-    <div className="aurora-bg flex min-h-screen items-center justify-center px-4">
+    <div className="hero-wash flex min-h-screen items-center justify-center px-4">
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm">
         <Link href="/" className="mb-8 flex items-center justify-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">

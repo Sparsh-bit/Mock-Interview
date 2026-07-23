@@ -66,7 +66,7 @@ function InterviewSetup() {
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="h-10 w-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                      <Code2 className="h-5 w-5 text-blue-400" />
+                      <Code2 className="h-5 w-5 text-blue-600" />
                     </div>
                     {isSelected && <CheckCircle2 className="h-5 w-5 text-primary" />}
                   </div>
@@ -87,7 +87,7 @@ function InterviewSetup() {
             {/* Upcoming track placeholder */}
             <div className="rounded-xl border border-border/30 bg-surface/30 p-6 opacity-50 cursor-not-allowed">
               <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center mb-4">
-                <Code2 className="h-5 w-5 text-emerald-400" />
+                <Code2 className="h-5 w-5 text-emerald-600" />
               </div>
               <h3 className="font-bold text-lg">TCS Digital</h3>
               <p className="text-sm text-muted-foreground mt-1">Java Backend (Coming Soon)</p>

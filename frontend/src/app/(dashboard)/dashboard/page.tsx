@@ -60,7 +60,7 @@ export default function DashboardPage() {
       className="mx-auto max-w-6xl space-y-8"
     >
       {/* Welcome banner */}
-      <motion.div variants={fadeUp} className="aurora-bg glass relative overflow-hidden rounded-2xl border-primary/20 p-8">
+      <motion.div variants={fadeUp} className="hero-wash glass relative overflow-hidden rounded-2xl border-primary/20 p-8">
         <div className="relative">
           <h1 className="text-2xl font-bold tracking-tight">Welcome back, {displayName} 👋</h1>
           <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">
@@ -194,7 +194,7 @@ export default function DashboardPage() {
                         <p className="truncate text-xs font-semibold">{track.company.name}</p>
                         <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{track.name}</p>
                       </div>
-                      <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-400" />
+                      <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
                     </div>
                     <p className="mt-1.5 text-[10px] text-muted-foreground">{track.question_count} questions available</p>
                   </Link>

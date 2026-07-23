@@ -67,10 +67,10 @@ export default function RegisterPage() {
 
   if (done) {
     return (
-      <div className="aurora-bg flex min-h-screen items-center justify-center px-4">
+      <div className="hero-wash flex min-h-screen items-center justify-center px-4">
         <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm text-center">
           <Card className="border-emerald-500/20 p-10">
-            <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-400" />
+            <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-600" />
             <h2 className="mb-2 text-xl font-bold">Check your email</h2>
             <p className="text-sm text-muted-foreground">
               We sent a confirmation link to your email. Click it to activate your account.
@@ -85,7 +85,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="aurora-bg flex min-h-screen items-center justify-center px-4 py-12">
+    <div className="hero-wash flex min-h-screen items-center justify-center px-4 py-12">
       <motion.div
         initial="hidden"
         animate="visible"
@@ -113,7 +113,7 @@ export default function RegisterPage() {
           <ul className="space-y-3">
             {PERKS.map((perk) => (
               <li key={perk} className="flex items-center gap-3 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-400" />
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
                 {perk}
               </li>
             ))}

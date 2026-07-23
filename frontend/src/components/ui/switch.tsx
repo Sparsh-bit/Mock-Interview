@@ -16,15 +16,15 @@ export function Switch({ checked, onChange, className }: SwitchProps) {
       aria-checked={checked}
       onClick={onChange}
       className={cn(
-        'relative h-6 w-12 rounded-full p-0.5 transition-colors',
-        checked ? 'bg-primary' : 'bg-secondary',
+        'relative h-[31px] w-[51px] rounded-full p-0.5 transition-colors duration-300 ease-out-expo',
+        checked ? 'bg-success' : 'bg-[hsl(240,9%,83%)]',
         className
       )}
     >
       <motion.div
-        className="h-5 w-5 rounded-full bg-white shadow-sm"
-        animate={{ x: checked ? 24 : 0 }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        className="h-[27px] w-[27px] rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.25)]"
+        animate={{ x: checked ? 20 : 0 }}
+        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
       />
     </button>
   );

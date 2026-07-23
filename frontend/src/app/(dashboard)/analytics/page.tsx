@@ -65,7 +65,7 @@ export default function AnalyticsPage() {
           <Card hoverable className="p-5">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase text-muted-foreground">Highest Score</span>
-              <Trophy className="h-4 w-4 text-yellow-400" />
+              <Trophy className="h-4 w-4 text-amber-600" />
             </div>
             <p className="text-3xl font-bold tracking-tight">{stats?.best_score ? `${stats.best_score}/100` : '—'}</p>
           </Card>
@@ -83,7 +83,7 @@ export default function AnalyticsPage() {
       </div>
 
       <motion.div variants={fadeUp}>
-        <Card className="aurora-bg space-y-3 p-8 text-center">
+        <Card className="hero-wash space-y-3 p-8 text-center">
           <TrendingUp className="mx-auto mb-2 h-10 w-10 text-primary" />
           <h3 className="text-lg font-bold">Analytics Engine Active</h3>
           <p className="mx-auto max-w-md text-sm text-muted-foreground">

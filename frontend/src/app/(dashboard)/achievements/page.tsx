@@ -62,7 +62,7 @@ export default function AchievementsPage() {
               >
                 <div
                   className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl ${
-                    ach.unlocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-secondary text-muted-foreground'
+                    ach.unlocked ? 'bg-emerald-500/20 text-emerald-600' : 'bg-secondary text-muted-foreground'
                   }`}
                 >
                   {ach.unlocked ? <Icon className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
@@ -70,12 +70,12 @@ export default function AchievementsPage() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold">{ach.title}</h3>
-                    {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+                    {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">{ach.description}</p>
                   <p className="mt-2 text-[10px] font-semibold uppercase tracking-wider">
                     {ach.unlocked ? (
-                      <span className="text-emerald-400">Unlocked</span>
+                      <span className="text-emerald-600">Unlocked</span>
                     ) : (
                       <span className="text-muted-foreground">Locked</span>
                     )}

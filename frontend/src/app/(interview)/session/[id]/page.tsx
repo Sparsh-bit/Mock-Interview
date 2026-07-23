@@ -102,7 +102,7 @@ export default function LiveSessionPage() {
 
   if (data?.question === null) {
     return (
-      <div className="aurora-bg flex min-h-screen items-center justify-center bg-background p-6">
+      <div className="hero-wash flex min-h-screen items-center justify-center bg-background p-6">
         <motion.div
           initial="hidden"
           animate="visible"
@@ -194,7 +194,7 @@ export default function LiveSessionPage() {
                       variants={fadeUp}
                       className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3"
                     >
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
                       <p className="text-xs font-medium text-amber-300">
                         This answer sounded confident but may not be fully accurate — review the gaps below.
                       </p>
@@ -205,7 +205,7 @@ export default function LiveSessionPage() {
                     <motion.div variants={fadeUp} className="mt-5 grid gap-4 sm:grid-cols-2">
                       {feedback.strengths.length > 0 && (
                         <div>
-                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-400">
+                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">
                             <CheckCircle2 className="h-3.5 w-3.5" /> Strengths
                           </p>
                           <ul className="space-y-1.5 text-sm text-foreground/80">
@@ -220,7 +220,7 @@ export default function LiveSessionPage() {
                       )}
                       {feedback.weaknesses.length > 0 && (
                         <div>
-                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-orange-400">
+                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-orange-600">
                             <AlertTriangle className="h-3.5 w-3.5" /> Gaps
                           </p>
                           <ul className="space-y-1.5 text-sm text-foreground/80">

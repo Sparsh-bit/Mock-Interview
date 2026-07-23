@@ -62,7 +62,7 @@ export default function SettingsPage() {
                 disabled={loading || resetSent}
                 className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-2 text-xs font-bold transition-colors hover:bg-secondary disabled:opacity-50"
               >
-                {resetSent ? <><Check className="h-3.5 w-3.5 text-emerald-400" /> Link Sent</> : 'Reset Password'}
+                {resetSent ? <><Check className="h-3.5 w-3.5 text-emerald-600" /> Link Sent</> : 'Reset Password'}
               </button>
             </div>
           </Card>
@@ -101,7 +101,7 @@ export default function SettingsPage() {
         <motion.div variants={fadeUp}>
           <Card className="space-y-2 p-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600">
                 <Shield className="h-5 w-5" />
               </div>
               <div>

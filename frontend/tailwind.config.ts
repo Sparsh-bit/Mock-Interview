@@ -23,6 +23,11 @@ const config: Config = {
         ring: 'hsl(var(--ring))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        surface: {
+          DEFAULT: 'hsl(var(--surface))',
+          elevated: 'hsl(var(--surface-elevated))',
+          overlay: 'hsl(var(--surface-overlay))',
+        },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
@@ -145,10 +150,12 @@ const config: Config = {
         glow: 'glow 2s ease-in-out infinite',
       },
       boxShadow: {
-        glow: '0 0 40px hsl(var(--primary) / 0.15)',
-        'glow-lg': '0 0 80px hsl(var(--primary) / 0.2)',
-        card: '0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.3)',
-        'card-hover': '0 4px 20px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.3)',
+        // Soft, diffuse Apple-style elevation — no colored glows.
+        glow: '0 1px 2px rgba(20,20,25,0.04), 0 8px 24px rgba(20,20,25,0.06)',
+        'glow-lg': '0 2px 4px rgba(20,20,25,0.05), 0 20px 48px rgba(20,20,25,0.10)',
+        card: '0 1px 2px rgba(20,20,25,0.04), 0 8px 24px rgba(20,20,25,0.05)',
+        'card-hover': '0 2px 4px rgba(20,20,25,0.05), 0 16px 40px rgba(20,20,25,0.08)',
+        'btn-primary': '0 1px 2px rgba(0,113,227,0.25), 0 4px 12px rgba(0,113,227,0.20)',
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',

@@ -47,8 +47,8 @@ export default function ReportsListPage() {
                   <span
                     className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold border ${
                       sess.status === 'completed'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                        : 'bg-yellow-500/10 text-amber-600 border-yellow-500/30'
                     }`}
                   >
                     {sess.status}

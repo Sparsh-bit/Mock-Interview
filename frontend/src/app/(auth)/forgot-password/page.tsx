@@ -40,7 +40,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="aurora-bg flex min-h-screen items-center justify-center px-4">
+    <div className="hero-wash flex min-h-screen items-center justify-center px-4">
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm">
         <Link href="/" className="mb-8 flex items-center justify-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">
@@ -52,7 +52,7 @@ export default function ForgotPasswordPage() {
         <Card className="p-8">
           {sent ? (
             <div className="text-center">
-              <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-400" />
+              <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-600" />
               <h1 className="mb-2 text-xl font-bold">Check your email</h1>
               <p className="text-sm text-muted-foreground">
                 We sent a password reset link to your email. Click it to choose a new password.

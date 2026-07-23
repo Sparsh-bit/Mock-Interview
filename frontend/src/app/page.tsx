@@ -23,7 +23,7 @@ const FEATURES = [
     description:
       'Questions get harder when you answer well and easier when you struggle. Just like a real technical interview.',
     color: 'from-blue-500/20 to-blue-600/5',
-    iconColor: 'text-blue-400',
+    iconColor: 'text-blue-600',
   },
   {
     icon: FileText,
@@ -31,7 +31,7 @@ const FEATURES = [
     description:
       'Upload your resume and get interviews tailored to YOUR experience. Java in your resume? Expect deep Java questions.',
     color: 'from-purple-500/20 to-purple-600/5',
-    iconColor: 'text-purple-400',
+    iconColor: 'text-accent-violet',
   },
   {
     icon: Zap,
@@ -39,7 +39,7 @@ const FEATURES = [
     description:
       'Get scored after every single answer — technical accuracy, communication clarity, completeness, and confidence.',
     color: 'from-yellow-500/20 to-yellow-600/5',
-    iconColor: 'text-yellow-400',
+    iconColor: 'text-amber-600',
   },
   {
     icon: Mic,
@@ -47,7 +47,7 @@ const FEATURES = [
     description:
       'Practice speaking your answers aloud. Whisper transcription converts speech to text for full evaluation.',
     color: 'from-green-500/20 to-green-600/5',
-    iconColor: 'text-emerald-400',
+    iconColor: 'text-emerald-600',
   },
   {
     icon: TrendingUp,
@@ -55,7 +55,7 @@ const FEATURES = [
     description:
       'After each session, get an interview-readiness assessment, topic-by-topic scores, and an exact improvement roadmap.',
     color: 'from-red-500/20 to-red-600/5',
-    iconColor: 'text-red-400',
+    iconColor: 'text-red-600',
   },
   {
     icon: Target,
@@ -63,7 +63,7 @@ const FEATURES = [
     description:
       'The AI can detect when you sound confident but are factually wrong — and it challenges you. No easy passes.',
     color: 'from-orange-500/20 to-orange-600/5',
-    iconColor: 'text-orange-400',
+    iconColor: 'text-orange-600',
   },
 ];
 
@@ -90,7 +90,7 @@ const itemVariants: Variants = {
 
 export default function LandingPage() {
   return (
-    <div className="aurora-bg relative min-h-screen overflow-hidden bg-background">
+    <div className="hero-wash relative min-h-screen overflow-hidden bg-background">
       {/* Background grid */}
       <div className="pointer-events-none absolute inset-0 grid-bg opacity-100" />
 
@@ -230,8 +230,8 @@ export default function LandingPage() {
                 {/* Live score */}
                 <div className="mt-4 grid grid-cols-3 gap-3">
                   {[
-                    { label: 'Technical', value: '8.5', color: 'text-emerald-400' },
-                    { label: 'Clarity', value: '7.0', color: 'text-blue-400' },
+                    { label: 'Technical', value: '8.5', color: 'text-emerald-600' },
+                    { label: 'Clarity', value: '7.0', color: 'text-blue-600' },
                     { label: 'Depth', value: '—', color: 'text-muted-foreground' },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="rounded-lg bg-surface-elevated p-2 text-center">
