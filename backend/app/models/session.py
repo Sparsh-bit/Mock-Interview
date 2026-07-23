@@ -10,15 +10,16 @@ Answers and scores are written after each question-answer cycle.
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-import enum
 
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
 
 class SessionStatus(str, enum.Enum):
     PENDING = "pending"
@@ -67,18 +68,18 @@ class InterviewSession(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     session_metadata: Mapped[dict | None] = mapped_column(JSONB)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    user: Mapped["User"] = relationship("User", back_populates="sessions")  # type: ignore[name-defined]
-    track: Mapped["InterviewTrack"] = relationship("InterviewTrack", back_populates="sessions")  # type: ignore[name-defined]
-    answers: Mapped[list["Answer"]] = relationship(
+    user: Mapped[User] = relationship("User", back_populates="sessions")  # type: ignore[name-defined]
+    track: Mapped[InterviewTrack] = relationship("InterviewTrack", back_populates="sessions")  # type: ignore[name-defined]
+    answers: Mapped[list[Answer]] = relationship(
         "Answer", back_populates="session", cascade="all, delete-orphan",
     )
-    scores: Mapped[list["Score"]] = relationship(
+    scores: Mapped[list[Score]] = relationship(
         "Score", back_populates="session",
     )
-    voice_transcripts: Mapped[list["VoiceTranscript"]] = relationship(
+    voice_transcripts: Mapped[list[VoiceTranscript]] = relationship(
         "VoiceTranscript", back_populates="session", cascade="all, delete-orphan",
     )
-    report: Mapped["Report | None"] = relationship(  # type: ignore[name-defined]
+    report: Mapped[Report | None] = relationship(  # type: ignore[name-defined]
         "Report", back_populates="session", uselist=False,
     )
 
@@ -105,12 +106,12 @@ class Answer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     word_count: Mapped[int | None] = mapped_column(Integer)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    session: Mapped["InterviewSession"] = relationship("InterviewSession", back_populates="answers")
-    question: Mapped["Question"] = relationship("Question", back_populates="answers")  # type: ignore[name-defined]
-    score: Mapped["Score | None"] = relationship(
+    session: Mapped[InterviewSession] = relationship("InterviewSession", back_populates="answers")
+    question: Mapped[Question] = relationship("Question", back_populates="answers")  # type: ignore[name-defined]
+    score: Mapped[Score | None] = relationship(
         "Score", back_populates="answer", uselist=False,
     )
-    voice_transcript: Mapped["VoiceTranscript | None"] = relationship(
+    voice_transcript: Mapped[VoiceTranscript | None] = relationship(
         "VoiceTranscript",
         foreign_keys=[voice_transcript_id],
         primaryjoin="Answer.voice_transcript_id == VoiceTranscript.id",
@@ -156,8 +157,8 @@ class Score(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     raw_evaluation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    answer: Mapped["Answer"] = relationship("Answer", back_populates="score")
-    session: Mapped["InterviewSession"] = relationship("InterviewSession", back_populates="scores")
+    answer: Mapped[Answer] = relationship("Answer", back_populates="score")
+    session: Mapped[InterviewSession] = relationship("InterviewSession", back_populates="scores")
 
 
 class VoiceTranscript(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -178,6 +179,6 @@ class VoiceTranscript(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     language: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    session: Mapped["InterviewSession"] = relationship(
+    session: Mapped[InterviewSession] = relationship(
         "InterviewSession", back_populates="voice_transcripts",
     )

@@ -14,9 +14,8 @@ Configuration:
 
 from __future__ import annotations
 
-import structlog
-
 import httpx
+import structlog
 
 from .base_provider import BaseAIProvider, ProviderError, ProviderRequest, ProviderResponse
 

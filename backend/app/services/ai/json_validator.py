@@ -10,7 +10,7 @@ controlled error — never crash the interview engine.
 
 from __future__ import annotations
 
-from typing import Any, TypeVar, Type
+from typing import Any, TypeVar
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -54,7 +54,7 @@ class JSONValidator:
     both extraction and validation in one call.
     """
 
-    def validate(self, data: dict[str, Any], schema: Type[T]) -> T:
+    def validate(self, data: dict[str, Any], schema: type[T]) -> T:
         """
         Validate data against schema.
 

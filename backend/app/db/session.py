@@ -10,11 +10,12 @@ Never import a synchronous session; never call session.execute() outside of an a
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
-import structlog
 import orjson
+import structlog
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -70,10 +71,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             yield session
             await session.commit()
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 await session.rollback()
-            except Exception:
-                pass
             raise
         finally:
             await session.close()

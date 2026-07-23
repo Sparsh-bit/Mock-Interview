@@ -20,11 +20,10 @@ Rules:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
-
 
 # ─── Event type registry ──────────────────────────────────────────────────────
 
@@ -80,7 +79,7 @@ class BaseEvent(BaseModel):
     event_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     event_type: EventType
     occurred_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=lambda: datetime.now(UTC)
     )
     # Subject identifiers — stored as top-level columns in audit_logs for indexing
     user_id: uuid.UUID | None = None

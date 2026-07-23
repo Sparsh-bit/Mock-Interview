@@ -13,7 +13,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ─── Request / Response value objects ────────────────────────────────────────
 
 
@@ -154,7 +153,7 @@ class BaseAIProvider(ABC):
     async def close(self) -> None:
         """Release HTTP connections and other resources. Override if needed."""
 
-    async def __aenter__(self) -> "BaseAIProvider":
+    async def __aenter__(self) -> BaseAIProvider:
         return self
 
     async def __aexit__(self, *_: Any) -> None:

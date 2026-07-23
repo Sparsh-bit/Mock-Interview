@@ -77,6 +77,7 @@ async def get_report(
 ):
     """Retrieve the report for a completed session."""
     from fastapi import HTTPException  # noqa: PLC0415
+
     from app.models.report import Report  # noqa: PLC0415
     from app.models.session import InterviewSession  # noqa: PLC0415
 
@@ -123,11 +124,10 @@ async def generate_report(
     Phase 3: Generates a structured report from stored scores.
     """
     from fastapi import HTTPException  # noqa: PLC0415
-    from sqlalchemy.orm import selectinload  # noqa: PLC0415
-    from app.models.report import Report  # noqa: PLC0415
-    from app.models.session import InterviewSession, Answer, Score  # noqa: PLC0415
+
     from app.models.question import Question, Topic  # noqa: PLC0415
-    from app.models.company import InterviewTrack  # noqa: PLC0415
+    from app.models.report import Report  # noqa: PLC0415
+    from app.models.session import Answer, InterviewSession, Score  # noqa: PLC0415
 
     # Verify session
     session_result = await db.execute(
@@ -256,6 +256,7 @@ async def toggle_share(
     db: AsyncSession = Depends(get_db),
 ):
     from fastapi import HTTPException  # noqa: PLC0415
+
     from app.models.report import Report  # noqa: PLC0415
 
     result = await db.execute(

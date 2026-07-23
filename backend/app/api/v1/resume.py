@@ -186,8 +186,9 @@ async def set_primary(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
-    from app.models.report import ResumeFile  # noqa: PLC0415
     from sqlalchemy import update  # noqa: PLC0415
+
+    from app.models.report import ResumeFile  # noqa: PLC0415
 
     # Verify ownership
     result = await db.execute(
@@ -218,8 +219,9 @@ async def delete_resume(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
-    from app.models.report import ResumeFile  # noqa: PLC0415
     from supabase import create_client  # noqa: PLC0415
+
+    from app.models.report import ResumeFile  # noqa: PLC0415
 
     result = await db.execute(
         select(ResumeFile).where(

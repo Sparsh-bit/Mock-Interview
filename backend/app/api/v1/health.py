@@ -43,6 +43,7 @@ async def _check_supabase_connection() -> bool:
     """
     try:
         import httpx  # noqa: PLC0415
+
         from app.core.config import settings  # noqa: PLC0415
 
         async with httpx.AsyncClient(timeout=5.0) as client:

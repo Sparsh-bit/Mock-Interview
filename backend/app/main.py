@@ -12,8 +12,8 @@ Wires together all application layers:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
@@ -131,6 +131,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def request_id_middleware(request, call_next):
         import uuid
+
         import structlog
 
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))

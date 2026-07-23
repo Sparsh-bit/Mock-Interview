@@ -10,14 +10,15 @@ The Interview Orchestrator navigates this hierarchy when selecting questions.
 
 from __future__ import annotations
 
+import enum
 import uuid
 
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-import enum
 
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
 
 class QuestionDifficulty(str, enum.Enum):
     EASY = "easy"
@@ -52,14 +53,14 @@ class Topic(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    category: Mapped["QuestionCategory"] = relationship(  # type: ignore[name-defined]
+    category: Mapped[QuestionCategory] = relationship(  # type: ignore[name-defined]
         "QuestionCategory", back_populates="topics",
     )
-    subtopics: Mapped[list["Subtopic"]] = relationship(
+    subtopics: Mapped[list[Subtopic]] = relationship(
         "Subtopic", back_populates="topic", cascade="all, delete-orphan",
         order_by="Subtopic.order_index",
     )
-    questions: Mapped[list["Question"]] = relationship(
+    questions: Mapped[list[Question]] = relationship(
         "Question", back_populates="topic",
     )
 
@@ -80,8 +81,8 @@ class Subtopic(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    topic: Mapped["Topic"] = relationship("Topic", back_populates="subtopics")
-    questions: Mapped[list["Question"]] = relationship(
+    topic: Mapped[Topic] = relationship("Topic", back_populates="subtopics")
+    questions: Mapped[list[Question]] = relationship(
         "Question", back_populates="subtopic",
     )
 
@@ -120,13 +121,13 @@ class Question(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     avg_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    topic: Mapped["Topic"] = relationship("Topic", back_populates="questions")
-    subtopic: Mapped["Subtopic | None"] = relationship("Subtopic", back_populates="questions")
-    follow_ups: Mapped[list["FollowUpQuestion"]] = relationship(
+    topic: Mapped[Topic] = relationship("Topic", back_populates="questions")
+    subtopic: Mapped[Subtopic | None] = relationship("Subtopic", back_populates="questions")
+    follow_ups: Mapped[list[FollowUpQuestion]] = relationship(
         "FollowUpQuestion", back_populates="parent_question", cascade="all, delete-orphan",
         order_by="FollowUpQuestion.order_index",
     )
-    answers: Mapped[list["Answer"]] = relationship(  # type: ignore[name-defined]
+    answers: Mapped[list[Answer]] = relationship(  # type: ignore[name-defined]
         "Answer", back_populates="question",
     )
 
@@ -154,6 +155,6 @@ class FollowUpQuestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    parent_question: Mapped["Question"] = relationship(
+    parent_question: Mapped[Question] = relationship(
         "Question", back_populates="follow_ups",
     )

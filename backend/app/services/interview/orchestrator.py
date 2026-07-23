@@ -1,18 +1,23 @@
-import uuid
-from typing import Optional
-from datetime import datetime, timezone
 import json
+import uuid
+from datetime import UTC, datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from app.models.session import InterviewSession, SessionStatus, Answer, Score
-from app.models.question import Question
-from app.models.company import QuestionCategory
-from app.models.question import Topic
-from app.services.ai.provider_factory import get_ai_provider
-from app.services.ai.base_provider import ProviderRequest
+
+from app.events.base import (
+    AnswerEvaluatedEvent,
+    AnswerEvaluatedPayload,
+    InterviewStartedEvent,
+    InterviewStartedPayload,
+)
 from app.events.emitter import get_event_emitter
-from app.events.base import InterviewStartedEvent, AnswerEvaluatedEvent, InterviewStartedPayload, AnswerEvaluatedPayload
+from app.models.company import QuestionCategory
+from app.models.question import Question, Topic
+from app.models.session import Answer, InterviewSession, Score, SessionStatus
+from app.services.ai.base_provider import ProviderRequest
+from app.services.ai.provider_factory import get_ai_provider
+
 
 class InterviewOrchestrator:
     """State machine and business logic for conducting an interview."""
@@ -38,13 +43,13 @@ class InterviewOrchestrator:
                 track_id=track_id,
                 status=SessionStatus.ACTIVE,
                 mode="text",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             self.db.add(session)
         else:
             session.status = SessionStatus.ACTIVE
             if not session.started_at:
-                session.started_at = datetime.now(timezone.utc)
+                session.started_at = datetime.now(UTC)
 
         await self.db.flush()
 
@@ -66,7 +71,7 @@ class InterviewOrchestrator:
         await self.db.refresh(session)
         return session
 
-    async def get_next_question(self, session_id: uuid.UUID) -> Optional[Question]:
+    async def get_next_question(self, session_id: uuid.UUID) -> Question | None:
         """Adaptively selects the next question based on session history."""
         session = await self.db.get(InterviewSession, session_id)
         if not session or session.status != SessionStatus.ACTIVE:
@@ -107,9 +112,9 @@ class InterviewOrchestrator:
 
         return next_q
 
-    async def _ensure_seed_questions(self, track_id: uuid.UUID, answered_ids: list[uuid.UUID]) -> Optional[Question]:
+    async def _ensure_seed_questions(self, track_id: uuid.UUID, answered_ids: list[uuid.UUID]) -> Question | None:
         from app.models.company import QuestionCategory
-        from app.models.question import Topic, QuestionDifficulty, QuestionType
+        from app.models.question import QuestionDifficulty, QuestionType, Topic
 
         cat = await self.db.scalar(select(QuestionCategory).where(QuestionCategory.track_id == track_id))
         if not cat:
@@ -304,5 +309,5 @@ class InterviewOrchestrator:
         session = await self.db.get(InterviewSession, session_id)
         if session:
             session.status = SessionStatus.COMPLETED
-            session.completed_at = datetime.now(timezone.utc)
+            session.completed_at = datetime.now(UTC)
             await self.db.commit()

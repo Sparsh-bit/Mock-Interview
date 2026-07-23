@@ -63,10 +63,10 @@ class Report(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     raw_report: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    session: Mapped["InterviewSession"] = relationship(  # type: ignore[name-defined]
+    session: Mapped[InterviewSession] = relationship(  # type: ignore[name-defined]
         "InterviewSession", back_populates="report",
     )
-    user: Mapped["User"] = relationship("User", back_populates="reports")  # type: ignore[name-defined]
+    user: Mapped[User] = relationship("User", back_populates="reports")  # type: ignore[name-defined]
 
 
 class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -102,4 +102,4 @@ class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     # ── Relationships ──────────────────────────────────────────────────────
-    user: Mapped["User"] = relationship("User", back_populates="resume_files")  # type: ignore[name-defined]
+    user: Mapped[User] = relationship("User", back_populates="resume_files")  # type: ignore[name-defined]

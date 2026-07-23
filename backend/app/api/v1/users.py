@@ -13,15 +13,14 @@ import uuid
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, HttpUrl
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 
 from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
 from app.models.session import InterviewSession
-from app.models.user import Profile, User
+from app.models.user import Profile
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -152,6 +151,7 @@ async def get_stats(
 ):
     """Aggregate interview performance statistics for the current user."""
     from sqlalchemy import case  # noqa: PLC0415
+
     from app.models.session import Score  # noqa: PLC0415
 
     # Session counts
@@ -200,7 +200,7 @@ async def get_session_history(
     limit: int = Query(default=10, le=50),
     offset: int = Query(default=0, ge=0),
 ):
-    from app.models.company import InterviewTrack, Company  # noqa: PLC0415
+    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
     from app.models.report import Report  # noqa: PLC0415
 
     result = await db.execute(

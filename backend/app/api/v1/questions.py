@@ -19,7 +19,6 @@ from sqlalchemy.orm import selectinload
 from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
 from app.models.company import Company, InterviewTrack, QuestionCategory
-from app.models.question import Topic
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()

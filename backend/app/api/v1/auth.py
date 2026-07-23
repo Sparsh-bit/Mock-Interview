@@ -9,16 +9,15 @@ POST /api/v1/auth/logout    — Invalidate session (Redis token blacklist)
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, status
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
-from fastapi import Depends
 from app.models.user import Profile, User
 
 logger = structlog.get_logger(__name__)
@@ -39,7 +38,7 @@ class UserResponse(BaseModel):
     email: str
     is_admin: bool
     created_at: datetime
-    profile: "ProfileResponse | None"
+    profile: ProfileResponse | None
 
 
 class ProfileResponse(BaseModel):

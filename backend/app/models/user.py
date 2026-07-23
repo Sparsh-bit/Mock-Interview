@@ -41,16 +41,16 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    profile: Mapped["Profile"] = relationship(
+    profile: Mapped[Profile] = relationship(
         "Profile", back_populates="user", uselist=False, cascade="all, delete-orphan",
     )
-    sessions: Mapped[list["InterviewSession"]] = relationship(  # type: ignore[name-defined]
+    sessions: Mapped[list[InterviewSession]] = relationship(  # type: ignore[name-defined]
         "InterviewSession", back_populates="user",
     )
-    reports: Mapped[list["Report"]] = relationship(  # type: ignore[name-defined]
+    reports: Mapped[list[Report]] = relationship(  # type: ignore[name-defined]
         "Report", back_populates="user",
     )
-    resume_files: Mapped[list["ResumeFile"]] = relationship(  # type: ignore[name-defined]
+    resume_files: Mapped[list[ResumeFile]] = relationship(  # type: ignore[name-defined]
         "ResumeFile", back_populates="user",
     )
 
@@ -77,4 +77,4 @@ class Profile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC", nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    user: Mapped["User"] = relationship("User", back_populates="profile")
+    user: Mapped[User] = relationship("User", back_populates="profile")

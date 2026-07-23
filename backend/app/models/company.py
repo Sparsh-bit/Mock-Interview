@@ -37,7 +37,7 @@ class Company(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    tracks: Mapped[list["InterviewTrack"]] = relationship(
+    tracks: Mapped[list[InterviewTrack]] = relationship(
         "InterviewTrack", back_populates="company", cascade="all, delete-orphan",
     )
 
@@ -68,12 +68,12 @@ class InterviewTrack(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    company: Mapped["Company"] = relationship("Company", back_populates="tracks")
-    categories: Mapped[list["QuestionCategory"]] = relationship(
+    company: Mapped[Company] = relationship("Company", back_populates="tracks")
+    categories: Mapped[list[QuestionCategory]] = relationship(
         "QuestionCategory", back_populates="track", cascade="all, delete-orphan",
         order_by="QuestionCategory.order_index",
     )
-    sessions: Mapped[list["InterviewSession"]] = relationship(  # type: ignore[name-defined]
+    sessions: Mapped[list[InterviewSession]] = relationship(  # type: ignore[name-defined]
         "InterviewSession", back_populates="track",
     )
 
@@ -100,8 +100,8 @@ class QuestionCategory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # ── Relationships ──────────────────────────────────────────────────────
-    track: Mapped["InterviewTrack"] = relationship("InterviewTrack", back_populates="categories")
-    topics: Mapped[list["Topic"]] = relationship(  # type: ignore[name-defined]
+    track: Mapped[InterviewTrack] = relationship("InterviewTrack", back_populates="categories")
+    topics: Mapped[list[Topic]] = relationship(  # type: ignore[name-defined]
         "Topic", back_populates="category", cascade="all, delete-orphan",
         order_by="Topic.order_index",
     )

@@ -15,8 +15,9 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import defaultdict
-from typing import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 import structlog
 
@@ -63,10 +64,8 @@ class EventBus:
     def unsubscribe(self, event_type: EventType, handler: HandlerFn) -> None:
         """Remove a specific handler subscription."""
         handlers = self._handlers.get(event_type, [])
-        try:
-            handlers.remove(handler)
-        except ValueError:
-            pass  # Handler was not registered — silently ignore
+        with contextlib.suppress(ValueError):
+            handlers.remove(handler)  # no-op if the handler was never registered
 
     async def publish(self, event: BaseEvent) -> None:
         """

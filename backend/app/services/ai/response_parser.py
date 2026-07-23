@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Type, TypeVar
+from typing import Any, TypeVar
 
 import structlog
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ class ResponseParser:
     def __init__(self, validator: JSONValidator) -> None:
         self._validator = validator
 
-    def parse(self, content: str, schema: Type[T]) -> T:
+    def parse(self, content: str, schema: type[T]) -> T:
         """
         Extract JSON from content and validate against schema.
 

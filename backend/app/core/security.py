@@ -101,7 +101,8 @@ async def get_current_user(
 
     # Load application user record
     from sqlalchemy import select
-    from app.models.user import User, Profile
+
+    from app.models.user import Profile, User
 
     result = await db.execute(
         select(User).where(User.supabase_uid == supabase_uid)
@@ -149,6 +150,7 @@ async def get_current_admin_user(
     db: AsyncSession = Depends(get_db),
 ) -> AuthenticatedUser:
     from sqlalchemy import select
+
     from app.models.user import User
 
     result = await db.execute(

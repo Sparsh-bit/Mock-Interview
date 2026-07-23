@@ -11,7 +11,7 @@ No logic in templates — only substitution.
 from __future__ import annotations
 
 from string import Template
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .base_provider import ProviderMessage
 
@@ -42,7 +42,7 @@ class PromptBuilder:
         system_text = builder.render("interviewer", track_name="...", ...)
     """
 
-    def __init__(self, loader: "PromptLoader") -> None:
+    def __init__(self, loader: PromptLoader) -> None:
         self._loader = loader
 
     def render(self, template_name: str, **variables: str) -> str:

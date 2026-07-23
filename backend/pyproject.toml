@@ -77,6 +77,12 @@ target-version = "py311"
 select = ["E", "W", "F", "I", "B", "C4", "UP", "PIE", "SIM"]
 ignore = ["E501", "B008", "B904"]
 
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy relationship() targets are cross-file string forward-refs resolved
+# at mapper-configuration time, not import time — ruff can't see them, so F821
+# here is a false positive rather than a real undefined-name bug.
+"app/models/*.py" = ["F821"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
