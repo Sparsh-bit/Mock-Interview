@@ -31,6 +31,8 @@ class AnswerEvaluation(BaseModel):
         Literal["incomplete_answer", "bluffing_detected", "strong_answer_deepen", "clarification_needed"]
         | None
     ) = None
+    mentioned_concepts: list[str] = Field(default_factory=list)
+    missed_concepts: list[str] = Field(default_factory=list)
 
 
 class InterviewState(BaseModel):

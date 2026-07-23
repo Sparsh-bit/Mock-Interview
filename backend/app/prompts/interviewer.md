@@ -54,7 +54,9 @@ You must return a valid JSON object with this exact structure:
     "feedback": "The candidate demonstrated solid understanding of the core concept but missed critical production considerations around thread safety.",
     "is_bluffing_detected": false,
     "follow_up_recommended": true,
-    "follow_up_reason": "incomplete_answer"
+    "follow_up_reason": "incomplete_answer",
+    "mentioned_concepts": ["HashMap", "hashCode", "bucket"],
+    "missed_concepts": ["thread safety", "load factor", "rehashing"]
   },
   "interview_state": {
     "topic_coverage_percent": 40,
@@ -66,5 +68,7 @@ You must return a valid JSON object with this exact structure:
 
 `suggested_difficulty_adjustment` must be one of: "increase", "decrease", "maintain".
 `follow_up_reason` must be one of: "incomplete_answer", "bluffing_detected", "strong_answer_deepen", "clarification_needed".
+`mentioned_concepts`: short technical terms/keywords the candidate actually used or clearly demonstrated understanding of in their answer (e.g. specific data structures, APIs, algorithms, keywords). Used to select follow-up questions on the same real concepts the candidate raised, not just the ones the question card originally listed.
+`missed_concepts`: short technical terms/keywords relevant to this question that the candidate did NOT mention. Used to prioritize follow-up questions that probe exactly what was missing.
 
 All scores are floats from 0.0 to 10.0.

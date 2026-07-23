@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AIProviderUnavailableError
@@ -87,7 +87,18 @@ class InterviewOrchestrator:
         return session
 
     async def get_next_question(self, session_id: uuid.UUID) -> Question | None:
-        """Adaptively selects the next question based on session history."""
+        """
+        Adaptively selects the next question based on the candidate's last
+        answer, not a random pick:
+          - Difficulty follows the AI's suggested_difficulty_adjustment from
+            the previous answer (increase on strong answers, decrease on weak).
+          - Among candidates at the target difficulty, prefers questions whose
+            expected_keywords overlap the concepts the candidate MISSED, so the
+            interview probes exactly the gaps they just revealed -- then falls
+            back to concepts they mentioned (to go deeper), then anything.
+        The first question of a session has no prior signal, so it starts at
+        medium difficulty.
+        """
         session = await self.db.get(InterviewSession, session_id)
         if not session or session.status != SessionStatus.ACTIVE:
             return None
@@ -97,11 +108,12 @@ class InterviewOrchestrator:
         )
         answered_ids = list(answered.all())
 
-        # If user answered 10 or more questions in this session, complete session
         if len(answered_ids) >= 10:
             return None
 
-        # Try track-specific selection first
+        target_difficulty, focus_concepts = await self._adaptive_signals(session_id)
+
+        # Candidate pool: unanswered questions in this track.
         query = (
             select(Question)
             .join(Topic, Question.topic_id == Topic.id)
@@ -110,22 +122,82 @@ class InterviewOrchestrator:
         )
         if answered_ids:
             query = query.where(Question.id.notin_(answered_ids))
+        candidates = list(await self.db.scalars(query))
 
-        query = query.order_by(func.random()).limit(1)
-        next_q = await self.db.scalar(query)
-
-        # Fallback to any unanswered question in database
-        if not next_q:
-            fallback_query = select(Question)
+        # Fallback to any unanswered question if the track pool is empty.
+        if not candidates:
+            fallback = select(Question)
             if answered_ids:
-                fallback_query = fallback_query.where(Question.id.notin_(answered_ids))
-            next_q = await self.db.scalar(fallback_query.order_by(func.random()).limit(1))
+                fallback = fallback.where(Question.id.notin_(answered_ids))
+            candidates = list(await self.db.scalars(fallback))
 
-        # Auto-seed core questions if database question table is empty or exhausted
-        if not next_q:
-            next_q = await self._ensure_seed_questions(session.track_id, answered_ids)
+        if not candidates:
+            return await self._ensure_seed_questions(session.track_id, answered_ids)
 
-        return next_q
+        return self._rank_question(candidates, target_difficulty, focus_concepts)
+
+    async def _adaptive_signals(self, session_id: uuid.UUID) -> tuple[str, list[str]]:
+        """
+        Derive (target_difficulty, focus_concepts) from the most recent scored
+        answer in this session. Returns ("medium", []) when there's no prior
+        answer to adapt from.
+        """
+        last_score = await self.db.scalar(
+            select(Score)
+            .where(Score.session_id == session_id)
+            .order_by(Score.created_at.desc())
+            .limit(1)
+        )
+        if not last_score:
+            return "medium", []
+
+        raw = last_score.raw_evaluation or {}
+        adjustment = raw.get("suggested_difficulty_adjustment", "maintain")
+
+        # Base the "current" difficulty on the last answered question, then step
+        # it per the AI's recommendation.
+        order = ["easy", "medium", "hard"]
+        last_answer = await self.db.scalar(
+            select(Answer)
+            .where(Answer.id == last_score.answer_id)
+        )
+        current = "medium"
+        if last_answer:
+            last_q = await self.db.get(Question, last_answer.question_id)
+            if last_q and last_q.difficulty in order:
+                current = last_q.difficulty
+        idx = order.index(current)
+        if adjustment == "increase":
+            idx = min(idx + 1, len(order) - 1)
+        elif adjustment == "decrease":
+            idx = max(idx - 1, 0)
+        target_difficulty = order[idx]
+
+        # Prefer probing what they missed; if nothing missed, deepen what they raised.
+        focus = list(raw.get("missed_concepts") or [])
+        if not focus:
+            focus = list(raw.get("mentioned_concepts") or [])
+        return target_difficulty, focus
+
+    @staticmethod
+    def _rank_question(
+        candidates: list[Question], target_difficulty: str, focus_concepts: list[str]
+    ) -> Question:
+        """
+        Pick the best candidate: highest keyword overlap with focus_concepts,
+        with a bonus for matching the target difficulty. Deterministic tie-break
+        by id keeps behavior testable.
+        """
+        focus_lower = {c.lower() for c in focus_concepts}
+
+        def score(q: Question) -> tuple[int, int, str]:
+            keywords = {k.lower() for k in (q.expected_keywords or [])}
+            overlap = len(keywords & focus_lower)
+            difficulty_match = 1 if q.difficulty == target_difficulty else 0
+            return (overlap, difficulty_match, str(q.id))
+
+        # Sort descending on (overlap, difficulty_match); stable, deterministic.
+        return sorted(candidates, key=score, reverse=True)[0]
 
     async def _ensure_seed_questions(self, track_id: uuid.UUID, answered_ids: list[uuid.UUID]) -> Question | None:
         from app.models.company import QuestionCategory
@@ -242,7 +314,8 @@ class InterviewOrchestrator:
         await self.db.flush()
 
         question = await self.db.get(Question, question_id)
-        evaluation, raw_content = await self._evaluate_answer(session, question, content)
+        result, raw_content = await self._evaluate_answer(session, question, content)
+        evaluation = result.evaluation
 
         score = Score(
             id=uuid.uuid4(),
@@ -257,7 +330,15 @@ class InterviewOrchestrator:
             weaknesses=evaluation.weaknesses,
             feedback=evaluation.feedback,
             is_bluffing_detected=evaluation.is_bluffing_detected,
-            raw_evaluation={"raw_response": raw_content},
+            # Persist the adaptive-selection signals alongside the raw response
+            # so get_next_question() can steer topic/difficulty from what the
+            # candidate actually said, not a fresh random pick.
+            raw_evaluation={
+                "raw_response": raw_content,
+                "mentioned_concepts": evaluation.mentioned_concepts,
+                "missed_concepts": evaluation.missed_concepts,
+                "suggested_difficulty_adjustment": result.interview_state.suggested_difficulty_adjustment,
+            },
         )
         self.db.add(score)
         await self.db.commit()
@@ -299,7 +380,7 @@ class InterviewOrchestrator:
         or unavailable AI response. See app/prompts/interviewer.md for the
         full contract this depends on.
 
-        Returns (AnswerEvaluation, raw_response_text).
+        Returns (InterviewerResponse, raw_response_text).
         """
         track_name = "Unknown Track"
         if session.track_id:
@@ -353,7 +434,7 @@ class InterviewOrchestrator:
             last_raw_content = ai_resp.content
             try:
                 parsed = self.response_parser.parse(ai_resp.content, InterviewerResponse)
-                return parsed.evaluation, last_raw_content
+                return parsed, last_raw_content
             except AIValidationError:
                 logger.warning(
                     "ai_evaluation_validation_failed", session_id=str(session.id), attempt=attempt
