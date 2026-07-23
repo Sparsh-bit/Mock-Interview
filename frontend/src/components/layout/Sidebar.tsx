@@ -10,6 +10,7 @@ import {
   Code2,
   FileText,
   LayoutDashboard,
+  ListChecks,
   Play,
   Settings,
   Trophy,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
     items: [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { href: '/interview', icon: Play, label: 'Start Interview' },
+      { href: '/quiz', icon: ListChecks, label: 'Practice Quiz' },
       { href: '/report', icon: FileText, label: 'Reports' },
     ],
   },

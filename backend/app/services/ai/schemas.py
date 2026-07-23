@@ -35,6 +35,23 @@ class AnswerEvaluation(BaseModel):
     missed_concepts: list[str] = Field(default_factory=list)
 
 
+class QuizQuestion(BaseModel):
+    """A single MCQ from app/prompts/quiz_generator.md."""
+
+    question: str
+    options: list[str] = Field(min_length=2, max_length=6)
+    correct_index: int = Field(ge=0)
+    explanation: str = ""
+    topic: str = "General"
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+
+
+class QuizGeneration(BaseModel):
+    """Full quiz output from app/prompts/quiz_generator.md."""
+
+    questions: list[QuizQuestion] = Field(default_factory=list)
+
+
 class GeneratedQuestion(BaseModel):
     """Matches the output of app/prompts/question_generator.md."""
 
