@@ -25,6 +25,7 @@ from .provider_factory import (
 from .response_parser import ResponseParser
 from .schemas import (
     AnswerEvaluation,
+    GeneratedQuestion,
     ImprovementResourceItem,
     ImprovementRoadmapItem,
     InterviewerResponse,
@@ -48,6 +49,7 @@ __all__ = [
     "ResponseParser",
     # Response schemas
     "AnswerEvaluation",
+    "GeneratedQuestion",
     "InterviewState",
     "InterviewerResponse",
     "ImprovementResourceItem",

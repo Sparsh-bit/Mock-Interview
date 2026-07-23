@@ -35,6 +35,17 @@ class AnswerEvaluation(BaseModel):
     missed_concepts: list[str] = Field(default_factory=list)
 
 
+class GeneratedQuestion(BaseModel):
+    """Matches the output of app/prompts/question_generator.md."""
+
+    content: str
+    topic_name: str = "General"
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    question_type: Literal["conceptual", "practical", "scenario", "coding", "design"] = "conceptual"
+    expected_keywords: list[str] = Field(default_factory=list)
+    ideal_answer: str = ""
+
+
 class InterviewState(BaseModel):
     """Matches the `interview_state` object in app/prompts/interviewer.md."""
 

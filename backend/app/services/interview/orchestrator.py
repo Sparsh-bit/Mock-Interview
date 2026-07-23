@@ -23,7 +23,7 @@ from app.services.ai.json_validator import AIValidationError, JSONValidator
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.provider_factory import get_ai_provider
 from app.services.ai.response_parser import ResponseParser
-from app.services.ai.schemas import InterviewerResponse
+from app.services.ai.schemas import GeneratedQuestion, InterviewerResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -113,7 +113,16 @@ class InterviewOrchestrator:
 
         target_difficulty, focus_concepts = await self._adaptive_signals(session_id)
 
-        # Candidate pool: unanswered questions in this track.
+        # Primary path: generate a fresh question with the AI so no two
+        # interviews are identical and follow-ups probe what the candidate
+        # actually said. Falls through to DB selection if generation fails.
+        generated = await self._generate_question(
+            session, answered_ids, target_difficulty, focus_concepts, len(answered_ids) + 1
+        )
+        if generated is not None:
+            return generated
+
+        # Fallback candidate pool: unanswered questions in this track.
         query = (
             select(Question)
             .join(Topic, Question.topic_id == Topic.id)
@@ -135,6 +144,115 @@ class InterviewOrchestrator:
             return await self._ensure_seed_questions(session.track_id, answered_ids)
 
         return self._rank_question(candidates, target_difficulty, focus_concepts)
+
+    async def _generate_question(
+        self,
+        session: InterviewSession,
+        answered_ids: list[uuid.UUID],
+        target_difficulty: str,
+        focus_concepts: list[str],
+        question_number: int,
+    ) -> Question | None:
+        """
+        Generate a fresh interview question via the AI (question_generator
+        prompt) and persist it as a Question row so answers can FK to it.
+        Returns None on any AI/validation failure so the caller can fall back
+        to DB selection -- generation is best-effort, never a hard blocker.
+        """
+        track = await self.db.get(InterviewTrack, session.track_id) if session.track_id else None
+        track_name = track.name if track else "Cognizant Digital Nurture — Java FSE"
+
+        # Topics available for this track (falls back to the CDN Java FSE set).
+        topic_rows = await self.db.scalars(
+            select(Topic.name)
+            .join(QuestionCategory, Topic.category_id == QuestionCategory.id)
+            .where(QuestionCategory.track_id == session.track_id)
+        )
+        topics = [t for t in topic_rows if t]
+        topics_str = ", ".join(topics) if topics else (
+            "Java OOP, Collections & HashMap internals, Exception Handling, JVM/JDK/JRE, "
+            "Multithreading, SQL, Spring Boot, REST APIs, MVC, Design Patterns, PL/SQL"
+        )
+
+        # Already-asked question texts, to avoid repeats.
+        asked_texts: list[str] = []
+        if answered_ids:
+            rows = await self.db.scalars(select(Question.content).where(Question.id.in_(answered_ids)))
+            asked_texts = [c for c in rows if c]
+        already_asked = "\n".join(f"- {t}" for t in asked_texts) if asked_texts else "(none yet)"
+        focus_str = ", ".join(focus_concepts) if focus_concepts else "(none — this is a fresh topic)"
+
+        messages = self.prompt_builder.chat(
+            system_template="question_generator",
+            user_content="Generate the next interview question now, following the rules and output format.",
+            track_name=track_name,
+            topics=topics_str,
+            difficulty=target_difficulty,
+            question_number=str(question_number),
+            already_asked=already_asked,
+            focus_concepts=focus_str,
+            candidate_experience_years="not specified",
+        )
+
+        parsed: GeneratedQuestion | None = None
+        for attempt in range(2):
+            try:
+                resp = await self.ai.complete(
+                    ProviderRequest(messages=messages, json_mode=True, max_tokens=700)
+                )
+            except ProviderError:
+                logger.warning("question_gen_provider_error", session_id=str(session.id), attempt=attempt)
+                continue
+            try:
+                parsed = self.response_parser.parse(resp.content, GeneratedQuestion)
+                break
+            except AIValidationError:
+                logger.warning("question_gen_validation_failed", session_id=str(session.id), attempt=attempt)
+                continue
+
+        if parsed is None or not parsed.content.strip():
+            return None
+
+        topic = await self._get_or_create_topic(session.track_id, parsed.topic_name)
+        question = Question(
+            id=uuid.uuid4(),
+            topic_id=topic.id,
+            content=parsed.content.strip(),
+            difficulty=parsed.difficulty,
+            question_type=parsed.question_type,
+            expected_keywords=parsed.expected_keywords,
+            ideal_answer=parsed.ideal_answer or None,
+        )
+        self.db.add(question)
+        await self.db.commit()
+        await self.db.refresh(question)
+        return question
+
+    async def _get_or_create_topic(self, track_id: uuid.UUID, topic_name: str):
+        """Get-or-create a Topic (and its parent category) by name under a track."""
+        cat = await self.db.scalar(
+            select(QuestionCategory).where(QuestionCategory.track_id == track_id).limit(1)
+        )
+        if not cat:
+            cat = QuestionCategory(
+                id=uuid.uuid4(), track_id=track_id, name="General",
+                slug=f"general-{uuid.uuid4().hex[:6]}", order_index=0, is_active=True,
+            )
+            self.db.add(cat)
+            await self.db.flush()
+
+        clean = (topic_name or "General").strip() or "General"
+        topic = await self.db.scalar(
+            select(Topic).where(Topic.category_id == cat.id, Topic.name == clean).limit(1)
+        )
+        if not topic:
+            topic = Topic(
+                id=uuid.uuid4(), category_id=cat.id, name=clean,
+                slug=f"{clean.lower().replace(' ', '-')[:40]}-{uuid.uuid4().hex[:6]}", order_index=0,
+            )
+            self.db.add(topic)
+            await self.db.flush()
+        return topic
 
     async def _adaptive_signals(self, session_id: uuid.UUID) -> tuple[str, list[str]]:
         """
