@@ -5,7 +5,9 @@ JWT verification for Supabase-issued access tokens.
 All protected API endpoints use get_current_user() as a FastAPI dependency.
 
 Supabase JWTs are HS256 tokens signed with the project's JWT secret.
-We verify them locally and support unverified fallback during dev if the secret is placeholder.
+We verify them locally; the unverified-claims fallback only applies in development when the
+secret is unconfigured/placeholder. Any verification failure, or a missing secret outside
+development, fails closed with a 401.
 """
 
 from __future__ import annotations
@@ -50,24 +52,29 @@ class AuthenticatedUser:
 def verify_supabase_jwt(token: str) -> dict:
     """
     Decode and verify a Supabase JWT.
-    Falls back to unverified claim parsing in development if secret is unconfigured/placeholder.
+    Falls back to unverified claim parsing only in development with an unconfigured/placeholder
+    secret. Any other case (production, or a configured secret that fails verification) fails closed.
     """
-    try:
-        if not settings.SUPABASE_JWT_SECRET or settings.SUPABASE_JWT_SECRET == "your-jwt-secret":
-            return jwt.get_unverified_claims(token)
+    secret_unconfigured = (
+        not settings.SUPABASE_JWT_SECRET or settings.SUPABASE_JWT_SECRET == "your-jwt-secret"
+    )
 
+    if secret_unconfigured:
+        if not settings.is_development:
+            logger.error("jwt_secret_unconfigured_in_non_development")
+            raise CREDENTIALS_EXCEPTION
+        return jwt.get_unverified_claims(token)
+
+    try:
         return jwt.decode(
             token,
             settings.SUPABASE_JWT_SECRET,
             algorithms=[settings.JWT_ALGORITHM],
             options={"verify_aud": False},
         )
-    except JWTError:
-        try:
-            return jwt.get_unverified_claims(token)
-        except Exception as exc:
-            logger.warning("jwt_verification_failed", error=str(exc))
-            raise CREDENTIALS_EXCEPTION from exc
+    except JWTError as exc:
+        logger.warning("jwt_verification_failed", error=str(exc))
+        raise CREDENTIALS_EXCEPTION from exc
 
 
 async def get_current_user(
