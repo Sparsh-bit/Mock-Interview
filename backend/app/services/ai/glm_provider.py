@@ -1,15 +1,21 @@
 """
-GLM Provider — glm_provider.py
+OpenAI-compatible chat-completion provider — glm_provider.py
 
-ZhipuAI GLM implementation of BaseAIProvider.
-Supports GLM-4 series models with native JSON mode.
-
-API documentation: https://open.bigmodel.cn/dev/api/normal-model/glm-4
+A single implementation shared by every provider that speaks the standard
+`POST /chat/completions` shape (ZhipuAI/GLM, NVIDIA NIM, and by extension
+OpenAI itself). Only base_url/api_key/model/provider_name differ between
+them -- see provider_factory.py for how each is constructed from settings.
 
 Configuration:
     AI_PROVIDER=glm
     GLM_API_KEY=<your-zhipuai-key>
-    GLM_MODEL=glm-4-flash   # or glm-4, glm-4-air, glm-4-long
+    GLM_MODEL=glm-4-flash            # or glm-4, glm-4-air, glm-5.2, ...
+    GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+
+    AI_PROVIDER=nvidia
+    NVIDIA_API_KEY=<your-nvidia-nim-key>
+    NVIDIA_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+    NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 """
 
 from __future__ import annotations
@@ -21,29 +27,36 @@ from .base_provider import BaseAIProvider, ProviderError, ProviderRequest, Provi
 
 logger = structlog.get_logger(__name__)
 
-from app.core.config import settings
-
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
 
 
-class GLMProvider(BaseAIProvider):
+class OpenAICompatibleProvider(BaseAIProvider):
     """
-    ZhipuAI GLM provider.
+    Generic provider for any OpenAI-compatible `/chat/completions` API.
 
     Uses httpx.AsyncClient for connection pooling and proper timeout control.
     All exceptions from httpx are caught and re-raised as ProviderError so
     the rest of the application only needs to handle one error type.
     """
 
-    def __init__(self, api_key: str, model: str = "glm-4-flash") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str,
+        provider_name: str,
+        read_timeout: float = 120.0,
+    ) -> None:
         if not api_key:
-            raise ValueError("GLMProvider requires a non-empty api_key.")
+            raise ValueError(f"{provider_name} provider requires a non-empty api_key.")
         self._api_key = api_key
         self._model = model
+        self._provider_name = provider_name
         self._client = httpx.AsyncClient(
-            base_url=settings.GLM_BASE_URL,
-            # Conservative timeouts: connect fast, allow long reads for streaming
-            timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0),
+            base_url=base_url,
+            # Conservative timeouts: connect fast, allow long reads for
+            # heavier/reasoning models that can take significantly longer.
+            timeout=httpx.Timeout(connect=10.0, read=read_timeout, write=30.0, pool=5.0),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -54,7 +67,7 @@ class GLMProvider(BaseAIProvider):
 
     @property
     def provider_name(self) -> str:
-        return "glm"
+        return self._provider_name
 
     @property
     def model_name(self) -> str:
@@ -70,43 +83,42 @@ class GLMProvider(BaseAIProvider):
             "max_tokens": request.max_tokens,
         }
 
-        # GLM supports JSON mode via response_format
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
 
         log = logger.bind(
-            provider="glm",
+            provider=self.provider_name,
             model=model,
             message_count=len(request.messages),
             json_mode=request.json_mode,
             max_tokens=request.max_tokens,
         )
-        log.debug("glm_request_start")
+        log.debug("provider_request_start")
 
         try:
             response = await self._client.post(_CHAT_COMPLETIONS_PATH, json=payload)
         except httpx.TimeoutException as exc:
-            log.error("glm_timeout", error=str(exc))
+            log.error("provider_timeout", error=str(exc))
             raise ProviderError(
-                f"GLM request timed out after {exc}",
+                f"{self.provider_name} request timed out after {exc}",
                 provider=self.provider_name,
             ) from exc
         except httpx.RequestError as exc:
-            log.error("glm_network_error", error=str(exc))
+            log.error("provider_network_error", error=str(exc))
             raise ProviderError(
-                f"GLM network error: {exc}",
+                f"{self.provider_name} network error: {exc}",
                 provider=self.provider_name,
             ) from exc
 
         if response.status_code != 200:
             error_body = response.text[:500]
             log.error(
-                "glm_api_error",
+                "provider_api_error",
                 status_code=response.status_code,
                 body=error_body,
             )
             raise ProviderError(
-                f"GLM API returned {response.status_code}: {error_body}",
+                f"{self.provider_name} API returned {response.status_code}: {error_body}",
                 provider=self.provider_name,
                 status_code=response.status_code,
                 raw_error=error_body,
@@ -119,7 +131,7 @@ class GLMProvider(BaseAIProvider):
             usage = data.get("usage", {})
         except (KeyError, IndexError) as exc:
             raise ProviderError(
-                f"Unexpected GLM response shape: {str(data)[:200]}",
+                f"Unexpected {self.provider_name} response shape: {str(data)[:200]}",
                 provider=self.provider_name,
                 raw_error=data,
             ) from exc
@@ -133,7 +145,7 @@ class GLMProvider(BaseAIProvider):
         )
 
         log.debug(
-            "glm_request_complete",
+            "provider_request_complete",
             finish_reason=result.finish_reason,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
@@ -156,8 +168,13 @@ class GLMProvider(BaseAIProvider):
             )
             return True
         except Exception:
-            logger.exception("glm_health_check_failed")
+            logger.exception("provider_health_check_failed", provider=self.provider_name)
             return False
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+# Backwards-compatible name -- existing imports/log messages referenced "GLM"
+# specifically before this became a shared generic implementation.
+GLMProvider = OpenAICompatibleProvider

@@ -43,10 +43,11 @@ def _lazy_register() -> None:
     """
     global _PROVIDER_REGISTRY  # noqa: PLW0603
 
-    from .glm_provider import GLMProvider  # noqa: PLC0415
+    from .glm_provider import OpenAICompatibleProvider  # noqa: PLC0415
 
     _PROVIDER_REGISTRY = {
-        "glm": GLMProvider,
+        "glm": OpenAICompatibleProvider,
+        "nvidia": OpenAICompatibleProvider,
         # Future providers — implement the class, uncomment the line, done:
         # "openai": OpenAIProvider,
         # "anthropic": AnthropicProvider,
@@ -204,6 +205,18 @@ def _build_provider(name: str, cls: type[BaseAIProvider]) -> BaseAIProvider:
             return cls(
                 api_key=settings.GLM_API_KEY,
                 model=settings.GLM_MODEL,
+                base_url=settings.GLM_BASE_URL,
+                provider_name="glm",
+            )
+        case "nvidia":
+            return cls(
+                api_key=settings.NVIDIA_API_KEY,
+                model=settings.NVIDIA_MODEL,
+                base_url=settings.NVIDIA_BASE_URL,
+                provider_name="nvidia",
+                # Large reasoning models (e.g. nemotron-3-ultra) can take
+                # noticeably longer than GLM's flash-tier models.
+                read_timeout=180.0,
             )
         # case "openai":
         #     return cls(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL)

@@ -90,15 +90,25 @@ class Settings(BaseSettings):
     # ── AI Provider ───────────────────────────────────────────────────────
     AI_PROVIDER: str = Field(
         default="glm",
-        description="Active AI provider: glm | openai | anthropic | gemini | local",
+        description="Active AI provider: glm | nvidia | openai | anthropic | gemini | local",
     )
 
-    # GLM (NVIDIA NIM or ZhipuAI) — default provider
+    # GLM — ZhipuAI's own API (default provider)
     GLM_API_KEY: str = Field(default="", description="API key")
     GLM_MODEL: str = Field(default="glm-4-flash", description="GLM model name")
     GLM_BASE_URL: str = Field(
         default="https://open.bigmodel.cn/api/paas/v4",
-        description="GLM base URL (override for NVIDIA NIM)"
+        description="GLM (ZhipuAI) base URL"
+    )
+
+    # NVIDIA NIM — alternate provider, same OpenAI-compatible shape as GLM
+    NVIDIA_API_KEY: str = Field(default="", description="NVIDIA NIM API key")
+    NVIDIA_MODEL: str = Field(
+        default="nvidia/nemotron-3-ultra-550b-a55b", description="NVIDIA NIM model name"
+    )
+    NVIDIA_BASE_URL: str = Field(
+        default="https://integrate.api.nvidia.com/v1",
+        description="NVIDIA NIM base URL"
     )
 
     # OpenAI (future)
