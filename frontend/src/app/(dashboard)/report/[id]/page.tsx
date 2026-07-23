@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useReport, useToggleShareReport } from '@/hooks/useData';
+import { motion } from 'framer-motion';
 import {
   Award,
   BookOpen,
@@ -16,6 +17,42 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+
+const READINESS_META: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
+  interview_ready: { label: 'Interview Ready', variant: 'success' },
+  close_to_ready: { label: 'Close to Ready', variant: 'warning' },
+  significant_gaps: { label: 'Significant Gaps', variant: 'danger' },
+  needs_more_practice: { label: 'Needs More Practice', variant: 'warning' },
+};
+
+function OverallScoreRing({ score, label }: { score: number; label: string }) {
+  const circumference = 2 * Math.PI * 54;
+  const offset = circumference - (score / 100) * circumference;
+
+  return (
+    <div className="relative flex h-36 w-36 items-center justify-center">
+      <svg className="h-36 w-36 -rotate-90" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="54" strokeWidth="8" className="stroke-border/50" fill="none" />
+        <motion.circle
+          cx="60" cy="60" r="54" strokeWidth="8" fill="none" strokeLinecap="round"
+          className="stroke-primary"
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.1, ease: easeOutExpo, delay: 0.2 }}
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="text-3xl font-bold tracking-tight text-primary">{score}</span>
+        <span className="text-[10px] text-muted-foreground">/ 100 · {label}</span>
+      </div>
+    </div>
+  );
+}
 
 export default function ReportDetailPage() {
   const params = useParams();
@@ -38,51 +75,37 @@ export default function ReportDetailPage() {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm font-medium text-muted-foreground">Generating your AI Performance Report...</p>
+        <p className="text-sm font-medium text-muted-foreground">Generating your AI performance report…</p>
       </div>
     );
   }
 
   if (error || !report) {
     return (
-      <div className="max-w-2xl mx-auto mt-12 glass rounded-2xl p-8 border border-destructive/20 text-center">
-        <XCircle className="h-12 w-12 text-destructive mx-auto mb-4" />
-        <h2 className="text-xl font-bold mb-2">Report Not Found</h2>
-        <p className="text-sm text-muted-foreground mb-6">
-          Could not load the report for this session. Please make sure the session is complete.
-        </p>
-        <button
-          onClick={() => router.push('/dashboard')}
-          className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground"
-        >
-          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-        </button>
-      </div>
+      <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
+        <Card className="border-destructive/20 p-8 text-center">
+          <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
+          <h2 className="mb-2 text-xl font-bold">Report Not Found</h2>
+          <p className="mb-6 text-sm text-muted-foreground">
+            Could not load the report for this session. Please make sure the session is complete.
+          </p>
+          <Button onClick={() => router.push('/dashboard')}>
+            <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+          </Button>
+        </Card>
+      </motion.div>
     );
   }
 
-  const getReadinessBadge = (level: string) => {
-    switch (level) {
-      case 'interview_ready':
-        return { label: 'Interview Ready', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
-      case 'close_to_ready':
-        return { label: 'Close to Ready', color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' };
-      case 'significant_gaps':
-        return { label: 'Significant Gaps', color: 'bg-red-500/10 text-red-400 border-red-500/30' };
-      default:
-        return { label: 'Needs More Practice', color: 'bg-orange-500/10 text-orange-400 border-orange-500/30' };
-    }
-  };
-
-  const recBadge = getReadinessBadge(report.readiness_level);
+  const readiness = READINESS_META[report.readiness_level] ?? { label: report.readiness_level, variant: 'warning' as const };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-12">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8 pb-12">
       {/* Top nav / controls */}
-      <div className="flex items-center justify-between">
+      <motion.div variants={fadeUp} className="flex items-center justify-between">
         <button
           onClick={() => router.push('/dashboard')}
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard
         </button>
@@ -92,178 +115,184 @@ export default function ReportDetailPage() {
           className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all ${
             report.is_shared
               ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-              : 'border-border bg-surface hover:bg-accent text-muted-foreground'
+              : 'border-border bg-surface text-muted-foreground hover:bg-secondary'
           }`}
         >
           <Share2 className="h-3.5 w-3.5" />
           {report.is_shared ? 'Publicly Shared' : 'Share Report'}
         </button>
-      </div>
+      </motion.div>
 
       {/* Header Banner */}
-      <div className="glass rounded-2xl border border-primary/20 p-8 relative overflow-hidden">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${recBadge.color}`}>
-                {recBadge.label}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Evaluated on {new Date(report.created_at).toLocaleDateString()}
-              </span>
+      <motion.div variants={fadeUp}>
+        <Card className="aurora-bg relative overflow-hidden border-primary/20 p-8">
+          <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
+            <div>
+              <div className="mb-3 flex items-center gap-3">
+                <Badge variant={readiness.variant}>{readiness.label}</Badge>
+                <span className="text-xs text-muted-foreground">
+                  Evaluated on {new Date(report.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <h1 className="text-3xl font-bold tracking-[-0.02em]">Technical Evaluation Report</h1>
+              <p className="mt-2 max-w-xl text-sm text-muted-foreground">{report.executive_summary}</p>
+              {report.readiness_reasoning && (
+                <p className="mt-2 max-w-xl text-xs italic text-muted-foreground/80">{report.readiness_reasoning}</p>
+              )}
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">Technical Evaluation Report</h1>
-            <p className="text-sm text-muted-foreground mt-2 max-w-xl">
-              {report.executive_summary}
-            </p>
+            <OverallScoreRing score={report.overall_score} label={report.overall_score_label} />
           </div>
-
-          <div className="flex flex-col items-center justify-center rounded-2xl bg-surface/80 border border-border/50 p-6 min-w-[160px] text-center shadow-glow">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Overall Score</span>
-            <span className="text-4xl font-bold text-primary mt-1">{report.overall_score}</span>
-            <span className="text-[10px] text-muted-foreground mt-0.5">out of 100 ({report.overall_score_label})</span>
-          </div>
-        </div>
-      </div>
+        </Card>
+      </motion.div>
 
       {/* Grid: Strengths & Weaknesses */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Strengths */}
-        <div className="glass rounded-xl border border-emerald-500/20 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-            <h3 className="font-bold text-base">Key Strengths</h3>
-          </div>
-          <ul className="space-y-2.5">
-            {report.strengths.map((str, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-2 flex-shrink-0" />
-                <span>{str}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <motion.div variants={fadeUp}>
+          <Card className="h-full border-emerald-500/20 p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              <h3 className="text-base font-bold">Key Strengths</h3>
+            </div>
+            <ul className="space-y-2.5">
+              {report.strengths.map((str, idx) => (
+                <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
+                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+                  <span>{str}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </motion.div>
 
-        {/* Weaknesses / Growth Areas */}
-        <div className="glass rounded-xl border border-yellow-500/20 p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <TrendingUp className="h-5 w-5 text-yellow-400" />
-            <h3 className="font-bold text-base">Areas for Growth</h3>
-          </div>
-          <ul className="space-y-2.5">
-            {report.weaknesses.map((w, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
-                <span className="h-1.5 w-1.5 rounded-full bg-yellow-400 mt-2 flex-shrink-0" />
-                <span>{w}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <motion.div variants={fadeUp}>
+          <Card className="h-full border-yellow-500/20 p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-yellow-400" />
+              <h3 className="text-base font-bold">Areas for Growth</h3>
+            </div>
+            <ul className="space-y-2.5">
+              {report.weaknesses.map((w, idx) => (
+                <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
+                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-yellow-400" />
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </motion.div>
       </div>
 
       {/* Topic Breakdown */}
       {Object.keys(report.topic_scores || {}).length > 0 && (
-        <div className="glass rounded-xl border border-border/50 p-6">
-          <h3 className="font-bold text-base mb-6 flex items-center gap-2">
-            <Award className="h-5 w-5 text-blue-400" /> Topic Performance Breakdown
-          </h3>
-          <div className="space-y-4">
-            {Object.entries(report.topic_scores).map(([topic, score]) => (
-              <div key={topic} className="space-y-1.5">
-                <div className="flex justify-between text-xs font-semibold">
-                  <span>{topic}</span>
-                  <span className="text-primary">{score}/100</span>
+        <motion.div variants={fadeUp}>
+          <Card className="p-6">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+              <Award className="h-5 w-5 text-primary" /> Topic Performance Breakdown
+            </h3>
+            <div className="space-y-4">
+              {Object.entries(report.topic_scores).map(([topic, score]) => (
+                <div key={topic} className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span>{topic}</span>
+                    <span className="text-primary">{score}/100</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-primary to-accent-violet"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(score, 100)}%` }}
+                      transition={{ duration: 0.8, ease: easeOutExpo }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-primary rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(score, 100)}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          </Card>
+        </motion.div>
       )}
 
       {/* Question-by-Question Analysis */}
       {report.question_analysis && report.question_analysis.length > 0 && (
-        <div className="glass rounded-xl border border-border/50 p-6">
-          <h3 className="font-bold text-base mb-6 flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-blue-400" /> Question-by-Question Analysis
-          </h3>
-          <div className="space-y-4">
-            {report.question_analysis.map((qa, idx) => (
-              <div key={idx} className="rounded-xl border border-border/50 bg-surface/50 p-4 space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold flex-1">{qa.question}</p>
-                  <span className="text-xs font-bold text-primary whitespace-nowrap">{qa.score}/10</span>
+        <motion.div variants={fadeUp}>
+          <Card className="p-6">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+              <ShieldCheck className="h-5 w-5 text-primary" /> Question-by-Question Analysis
+            </h3>
+            <div className="space-y-4">
+              {report.question_analysis.map((qa, idx) => (
+                <div key={idx} className="space-y-2 rounded-xl border border-border/50 bg-surface/50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="flex-1 text-sm font-semibold">{qa.question}</p>
+                    <span className="whitespace-nowrap text-xs font-bold text-primary">{qa.score}/10</span>
+                  </div>
+                  <span className="inline-block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {qa.answer_quality.replace('_', ' ')}
+                  </span>
+                  {qa.missing_concepts.length > 0 && (
+                    <p className="text-xs text-foreground/80">
+                      <span className="font-semibold text-yellow-400">Missing: </span>
+                      {qa.missing_concepts.join(', ')}
+                    </p>
+                  )}
+                  {qa.ideal_answer_summary && (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-semibold">Ideal answer: </span>
+                      {qa.ideal_answer_summary}
+                    </p>
+                  )}
                 </div>
-                <span className="inline-block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {qa.answer_quality.replace('_', ' ')}
-                </span>
-                {qa.missing_concepts.length > 0 && (
-                  <p className="text-xs text-foreground/80">
-                    <span className="font-semibold text-yellow-400">Missing: </span>
-                    {qa.missing_concepts.join(', ')}
-                  </p>
-                )}
-                {qa.ideal_answer_summary && (
-                  <p className="text-xs text-muted-foreground">
-                    <span className="font-semibold">Ideal answer: </span>
-                    {qa.ideal_answer_summary}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          </Card>
+        </motion.div>
       )}
 
       {/* Improvement Roadmap */}
       {report.improvement_roadmap && report.improvement_roadmap.length > 0 && (
-        <div className="glass rounded-xl border border-border/50 p-6">
-          <h3 className="font-bold text-base mb-6 flex items-center gap-2">
-            <Sparkles className="h-5 w-5 text-purple-400" /> Recommended Action Plan
-          </h3>
-          <div className="space-y-4">
-            {report.improvement_roadmap.map((item, idx) => (
-              <div key={idx} className="rounded-xl border border-border/50 bg-surface/50 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-primary uppercase">Priority #{item.priority}</span>
-                  <span className="text-xs text-muted-foreground">Est. {item.study_hours_estimate} hrs study</span>
-                </div>
-                <h4 className="font-bold text-sm">{item.topic}</h4>
-                <div className="flex items-center gap-4 text-xs">
-                  <span>Current: <strong className="text-yellow-400">{item.current_score}</strong></span>
-                  <span>→</span>
-                  <span>Target: <strong className="text-emerald-400">{item.target_score}</strong></span>
-                </div>
-                {item.resources && item.resources.length > 0 && (
-                  <div className="pt-2 border-t border-border/40">
-                    <p className="text-[11px] text-muted-foreground font-semibold mb-2">Recommended Study Resources:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {item.resources.map((res, rIdx) => (
-                        <a
-                          key={rIdx}
-                          href={res.url || '#'}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-md px-2.5 py-1 transition-colors"
-                        >
-                          <BookOpen className="h-3 w-3" />
-                          {res.title}
-                          <ExternalLink className="h-3 w-3 opacity-60" />
-                        </a>
-                      ))}
-                    </div>
+        <motion.div variants={fadeUp}>
+          <Card className="p-6">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+              <Sparkles className="h-5 w-5 text-accent-violet" /> Recommended Action Plan
+            </h3>
+            <div className="space-y-4">
+              {report.improvement_roadmap.map((item, idx) => (
+                <div key={idx} className="space-y-3 rounded-xl border border-border/50 bg-surface/50 p-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase text-primary">Priority #{item.priority}</span>
+                    <span className="text-xs text-muted-foreground">Est. {item.study_hours_estimate} hrs study</span>
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+                  <h4 className="text-sm font-bold">{item.topic}</h4>
+                  <div className="flex items-center gap-4 text-xs">
+                    <span>Current: <strong className="text-yellow-400">{item.current_score}</strong></span>
+                    <span>→</span>
+                    <span>Target: <strong className="text-emerald-400">{item.target_score}</strong></span>
+                  </div>
+                  {item.resources && item.resources.length > 0 && (
+                    <div className="border-t border-border/40 pt-2">
+                      <p className="mb-2 text-[11px] font-semibold text-muted-foreground">Recommended Study Resources:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {item.resources.map((res, rIdx) => (
+                          <a
+                            key={rIdx}
+                            href={res.url || '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-primary/20"
+                          >
+                            <BookOpen className="h-3 w-3" />
+                            {res.title}
+                            <ExternalLink className="h-3 w-3 opacity-60" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }
