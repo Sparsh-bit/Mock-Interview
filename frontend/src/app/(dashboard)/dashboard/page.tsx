@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
+import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -26,18 +27,18 @@ interface StatCardProps {
   value: string;
   icon: React.ReactNode;
   sub?: string;
-  color?: string;
+  color?: IconTileProps['color'];
 }
 
-function StatCard({ label, value, icon, sub, color = 'text-primary' }: StatCardProps) {
+function StatCard({ label, value, icon, sub, color = 'blue' }: StatCardProps) {
   return (
     <motion.div variants={fadeUp}>
       <Card hoverable className="p-6">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
-          <div className={`${color} opacity-80`}>{icon}</div>
+          <IconTile color={color} size="sm">{icon}</IconTile>
         </div>
-        <p className="text-3xl font-bold tracking-tight">{value}</p>
+        <p className="text-3xl font-semibold tracking-tight">{value}</p>
         {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
       </Card>
     </motion.div>
@@ -82,27 +83,28 @@ export default function DashboardPage() {
           value={statsLoading ? '…' : (stats?.total_sessions ? String(stats.total_sessions) : '0')}
           icon={<BookOpen className="h-4 w-4" />}
           sub="all time"
+          color="blue"
         />
         <StatCard
           label="Average Score"
           value={statsLoading ? '…' : (stats?.average_score ? `${stats.average_score}/100` : '—')}
           icon={<BarChart2 className="h-4 w-4" />}
           sub={stats?.average_score ? 'across all sessions' : 'complete a session to see'}
-          color="text-primary"
+          color="cyan"
         />
         <StatCard
           label="Hours Practiced"
           value={statsLoading ? '…' : `${stats?.hours_practiced ?? 0}h`}
           icon={<Clock className="h-4 w-4" />}
           sub="total time"
-          color="text-accent-violet"
+          color="violet"
         />
         <StatCard
           label="Day Streak"
           value={statsLoading ? '…' : `${stats?.streak_days ?? 0}🔥`}
           icon={<TrendingUp className="h-4 w-4" />}
           sub="keep it up"
-          color="text-accent-emerald"
+          color="amber"
         />
       </div>
 
