@@ -47,3 +47,45 @@ class InterviewerResponse(BaseModel):
     next_question: str = ""
     evaluation: AnswerEvaluation
     interview_state: InterviewState = Field(default_factory=InterviewState)
+
+
+class ImprovementResourceItem(BaseModel):
+    type: str
+    title: str
+    url: str | None = None
+    author: str | None = None
+
+
+class ImprovementRoadmapItem(BaseModel):
+    priority: int
+    topic: str
+    current_score: float
+    target_score: float
+    study_hours_estimate: int
+    resources: list[ImprovementResourceItem] = Field(default_factory=list)
+
+
+class QuestionAnalysisItem(BaseModel):
+    question_id: str
+    question: str
+    answer_quality: Literal["excellent", "good", "partial", "incorrect", "no_answer"]
+    score: float = Field(ge=0.0, le=10.0)
+    missing_concepts: list[str] = Field(default_factory=list)
+    ideal_answer_summary: str = ""
+
+
+class ReportGeneratorResponse(BaseModel):
+    """Full response schema for the `report_generator` prompt template."""
+
+    executive_summary: str
+    readiness_level: Literal["interview_ready", "close_to_ready", "needs_more_practice", "significant_gaps"]
+    readiness_reasoning: str
+    overall_score: float = Field(ge=0.0, le=100.0)
+    overall_score_label: str
+    topic_scores: dict[str, float] = Field(default_factory=dict)
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    performance_percentile: int = Field(ge=0, le=100, default=50)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    question_analysis: list[QuestionAnalysisItem] = Field(default_factory=list)
+    improvement_roadmap: list[ImprovementRoadmapItem] = Field(default_factory=list)

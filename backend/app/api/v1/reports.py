@@ -9,6 +9,7 @@ PATCH  /api/v1/reports/{report_id}/share      — Toggle report sharing
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime
 
@@ -50,16 +51,29 @@ class ImprovementItem(BaseModel):
     resources: list[ImprovementResource]
 
 
+class QuestionAnalysisResponseItem(BaseModel):
+    question_id: str
+    question: str
+    answer_quality: str
+    score: float
+    missing_concepts: list[str]
+    ideal_answer_summary: str
+
+
 class ReportResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID
     overall_score: float
     overall_score_label: str
     executive_summary: str
-    hire_recommendation: str
+    readiness_level: str
+    readiness_reasoning: str
     strengths: list[str]
     weaknesses: list[str]
     topic_scores: dict[str, float]
+    dimension_scores: dict[str, float]
+    performance_percentile: int
+    question_analysis: list[QuestionAnalysisResponseItem]
     improvement_roadmap: list[ImprovementItem]
     is_shared: bool
     created_at: datetime
@@ -120,14 +134,28 @@ async def generate_report(
     """
     Generate the AI performance report for a completed session.
 
-    Phase 5: Calls the GLM report_generator prompt with all session data.
-    Phase 3: Generates a structured report from stored scores.
+    Calls the GLM report_generator prompt with the full session transcript
+    (every question, answer, and score) and validates the structured response
+    via the same PromptBuilder -> ResponseParser -> Pydantic pipeline used for
+    live answer evaluation. Falls back to a heuristic (score-averaging only,
+    no AI-generated summary) if the AI evaluation cannot be produced after
+    retrying -- surfaced honestly via raw_report.generated_by, never disguised
+    as a full AI report.
     """
     from fastapi import HTTPException  # noqa: PLC0415
 
+    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
     from app.models.question import Question, Topic  # noqa: PLC0415
     from app.models.report import Report  # noqa: PLC0415
     from app.models.session import Answer, InterviewSession, Score  # noqa: PLC0415
+    from app.models.user import Profile  # noqa: PLC0415
+    from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import ProviderError, ProviderRequest  # noqa: PLC0415
+    from app.services.ai.json_validator import AIValidationError, JSONValidator  # noqa: PLC0415
+    from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
+    from app.services.ai.provider_factory import get_ai_provider  # noqa: PLC0415
+    from app.services.ai.response_parser import ResponseParser  # noqa: PLC0415
+    from app.services.ai.schemas import ReportGeneratorResponse  # noqa: PLC0415
 
     # Verify session
     session_result = await db.execute(
@@ -150,94 +178,152 @@ async def generate_report(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Report already exists for this session")
 
-    # Load scores
-    scores_result = await db.execute(
-        select(Score, Topic.name.label("topic_name"))
-        .join(Answer, Score.answer_id == Answer.id)
+    # Load full transcript: question + answer + score per turn
+    transcript_result = await db.execute(
+        select(Answer, Question, Score, Topic.name.label("topic_name"))
         .join(Question, Answer.question_id == Question.id)
+        .join(Score, Score.answer_id == Answer.id)
         .join(Topic, Question.topic_id == Topic.id)
-        .where(Score.session_id == session_id)
+        .where(Answer.session_id == session_id)
+        .order_by(Answer.created_at)
     )
-    score_rows = scores_result.all()
+    transcript_rows = transcript_result.all()
 
-    # Calculate aggregate scores
-    if not score_rows:
-        overall_score = 0.0
-        topic_scores = {}
+    if not transcript_rows:
+        raise HTTPException(
+            status_code=409,
+            detail="No answered questions found for this session -- nothing to report on.",
+        )
+
+    track = await db.get(InterviewTrack, session.track_id)
+    company = await db.get(Company, track.company_id) if track else None
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == current_user.user_id))
+    profile = profile_result.scalar_one_or_none()
+    candidate_name = (profile.full_name if profile and profile.full_name else "the candidate")
+
+    duration_minutes = 0
+    if session.started_at and session.completed_at:
+        duration_minutes = max(1, int((session.completed_at - session.started_at).total_seconds() // 60))
+
+    prompt_builder = PromptBuilder(get_prompt_loader())
+    response_parser = ResponseParser(JSONValidator())
+    ai = get_ai_provider()
+
+    transcript_lines = []
+    for ans, question, score, topic_name in transcript_rows:
+        transcript_lines.append(
+            f"[{topic_name}] Question: {question.content}\n"
+            f"Answer: {ans.content}\n"
+            f"Scores -- technical: {score.technical_score}, communication: {score.communication_score}, "
+            f"completeness: {score.completeness_score}, overall: {score.overall_score}\n"
+            f"Feedback given at the time: {score.feedback}\n"
+            f"question_id: {ans.question_id}"
+        )
+    user_content = "\n\n---\n\n".join(transcript_lines)
+
+    messages = prompt_builder.chat(
+        system_template="report_generator",
+        user_content=user_content,
+        track_name=track.name if track else "Unknown Track",
+        company_name=company.name if company else "Unknown Company",
+        candidate_name=candidate_name,
+        total_questions=str(len(transcript_rows)),
+        session_duration_minutes=str(duration_minutes),
+    )
+
+    ai_report: ReportGeneratorResponse | None = None
+    last_raw_content = ""
+    for attempt in range(2):
+        try:
+            ai_resp = await ai.complete(
+                ProviderRequest(messages=messages, json_mode=True, max_tokens=3000)
+            )
+        except ProviderError:
+            logger.warning("ai_report_provider_error", session_id=str(session_id), attempt=attempt)
+            continue
+
+        last_raw_content = ai_resp.content
+        try:
+            ai_report = response_parser.parse(ai_resp.content, ReportGeneratorResponse)
+            break
+        except AIValidationError:
+            logger.warning("ai_report_validation_failed", session_id=str(session_id), attempt=attempt)
+            continue
+
+    if ai_report is not None:
+        report = Report(
+            session_id=session_id,
+            user_id=current_user.user_id,
+            overall_score=ai_report.overall_score,
+            overall_score_label=ai_report.overall_score_label,
+            executive_summary=ai_report.executive_summary,
+            readiness_level=ai_report.readiness_level,
+            strengths=ai_report.strengths,
+            weaknesses=ai_report.weaknesses,
+            topic_scores=ai_report.topic_scores,
+            improvement_roadmap=[item.model_dump() for item in ai_report.improvement_roadmap],
+            raw_report={
+                "generated_by": "ai",
+                "readiness_reasoning": ai_report.readiness_reasoning,
+                "dimension_scores": ai_report.dimension_scores,
+                "performance_percentile": ai_report.performance_percentile,
+                "question_analysis": [item.model_dump() for item in ai_report.question_analysis],
+                "raw_response": last_raw_content,
+            },
+        )
     else:
-        all_scores = [row.Score.overall_score for row in score_rows]
-        overall_score = round(sum(all_scores) / len(all_scores) * 10, 1)  # Scale 0-100
-
+        # AI evaluation unavailable after retrying -- fall back to a heuristic
+        # score-averaging report rather than blocking the candidate entirely,
+        # but mark it plainly as heuristic (never disguised as a full AI report).
+        logger.error(
+            "ai_report_generation_failed_using_heuristic_fallback",
+            session_id=str(session_id),
+        )
         topic_map: dict[str, list[float]] = {}
-        for row in score_rows:
-            topic_map.setdefault(row.topic_name, []).append(row.Score.overall_score)
+        for _, _, score, topic_name in transcript_rows:
+            topic_map.setdefault(topic_name, []).append(score.overall_score)
         topic_scores = {
-            topic: round(sum(scores) / len(scores) * 10, 1)
-            for topic, scores in topic_map.items()
+            topic: round(sum(scores) / len(scores) * 10, 1) for topic, scores in topic_map.items()
         }
+        overall_score = round(
+            sum(s.overall_score for _, _, s, _ in transcript_rows) / len(transcript_rows) * 10, 1
+        )
+        report = Report(
+            session_id=session_id,
+            user_id=current_user.user_id,
+            overall_score=overall_score,
+            overall_score_label="Needs Review",
+            executive_summary=(
+                f"{candidate_name} completed {len(transcript_rows)} questions with an average score of "
+                f"{overall_score}/100. AI-generated narrative feedback is temporarily unavailable -- "
+                "this is a score-only summary; please retry report generation shortly."
+            ),
+            readiness_level="needs_more_practice",
+            strengths=[],
+            weaknesses=[],
+            topic_scores=topic_scores,
+            improvement_roadmap=[],
+            raw_report={"generated_by": "heuristic_fallback", "topic_scores": topic_scores},
+        )
 
-    # Score label
-    if overall_score >= 85:
-        label = "Excellent"
-        recommendation = "strong_hire"
-    elif overall_score >= 70:
-        label = "Good"
-        recommendation = "hire"
-    elif overall_score >= 55:
-        label = "Average"
-        recommendation = "borderline"
-    elif overall_score >= 40:
-        label = "Needs Improvement"
-        recommendation = "no_hire_currently"
-    else:
-        label = "Poor"
-        recommendation = "no_hire"
-
-    # Create report
-    report = Report(
-        session_id=session_id,
-        user_id=current_user.user_id,
-        overall_score=overall_score,
-        overall_score_label=label,
-        executive_summary=(
-            f"The candidate completed {session.questions_asked or 0} questions and achieved an "
-            f"overall score of {overall_score}/100. "
-            "Detailed AI evaluation will be available in Phase 5."
-        ),
-        hire_recommendation=recommendation,
-        strengths=["Completed the interview session"],
-        weaknesses=["Full evaluation requires Phase 5 AI integration"],
-        topic_scores=topic_scores,
-        improvement_roadmap=[
-            {
-                "priority": 1,
-                "topic": "Java Core",
-                "current_score": overall_score,
-                "target_score": min(overall_score + 20, 100),
-                "study_hours_estimate": 10,
-                "resources": [
-                    {"type": "official_docs", "title": "Java Documentation", "url": "https://docs.oracle.com/en/java/"},
-                ],
-            }
-        ],
-        raw_report={"generated_by": "phase3_heuristic", "scores": topic_scores},
-    )
     db.add(report)
     await db.commit()
     await db.refresh(report)
+    overall_score = report.overall_score
 
-    await emitter.emit(
-        ReportGeneratedEvent(
-            user_id=current_user.user_id,
-            session_id=session_id,
-            payload=ReportGeneratedPayload(
-                report_id=report.id,
-                overall_score=overall_score,
-                generation_time_ms=100,
-                questions_evaluated=session.questions_asked or 0,
-            ),
+    with contextlib.suppress(Exception):
+        await emitter.emit(
+            ReportGeneratedEvent(
+                user_id=current_user.user_id,
+                session_id=session_id,
+                payload=ReportGeneratedPayload(
+                    report_id=report.id,
+                    overall_score=overall_score,
+                    generation_time_ms=100,
+                    questions_evaluated=session.questions_asked or 0,
+                ),
+            )
         )
-    )
 
     logger.info(
         "report_generated",
@@ -299,16 +385,33 @@ def _build_report_response(report) -> ReportResponse:
             )
         )
 
+    raw = report.raw_report or {}
+    question_analysis = [
+        QuestionAnalysisResponseItem(
+            question_id=str(qa.get("question_id", "")),
+            question=qa.get("question", ""),
+            answer_quality=qa.get("answer_quality", ""),
+            score=qa.get("score", 0),
+            missing_concepts=qa.get("missing_concepts", []),
+            ideal_answer_summary=qa.get("ideal_answer_summary", ""),
+        )
+        for qa in raw.get("question_analysis", [])
+    ]
+
     return ReportResponse(
         id=report.id,
         session_id=report.session_id,
         overall_score=report.overall_score,
         overall_score_label=report.overall_score_label,
         executive_summary=report.executive_summary,
-        hire_recommendation=report.hire_recommendation,
+        readiness_level=report.readiness_level,
+        readiness_reasoning=raw.get("readiness_reasoning", ""),
         strengths=report.strengths or [],
         weaknesses=report.weaknesses or [],
         topic_scores=report.topic_scores or {},
+        dimension_scores=raw.get("dimension_scores", {}),
+        performance_percentile=raw.get("performance_percentile", 50),
+        question_analysis=question_analysis,
         improvement_roadmap=parsed_roadmap,
         is_shared=report.is_shared,
         created_at=report.created_at,

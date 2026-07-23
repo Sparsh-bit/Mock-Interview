@@ -314,7 +314,7 @@ def upgrade() -> None:
         sa.Column("overall_score", sa.Float(), nullable=False),
         sa.Column("overall_score_label", sa.String(50), nullable=False),
         sa.Column("executive_summary", sa.Text(), nullable=False),
-        sa.Column("hire_recommendation", sa.String(30), nullable=False),
+        sa.Column("readiness_level", sa.String(30), nullable=False),
         sa.Column("strengths", postgresql.ARRAY(sa.String()), nullable=False, server_default="{}"),
         sa.Column("weaknesses", postgresql.ARRAY(sa.String()), nullable=False, server_default="{}"),
         sa.Column("topic_scores", postgresql.JSONB(), nullable=False, server_default="{}"),

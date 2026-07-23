@@ -25,7 +25,9 @@ The user message will contain:
 
 ### Executive Summary
 - 3-4 sentences overall assessment
-- Clear hire/no-hire recommendation with reasoning
+- A clear interview-readiness assessment with reasoning (never phrase this as
+  a hire/reject prediction — this tool estimates readiness signals, it does
+  not know what any specific company will decide)
 - Specific strengths that would make the candidate valuable
 
 ### Scoring
@@ -51,9 +53,9 @@ Return ONLY a valid JSON object:
 
 ```json
 {
-  "executive_summary": "The candidate demonstrated solid foundational Java knowledge with particular strength in OOP principles and basic Collections usage. However, significant gaps in Spring Security, JPA optimization, and concurrent programming would be disqualifying at the senior level. With 4-6 weeks of focused study, the candidate should be ready for a mid-level Java FSE role.",
-  "hire_recommendation": "no_hire_currently",
-  "hire_reasoning": "Strong foundations but critical gaps in production-readiness topics required for the role.",
+  "executive_summary": "The candidate demonstrated solid foundational Java knowledge with particular strength in OOP principles and basic Collections usage. However, significant gaps in Spring Security, JPA optimization, and concurrent programming would need work before a real interview. With 4-6 weeks of focused study, the candidate should be ready for a mid-level Java FSE interview.",
+  "readiness_level": "needs_more_practice",
+  "readiness_reasoning": "Strong foundations but critical gaps in production-readiness topics commonly asked in this track.",
   "overall_score": 62.5,
   "overall_score_label": "Needs Improvement",
   "topic_scores": {
@@ -112,5 +114,9 @@ Return ONLY a valid JSON object:
 }
 ```
 
-`hire_recommendation` must be: "strong_hire" | "hire" | "borderline" | "no_hire_currently" | "no_hire"
+`readiness_level` must be: "interview_ready" | "close_to_ready" | "needs_more_practice" | "significant_gaps"
 `answer_quality` must be: "excellent" | "good" | "partial" | "incorrect" | "no_answer"
+
+Never phrase `readiness_reasoning`, `executive_summary`, or any other field as a
+prediction of what a specific employer will decide. This is a readiness estimate
+based on this session's measurable signals, not a hiring outcome forecast.

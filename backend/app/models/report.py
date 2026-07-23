@@ -42,9 +42,9 @@ class Report(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         comment="e.g. 'Excellent', 'Good', 'Needs Improvement', 'Poor'",
     )
     executive_summary: Mapped[str] = mapped_column(Text, nullable=False)
-    hire_recommendation: Mapped[str] = mapped_column(
+    readiness_level: Mapped[str] = mapped_column(
         String(30), nullable=False,
-        comment="strong_hire | hire | borderline | no_hire_currently | no_hire",
+        comment="interview_ready | close_to_ready | needs_more_practice | significant_gaps",
     )
     strengths: Mapped[list[str]] = mapped_column(
         ARRAY(String), server_default="{}", nullable=False,

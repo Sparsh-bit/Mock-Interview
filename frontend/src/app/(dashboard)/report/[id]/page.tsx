@@ -61,20 +61,20 @@ export default function ReportDetailPage() {
     );
   }
 
-  const getRecommendationBadge = (rec: string) => {
-    switch (rec) {
-      case 'strong_hire':
-        return { label: 'Strong Hire', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
-      case 'hire':
-        return { label: 'Hire', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
-      case 'borderline':
-        return { label: 'Borderline', color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' };
+  const getReadinessBadge = (level: string) => {
+    switch (level) {
+      case 'interview_ready':
+        return { label: 'Interview Ready', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' };
+      case 'close_to_ready':
+        return { label: 'Close to Ready', color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' };
+      case 'significant_gaps':
+        return { label: 'Significant Gaps', color: 'bg-red-500/10 text-red-400 border-red-500/30' };
       default:
-        return { label: 'Needs Improvement', color: 'bg-red-500/10 text-red-400 border-red-500/30' };
+        return { label: 'Needs More Practice', color: 'bg-orange-500/10 text-orange-400 border-orange-500/30' };
     }
   };
 
-  const recBadge = getRecommendationBadge(report.hire_recommendation);
+  const recBadge = getReadinessBadge(report.readiness_level);
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
@@ -180,6 +180,40 @@ export default function ReportDetailPage() {
                     style={{ width: `${Math.min(score, 100)}%` }}
                   />
                 </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Question-by-Question Analysis */}
+      {report.question_analysis && report.question_analysis.length > 0 && (
+        <div className="glass rounded-xl border border-border/50 p-6">
+          <h3 className="font-bold text-base mb-6 flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-blue-400" /> Question-by-Question Analysis
+          </h3>
+          <div className="space-y-4">
+            {report.question_analysis.map((qa, idx) => (
+              <div key={idx} className="rounded-xl border border-border/50 bg-surface/50 p-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold flex-1">{qa.question}</p>
+                  <span className="text-xs font-bold text-primary whitespace-nowrap">{qa.score}/10</span>
+                </div>
+                <span className="inline-block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {qa.answer_quality.replace('_', ' ')}
+                </span>
+                {qa.missing_concepts.length > 0 && (
+                  <p className="text-xs text-foreground/80">
+                    <span className="font-semibold text-yellow-400">Missing: </span>
+                    {qa.missing_concepts.join(', ')}
+                  </p>
+                )}
+                {qa.ideal_answer_summary && (
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-semibold">Ideal answer: </span>
+                    {qa.ideal_answer_summary}
+                  </p>
+                )}
               </div>
             ))}
           </div>

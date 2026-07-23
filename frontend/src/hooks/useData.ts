@@ -55,16 +55,29 @@ export interface UserProfile {
   updated_at: string;
 }
 
+export interface QuestionAnalysis {
+  question_id: string;
+  question: string;
+  answer_quality: string;
+  score: number;
+  missing_concepts: string[];
+  ideal_answer_summary: string;
+}
+
 export interface ReportData {
   id: string;
   session_id: string;
   overall_score: number;
   overall_score_label: string;
   executive_summary: string;
-  hire_recommendation: string;
+  readiness_level: string;
+  readiness_reasoning: string;
   strengths: string[];
   weaknesses: string[];
   topic_scores: Record<string, number>;
+  dimension_scores: Record<string, number>;
+  performance_percentile: number;
+  question_analysis: QuestionAnalysis[];
   improvement_roadmap: Array<{
     priority: number;
     topic: string;

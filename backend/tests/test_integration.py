@@ -32,6 +32,19 @@ def _unique_email() -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
+async def _app_lifespan():
+    """
+    Run the app's real startup/shutdown hooks for the test session (EventBus,
+    AI provider singleton, prompt cache warm-up). ASGITransport does not run
+    lifespan on its own, so without this, anything relying on
+    initialize_event_bus()/initialize_ai_provider() having run would only be
+    caught in production, not in tests.
+    """
+    async with app.router.lifespan_context(app):
+        yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 async def _setup_schema():
     """Create all tables once for the entire test session."""
     async with engine.begin() as conn:
@@ -241,6 +254,87 @@ class TestInterviewEndpoints:
             headers=auth_headers,
         )
         assert response.status_code == 404
+
+
+# ─── Report Endpoint Tests ──────────────────────────────────────────────────────
+
+class TestReportEndpoints:
+    async def test_generate_report_real_ai(
+        self, async_client: AsyncClient, auth_headers: dict, db_session
+    ):
+        """
+        End-to-end: run a full session (start -> answer x2 -> complete), then
+        generate a report and confirm it's a REAL AI-generated report (not the
+        old heuristic-only placeholder) -- exercises PromptBuilder ->
+        report_generator.md -> GLMProvider -> ResponseParser -> Pydantic.
+        """
+        company = Company(name="TestCo", slug=f"testco-{uuid.uuid4().hex[:6]}", description="Test")
+        db_session.add(company)
+        await db_session.flush()
+
+        track = InterviewTrack(
+            company_id=company.id,
+            name="Test Track",
+            slug=f"test-track-{uuid.uuid4().hex[:6]}",
+            description="Test track",
+        )
+        db_session.add(track)
+        await db_session.commit()
+
+        start_resp = await async_client.post(
+            "/api/v1/interview/start",
+            json={"track_id": str(track.id)},
+            headers=auth_headers,
+        )
+        assert start_resp.status_code == 201
+        session_id = start_resp.json()["session_id"]
+
+        answers = [
+            "HashMap is not synchronized and allows one null key and multiple null "
+            "values, unlike Hashtable which is synchronized and disallows nulls.",
+            "final marks a variable/method/class as non-modifiable, finally is a "
+            "block that always runs after try/catch, and finalize() was a "
+            "deprecated garbage-collection hook.",
+        ]
+        for answer_content in answers:
+            next_resp = await async_client.get(
+                f"/api/v1/interview/{session_id}/next", headers=auth_headers
+            )
+            question = next_resp.json()["question"]
+            if question is None:
+                break
+            answer_resp = await async_client.post(
+                f"/api/v1/interview/{session_id}/answer",
+                json={"question_id": question["id"], "content": answer_content},
+                headers=auth_headers,
+            )
+            assert answer_resp.status_code == 200, answer_resp.text
+
+        complete_resp = await async_client.post(
+            f"/api/v1/interview/{session_id}/complete", headers=auth_headers
+        )
+        assert complete_resp.status_code == 200
+
+        report_resp = await async_client.post(
+            f"/api/v1/reports/{session_id}/generate", headers=auth_headers
+        )
+        assert report_resp.status_code == 201, report_resp.text
+        data = report_resp.json()
+
+        for key in (
+            "overall_score", "overall_score_label", "executive_summary",
+            "readiness_level", "readiness_reasoning", "strengths", "weaknesses",
+            "topic_scores", "dimension_scores", "performance_percentile",
+            "question_analysis",
+        ):
+            assert key in data, f"missing '{key}' in report response"
+
+        assert data["readiness_level"] in (
+            "interview_ready", "close_to_ready", "needs_more_practice", "significant_gaps"
+        )
+        assert 0.0 <= data["overall_score"] <= 100.0
+        assert len(data["executive_summary"]) > 0
+        assert len(data["question_analysis"]) >= 1
 
 
 # ─── Questions Endpoint Tests ──────────────────────────────────────────────────
