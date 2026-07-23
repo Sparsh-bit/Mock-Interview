@@ -35,6 +35,30 @@ class AnswerEvaluation(BaseModel):
     missed_concepts: list[str] = Field(default_factory=list)
 
 
+class GDContribution(BaseModel):
+    speaker: str
+    text: str
+
+
+class GDPanelTurn(BaseModel):
+    """Matches the output of app/prompts/gd_panel.md."""
+
+    contributions: list[GDContribution] = Field(default_factory=list)
+
+
+class GDEvaluation(BaseModel):
+    """Matches the output of app/prompts/gd_evaluator.md."""
+
+    contribution_score: float = Field(ge=0.0, le=10.0)
+    relevance_score: float = Field(ge=0.0, le=10.0)
+    clarity_score: float = Field(ge=0.0, le=10.0)
+    engagement_score: float = Field(ge=0.0, le=10.0)
+    overall_score: float = Field(ge=0.0, le=10.0)
+    feedback: str
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+
+
 class CommunicationEvaluation(BaseModel):
     """Matches the output of app/prompts/communication_evaluator.md."""
 
