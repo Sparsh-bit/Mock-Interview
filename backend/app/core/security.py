@@ -4,17 +4,28 @@ Security — core/security.py
 JWT verification for Supabase-issued access tokens.
 All protected API endpoints use get_current_user() as a FastAPI dependency.
 
-Supabase JWTs are HS256 tokens signed with the project's JWT secret.
-We verify them locally; the unverified-claims fallback only applies in development when the
-secret is unconfigured/placeholder. Any verification failure, or a missing secret outside
-development, fails closed with a 401.
+Supabase projects sign access tokens one of two ways, and we must support
+both since which one is active is a per-project setting, not something we
+control:
+  - Legacy shared-secret HS256 (SUPABASE_JWT_SECRET, symmetric).
+  - Newer JWT Signing Keys, asymmetric (ES256/RS256), verified against the
+    project's public JWKS at {SUPABASE_URL}/auth/v1/.well-known/jwks.json.
+We inspect the token header's `alg` to decide which path applies, rather
+than hardcoding one algorithm -- a project on JWKS-based signing will
+never present an HS256 token, so this is a clean either/or, not a guess.
+
+The unverified-claims fallback only applies in development when neither a
+usable secret nor a reachable JWKS is available. Any verification failure
+otherwise fails closed with a 401.
 """
 
 from __future__ import annotations
 
+import time
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
+import httpx
 import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,6 +44,30 @@ CREDENTIALS_EXCEPTION = HTTPException(
     headers={"WWW-Authenticate": "Bearer"},
 )
 
+_HS_ALGORITHMS = {"HS256", "HS384", "HS512"}
+
+# ─── JWKS cache ────────────────────────────────────────────────────────────
+# Supabase's signing keys rotate rarely; a short in-process cache avoids a
+# network round-trip on every request without risking long-lived staleness.
+_JWKS_CACHE_TTL_SECONDS = 600
+_jwks_cache: dict[str, Any] = {"keys": [], "fetched_at": 0.0}
+
+
+async def _get_jwks() -> list[dict[str, Any]]:
+    now = time.monotonic()
+    if now - _jwks_cache["fetched_at"] < _JWKS_CACHE_TTL_SECONDS and _jwks_cache["keys"]:
+        return _jwks_cache["keys"]
+
+    url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.get(url, headers={"apikey": settings.SUPABASE_ANON_KEY})
+        response.raise_for_status()
+        keys = response.json().get("keys", [])
+
+    _jwks_cache["keys"] = keys
+    _jwks_cache["fetched_at"] = now
+    return keys
+
 
 class AuthenticatedUser:
     """
@@ -49,31 +84,70 @@ class AuthenticatedUser:
         return f"<AuthenticatedUser id={self.user_id} email={self.email}>"
 
 
-def verify_supabase_jwt(token: str) -> dict:
+async def verify_supabase_jwt(token: str) -> dict:
     """
-    Decode and verify a Supabase JWT.
-    Falls back to unverified claim parsing only in development with an unconfigured/placeholder
-    secret. Any other case (production, or a configured secret that fails verification) fails closed.
-    """
-    secret_unconfigured = (
-        not settings.SUPABASE_JWT_SECRET or settings.SUPABASE_JWT_SECRET == "your-jwt-secret"
-    )
+    Decode and verify a Supabase JWT, routing to the correct verification
+    path based on the token's own `alg` header rather than assuming one:
+      - HS256/384/512 -> legacy shared-secret verification.
+      - Anything else (ES256, RS256, ...) -> JWKS public-key verification.
 
-    if secret_unconfigured:
-        if not settings.is_development:
-            logger.error("jwt_secret_unconfigured_in_non_development")
-            raise CREDENTIALS_EXCEPTION
-        return jwt.get_unverified_claims(token)
+    Falls back to unverified claim parsing only in development when the
+    applicable verification method has no usable key configured/reachable.
+    Any other failure fails closed with a 401.
+    """
+    try:
+        header = jwt.get_unverified_header(token)
+    except JWTError as exc:
+        logger.warning("jwt_header_decode_failed", error=str(exc))
+        raise CREDENTIALS_EXCEPTION from exc
+
+    alg = header.get("alg", "")
+
+    if alg in _HS_ALGORITHMS:
+        secret_unconfigured = (
+            not settings.SUPABASE_JWT_SECRET or settings.SUPABASE_JWT_SECRET == "your-jwt-secret"
+        )
+        if secret_unconfigured:
+            if not settings.is_development:
+                logger.error("jwt_secret_unconfigured_in_non_development")
+                raise CREDENTIALS_EXCEPTION
+            return jwt.get_unverified_claims(token)
+
+        try:
+            return jwt.decode(
+                token,
+                settings.SUPABASE_JWT_SECRET,
+                algorithms=[alg],
+                options={"verify_aud": False},
+            )
+        except JWTError as exc:
+            logger.warning("jwt_verification_failed", error=str(exc), alg=alg)
+            raise CREDENTIALS_EXCEPTION from exc
+
+    # Asymmetric algorithm -- verify against the project's JWKS.
+    kid = header.get("kid")
+    try:
+        keys = await _get_jwks()
+    except Exception as exc:  # network error, bad JWKS response, etc.
+        logger.error("jwks_fetch_failed", error=str(exc))
+        if settings.is_development:
+            return jwt.get_unverified_claims(token)
+        raise CREDENTIALS_EXCEPTION from exc
+
+    matching_key = next((k for k in keys if k.get("kid") == kid), None)
+    if matching_key is None:
+        logger.warning("jwks_no_matching_key", kid=kid)
+        raise CREDENTIALS_EXCEPTION
 
     try:
         return jwt.decode(
             token,
-            settings.SUPABASE_JWT_SECRET,
-            algorithms=[settings.JWT_ALGORITHM],
+            matching_key,
+            algorithms=[matching_key.get("alg", alg)],
             options={"verify_aud": False},
         )
     except JWTError as exc:
-        logger.warning("jwt_verification_failed", error=str(exc))
+        logger.warning("jwt_verification_failed", error=str(exc), alg=alg)
         raise CREDENTIALS_EXCEPTION from exc
 
 
@@ -91,7 +165,7 @@ async def get_current_user(
     if credentials is None or not credentials.credentials:
         raise CREDENTIALS_EXCEPTION
 
-    claims = verify_supabase_jwt(credentials.credentials)
+    claims = await verify_supabase_jwt(credentials.credentials)
 
     supabase_uid: str = claims.get("sub", "")
     email: str = claims.get("email", "")
