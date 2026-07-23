@@ -1,0 +1,135 @@
+questions:
+  - id: java-core-001
+    content: "What is the difference between == and .equals() in Java?"
+    topic: "java-fundamentals"
+    difficulty: easy
+    type: conceptual
+    expected_keywords:
+      - "reference comparison"
+      - "value comparison"
+      - "String pool"
+      - "object identity"
+      - "override equals"
+    ideal_answer: >
+      == compares object references (memory addresses) for objects, and compares values for primitives.
+      .equals() compares the logical content of objects. For String, .equals() compares the actual
+      character sequence. If you do not override .equals() in your class, it defaults to ==.
+      String literals use the String pool, so s1 == s2 may be true for literals but not for
+      new String() objects.
+    follow_ups:
+      - id: java-core-001-f1
+        content: "If you override equals(), what else must you always override and why?"
+        trigger: incomplete_answer
+      - id: java-core-001-f2
+        content: "What is the contract between equals() and hashCode()?"
+        trigger: strong_answer_deepen
+
+  - id: java-core-002
+    content: "Explain the difference between HashMap and ConcurrentHashMap. When would you use each?"
+    topic: "java-collections"
+    difficulty: medium
+    type: conceptual
+    expected_keywords:
+      - "thread safety"
+      - "synchronized"
+      - "CAS operations"
+      - "segment locking"
+      - "null keys"
+      - "performance"
+      - "concurrent modification"
+    ideal_answer: >
+      HashMap is not thread-safe. Concurrent access without synchronization causes ConcurrentModificationException
+      or data corruption. Use it in single-threaded contexts.
+      ConcurrentHashMap (Java 8+) uses CAS operations and synchronized blocks at the bucket level,
+      not the map level, allowing highly concurrent reads and writes without full locking.
+      It does not allow null keys or values. Always prefer ConcurrentHashMap in multi-threaded code
+      instead of wrapping HashMap with Collections.synchronizedMap(), which locks the entire map.
+    follow_ups:
+      - id: java-core-002-f1
+        content: "What is the difference between fail-fast and fail-safe iterators?"
+        trigger: strong_answer_deepen
+      - id: java-core-002-f2
+        content: "How did ConcurrentHashMap change between Java 7 and Java 8?"
+        trigger: strong_answer_deepen
+
+  - id: java-core-003
+    content: "What is the difference between checked and unchecked exceptions? Give examples of each."
+    topic: "java-fundamentals"
+    difficulty: easy
+    type: conceptual
+    expected_keywords:
+      - "RuntimeException"
+      - "compile-time check"
+      - "IOException"
+      - "NullPointerException"
+      - "throws declaration"
+      - "try-catch"
+    ideal_answer: >
+      Checked exceptions extend Exception (but not RuntimeException) and must be either caught or
+      declared in the method signature with throws. Examples: IOException, SQLException.
+      Unchecked exceptions extend RuntimeException and do not require explicit handling.
+      Examples: NullPointerException, ArrayIndexOutOfBoundsException, IllegalArgumentException.
+      The intent: checked exceptions represent recoverable conditions; unchecked represent
+      programming errors that the caller cannot reasonably recover from.
+    follow_ups:
+      - id: java-core-003-f1
+        content: "Why is there debate about checked exceptions? What is the argument against them?"
+        trigger: strong_answer_deepen
+
+  - id: java-core-004
+    content: "Explain Java's memory model: heap, stack, and method area. What goes in each?"
+    topic: "jvm-internals"
+    difficulty: medium
+    type: conceptual
+    expected_keywords:
+      - "heap"
+      - "stack"
+      - "method area"
+      - "object instances"
+      - "local variables"
+      - "class metadata"
+      - "garbage collection"
+      - "thread-local"
+    ideal_answer: >
+      Stack: Each thread has its own stack. Stores method call frames, local primitive variables,
+      and references to heap objects. Automatically managed — frame is popped when method returns.
+      Heap: Shared across all threads. Stores all object instances and arrays. Subject to garbage
+      collection. Divided into Young Generation (Eden + Survivor spaces) and Old Generation.
+      Method Area (Metaspace in Java 8+): Stores class metadata, static variables, constant pool,
+      and bytecode. Shared across threads. In Java 8+, Metaspace uses native memory instead of heap.
+    follow_ups:
+      - id: java-core-004-f1
+        content: "What is StackOverflowError, and what causes it?"
+        trigger: incomplete_answer
+      - id: java-core-004-f2
+        content: "Explain the difference between Young Generation and Old Generation in the heap."
+        trigger: strong_answer_deepen
+
+  - id: java-core-005
+    content: "What is the Java Stream API? How does it differ from traditional for-loops?"
+    topic: "java-streams"
+    difficulty: medium
+    type: practical
+    expected_keywords:
+      - "lazy evaluation"
+      - "pipeline"
+      - "filter"
+      - "map"
+      - "collect"
+      - "terminal operation"
+      - "intermediate operation"
+      - "parallelStream"
+      - "functional"
+    ideal_answer: >
+      Streams provide a declarative, functional-style API for processing sequences of elements.
+      Key differences from loops: lazy evaluation (intermediate ops don't execute until terminal op
+      is called), composable pipelines (filter().map().collect()), and built-in parallelism via
+      parallelStream(). Streams do not modify the source and cannot be reused after a terminal operation.
+      Common terminal operations: collect(), forEach(), reduce(), count(), findFirst().
+    follow_ups:
+      - id: java-core-005-f1
+        content: "What is the difference between map() and flatMap()?"
+        trigger: incomplete_answer
+      - id: java-core-005-f2
+        content: "When would you NOT use streams and prefer a traditional loop?"
+        trigger: strong_answer_deepen

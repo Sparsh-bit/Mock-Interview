@@ -1,0 +1,32 @@
+"""
+AI Services package — services/ai/__init__.py
+
+Public API for the AI provider abstraction layer.
+
+All AI-related imports in the application should come from this package,
+not from individual sub-modules.
+"""
+
+from .base_provider import BaseAIProvider, ProviderError, ProviderMessage, ProviderRequest, ProviderResponse
+from .json_validator import AIValidationError, JSONValidator
+from .prompt_builder import PromptBuilder
+from .provider_factory import get_ai_provider, register_provider
+from .response_parser import ResponseParser
+
+__all__ = [
+    # Base types
+    "BaseAIProvider",
+    "ProviderError",
+    "ProviderMessage",
+    "ProviderRequest",
+    "ProviderResponse",
+    # Validation
+    "AIValidationError",
+    "JSONValidator",
+    # Parsing and building
+    "PromptBuilder",
+    "ResponseParser",
+    # DI factory
+    "get_ai_provider",
+    "register_provider",
+]

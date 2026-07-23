@@ -1,0 +1,271 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Design System Tokens ───────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    /* Background hierarchy */
+    --background: 220 13% 5%;
+    --surface: 222 14% 8%;
+    --surface-elevated: 222 13% 11%;
+    --surface-overlay: 222 12% 14%;
+
+    /* Foreground hierarchy */
+    --foreground: 210 40% 96%;
+    --muted: 217 19% 27%;
+    --muted-foreground: 215 16% 57%;
+
+    /* Component tokens */
+    --card: 222 14% 8%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 14% 8%;
+    --popover-foreground: 210 40% 96%;
+
+    /* Brand accent — electric blue */
+    --primary: 213 94% 68%;
+    --primary-foreground: 220 13% 5%;
+
+    /* Secondary */
+    --secondary: 217 19% 14%;
+    --secondary-foreground: 210 40% 96%;
+
+    /* Accent */
+    --accent: 217 19% 14%;
+    --accent-foreground: 210 40% 96%;
+
+    /* Semantic */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 96%;
+    --success: 142 71% 45%;
+    --success-foreground: 220 13% 5%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 220 13% 5%;
+
+    /* Borders */
+    --border: 217 19% 17%;
+    --input: 217 19% 17%;
+    --ring: 213 94% 68%;
+
+    /* Radius */
+    --radius: 0.625rem;
+
+    /* Font families */
+    --font-inter: 'Inter', system-ui, sans-serif;
+    --font-jetbrains-mono: 'JetBrains Mono', 'Menlo', monospace;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    @apply scroll-smooth;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-inter);
+    font-feature-settings: 'rlig' 1, 'calt' 1, 'ss01' 1;
+    min-height: 100vh;
+  }
+
+  /* Focus visible — accessibility */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
+
+  /* Selection */
+  ::selection {
+    background: hsl(var(--primary) / 0.25);
+    color: hsl(var(--foreground));
+  }
+}
+
+/* ─── Typography ─────────────────────────────────────────────────────────── */
+
+@layer base {
+  h1 { @apply text-4xl font-bold tracking-tight; }
+  h2 { @apply text-3xl font-semibold tracking-tight; }
+  h3 { @apply text-2xl font-semibold tracking-tight; }
+  h4 { @apply text-xl font-semibold; }
+  h5 { @apply text-lg font-medium; }
+  h6 { @apply text-base font-medium; }
+  p  { @apply leading-7; }
+
+  code {
+    font-family: var(--font-jetbrains-mono);
+    @apply text-sm bg-secondary px-1.5 py-0.5 rounded text-primary;
+  }
+}
+
+/* ─── Utility Classes ────────────────────────────────────────────────────── */
+
+@layer utilities {
+  /* Glass effect */
+  .glass {
+    background: hsl(var(--surface) / 0.8);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid hsl(var(--border));
+  }
+
+  .glass-hover {
+    @apply glass transition-all duration-200;
+  }
+
+  .glass-hover:hover {
+    background: hsl(var(--surface-elevated) / 0.9);
+    border-color: hsl(var(--primary) / 0.3);
+    box-shadow: 0 0 24px hsl(var(--primary) / 0.1);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(var(--primary)) 0%, #a78bfa 100%);
+  }
+
+  .gradient-text-blue {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
+  }
+
+  /* Glow effects */
+  .glow {
+    box-shadow: 0 0 40px hsl(var(--primary) / 0.15);
+  }
+
+  .glow-hover {
+    @apply transition-shadow duration-300;
+  }
+
+  .glow-hover:hover {
+    box-shadow: 0 0 40px hsl(var(--primary) / 0.25);
+  }
+
+  /* Noise texture overlay */
+  .noise-overlay::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    pointer-events: none;
+  }
+
+  /* Grid pattern */
+  .grid-bg {
+    background-image: linear-gradient(hsl(var(--primary) / 0.05) 1px, transparent 1px),
+      linear-gradient(to right, hsl(var(--primary) / 0.05) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  /* Shimmer loading */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--surface-elevated)) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Score color helpers */
+  .score-excellent { @apply text-emerald-400; }
+  .score-good { @apply text-blue-400; }
+  .score-average { @apply text-yellow-400; }
+  .score-poor { @apply text-red-400; }
+
+  /* Interview-specific */
+  .interview-panel {
+    @apply glass rounded-xl border border-border/50;
+  }
+
+  .question-card {
+    @apply bg-surface-elevated border border-border rounded-lg p-6;
+    transition: border-color 0.2s;
+  }
+}
+
+/* ─── Component Overrides ────────────────────────────────────────────────── */
+
+@layer components {
+  /* Pill badge */
+  .badge-outline {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full;
+    @apply border border-border text-muted-foreground;
+  }
+
+  /* Difficulty badges */
+  .badge-easy {
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
+    @apply bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+  }
+
+  .badge-medium {
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
+    @apply bg-yellow-500/10 text-yellow-400 border border-yellow-500/20;
+  }
+
+  .badge-hard {
+    @apply inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full;
+    @apply bg-red-500/10 text-red-400 border border-red-500/20;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply glass rounded-xl p-6;
+    @apply transition-all duration-200 hover:scale-[1.01];
+  }
+
+  /* Section header */
+  .section-label {
+    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+  }
+
+  /* Sidebar nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium;
+    @apply text-muted-foreground transition-all duration-150;
+  }
+
+  .nav-item:hover {
+    @apply bg-accent text-foreground;
+  }
+
+  .nav-item.active {
+    @apply bg-primary/10 text-primary;
+  }
+}
