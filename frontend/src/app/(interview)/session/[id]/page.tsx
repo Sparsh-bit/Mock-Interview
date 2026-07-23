@@ -68,21 +68,26 @@ export default function LiveSessionPage() {
   const { data, isLoading, refetch } = useNextQuestion(sessionId);
   const [answer, setAnswer] = useState('');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [voiceMode, setVoiceMode] = useState(false);
+  // Voice is the primary way to answer; typing is a fallback when the mic
+  // or browser can't do speech recognition, so a candidate is never stuck.
+  const [typing, setTyping] = useState(false);
 
   const stt = useSpeechRecognition();
   const tts = useSpeechSynthesis();
 
   const isCoding = data?.question?.type === 'coding';
   const questionText = data?.question?.content;
+  // Fall back to typing automatically if speech recognition isn't available.
+  const useTyping = typing || !stt.supported;
 
-  // In voice mode, read each new question aloud once it loads.
+  // Read each new question aloud (voice-first interview feel) unless the
+  // candidate has switched to the typing fallback.
   useEffect(() => {
-    if (voiceMode && questionText && tts.supported && !feedback) {
+    if (!useTyping && !isCoding && questionText && tts.supported && !feedback) {
       tts.speak(questionText);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionText, voiceMode]);
+  }, [questionText]);
 
   // Feed finalized speech-to-text into the answer box.
   useEffect(() => {
@@ -310,26 +315,13 @@ export default function LiveSessionPage() {
                   <Volume2 className="h-3 w-3" /> {tts.speaking ? 'Speaking…' : 'Hear question'}
                 </button>
               )}
-              {!isCoding && stt.supported && (
-                <button
-                  onClick={() => setVoiceMode((v) => !v)}
-                  title="Toggle voice mode"
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                    voiceMode ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Mic className="h-3 w-3" /> Voice {voiceMode ? 'on' : 'off'}
-                </button>
-              )}
             </div>
           </div>
 
-          {/* Voice picker — Chrome's default voice on macOS is poor; let the
-              candidate choose a better installed voice and preview it. */}
-          {!isCoding && tts.supported && tts.voices.length > 0 && (
+          {/* Voice picker — let the candidate choose the interviewer voice. */}
+          {!isCoding && !useTyping && tts.supported && tts.voices.length > 0 && (
             <div className="mb-4 flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">Voice</label>
+              <label className="text-xs text-muted-foreground">Interviewer voice</label>
               <select
                 value={tts.voiceURI ?? ''}
                 onChange={(e) => tts.setVoiceURI(e.target.value)}
@@ -359,13 +351,14 @@ export default function LiveSessionPage() {
                 submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
               }
             />
-          ) : (
+          ) : useTyping ? (
+            /* Typing fallback (mic/browser unsupported, or candidate opted in). */
             <>
               <textarea
-                value={stt.listening && stt.interim ? `${answer} ${stt.interim}`.trim() : answer}
+                value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 disabled={!!feedback || submitAnswer.isPending}
-                placeholder={voiceMode ? 'Tap the mic and speak your answer…' : 'Type your answer here as if you were speaking to an interviewer…'}
+                placeholder="Type your answer here as if you were speaking to an interviewer…"
                 className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
               />
               <div className="mt-3 flex items-center justify-between gap-3">
@@ -376,15 +369,14 @@ export default function LiveSessionPage() {
                     {wordCount} {wordCount === 1 ? 'word' : 'words'}
                   </span>
                 )}
-                <div className="flex items-center gap-2">
-                  {voiceMode && stt.supported && (
-                    <Button
-                      variant={stt.listening ? 'destructive' : 'secondary'}
-                      onClick={toggleMic}
-                      disabled={!!feedback || submitAnswer.isPending}
+                <div className="flex items-center gap-3">
+                  {stt.supported && (
+                    <button
+                      onClick={() => setTyping(false)}
+                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                     >
-                      {stt.listening ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Speak</>}
-                    </Button>
+                      Use voice instead
+                    </button>
                   )}
                   <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
                     <Send className="h-4 w-4" /> Submit Answer
@@ -392,6 +384,77 @@ export default function LiveSessionPage() {
                 </div>
               </div>
             </>
+          ) : (
+            /* Voice-first answer UI. */
+            <div className="flex flex-1 flex-col items-center justify-center gap-5 py-4">
+              <button
+                onClick={toggleMic}
+                disabled={!!feedback || submitAnswer.isPending}
+                aria-label={stt.listening ? 'Stop recording' : 'Start recording'}
+                className={cn(
+                  'relative flex h-24 w-24 items-center justify-center rounded-full transition-all disabled:opacity-50',
+                  stt.listening
+                    ? 'bg-destructive text-destructive-foreground shadow-glow'
+                    : 'bg-primary text-primary-foreground shadow-glow hover:shadow-glow-lg'
+                )}
+              >
+                {stt.listening && (
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-40" />
+                )}
+                {stt.listening ? <MicOff className="h-9 w-9" /> : <Mic className="h-9 w-9" />}
+              </button>
+
+              <p className="text-sm font-medium text-muted-foreground">
+                {submitAnswer.isPending
+                  ? 'Evaluating your answer…'
+                  : stt.listening
+                    ? 'Listening… tap to stop'
+                    : answer
+                      ? 'Tap the mic to add more, or submit'
+                      : 'Tap the mic and speak your answer'}
+              </p>
+
+              {/* Live transcript */}
+              <div className="min-h-[96px] w-full flex-1 overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
+                {answer || stt.interim ? (
+                  <span>
+                    {answer}{' '}
+                    <span className="text-muted-foreground/60">{stt.listening ? stt.interim : ''}</span>
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground/50">Your spoken answer will appear here…</span>
+                )}
+              </div>
+
+              <div className="flex w-full items-center justify-between gap-3">
+                {submitAnswer.isPending ? (
+                  <AIWorkingIndicator />
+                ) : (
+                  <button
+                    onClick={() => {
+                      stt.stop();
+                      setTyping(true);
+                    }}
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Trouble with the mic? Type instead
+                  </button>
+                )}
+                <div className="flex items-center gap-2">
+                  {answer && !submitAnswer.isPending && (
+                    <button
+                      onClick={() => { setAnswer(''); stt.reset(); }}
+                      className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
+                    <Send className="h-4 w-4" /> Submit Answer
+                  </Button>
+                </div>
+              </div>
+            </div>
           )}
         </motion.div>
       </motion.main>
