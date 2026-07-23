@@ -115,7 +115,9 @@ The platform follows a modern, scalable architecture designed for production.
 
 **Downstream / later-phase ideas** (not yet scoped, don't build speculatively): coding round with hidden test cases, PDF report as a 5-page professional document (overall score + radar chart / question-by-question feedback / weak topics / improvement plan / readiness estimate), and a college/institution admin analytics dashboard (cohort-level average score, weakest topic, placement-readiness aggregate). These are real roadmap items but sequenced after the core adaptive-interview + honest-scoring experience is solid.
 
-**Stack notes vs. this vision**: the vision text names GPT-5.5/Claude/Gemini/Llama and Clerk as example infra — this repo's actual stack is GLM 5.2 via the existing `BaseAIProvider`/`GLMProvider` abstraction (swap providers there, not per-caller) and Supabase Auth (already fully wired, not Clerk). Treat those as the working choices unless a stack change is explicitly decided and recorded here.
+**Stack notes vs. this vision**: the vision text names GPT-5.5/Claude/Gemini/Llama and Clerk as example infra — this repo's actual stack is GLM via the existing `BaseAIProvider`/`GLMProvider` abstraction (swap providers there, not per-caller) and Supabase Auth (already fully wired, not Clerk). Treat those as the working choices unless a stack change is explicitly decided and recorded here.
+
+**AI provider routing (2026-07-23)**: `GLMProvider` talks to ZhipuAI's own API (`https://open.bigmodel.cn/api/paas/v4`) directly, not NVIDIA NIM — an NVIDIA NIM deployment of `z-ai/glm-5.2` was tried first but never responded to any chat-completion request (confirmed via direct curl at 150s timeout, while other NIM models responded instantly). `glm-5.2` is a real, valid model on the configured Zhipu account but requires a funded balance (error 1113 "insufficient balance"); `.env` currently runs `GLM_MODEL=glm-4.5-flash` (free tier, confirmed working end-to-end) until the account is topped up, at which point swap back to `glm-5.2` — no code change needed, only the `.env` value.
 
 ---
 
