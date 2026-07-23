@@ -1,20 +1,26 @@
 'use client';
 
 import Link from 'next/link';
+import { motion } from 'framer-motion';
 import { useTracks } from '@/hooks/useData';
-import { BookOpen, CheckCircle2, Code2, Loader2, Play, Sparkles } from 'lucide-react';
+import { Code2, Loader2, Play, Sparkles } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { buttonVariants } from '@/components/ui/button';
+import { fadeUp, staggerContainer } from '@/lib/motion';
+import { cn } from '@/lib/utils';
 
 export default function TracksPage() {
   const { data: tracks, isLoading } = useTracks();
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Interview Tracks</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
+      <motion.div variants={fadeUp}>
+        <h1 className="text-2xl font-bold tracking-tight">Interview Tracks</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           Explore corporate-tailored interview tracks designed for real hiring assessments.
         </p>
-      </div>
+      </motion.div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
@@ -23,78 +29,79 @@ export default function TracksPage() {
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           {(tracks || []).map((track) => (
-            <div
-              key={track.id}
-              className="glass rounded-2xl border border-border/50 p-6 flex flex-col justify-between hover:border-primary/40 transition-colors"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                      <Code2 className="h-5 w-5 text-primary" />
+            <motion.div key={track.id} variants={fadeUp}>
+              <Card hoverable className="flex h-full flex-col justify-between p-6">
+                <div>
+                  <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                        <Code2 className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold">{track.company.name}</h3>
+                        <p className="text-xs text-muted-foreground">{track.name}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-bold text-base">{track.company.name}</h3>
-                      <p className="text-xs text-muted-foreground">{track.name}</p>
+                    <Badge variant="warning">Active</Badge>
+                  </div>
+
+                  <p className="text-sm leading-relaxed text-foreground/80">
+                    {track.description || 'Comprehensive evaluation covering core concepts, system design, and coding principles.'}
+                  </p>
+
+                  <div className="mt-6 grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-xl border border-border/40 bg-surface/50 p-3">
+                      <span className="text-muted-foreground">Duration:</span>
+                      <p className="mt-0.5 font-semibold">{track.duration_minutes || 45} mins</p>
+                    </div>
+                    <div className="rounded-xl border border-border/40 bg-surface/50 p-3">
+                      <span className="text-muted-foreground">Questions:</span>
+                      <p className="mt-0.5 font-semibold">{track.question_count} Available</p>
                     </div>
                   </div>
-                  <span className="badge-medium">Active</span>
                 </div>
 
-                <p className="text-sm text-foreground/80 leading-relaxed">
-                  {track.description || 'Comprehensive evaluation covering core concepts, system design, and coding principles.'}
-                </p>
-
-                <div className="mt-6 grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded-lg bg-surface/50 border border-border/40 p-3">
-                    <span className="text-muted-foreground">Duration:</span>
-                    <p className="font-semibold mt-0.5">{track.duration_minutes || 45} mins</p>
-                  </div>
-                  <div className="rounded-lg bg-surface/50 border border-border/40 p-3">
-                    <span className="text-muted-foreground">Questions:</span>
-                    <p className="font-semibold mt-0.5">{track.question_count} Available</p>
-                  </div>
+                <div className="mt-6 border-t border-border/40 pt-4">
+                  <Link
+                    href={`/interview?trackId=${track.id}`}
+                    className={cn(buttonVariants({ size: 'md' }), 'w-full')}
+                  >
+                    <Play className="h-4 w-4" /> Start Track Assessment
+                  </Link>
                 </div>
-              </div>
-
-              <div className="mt-6 pt-4 border-t border-border/40">
-                <Link
-                  href={`/interview?trackId=${track.id}`}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-all shadow-glow"
-                >
-                  <Play className="h-4 w-4" /> Start Track Assessment
-                </Link>
-              </div>
-            </div>
+              </Card>
+            </motion.div>
           ))}
 
           {/* Upcoming Track */}
-          <div className="glass rounded-2xl border border-border/30 p-6 flex flex-col justify-between opacity-60">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center">
-                    <Sparkles className="h-5 w-5 text-muted-foreground" />
+          <motion.div variants={fadeUp}>
+            <Card className="flex h-full flex-col justify-between p-6 opacity-60">
+              <div>
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary">
+                      <Sparkles className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold">TCS Digital</h3>
+                      <p className="text-xs text-muted-foreground">Java & Data Structures</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-base">TCS Digital</h3>
-                    <p className="text-xs text-muted-foreground">Java & Data Structures</p>
-                  </div>
+                  <Badge>Coming Soon</Badge>
                 </div>
-                <span className="text-[10px] bg-muted px-2.5 py-0.5 rounded-full font-semibold">Coming Soon</span>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  TCS Digital recruitment track focusing on advanced algorithmic problem solving and Java ecosystem.
+                </p>
               </div>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                TCS Digital recruitment track focusing on advanced algorithmic problem solving and Java ecosystem.
-              </p>
-            </div>
-            <div className="mt-6 pt-4 border-t border-border/40">
-              <button disabled className="w-full rounded-xl bg-muted px-4 py-3 text-sm font-bold text-muted-foreground cursor-not-allowed">
-                Coming Soon
-              </button>
-            </div>
-          </div>
+              <div className="mt-6 border-t border-border/40 pt-4">
+                <button disabled className="w-full cursor-not-allowed rounded-xl bg-secondary px-4 py-3 text-sm font-bold text-muted-foreground">
+                  Coming Soon
+                </button>
+              </div>
+            </Card>
+          </motion.div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
