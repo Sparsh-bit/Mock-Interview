@@ -1,19 +1,9 @@
-// Utility functions
-export function cn(...inputs: (string | undefined | null | boolean | Record<string, boolean>)[]): string {
-  const classes: string[] = [];
-  
-  for (const input of inputs) {
-    if (!input) continue;
-    if (typeof input === 'string') {
-      classes.push(input);
-    } else if (typeof input === 'object') {
-      for (const [key, value] of Object.entries(input)) {
-        if (value) classes.push(key);
-      }
-    }
-  }
-  
-  return classes.join(' ');
+import { type ClassValue, clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+/** Merges class names and resolves conflicting Tailwind utilities (e.g. `px-2` + `px-4` -> `px-4`). */
+export function cn(...inputs: ClassValue[]): string {
+  return twMerge(clsx(inputs));
 }
 
 export function formatDuration(seconds: number): string {
@@ -46,19 +36,19 @@ export function getScoreColor(score: number): string {
   return 'text-red-400';
 }
 
-export function getHireRecommendationLabel(rec: string): string {
+export function getReadinessLabel(level: string): string {
   const labels: Record<string, string> = {
-    strong_hire: '✅ Strong Hire',
-    hire: '✅ Hire',
-    borderline: '⚠️ Borderline',
-    no_hire_currently: '❌ No Hire Currently',
-    no_hire: '❌ No Hire',
+    interview_ready: 'Interview Ready',
+    close_to_ready: 'Close to Ready',
+    needs_more_practice: 'Needs More Practice',
+    significant_gaps: 'Significant Gaps',
   };
-  return labels[rec] || rec;
+  return labels[level] || level;
 }
 
-export function getHireRecommendationColor(rec: string): string {
-  if (rec === 'strong_hire' || rec === 'hire') return 'text-emerald-400';
-  if (rec === 'borderline') return 'text-yellow-400';
-  return 'text-red-400';
+export function getReadinessColor(level: string): string {
+  if (level === 'interview_ready') return 'text-emerald-400';
+  if (level === 'close_to_ready') return 'text-yellow-400';
+  if (level === 'significant_gaps') return 'text-red-400';
+  return 'text-orange-400';
 }

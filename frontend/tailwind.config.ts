@@ -74,11 +74,23 @@ const config: Config = {
           DEFAULT: 'hsl(var(--warning))',
           foreground: 'hsl(var(--warning-foreground))',
         },
+        // Secondary accent glows — sparing use for depth/variety, never as
+        // the primary interactive color (that stays `primary`)
+        'accent-violet': 'hsl(var(--accent-violet))',
+        'accent-cyan': 'hsl(var(--accent-cyan))',
+        'accent-emerald': 'hsl(var(--accent-emerald))',
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: 'var(--radius-sm)',
+        xl: 'var(--radius-lg)',
+        '2xl': 'var(--radius-xl)',
+      },
+      transitionTimingFunction: {
+        'out-expo': 'var(--ease-out-expo)',
+        spring: 'var(--ease-spring)',
+        smooth: 'var(--ease-in-out-smooth)',
       },
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
