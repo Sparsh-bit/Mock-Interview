@@ -13,6 +13,8 @@ import {
   TrendingUp,
   Zap,
 } from 'lucide-react';
+import { buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 const FEATURES = [
   {
@@ -51,7 +53,7 @@ const FEATURES = [
     icon: TrendingUp,
     title: 'Detailed Performance Reports',
     description:
-      'After each session, get a hire/no-hire verdict, topic-by-topic scores, and an exact improvement roadmap.',
+      'After each session, get an interview-readiness assessment, topic-by-topic scores, and an exact improvement roadmap.',
     color: 'from-red-500/20 to-red-600/5',
     iconColor: 'text-red-400',
   },
@@ -88,17 +90,9 @@ const itemVariants: Variants = {
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background">
+    <div className="aurora-bg relative min-h-screen overflow-hidden bg-background">
       {/* Background grid */}
       <div className="pointer-events-none absolute inset-0 grid-bg opacity-100" />
-
-      {/* Radial gradient orb */}
-      <div
-        className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2"
-        aria-hidden
-      >
-        <div className="h-[600px] w-[800px] rounded-full bg-primary/5 blur-[120px]" />
-      </div>
 
       {/* ── Navbar ─────────────────────────────────────────────────────────── */}
       <nav className="relative z-10 flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
@@ -122,10 +116,7 @@ export default function LandingPage() {
           >
             Sign in
           </Link>
-          <Link
-            href="/register"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-all"
-          >
+          <Link href="/register" className={cn(buttonVariants({ size: 'sm' }))}>
             Get Started Free
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
