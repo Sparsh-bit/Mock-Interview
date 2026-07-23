@@ -195,9 +195,12 @@ class InterviewOrchestrator:
             parsed, _ = await generate_structured(
                 GeneratedQuestion,
                 messages,
-                max_tokens=700,
+                # Generous headroom: the reasoning model spends tokens
+                # "thinking", and too small a budget truncates the JSON so the
+                # question comes out half-written (e.g. "Can you explain").
+                max_tokens=1600,
                 attempts_per_provider=1,
-                is_valid=lambda q: bool(q.content.strip()),
+                is_valid=lambda q: len(q.content.strip()) >= 15,
                 context="question_generation",
             )
         except AIProviderUnavailableError:

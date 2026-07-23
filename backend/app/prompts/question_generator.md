@@ -22,6 +22,7 @@ $already_asked
 $focus_concepts
 5. Match the target difficulty: "easy" = definition/recall, "medium" = explain-how/compare, "hard" = internals/trade-offs/design.
 6. Keep the question natural and conversational, the way it would be spoken aloud — not a textbook prompt.
+7. `content` MUST be a complete, self-contained question ending in a question mark — never a fragment like "Can you explain" or a trailing/cut-off sentence. Write the full question in one line.
 
 ## Output Format
 
