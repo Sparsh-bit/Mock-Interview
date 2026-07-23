@@ -4,11 +4,13 @@ import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Mic, Send, StopCircle, ArrowRight, CheckCircle2, AlertTriangle, Sparkles } from 'lucide-react';
+import { Loader2, Send, StopCircle, ArrowRight, CheckCircle2, AlertTriangle, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
+import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
+import type { CodeLanguage } from '@/hooks/useCode';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
 
 interface Feedback {
@@ -63,11 +65,12 @@ export default function LiveSessionPage() {
   const [answer, setAnswer] = useState('');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
-  const handleSubmit = async () => {
-    if (!answer.trim() || !data?.question) return;
+  const isCoding = data?.question?.type === 'coding';
 
+  const submitContent = (content: string) => {
+    if (!content.trim() || !data?.question) return;
     submitAnswer.mutate(
-      { sessionId, questionId: data.question.id, content: answer },
+      { sessionId, questionId: data.question.id, content },
       {
         onSuccess: (res) => {
           setFeedback({
@@ -85,6 +88,8 @@ export default function LiveSessionPage() {
       }
     );
   };
+
+  const handleSubmit = () => submitContent(answer);
 
   const handleNext = () => {
     setAnswer('');
@@ -250,34 +255,43 @@ export default function LiveSessionPage() {
         {/* Right: Answer Area */}
         <motion.div variants={fadeUp} className="glass flex flex-1 flex-col rounded-2xl border-border/50 p-6">
           <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm font-semibold text-muted-foreground">Your Answer</span>
-            <button
-              disabled
-              className="flex items-center gap-1.5 rounded-full border border-border/60 px-2.5 py-1 text-xs text-muted-foreground/70"
-              title="Coming soon"
-            >
-              <Mic className="h-3 w-3" /> Voice Mode
-            </button>
+            <span className="text-sm font-semibold text-muted-foreground">
+              {isCoding ? 'Your Solution' : 'Your Answer'}
+            </span>
+            {isCoding && <Badge variant="violet">Coding round</Badge>}
           </div>
-          <textarea
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            disabled={!!feedback || submitAnswer.isPending}
-            placeholder="Type your answer here as if you were speaking to an interviewer…"
-            className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface/50 p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
-          />
-          <div className="mt-3 flex items-center justify-between">
-            {submitAnswer.isPending ? (
-              <AIWorkingIndicator />
-            ) : (
-              <span className="text-xs text-muted-foreground/70">
-                {wordCount} {wordCount === 1 ? 'word' : 'words'}
-              </span>
-            )}
-            <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
-              <Send className="h-4 w-4" /> Submit Answer
-            </Button>
-          </div>
+
+          {isCoding ? (
+            <CodingWorkspace
+              disabled={!!feedback}
+              submitting={submitAnswer.isPending}
+              onSubmit={({ language, code }: { language: CodeLanguage; code: string }) =>
+                submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
+              }
+            />
+          ) : (
+            <>
+              <textarea
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                disabled={!!feedback || submitAnswer.isPending}
+                placeholder="Type your answer here as if you were speaking to an interviewer…"
+                className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
+              />
+              <div className="mt-3 flex items-center justify-between">
+                {submitAnswer.isPending ? (
+                  <AIWorkingIndicator />
+                ) : (
+                  <span className="text-xs text-muted-foreground/70">
+                    {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                  </span>
+                )}
+                <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
+                  <Send className="h-4 w-4" /> Submit Answer
+                </Button>
+              </div>
+            </>
+          )}
         </motion.div>
       </motion.main>
     </div>
