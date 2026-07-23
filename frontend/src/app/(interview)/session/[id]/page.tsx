@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
+import { PresenceMonitor } from '@/components/interview/PresenceMonitor';
 import type { CodeLanguage } from '@/hooks/useCode';
 import { useSpeechRecognition, useSpeechSynthesis } from '@/hooks/useSpeech';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
@@ -284,6 +285,9 @@ export default function LiveSessionPage() {
               )}
             </AnimatePresence>
           </div>
+
+          {/* Optional live presence check (camera + mic, on-device only) */}
+          <PresenceMonitor />
         </motion.div>
 
         {/* Right: Answer Area */}
