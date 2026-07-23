@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, Eye, EyeOff, Loader2, Mic, ShieldCheck, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,10 +17,14 @@ export function PresenceMonitor() {
   const [consented, setConsented] = useState(false);
   const { videoRef, active, loading, error, metrics, start, stop } = usePresenceMonitor();
 
-  const enable = async () => {
-    setConsented(true);
-    await start();
-  };
+  // Start only AFTER the <video> element has mounted (consent flips true),
+  // otherwise videoRef.current is still null and the stream never attaches.
+  useEffect(() => {
+    if (consented) start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consented]);
+
+  const enable = () => setConsented(true);
 
   const disable = () => {
     stop();

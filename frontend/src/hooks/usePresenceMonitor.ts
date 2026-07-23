@@ -51,6 +51,7 @@ export function usePresenceMonitor() {
   const [metrics, setMetrics] = useState<PresenceMetrics>(INITIAL);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const startingRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
   const landmarkerRef = useRef<import('@mediapipe/tasks-vision').FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -69,14 +70,21 @@ export function usePresenceMonitor() {
     landmarkerRef.current?.close();
     landmarkerRef.current = null;
     framesRef.current = { total: 0, contact: 0 };
+    startingRef.current = false;
     setActive(false);
     setMetrics(INITIAL);
   }, []);
 
   const start = useCallback(async () => {
+    // Guard against double-invocation (React StrictMode re-runs effects in dev).
+    if (startingRef.current || streamRef.current) return;
+    startingRef.current = true;
     setError(null);
     setLoading(true);
     try {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        throw new Error('unsupported');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -127,20 +135,27 @@ export function usePresenceMonitor() {
 
         let faceDetected = false;
         let lookingAtScreen = false;
-        if (video.readyState >= 2) {
-          const res = lm.detectForVideo(video, performance.now());
-          faceDetected = (res.faceLandmarks?.length ?? 0) > 0;
-          const shapes = res.faceBlendshapes?.[0]?.categories;
-          if (faceDetected && shapes) {
-            const byName: Record<string, number> = {};
-            for (const c of shapes) byName[c.categoryName] = c.score;
-            // Average left/right gaze-away components; high = looking off-screen.
-            const gazeAway =
-              ((byName.eyeLookOutLeft ?? 0) + (byName.eyeLookInLeft ?? 0) +
-               (byName.eyeLookOutRight ?? 0) + (byName.eyeLookInRight ?? 0) +
-               (byName.eyeLookUpLeft ?? 0) + (byName.eyeLookDownLeft ?? 0) +
-               (byName.eyeLookUpRight ?? 0) + (byName.eyeLookDownRight ?? 0)) / 4;
-            lookingAtScreen = gazeAway < 0.55;
+        // Only run detection once the frame actually has pixels — calling
+        // detectForVideo on a 0x0 frame makes MediaPipe throw (ROI must be
+        // > 0), which would otherwise crash the loop.
+        if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+          try {
+            const res = lm.detectForVideo(video, performance.now());
+            faceDetected = (res.faceLandmarks?.length ?? 0) > 0;
+            const shapes = res.faceBlendshapes?.[0]?.categories;
+            if (faceDetected && shapes) {
+              const byName: Record<string, number> = {};
+              for (const c of shapes) byName[c.categoryName] = c.score;
+              // Average left/right gaze-away components; high = looking off-screen.
+              const gazeAway =
+                ((byName.eyeLookOutLeft ?? 0) + (byName.eyeLookInLeft ?? 0) +
+                 (byName.eyeLookOutRight ?? 0) + (byName.eyeLookInRight ?? 0) +
+                 (byName.eyeLookUpLeft ?? 0) + (byName.eyeLookDownLeft ?? 0) +
+                 (byName.eyeLookUpRight ?? 0) + (byName.eyeLookDownRight ?? 0)) / 4;
+              lookingAtScreen = gazeAway < 0.55;
+            }
+          } catch {
+            // Transient decode/ROI hiccup — skip this frame, keep the loop alive.
           }
         }
 
@@ -154,14 +169,24 @@ export function usePresenceMonitor() {
       };
       rafRef.current = requestAnimationFrame(loop);
     } catch (e) {
+      // Clean up a partially-acquired stream so a retry can work.
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
       setLoading(false);
       setActive(false);
+      const name = (e as { name?: string })?.name ?? '';
       const msg = e instanceof Error ? e.message : String(e);
-      setError(
-        /permission|denied|notallowed/i.test(msg)
-          ? 'Camera/microphone permission was denied.'
-          : 'Could not start camera analysis.'
-      );
+      if (name === 'NotAllowedError' || /permission|denied|notallowed/i.test(msg)) {
+        setError('Camera/microphone permission was denied. Allow access in your browser and try again.');
+      } else if (name === 'NotFoundError' || /notfound|devicesnotfound/i.test(msg)) {
+        setError('No camera or microphone was found on this device.');
+      } else if (msg === 'unsupported') {
+        setError('This browser does not support camera capture, or the page is not on a secure (https/localhost) origin.');
+      } else {
+        setError('Could not start camera analysis. Please try again.');
+      }
+    } finally {
+      startingRef.current = false;
     }
   }, []);
 
