@@ -60,8 +60,12 @@ const nextConfig: NextConfig = {
           { key: 'X-XSS-Protection', value: '1; mode=block' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           {
+            // Allow camera + mic for our own origin (needed for the live
+            // presence check and voice answers). An empty allowlist —
+            // camera=() — disables it for everyone including self, which
+            // silently blocks getUserMedia before any app code runs.
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(self), geolocation=()',
+            value: 'camera=(self), microphone=(self), geolocation=()',
           },
         ],
       },
