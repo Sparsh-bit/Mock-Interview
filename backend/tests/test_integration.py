@@ -168,14 +168,13 @@ class TestInterviewEndpoints:
         assert data["status"] == "active"
 
     async def test_get_next_question_no_session(self, async_client: AsyncClient, auth_headers: dict):
+        """A nonexistent (or not-owned) session must 404, not silently return an empty question."""
         fake_id = uuid.uuid4()
         response = await async_client.get(
             f"/api/v1/interview/{fake_id}/next",
             headers=auth_headers,
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["question"] is None
+        assert response.status_code == 404
 
 
 # ─── Questions Endpoint Tests ──────────────────────────────────────────────────
@@ -219,6 +218,10 @@ class TestDatabaseConnectivity:
 # ─── Supabase Integration Test ─────────────────────────────────────────────────
 
 class TestSupabaseIntegration:
+    @pytest.mark.skipif(
+        settings.SUPABASE_URL == "https://your-project.supabase.co",
+        reason="Supabase project not configured in .env"
+    )
     async def test_supabase_health(self):
         import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
