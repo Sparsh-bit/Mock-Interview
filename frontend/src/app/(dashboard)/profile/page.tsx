@@ -3,8 +3,13 @@
 import { useUserProfile, useUpdateProfile } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
 import { useState, useEffect } from 'react';
-import { Loader2, Save, User, Building, Briefcase, Linkedin, Github, Check } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { fadeUp, staggerContainer } from '@/lib/motion';
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -39,7 +44,7 @@ export default function ProfilePage() {
       onSuccess: () => {
         toast.success('Profile updated successfully!');
       },
-      onError: (err: any) => {
+      onError: (err: Error) => {
         toast.error(err.message || 'Failed to update profile.');
       },
     });
@@ -54,112 +59,106 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Your Profile</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-4xl space-y-8">
+      <motion.div variants={fadeUp}>
+        <h1 className="text-2xl font-bold tracking-tight">Your Profile</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           Manage your personal details and target company settings for personalized AI interviews.
         </p>
-      </div>
+      </motion.div>
 
-      <div className="glass rounded-2xl border border-border/50 p-8">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Avatar & Email */}
-          <div className="flex items-center gap-4 pb-6 border-b border-border/50">
-            <div className="h-16 w-16 rounded-full bg-primary/20 flex items-center justify-center text-xl font-bold text-primary border border-primary/30">
-              {user?.email?.[0]?.toUpperCase() || 'U'}
+      <motion.div variants={fadeUp}>
+        <Card className="p-8">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Avatar & Email */}
+            <div className="flex items-center gap-4 border-b border-border/50 pb-6">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full border border-primary/30 bg-primary/15 text-xl font-bold text-primary">
+                {user?.email?.[0]?.toUpperCase() || 'U'}
+              </div>
+              <div>
+                <h3 className="text-lg font-bold">{formData.full_name || user?.email?.split('@')[0]}</h3>
+                <p className="text-xs text-muted-foreground">{user?.email}</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-bold text-lg">{formData.full_name || user?.email?.split('@')[0]}</h3>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-          </div>
 
-          <div className="grid gap-6 md:grid-cols-2">
+            <div className="grid gap-6 md:grid-cols-2">
+              <div>
+                <label htmlFor="full_name" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Full Name
+                </label>
+                <Input
+                  id="full_name"
+                  type="text"
+                  value={formData.full_name}
+                  onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                  placeholder="e.g. Rahul Sharma"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="target_company" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Target Company
+                </label>
+                <Input
+                  id="target_company"
+                  type="text"
+                  value={formData.target_company}
+                  onChange={(e) => setFormData({ ...formData, target_company: e.target.value })}
+                  placeholder="e.g. Cognizant, TCS"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="experience_years" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Years of Experience
+                </label>
+                <Input
+                  id="experience_years"
+                  type="number"
+                  min="0"
+                  max="50"
+                  value={formData.experience_years}
+                  onChange={(e) => setFormData({ ...formData, experience_years: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="linkedin_url" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  LinkedIn Profile URL
+                </label>
+                <Input
+                  id="linkedin_url"
+                  type="url"
+                  value={formData.linkedin_url}
+                  onChange={(e) => setFormData({ ...formData, linkedin_url: e.target.value })}
+                  placeholder="https://linkedin.com/in/…"
+                />
+              </div>
+            </div>
+
             <div>
-              <label htmlFor="full_name" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Full Name
+              <label htmlFor="bio" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Bio / Background Summary
               </label>
-              <input
-                id="full_name"
-                type="text"
-                value={formData.full_name}
-                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                className="w-full rounded-xl border border-border/60 bg-surface px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="e.g. Rahul Sharma"
+              <textarea
+                id="bio"
+                rows={3}
+                value={formData.bio}
+                onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                className="ease-out-expo w-full resize-none rounded-lg border border-border bg-surface p-4 text-sm transition-all focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                placeholder="Brief overview of your technical background, skills, and goals…"
               />
             </div>
 
-            <div>
-              <label htmlFor="target_company" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Target Company
-              </label>
-              <input
-                id="target_company"
-                type="text"
-                value={formData.target_company}
-                onChange={(e) => setFormData({ ...formData, target_company: e.target.value })}
-                className="w-full rounded-xl border border-border/60 bg-surface px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="e.g. Cognizant, TCS"
-              />
+            <div className="flex justify-end pt-4">
+              <Button type="submit" loading={updateProfile.isPending}>
+                <Save className="h-4 w-4" />
+                Save Profile Changes
+              </Button>
             </div>
-
-            <div>
-              <label htmlFor="experience_years" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Years of Experience
-              </label>
-              <input
-                id="experience_years"
-                type="number"
-                min="0"
-                max="50"
-                value={formData.experience_years}
-                onChange={(e) => setFormData({ ...formData, experience_years: parseInt(e.target.value) || 0 })}
-                className="w-full rounded-xl border border-border/60 bg-surface px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="linkedin_url" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                LinkedIn Profile URL
-              </label>
-              <input
-                id="linkedin_url"
-                type="url"
-                value={formData.linkedin_url}
-                onChange={(e) => setFormData({ ...formData, linkedin_url: e.target.value })}
-                className="w-full rounded-xl border border-border/60 bg-surface px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="https://linkedin.com/in/..."
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="bio" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              Bio / Background Summary
-            </label>
-            <textarea
-              id="bio"
-              rows={3}
-              value={formData.bio}
-              onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-              className="w-full rounded-xl border border-border/60 bg-surface p-4 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder="Brief overview of your technical background, skills, and goals..."
-            />
-          </div>
-
-          <div className="pt-4 flex justify-end">
-            <button
-              type="submit"
-              disabled={updateProfile.isPending}
-              className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-all disabled:opacity-50 shadow-glow"
-            >
-              {updateProfile.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Profile Changes
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+          </form>
+        </Card>
+      </motion.div>
+    </motion.div>
   );
 }

@@ -1,7 +1,10 @@
 'use client';
 
 import { useUserStats } from '@/hooks/useData';
-import { Award, CheckCircle2, Flame, Lock, ShieldCheck, Star, Zap } from 'lucide-react';
+import { Award, CheckCircle2, Lock, ShieldCheck, Star, Zap } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Card } from '@/components/ui/card';
+import { fadeUp, staggerContainer } from '@/lib/motion';
 
 export default function AchievementsPage() {
   const { data: stats } = useUserStats();
@@ -38,51 +41,51 @@ export default function AchievementsPage() {
   ];
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Achievements & Milestones</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+    <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
+      <motion.div variants={fadeUp}>
+        <h1 className="text-2xl font-bold tracking-tight">Achievements & Milestones</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           Unlock badges and track your milestone achievements as you practice.
         </p>
-      </div>
+      </motion.div>
 
       <div className="grid gap-4 md:grid-cols-2">
         {achievements.map((ach) => {
           const Icon = ach.icon;
           return (
-            <div
-              key={ach.id}
-              className={`glass rounded-2xl border p-6 flex items-start gap-4 transition-all ${
-                ach.unlocked
-                  ? 'border-emerald-500/30 bg-emerald-500/5'
-                  : 'border-border/40 opacity-50'
-              }`}
-            >
-              <div
-                className={`h-12 w-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  ach.unlocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-muted text-muted-foreground'
+            <motion.div key={ach.id} variants={fadeUp}>
+              <Card
+                hoverable={ach.unlocked}
+                className={`flex items-start gap-4 p-6 ${
+                  ach.unlocked ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border/40 opacity-50'
                 }`}
               >
-                {ach.unlocked ? <Icon className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-base">{ach.title}</h3>
-                  {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+                <div
+                  className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl ${
+                    ach.unlocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-secondary text-muted-foreground'
+                  }`}
+                >
+                  {ach.unlocked ? <Icon className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{ach.description}</p>
-                <p className="text-[10px] font-semibold uppercase tracking-wider mt-2">
-                  {ach.unlocked ? (
-                    <span className="text-emerald-400">Unlocked</span>
-                  ) : (
-                    <span className="text-muted-foreground">Locked</span>
-                  )}
-                </p>
-              </div>
-            </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold">{ach.title}</h3>
+                    {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">{ach.description}</p>
+                  <p className="mt-2 text-[10px] font-semibold uppercase tracking-wider">
+                    {ach.unlocked ? (
+                      <span className="text-emerald-400">Unlocked</span>
+                    ) : (
+                      <span className="text-muted-foreground">Locked</span>
+                    )}
+                  </p>
+                </div>
+              </Card>
+            </motion.div>
           );
         })}
       </div>
-    </div>
+    </motion.div>
   );
 }
