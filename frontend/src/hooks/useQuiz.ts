@@ -37,11 +37,19 @@ export function useQuiz() {
   const api = getBrowserApiClient();
 
   const startQuiz = useMutation({
-    mutationFn: async (opts: { trackId?: string; count: number; minutes: number }) => {
+    mutationFn: async (opts: {
+      trackId?: string;
+      count: number;
+      minutes: number;
+      topic?: string;
+      company?: string;
+    }) => {
       const res = await api.post('/api/v1/quiz/start', {
         track_id: opts.trackId ?? null,
         count: opts.count,
         minutes: opts.minutes,
+        topic: opts.topic?.trim() || null,
+        company: opts.company?.trim() || null,
       });
       return res.data as StartQuizResponse;
     },

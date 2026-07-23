@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { installMediapipeLogFilter } from '@/lib/mediapipeLogs';
 
 const MP_VERSION = '0.10.35';
 const WASM_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
@@ -58,6 +59,7 @@ export function usePresenceMonitor() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const framesRef = useRef({ total: 0, contact: 0 });
+  const restoreLogsRef = useRef<(() => void) | null>(null);
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -71,6 +73,9 @@ export function usePresenceMonitor() {
     landmarkerRef.current = null;
     framesRef.current = { total: 0, contact: 0 };
     startingRef.current = false;
+    // Restore console after MediaPipe is torn down.
+    restoreLogsRef.current?.();
+    restoreLogsRef.current = null;
     setActive(false);
     setMetrics(INITIAL);
   }, []);
@@ -101,6 +106,13 @@ export function usePresenceMonitor() {
       source.connect(analyser);
       audioCtxRef.current = audioCtx;
       analyserRef.current = analyser;
+
+      // MediaPipe/TFLite print benign INFO/WARNING diagnostics through
+      // console.error during init + inference; filter only those (reversible)
+      // so Next's dev overlay doesn't flag them as real errors.
+      if (!restoreLogsRef.current) {
+        restoreLogsRef.current = installMediapipeLogFilter();
+      }
 
       // MediaPipe face landmarker (loaded from CDN at runtime).
       const vision = await loadVision();
@@ -185,6 +197,9 @@ export function usePresenceMonitor() {
       } else {
         setError('Could not start camera analysis. Please try again.');
       }
+      // Restore console if we failed after installing the filter.
+      restoreLogsRef.current?.();
+      restoreLogsRef.current = null;
     } finally {
       startingRef.current = false;
     }

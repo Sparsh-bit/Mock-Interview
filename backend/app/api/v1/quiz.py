@@ -46,6 +46,9 @@ class StartQuizRequest(BaseModel):
     track_id: uuid.UUID | None = None
     count: int = Field(default=8, ge=3, le=20)
     minutes: int = Field(default=10, ge=1, le=60)
+    # Optional free-text focus + target company, typed by the candidate.
+    topic: str | None = Field(default=None, max_length=300)
+    company: str | None = Field(default=None, max_length=120)
 
 
 class QuizOption(BaseModel):
@@ -131,12 +134,17 @@ async def start_quiz(
     parser = ResponseParser(JSONValidator())
     ai = get_ai_provider()
 
+    company = (request.company or "").strip() or "a general tech company (Cognizant Digital Nurture style)"
+    focus = (request.topic or "").strip() or "(no specific topic — use the track's default topic areas below)"
+
     messages = builder.chat(
         system_template="quiz_generator",
         user_content="Generate the quiz now, following the rules and output format.",
         track_name=track_name,
         topics=topics_str,
         count=str(request.count),
+        company=company,
+        focus=focus,
     )
 
     # Budget tokens to the quiz size (~300 tokens/question + buffer). The

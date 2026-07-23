@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { useQuiz, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
 import { fadeUp, staggerContainer } from '@/lib/motion';
@@ -16,6 +17,17 @@ type Phase = 'setup' | 'exam' | 'results';
 
 const COUNT_OPTIONS = [5, 8, 10, 15];
 const MINUTE_OPTIONS = [5, 10, 15, 20];
+// Common fresher-interview topics across most companies — quick presets.
+const PRESET_TOPICS = [
+  'Core Java & OOP',
+  'Data Structures',
+  'SQL & Databases',
+  'Aptitude & Reasoning',
+  'Operating Systems',
+  'OOPS Concepts',
+  'DBMS',
+  'Computer Networks',
+];
 
 function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -28,6 +40,8 @@ export default function QuizPage() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [count, setCount] = useState(8);
   const [minutes, setMinutes] = useState(10);
+  const [topic, setTopic] = useState('');
+  const [company, setCompany] = useState('');
 
   const [quizId, setQuizId] = useState<string>('');
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -38,7 +52,7 @@ export default function QuizPage() {
 
   const handleStart = () => {
     startQuiz.mutate(
-      { count, minutes },
+      { count, minutes, topic, company },
       {
         onSuccess: (data) => {
           setQuizId(data.quiz_id);
@@ -103,6 +117,45 @@ export default function QuizPage() {
 
         <motion.div variants={fadeUp}>
           <Card className="space-y-6 p-8">
+            <div>
+              <label htmlFor="quiz-company" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Company you&apos;re preparing for <span className="font-normal normal-case">(optional)</span>
+              </label>
+              <Input
+                id="quiz-company"
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
+                placeholder="e.g. Cognizant, TCS, Infosys, Accenture…"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="quiz-topic" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Topic or request <span className="font-normal normal-case">(optional)</span>
+              </label>
+              <Input
+                id="quiz-topic"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="e.g. HashMap internals, SQL joins, OOP concepts…"
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                {PRESET_TOPICS.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTopic(t)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                      topic === t ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div>
               <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Number of questions
