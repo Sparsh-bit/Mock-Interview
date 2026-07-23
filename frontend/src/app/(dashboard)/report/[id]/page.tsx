@@ -20,7 +20,16 @@ import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+
+const REPORT_GENERATION_MESSAGES = [
+  'Reading through your full session…',
+  'Scoring each answer against the ideal response…',
+  'Identifying strengths and gaps by topic…',
+  'Building your improvement roadmap…',
+  'Almost done…',
+];
 
 const READINESS_META: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
   interview_ready: { label: 'Interview Ready', variant: 'success' },
@@ -75,7 +84,7 @@ export default function ReportDetailPage() {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm font-medium text-muted-foreground">Generating your AI performance report…</p>
+        <AIWorkingIndicator messages={REPORT_GENERATION_MESSAGES} intervalMs={5000} />
       </div>
     );
   }
