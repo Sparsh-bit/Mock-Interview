@@ -5,6 +5,7 @@ Import all models here to ensure they are registered with SQLAlchemy's
 declarative registry before Alembic introspects the metadata.
 """
 
+from .activity import ActivityLog
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .company import Company, InterviewTrack, QuestionCategory
 from .question import FollowUpQuestion, Question, Subtopic, Topic
@@ -41,4 +42,6 @@ __all__ = [
     # System
     "AuditLog",
     "SystemPrompt",
+    # Activity
+    "ActivityLog",
 ]

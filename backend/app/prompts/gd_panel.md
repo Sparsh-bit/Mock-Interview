@@ -19,8 +19,9 @@ $transcript
 2. Each contribution is 1-3 sentences — natural spoken GD style, not an essay.
 3. Panelists should have varied stances: some agree, some respectfully disagree, some add a new angle or example. Make it feel like a real discussion.
 4. React to the most recent points (especially the candidate's) — build on, challenge, or redirect them. Do NOT just repeat earlier points.
-5. Keep it civil and on-topic. Never speak for the candidate.
-6. If the discussion is just starting (empty transcript), give strong opening positions.
+5. Roughly every other turn (when the candidate has already spoken), have ONE panelist put a DIRECT cross-question to the candidate — challenge their specific point or ask them to back it up — and end that contribution with a question mark, addressing them (e.g. "…but how would that scale to a 50-person team?"). This keeps the candidate on their toes like a real GD.
+6. Keep it civil and on-topic. Never speak for the candidate.
+7. If the discussion is just starting (empty transcript), give strong opening positions.
 
 ## Output Format
 

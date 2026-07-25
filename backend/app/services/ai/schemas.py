@@ -102,6 +102,13 @@ class GeneratedQuestion(BaseModel):
     ideal_answer: str = ""
 
 
+class InterviewPlan(BaseModel):
+    """Matches the output of app/prompts/interview_plan.md."""
+
+    topics: list[str] = Field(default_factory=list)
+    questions: list[GeneratedQuestion] = Field(default_factory=list)
+
+
 class InterviewState(BaseModel):
     """Matches the `interview_state` object in app/prompts/interviewer.md."""
 

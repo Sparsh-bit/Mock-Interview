@@ -19,6 +19,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
+import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -74,6 +75,11 @@ export default function DashboardPage() {
             Start Interview
           </Link>
         </div>
+      </motion.div>
+
+      {/* Nudge to try a round they haven't done yet (communication / GD) */}
+      <motion.div variants={fadeUp}>
+        <FeatureNudge />
       </motion.div>
 
       {/* Stats grid */}

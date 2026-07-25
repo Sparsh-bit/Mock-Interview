@@ -1,34 +1,46 @@
+import asyncio
 import contextlib
+import hashlib
+import json
+import random
 import uuid
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AIProviderUnavailableError
-from app.events.base import (
-    AnswerEvaluatedEvent,
-    AnswerEvaluatedPayload,
-    InterviewStartedEvent,
-    InterviewStartedPayload,
-)
+from app.db.redis import cache_get, cache_set, get_redis
+from app.events.base import InterviewStartedEvent, InterviewStartedPayload
 from app.events.emitter import get_event_emitter
 from app.models.company import InterviewTrack, QuestionCategory
-from app.models.question import Question, Subtopic, Topic
+from app.models.question import Question, Topic
+from app.models.report import ResumeFile
 from app.models.session import Answer, InterviewSession, Score, SessionStatus
 from app.prompts.prompt_loader import get_prompt_loader
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
-from app.services.ai.schemas import GeneratedQuestion, InterviewerResponse
+from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
 
 logger = structlog.get_logger(__name__)
 
-# The free-tier reasoning model intermittently returns empty content, so we
-# allow a few attempts before failing closed with AIProviderUnavailableError
-# rather than silently persisting a made-up score. See prompt.md's "Refined
-# Niche": scoring must be example-driven and honest, never a fake verdict.
-_MAX_EVALUATION_ATTEMPTS = 3
+# How many questions the AI pre-generates for a planned interview, and the
+# max number of live cross-questions injected during it (kept small so the
+# interview stays fluent — most questions are served instantly from the plan).
+_PLANNED_QUESTION_COUNT = 6
+_MAX_CROSS_QUESTIONS = 2
+# Plan reuse cache: we accumulate up to N distinct AI-generated plan variants
+# per (company, program, focus) signature in Redis. Once N exist, a matching
+# request instantly reuses a random variant instead of waiting on the slow
+# free-tier model — fast AND still varied (and live cross-questions make every
+# run different regardless). This is the free "now" phase; the same lookup seam
+# can later be swapped for pgvector semantic matching without touching callers.
+_MAX_PLAN_VARIANTS = 4
+_PLAN_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
+# Hard cap on how long we wait for the AI to build the plan before falling back
+# to a DB-backed plan, so plan creation returns within a predictable time.
+_PLAN_AI_BUDGET_SECONDS = 110.0
 
 
 class InterviewOrchestrator:
@@ -81,6 +93,298 @@ class InterviewOrchestrator:
         await self.db.refresh(session)
         return session
 
+    async def create_plan(
+        self,
+        user_id: uuid.UUID,
+        track_id: uuid.UUID,
+        company: str,
+        program: str,
+        focus: str,
+        resume_text: str = "",
+    ) -> dict:
+        """
+        Generate the full interview plan up front (topics + pre-generated
+        questions tailored to company/program/focus), persist the questions,
+        and store the ordered plan on the session. The candidate reviews the
+        topics and calls approve_plan() before the interview starts. Serving
+        questions from this plan is instant, so the interview is fluent.
+
+        Returns {session_id, topics, question_count}.
+        """
+        session = InterviewSession(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            track_id=track_id,
+            status=SessionStatus.ACTIVE,
+            mode="text",
+            started_at=datetime.now(UTC),
+        )
+        self.db.add(session)
+        await self.db.flush()
+
+        # Prefer resume text the candidate pasted in setup (always available);
+        # otherwise fall back to a parsed resume on file, if any.
+        resume_summary = resume_text.strip() or await self._resume_summary(user_id)
+        # Resume-personalised plans are per-candidate, so they must NOT be shared
+        # via the cache. Only generic (company/program/focus) plans are cacheable.
+        personalized = bool(resume_text.strip()) or not resume_summary.startswith("(No resume")
+
+        plan: InterviewPlan | None = None
+
+        # 1) Try to reuse a previously-generated plan variant (instant, no LLM).
+        cache_key = self._plan_cache_key(company, program, focus)
+        variants: list[dict] = []
+        if not personalized:
+            variants = await self._load_plan_variants(cache_key)
+            if len(variants) >= _MAX_PLAN_VARIANTS:
+                with contextlib.suppress(Exception):
+                    plan = InterviewPlan(**random.choice(variants))
+                if plan is not None:
+                    logger.info("interview_plan_cache_hit", key=cache_key, variants=len(variants))
+
+        # 2) Cache miss (or personalised) → generate with the AI. Keep it snappy:
+        # one attempt per provider, lean tokens, and a HARD time cap so we never
+        # hang; on failure we fall back to a solid DB-backed plan.
+        if plan is None:
+            messages = self.prompt_builder.chat(
+                system_template="interview_plan",
+                user_content="Design the interview plan now, following the rules and output format.",
+                company=company.strip() or "a general tech company",
+                program=program.strip() or "Software Engineer (fresher)",
+                focus=focus.strip() or "(no specific focus — cover the standard areas for this role)",
+                resume=resume_summary,
+                question_count=str(_PLANNED_QUESTION_COUNT),
+            )
+            try:
+                plan, _ = await asyncio.wait_for(
+                    generate_structured(
+                        InterviewPlan,
+                        messages,
+                        max_tokens=2500,
+                        attempts_per_provider=1,
+                        is_valid=lambda p: len(p.questions) >= 4,
+                        context="interview_plan",
+                    ),
+                    timeout=_PLAN_AI_BUDGET_SECONDS,
+                )
+            except (AIProviderUnavailableError, TimeoutError):
+                logger.warning("interview_plan_ai_unavailable_using_fallback", session_id=str(session.id))
+
+            # Store a freshly-generated generic plan as a reusable variant.
+            if plan is not None and len(plan.questions) >= 4 and not personalized:
+                await self._save_plan_variant(cache_key, variants, plan)
+
+        if plan is not None and len(plan.questions) >= 4:
+            planned_ids, topics = await self._persist_plan(track_id, plan)
+        else:
+            planned_ids, topics = await self._fallback_plan(track_id)
+
+        session.session_metadata = {
+            "company": company,
+            "program": program,
+            "focus": focus,
+            "topics": topics,
+            "planned_question_ids": planned_ids,
+            "cross_question_ids": [],
+            "approved": False,
+            "cross_asked": 0,
+        }
+        await self.db.commit()
+        await self.db.refresh(session)
+
+        return {"session_id": session.id, "topics": topics, "question_count": len(planned_ids)}
+
+    @staticmethod
+    def _plan_cache_key(company: str, program: str, focus: str) -> str:
+        """Stable cache key for a (company, program, focus) plan signature."""
+        sig = "|".join(
+            part.strip().lower()
+            for part in (company or "", program or "", focus or "")
+        )
+        digest = hashlib.sha1(sig.encode("utf-8")).hexdigest()[:16]  # noqa: S324 — cache key, not security
+        return f"plan:variants:{digest}"
+
+    async def _load_plan_variants(self, cache_key: str) -> list[dict]:
+        """Load cached plan variants for a signature (best-effort, never raises)."""
+        try:
+            raw = await cache_get(get_redis(), cache_key)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, list):
+                    return data
+        except Exception as exc:  # noqa: BLE001 — cache is best-effort
+            logger.warning("plan_cache_load_failed", key=cache_key, error=str(exc))
+        return []
+
+    async def _save_plan_variant(
+        self, cache_key: str, variants: list[dict], plan: InterviewPlan
+    ) -> None:
+        """Append a freshly-generated plan variant to the cache (best-effort)."""
+        try:
+            updated = [*variants, plan.model_dump()][-_MAX_PLAN_VARIANTS:]
+            await cache_set(get_redis(), cache_key, json.dumps(updated), ttl=_PLAN_CACHE_TTL_SECONDS)
+        except Exception as exc:  # noqa: BLE001 — cache is best-effort
+            logger.warning("plan_cache_save_failed", key=cache_key, error=str(exc))
+
+    async def _persist_plan(
+        self, track_id: uuid.UUID, plan: InterviewPlan
+    ) -> tuple[list[str], list[str]]:
+        """Persist a plan's questions as Question rows; return (ordered_ids, topics)."""
+        planned_ids: list[str] = []
+        for gq in plan.questions:
+            if not gq.content.strip():
+                continue
+            topic = await self._get_or_create_topic(track_id, gq.topic_name)
+            q = Question(
+                id=uuid.uuid4(),
+                topic_id=topic.id,
+                content=gq.content.strip(),
+                difficulty=gq.difficulty,
+                question_type=gq.question_type,
+                expected_keywords=gq.expected_keywords,
+                ideal_answer=gq.ideal_answer or None,
+            )
+            self.db.add(q)
+            await self.db.flush()
+            planned_ids.append(str(q.id))
+        return planned_ids, (plan.topics or [])
+
+    async def _fallback_plan(self, track_id: uuid.UUID) -> tuple[list[str], list[str]]:
+        """
+        Build a solid interview plan WITHOUT the AI — a warm-up intro question
+        followed by a spread of the track's existing questions (seeded if the
+        track is empty). Guarantees the plan feature always returns quickly and
+        never just hangs when the AI provider is slow or down.
+
+        Returns (ordered_question_ids, topic_names).
+        """
+        # 1) Warm-up "tell me about yourself" opener, always first.
+        intro_topic = await self._get_or_create_topic(track_id, "Introduction")
+        intro = Question(
+            id=uuid.uuid4(),
+            topic_id=intro_topic.id,
+            content=(
+                "To start, tell me a little about yourself — your background, and the "
+                "project or skill you're most proud of."
+            ),
+            difficulty="easy",
+            question_type="conceptual",
+            expected_keywords=["background", "projects", "skills", "motivation"],
+            ideal_answer=None,
+        )
+        self.db.add(intro)
+        await self.db.flush()
+        ordered_ids = [str(intro.id)]
+        topics = ["Introduction"]
+
+        # 2) Existing questions for this track (seed if empty), ordered like a
+        #    real interview: easy → medium → hard, preferring a NEW topic at each
+        #    step so it flows across areas instead of drilling one. Within a
+        #    difficulty tier we shuffle for variety across retakes.
+        async def _track_questions() -> list[Question]:
+            return list(
+                await self.db.scalars(
+                    select(Question)
+                    .join(Topic, Question.topic_id == Topic.id)
+                    .join(QuestionCategory, Topic.category_id == QuestionCategory.id)
+                    .where(QuestionCategory.track_id == track_id)
+                )
+            )
+
+        rows = await _track_questions()
+        if not rows:
+            await self._ensure_seed_questions(track_id, [])
+            rows = await _track_questions()
+
+        rank = {"easy": 0, "medium": 1, "hard": 2}
+        tiers: dict[int, list[Question]] = {0: [], 1: [], 2: []}
+        for q in rows:
+            diff = getattr(q.difficulty, "value", q.difficulty)
+            tiers[rank.get(diff, 1)].append(q)
+        for tier in tiers.values():
+            random.shuffle(tier)
+
+        ordered: list[Question] = []
+        used_topics: set = set()
+        need = _PLANNED_QUESTION_COUNT - 1
+        # First pass: easy→medium→hard, one per new topic where possible.
+        for tier_idx in (0, 1, 2):
+            for q in tiers[tier_idx]:
+                if len(ordered) >= need:
+                    break
+                if q.topic_id not in used_topics:
+                    ordered.append(q)
+                    used_topics.add(q.topic_id)
+        # Second pass: fill any remaining slots (topic repeats allowed), keeping order.
+        if len(ordered) < need:
+            chosen = {id(q) for q in ordered}
+            for tier_idx in (0, 1, 2):
+                for q in tiers[tier_idx]:
+                    if len(ordered) >= need:
+                        break
+                    if id(q) not in chosen:
+                        ordered.append(q)
+                        chosen.add(id(q))
+
+        for q in ordered:
+            ordered_ids.append(str(q.id))
+            topic = await self.db.get(Topic, q.topic_id)
+            if topic and topic.name not in topics:
+                topics.append(topic.name)
+
+        return ordered_ids, topics
+
+    async def _resume_summary(self, user_id: uuid.UUID) -> str:
+        """
+        Build a compact text summary of the candidate's primary (or most recent
+        successfully-parsed) resume so the planner can ask resume-based
+        questions. Returns a plain placeholder when no parsed resume exists.
+        """
+        resume = await self.db.scalar(
+            select(ResumeFile)
+            .where(
+                ResumeFile.user_id == user_id,
+                ResumeFile.parsing_status == "completed",
+            )
+            .order_by(ResumeFile.is_primary.desc(), ResumeFile.created_at.desc())
+            .limit(1)
+        )
+        if not resume:
+            return "(No resume uploaded — ask standard questions for the role; skip resume-specific questions.)"
+
+        parts: list[str] = []
+        if resume.parsed_skills:
+            parts.append("Skills: " + ", ".join(resume.parsed_skills[:20]))
+        if resume.parsed_projects:
+            proj_titles: list[str] = []
+            for p in resume.parsed_projects[:5]:
+                if isinstance(p, dict):
+                    title = p.get("name") or p.get("title") or ""
+                    desc = p.get("description") or p.get("summary") or ""
+                    proj_titles.append(f"{title} — {desc}".strip(" —"))
+                elif isinstance(p, str):
+                    proj_titles.append(p)
+            if proj_titles:
+                parts.append("Projects:\n" + "\n".join(f"- {t}" for t in proj_titles if t))
+        if resume.parsed_experience:
+            with contextlib.suppress(Exception):
+                parts.append("Experience: " + str(resume.parsed_experience)[:600])
+
+        return "\n".join(parts) if parts else (
+            "(Resume uploaded but no structured content extracted — ask standard questions for the role.)"
+        )
+
+    async def approve_plan(self, session_id: uuid.UUID) -> bool:
+        """Mark a planned interview as approved so questions can be served."""
+        session = await self.db.get(InterviewSession, session_id)
+        if not session or not session.session_metadata:
+            return False
+        meta = dict(session.session_metadata)
+        meta["approved"] = True
+        session.session_metadata = meta
+        await self.db.commit()
+        return True
+
     async def get_next_question(self, session_id: uuid.UUID) -> Question | None:
         """
         Adaptively selects the next question based on the candidate's last
@@ -102,6 +406,12 @@ class InterviewOrchestrator:
             select(Answer.question_id).where(Answer.session_id == session_id)
         )
         answered_ids = list(answered.all())
+
+        # Planned-interview path: serve pre-generated questions instantly, with
+        # the occasional live cross-question. Takes precedence when a plan exists.
+        meta = session.session_metadata or {}
+        if meta.get("planned_question_ids") is not None:
+            return await self._next_planned_question(session, answered_ids)
 
         if len(answered_ids) >= 10:
             return None
@@ -139,6 +449,94 @@ class InterviewOrchestrator:
             return await self._ensure_seed_questions(session.track_id, answered_ids)
 
         return self._rank_question(candidates, target_difficulty, focus_concepts)
+
+    async def _next_planned_question(
+        self, session: InterviewSession, answered_ids: list[uuid.UUID]
+    ) -> Question | None:
+        """
+        Serve the next pre-generated question from the plan (instant). Before
+        serving, occasionally inject a live cross-question that probes the
+        candidate's most recent answer — kept to _MAX_CROSS_QUESTIONS and never
+        two in a row, so the interview stays fluent.
+        """
+        meta = dict(session.session_metadata or {})
+        if not meta.get("approved"):
+            return None
+
+        planned = meta.get("planned_question_ids", [])
+        cross_ids = set(meta.get("cross_question_ids", []))
+        answered_str = {str(a) for a in answered_ids}
+        remaining = [qid for qid in planned if qid not in answered_str]
+
+        # Occasional cross-question: after every 3rd answer, if we still have
+        # planned questions left, haven't hit the cross-question cap, and the
+        # last answered question wasn't itself a cross-question.
+        answered_count = len(answered_ids)
+        last_answer = await self.db.scalar(
+            select(Answer).where(Answer.session_id == session.id).order_by(Answer.created_at.desc()).limit(1)
+        )
+        last_was_cross = bool(last_answer and str(last_answer.question_id) in cross_ids)
+        if (
+            remaining
+            and last_answer is not None
+            and answered_count > 0
+            and answered_count % 3 == 0
+            and meta.get("cross_asked", 0) < _MAX_CROSS_QUESTIONS
+            and not last_was_cross
+        ):
+            last_q = await self.db.get(Question, last_answer.question_id)
+            cross = await self._generate_cross_question(last_q, last_answer.content)
+            if cross is not None:
+                meta["cross_asked"] = meta.get("cross_asked", 0) + 1
+                meta["cross_question_ids"] = [*meta.get("cross_question_ids", []), str(cross.id)]
+                session.session_metadata = meta
+                await self.db.commit()
+                return cross
+
+        if not remaining:
+            return None
+        return await self.db.get(Question, uuid.UUID(remaining[0]))
+
+    async def _generate_cross_question(
+        self, last_question: Question | None, last_answer: str
+    ) -> Question | None:
+        """Generate one follow-up probing the candidate's last answer. Best-effort."""
+        if last_question is None:
+            return None
+        topic = await self.db.get(Topic, last_question.topic_id)
+        topic_name = topic.name if topic else "General"
+
+        messages = self.prompt_builder.chat(
+            system_template="cross_question",
+            user_content="Generate the cross-question now, following the output format.",
+            topic=topic_name,
+            last_question=last_question.content,
+            last_answer=last_answer,
+        )
+        try:
+            parsed, _ = await generate_structured(
+                GeneratedQuestion,
+                messages,
+                max_tokens=1200,
+                attempts_per_provider=1,
+                is_valid=lambda q: len(q.content.strip()) >= 15,
+                context="cross_question",
+            )
+        except AIProviderUnavailableError:
+            return None
+
+        q = Question(
+            id=uuid.uuid4(),
+            topic_id=last_question.topic_id,
+            content=parsed.content.strip(),
+            difficulty=parsed.difficulty,
+            question_type=parsed.question_type,
+            expected_keywords=parsed.expected_keywords,
+            ideal_answer=parsed.ideal_answer or None,
+        )
+        self.db.add(q)
+        await self.db.flush()
+        return q
 
     async def _generate_question(
         self,
@@ -403,12 +801,22 @@ class InterviewOrchestrator:
 
         return created_questions[0] if created_questions else None
 
-    async def submit_answer(self, session_id: uuid.UUID, question_id: uuid.UUID, content: str) -> dict:
-        """Evaluates an answer using AI and transitions state.
+    async def submit_answer(
+        self,
+        session_id: uuid.UUID,
+        question_id: uuid.UUID,
+        content: str,
+        delivery: dict | None = None,
+    ) -> dict:
+        """
+        Record the candidate's answer — no scoring here. Scoring is deferred to
+        the end of the interview (report generation), so there's no per-answer
+        AI wait and no score shown mid-interview; the flow stays fluent.
 
-        Raises AIProviderUnavailableError (mapped to HTTP 503 by the global
-        exception handler) if the AI evaluation cannot be produced after
-        retrying — we never persist a made-up score to mask an AI failure.
+        `delivery` (optional) carries the client-measured speaking metrics for
+        this answer — filler words, pauses, words and speaking seconds — which
+        we accumulate on the session so the final report can analyse delivery
+        (e.g. "you paused a lot") across the whole interview.
         """
         session = await self.db.get(InterviewSession, session_id)
         if not session:
@@ -422,124 +830,23 @@ class InterviewOrchestrator:
         )
         self.db.add(ans)
         session.questions_asked = (session.questions_asked or 0) + 1
+
+        if delivery:
+            meta = dict(session.session_metadata or {})
+            agg = dict(meta.get("delivery") or {})
+            for key in ("filler_count", "pause_count", "total_pause_seconds", "words", "speaking_seconds"):
+                agg[key] = (agg.get(key) or 0) + int(delivery.get(key) or 0)
+            agg["answers"] = (agg.get("answers") or 0) + 1
+            meta["delivery"] = agg
+            session.session_metadata = meta
+
         await self.db.flush()
-
-        question = await self.db.get(Question, question_id)
-        result, raw_content = await self._evaluate_answer(session, question, content)
-        evaluation = result.evaluation
-
-        score = Score(
-            id=uuid.uuid4(),
-            answer_id=ans.id,
-            session_id=session_id,
-            technical_score=evaluation.technical_score,
-            communication_score=evaluation.communication_score,
-            completeness_score=evaluation.completeness_score,
-            confidence_score=evaluation.confidence_score,
-            overall_score=evaluation.overall_score,
-            strengths=evaluation.strengths,
-            weaknesses=evaluation.weaknesses,
-            feedback=evaluation.feedback,
-            is_bluffing_detected=evaluation.is_bluffing_detected,
-            # Persist the adaptive-selection signals alongside the raw response
-            # so get_next_question() can steer topic/difficulty from what the
-            # candidate actually said, not a fresh random pick.
-            raw_evaluation={
-                "raw_response": raw_content,
-                "mentioned_concepts": evaluation.mentioned_concepts,
-                "missed_concepts": evaluation.missed_concepts,
-                "suggested_difficulty_adjustment": result.interview_state.suggested_difficulty_adjustment,
-            },
+        answered = await self.db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.session_id == session_id)
         )
-        self.db.add(score)
         await self.db.commit()
 
-        with contextlib.suppress(Exception):
-            await self.emitter.emit(AnswerEvaluatedEvent(
-                event_id=uuid.uuid4(),
-                user_id=session.user_id,
-                session_id=session_id,
-                payload=AnswerEvaluatedPayload(
-                    answer_id=ans.id,
-                    question_id=question_id,
-                    overall_score=evaluation.overall_score,
-                    technical_score=evaluation.technical_score,
-                    communication_score=evaluation.communication_score,
-                    is_bluffing_detected=evaluation.is_bluffing_detected,
-                    evaluation_time_ms=0,
-                )
-            ))
-
-        return {
-            "technical_score": evaluation.technical_score,
-            "communication_score": evaluation.communication_score,
-            "completeness_score": evaluation.completeness_score,
-            "confidence_score": evaluation.confidence_score,
-            "overall_score": evaluation.overall_score,
-            "strengths": evaluation.strengths,
-            "weaknesses": evaluation.weaknesses,
-            "feedback": evaluation.feedback,
-            "is_bluffing_detected": evaluation.is_bluffing_detected,
-        }
-
-    async def _evaluate_answer(
-        self, session: InterviewSession, question: Question | None, content: str
-    ):
-        """
-        Evaluate a candidate's answer via the `interviewer` prompt template,
-        with a validation-driven schema check and one retry on a malformed
-        or unavailable AI response. See app/prompts/interviewer.md for the
-        full contract this depends on.
-
-        Returns (InterviewerResponse, raw_response_text).
-        """
-        track_name = "Unknown Track"
-        if session.track_id:
-            track = await self.db.get(InterviewTrack, session.track_id)
-            if track:
-                track_name = track.name
-
-        topic_name = "General"
-        subtopic_name = ""
-        difficulty_level = question.difficulty if question else "medium"
-        if question:
-            topic = await self.db.get(Topic, question.topic_id)
-            if topic:
-                topic_name = topic.name
-            if question.subtopic_id:
-                subtopic = await self.db.get(Subtopic, question.subtopic_id)
-                if subtopic:
-                    subtopic_name = subtopic.name
-
-        user_content = (
-            f"Question asked: {question.content if question else 'N/A'}\n\n"
-            f"Expected concepts: "
-            f"{', '.join(question.expected_keywords) if question and question.expected_keywords else 'N/A'}\n\n"
-            f"Candidate's answer:\n{content}"
-        )
-
-        messages = self.prompt_builder.chat(
-            system_template="interviewer",
-            user_content=user_content,
-            track_name=track_name,
-            topic_name=topic_name,
-            subtopic_name=subtopic_name,
-            difficulty_level=difficulty_level,
-            question_count=str(session.questions_asked or 1),
-            time_limit_minutes="5",
-            candidate_experience_years="not specified",
-        )
-
-        # Tries primary then fallback provider, retrying each; raises
-        # AIProviderUnavailableError (HTTP 503) only if all fail — we never
-        # persist a fabricated score.
-        return await generate_structured(
-            InterviewerResponse,
-            messages,
-            max_tokens=1200,
-            attempts_per_provider=_MAX_EVALUATION_ATTEMPTS,
-            context="answer_evaluation",
-        )
+        return {"status": "recorded", "questions_answered": answered or 0}
 
     async def complete_session(self, session_id: uuid.UUID):
         session = await self.db.get(InterviewSession, session_id)

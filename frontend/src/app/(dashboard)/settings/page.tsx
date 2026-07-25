@@ -1,7 +1,7 @@
 'use client';
 
 import { useAuth } from '@/hooks/useAuth';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Bell, Lock, Shield, Check } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,11 +9,31 @@ import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 
+const NOTIFY_KEY = 'interviewos:emailNotifications';
+
 export default function SettingsPage() {
   const { user, resetPassword } = useAuth();
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [resetSent, setResetSent] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Persist the notification preference locally so the choice actually sticks
+  // across reloads (rather than resetting every visit).
+  useEffect(() => {
+    const saved = localStorage.getItem(NOTIFY_KEY);
+    if (saved !== null) setEmailNotifications(saved === 'true');
+  }, []);
+
+  const toggleEmailNotifications = () => {
+    setEmailNotifications((v) => {
+      const next = !v;
+      localStorage.setItem(NOTIFY_KEY, String(next));
+      toast.success(next ? 'Email summaries turned on' : 'Email summaries turned off');
+      return next;
+    });
+  };
+
+  const apiEndpoint = process.env.NEXT_PUBLIC_API_URL || 'not configured';
 
   const handlePasswordReset = async () => {
     if (!user?.email) return;
@@ -86,13 +106,7 @@ export default function SettingsPage() {
                 <p className="text-sm font-semibold">Email Session Summaries</p>
                 <p className="text-xs text-muted-foreground">Get performance summaries emailed after interview rounds</p>
               </div>
-              <Switch
-                checked={emailNotifications}
-                onChange={() => {
-                  setEmailNotifications((v) => !v);
-                  toast.success('Notification settings saved');
-                }}
-              />
+              <Switch checked={emailNotifications} onChange={toggleEmailNotifications} />
             </div>
           </Card>
         </motion.div>
@@ -110,9 +124,9 @@ export default function SettingsPage() {
               </div>
             </div>
             <div className="space-y-1 border-t border-border/40 pt-4 text-xs text-muted-foreground">
-              <p><strong>Environment:</strong> Production / Local Hybrid</p>
-              <p><strong>API Endpoint:</strong> http://localhost:8000</p>
+              <p><strong>API Endpoint:</strong> {apiEndpoint}</p>
               <p><strong>Account ID:</strong> {user?.id}</p>
+              <p><strong>Email:</strong> {user?.email}</p>
             </div>
           </Card>
         </motion.div>

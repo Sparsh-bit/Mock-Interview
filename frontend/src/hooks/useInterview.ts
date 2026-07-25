@@ -1,25 +1,51 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
 import { useRouter } from 'next/navigation';
+
+export interface InterviewPlan {
+  session_id: string;
+  topics: string[];
+  question_count: number;
+}
 
 export function useNextQuestion(sessionId: string) {
   return useQuery({
     queryKey: ['interview', 'next-question', sessionId],
     queryFn: async () => {
       const response = await getBrowserApiClient().get(`/api/v1/interview/${sessionId}/next`);
-      return response.data as { question: any | null; message?: string };
+      return response.data as {
+        question: {
+          id: string;
+          content: string;
+          type: string;
+          difficulty: string;
+        } | null;
+        message?: string;
+      };
     },
     staleTime: 0,
     gcTime: 0,
     enabled: !!sessionId,
+    // The interview flow must not retry-storm the user with "network error"
+    // toasts — a single retry smooths over a transient blip, then we surface
+    // a clean retry button in the UI.
+    retry: 1,
   });
+}
+
+export interface PlanInput {
+  trackId: string;
+  company: string;
+  program: string;
+  prompt: string;
+  resumeText: string;
 }
 
 export function useInterview() {
   const api = getBrowserApiClient();
   const router = useRouter();
-  const queryClient = useQueryClient();
 
+  // Legacy single-track quick start (kept for any direct entry points).
   const startSession = useMutation({
     mutationFn: async (trackId: string) => {
       const response = await api.post('/api/v1/interview/start', { track_id: trackId });
@@ -27,27 +53,69 @@ export function useInterview() {
     },
     onSuccess: (data) => {
       router.push(`/session/${data.session_id}`);
-    }
+    },
   });
 
+  // Generate a company/program/resume-tailored plan for the candidate to review.
+  // The AI call can take a while on the free-tier model, so this request gets a
+  // generous timeout (the default 30s would abort it mid-generation).
+  const createPlan = useMutation({
+    mutationFn: async (input: PlanInput) => {
+      const response = await api.post(
+        '/api/v1/interview/plan',
+        {
+          track_id: input.trackId,
+          company: input.company,
+          program: input.program,
+          prompt: input.prompt,
+          resume_text: input.resumeText,
+        },
+        { timeout: 150_000 }
+      );
+      return response.data as InterviewPlan;
+    },
+  });
+
+  // Approve the plan and begin the interview.
+  const approvePlan = useMutation({
+    mutationFn: async (sessionId: string) => {
+      await api.post(`/api/v1/interview/${sessionId}/approve`, {});
+      return sessionId;
+    },
+    onSuccess: (sessionId) => {
+      router.push(`/session/${sessionId}`);
+    },
+  });
+
+  // Record the answer. Scoring is deferred to the final report, so this just
+  // confirms the answer was stored and the flow moves on immediately. Delivery
+  // metrics (fillers, pauses, pace) are sent so the final report can analyse
+  // how the candidate spoke across the whole interview.
   const submitAnswer = useMutation({
-    mutationFn: async ({ sessionId, questionId, content }: { sessionId: string; questionId: string; content: string }) => {
+    mutationFn: async ({
+      sessionId,
+      questionId,
+      content,
+      delivery,
+    }: {
+      sessionId: string;
+      questionId: string;
+      content: string;
+      delivery?: {
+        filler_count: number;
+        pause_count: number;
+        total_pause_seconds: number;
+        words: number;
+        speaking_seconds: number;
+      };
+    }) => {
       const response = await api.post(`/api/v1/interview/${sessionId}/answer`, {
         question_id: questionId,
-        content
+        content,
+        ...(delivery ? { delivery } : {}),
       });
-      return response.data as {
-        technical_score: number;
-        communication_score: number;
-        completeness_score: number;
-        confidence_score: number;
-        overall_score: number;
-        strengths: string[];
-        weaknesses: string[];
-        feedback: string;
-        is_bluffing_detected: boolean;
-      };
-    }
+      return response.data as { status: string; questions_answered: number };
+    },
   });
 
   const completeSession = useMutation({
@@ -56,11 +124,13 @@ export function useInterview() {
     },
     onSuccess: (_, sessionId) => {
       router.push(`/report/${sessionId}`);
-    }
+    },
   });
 
   return {
     startSession,
+    createPlan,
+    approvePlan,
     submitAnswer,
     completeSession,
     useNextQuestion,

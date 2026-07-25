@@ -46,9 +46,24 @@ async def _verify_session_ownership(
 class StartSessionRequest(BaseModel):
     track_id: uuid.UUID
 
+class PlanRequest(BaseModel):
+    track_id: uuid.UUID
+    company: str = ""
+    program: str = ""
+    prompt: str = ""
+    resume_text: str = ""
+
+class DeliveryMetrics(BaseModel):
+    filler_count: int = 0
+    pause_count: int = 0
+    total_pause_seconds: int = 0
+    words: int = 0
+    speaking_seconds: int = 0
+
 class SubmitAnswerRequest(BaseModel):
     question_id: uuid.UUID
     content: str
+    delivery: DeliveryMetrics | None = None
 
 @router.post(
     "/start",
@@ -63,6 +78,42 @@ async def start_interview_session(
     orchestrator = InterviewOrchestrator(db)
     session = await orchestrator.start_session(current_user.user_id, request.track_id)
     return {"session_id": session.id, "status": session.status}
+
+@router.post(
+    "/plan",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_interview_start_rate_limit)],
+)
+async def plan_interview(
+    request: PlanRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a company/program-tailored interview plan for the candidate to review."""
+    orchestrator = InterviewOrchestrator(db)
+    plan = await orchestrator.create_plan(
+        current_user.user_id,
+        request.track_id,
+        request.company,
+        request.program,
+        request.prompt,
+        request.resume_text,
+    )
+    return plan
+
+@router.post("/{session_id}/approve")
+async def approve_interview(
+    session_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve the generated plan and begin the interview."""
+    await _verify_session_ownership(db, session_id, current_user)
+    orchestrator = InterviewOrchestrator(db)
+    ok = await orchestrator.approve_plan(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No plan found for this session.")
+    return {"status": "active"}
 
 @router.get("/{session_id}/next")
 async def get_next_question(
@@ -93,7 +144,12 @@ async def submit_answer(
 ):
     await _verify_session_ownership(db, session_id, current_user)
     orchestrator = InterviewOrchestrator(db)
-    result = await orchestrator.submit_answer(session_id, request.question_id, request.content)
+    result = await orchestrator.submit_answer(
+        session_id,
+        request.question_id,
+        request.content,
+        delivery=request.delivery.model_dump() if request.delivery else None,
+    )
     return result
 
 @router.post("/{session_id}/complete")

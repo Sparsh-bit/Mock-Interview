@@ -2,61 +2,61 @@
 
 import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Send, StopCircle, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, Mic, MicOff, Volume2 } from 'lucide-react';
+import {
+  Loader2,
+  Send,
+  StopCircle,
+  Sparkles,
+  Mic,
+  MicOff,
+  Volume2,
+  WifiOff,
+  RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
 import { PresenceMonitor } from '@/components/interview/PresenceMonitor';
+import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import type { CodeLanguage } from '@/hooks/useCode';
 import { useSpeechRecognition, useSpeechSynthesis } from '@/hooks/useSpeech';
-import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+import { summarizeDelivery } from '@/lib/speech/delivery';
+import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
-interface Feedback {
-  tech: number;
-  comm: number;
-  fb: string;
-  strengths: string[];
-  weaknesses: string[];
-  bluffing: boolean;
-}
-
-function ScoreDial({ label, value, accent }: { label: string; value: number; accent: 'primary' | 'violet' }) {
-  const color = accent === 'primary' ? 'text-primary' : 'text-accent-violet';
-  const ring = accent === 'primary' ? 'stroke-primary' : 'stroke-accent-violet';
-  const circumference = 2 * Math.PI * 26;
-  const offset = circumference - (value / 10) * circumference;
-
+/**
+ * Full-panel "generating the next question" animation. Scoring is deferred to
+ * the final report, so between questions the candidate sees this calm indicator
+ * (never a raw spinner or a blank screen) while the AI prepares what's next.
+ */
+function GeneratingQuestion({ label }: { label: string }) {
   return (
-    <div className="flex flex-col items-center gap-2">
-      <div className="relative h-16 w-16">
-        <svg className="h-16 w-16 -rotate-90" viewBox="0 0 64 64">
-          <circle cx="32" cy="32" r="26" strokeWidth="5" className="stroke-border/60" fill="none" />
-          <motion.circle
-            cx="32"
-            cy="32"
-            r="26"
-            strokeWidth="5"
-            fill="none"
-            strokeLinecap="round"
-            className={ring}
-            strokeDasharray={circumference}
-            initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset: offset }}
-            transition={{ duration: 0.9, ease: easeOutExpo, delay: 0.15 }}
-          />
-        </svg>
-        <div className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${color}`}>
-          {value.toFixed(1)}
-        </div>
+    <motion.div
+      initial="hidden"
+      animate="visible"
+      variants={scalePop}
+      className="flex flex-col items-center gap-5 py-16 text-center"
+    >
+      <div className="relative flex h-16 w-16 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/20" />
+        <span className="absolute inline-flex h-12 w-12 rounded-full bg-primary/10" />
+        <Sparkles className="relative h-7 w-7 text-primary" />
       </div>
-      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-    </div>
+      <div className="flex items-center gap-1.5">
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            className="h-2 w-2 rounded-full bg-primary"
+            animate={{ opacity: [0.3, 1, 0.3], y: [0, -3, 0] }}
+            transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15 }}
+          />
+        ))}
+      </div>
+      <p className="text-sm font-medium text-muted-foreground">{label}</p>
+    </motion.div>
   );
 }
 
@@ -65,31 +65,36 @@ export default function LiveSessionPage() {
   const sessionId = params.id as string;
   const { useNextQuestion, submitAnswer, completeSession } = useInterview();
 
-  const { data, isLoading, refetch } = useNextQuestion(sessionId);
+  const { data, isLoading, isFetching, isError, refetch } = useNextQuestion(sessionId);
   const [answer, setAnswer] = useState('');
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
-  // Voice is the primary way to answer; typing is a fallback when the mic
-  // or browser can't do speech recognition, so a candidate is never stuck.
+  const [answered, setAnswered] = useState(0);
+  // Voice is the primary way to answer; typing is a fallback when the mic or
+  // browser can't do speech recognition, so a candidate is never stuck.
   const [typing, setTyping] = useState(false);
 
   const stt = useSpeechRecognition();
   const tts = useSpeechSynthesis();
+  // Track how long the candidate actually spoke this answer, for pace/delivery.
+  const speakStartRef = useRef<number | null>(null);
+  const speakSecondsRef = useRef(0);
 
-  const isCoding = data?.question?.type === 'coding';
-  const questionText = data?.question?.content;
-  // Fall back to typing automatically if speech recognition isn't available.
+  const question = data?.question ?? null;
+  const isCoding = question?.type === 'coding';
+  const questionText = question?.content;
   const useTyping = typing || !stt.supported;
 
-  // Read each new question aloud (voice-first interview feel) unless the
-  // candidate has switched to the typing fallback.
+  // Show the generating animation while the next question is being prepared
+  // (initial load, refetch after submit, or a live cross-question being built).
+  const preparing = isLoading || (isFetching && !question) || submitAnswer.isPending;
+
+  // Read each new question aloud (voice-first feel) unless typing.
   useEffect(() => {
-    if (!useTyping && !isCoding && questionText && tts.supported && !feedback) {
+    if (!useTyping && !isCoding && questionText && tts.supported) {
       tts.speak(questionText);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questionText]);
 
-  // Feed finalized speech-to-text into the answer box.
   useEffect(() => {
     if (stt.transcript) setAnswer(stt.transcript);
   }, [stt.transcript]);
@@ -97,30 +102,57 @@ export default function LiveSessionPage() {
   const toggleMic = () => {
     if (stt.listening) {
       stt.stop();
+      if (speakStartRef.current) {
+        speakSecondsRef.current += (Date.now() - speakStartRef.current) / 1000;
+        speakStartRef.current = null;
+      }
     } else {
-      stt.reset();
-      setAnswer('');
+      if (!answer) {
+        stt.reset();
+        speakSecondsRef.current = 0;
+      }
+      speakStartRef.current = Date.now();
       stt.start();
     }
   };
 
+  // Submit the answer, then immediately advance to the next question — no
+  // per-question score is shown (all scoring appears at the end in the report).
   const submitContent = (content: string) => {
-    if (!content.trim() || !data?.question) return;
+    if (!content.trim() || !question) return;
+    stt.stop();
+    tts.cancel();
+    if (speakStartRef.current) {
+      speakSecondsRef.current += (Date.now() - speakStartRef.current) / 1000;
+      speakStartRef.current = null;
+    }
+
+    // Delivery metrics for the end-of-interview report (skip for coding, where
+    // "speaking" doesn't apply).
+    const seconds = Math.max(1, Math.round(speakSecondsRef.current));
+    const summary = summarizeDelivery({ text: content, seconds, pauses: stt.pauses });
+    const delivery = isCoding
+      ? undefined
+      : {
+          filler_count: summary.fillerCount,
+          pause_count: summary.pauseCount,
+          total_pause_seconds: summary.totalPauseSec,
+          words: summary.words,
+          speaking_seconds: seconds,
+        };
+
     submitAnswer.mutate(
-      { sessionId, questionId: data.question.id, content },
+      { sessionId, questionId: question.id, content, delivery },
       {
         onSuccess: (res) => {
-          setFeedback({
-            tech: res.technical_score,
-            comm: res.communication_score,
-            fb: res.feedback,
-            strengths: res.strengths ?? [],
-            weaknesses: res.weaknesses ?? [],
-            bluffing: res.is_bluffing_detected,
-          });
+          setAnswered(res.questions_answered);
+          setAnswer('');
+          stt.reset();
+          speakSecondsRef.current = 0;
+          refetch();
         },
         onError: (err: Error) => {
-          toast.error(err.message || 'Failed to submit answer.');
+          toast.error(err.message || 'Failed to submit answer. Please try again.');
         },
       }
     );
@@ -128,24 +160,42 @@ export default function LiveSessionPage() {
 
   const handleSubmit = () => submitContent(answer);
 
-  const handleNext = () => {
-    setAnswer('');
-    setFeedback(null);
-    stt.stop();
-    stt.reset();
-    tts.cancel();
-    refetch();
-  };
-
+  // ─── Loading / preparing ──────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <GeneratingQuestion label="Preparing your first question…" />
       </div>
     );
   }
 
-  if (data?.question === null) {
+  // ─── Network / server error — clean retry, no console/toast storm ─────────
+  if (isError) {
+    return (
+      <div className="hero-wash flex min-h-screen items-center justify-center bg-background p-6">
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={scalePop}
+          className="glass max-w-md rounded-2xl border-border/50 p-10 text-center"
+        >
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
+            <WifiOff className="h-7 w-7 text-destructive" />
+          </div>
+          <h2 className="mb-3 text-xl font-bold">Connection hiccup</h2>
+          <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
+            We couldn&apos;t load the next question. Your progress is saved — just try again.
+          </p>
+          <Button className="w-full" onClick={() => refetch()}>
+            <RefreshCw className="h-4 w-4" /> Retry
+          </Button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // ─── Interview complete ───────────────────────────────────────────────────
+  if (question === null && !preparing) {
     return (
       <div className="hero-wash flex min-h-screen items-center justify-center bg-background p-6">
         <motion.div
@@ -159,9 +209,14 @@ export default function LiveSessionPage() {
           </div>
           <h2 className="mb-3 text-2xl font-bold">Interview Complete</h2>
           <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
-            You&apos;ve reached the end of this track. Generating your final report&hellip;
+            Nicely done{answered ? ` — you answered ${answered} question${answered === 1 ? '' : 's'}` : ''}.
+            We&apos;ll now score every answer and build your full report.
           </p>
-          <Button className="w-full" onClick={() => completeSession.mutate(sessionId)} loading={completeSession.isPending}>
+          <Button
+            className="w-full"
+            onClick={() => completeSession.mutate(sessionId)}
+            loading={completeSession.isPending}
+          >
             View Final Report
           </Button>
         </motion.div>
@@ -181,6 +236,11 @@ export default function LiveSessionPage() {
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
           </span>
           <span className="text-sm font-semibold tracking-tight">Live Interview Session</span>
+          {answered > 0 && (
+            <span className="ml-1 rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+              {answered} answered
+            </span>
+          )}
         </div>
         <button
           onClick={() => completeSession.mutate(sessionId)}
@@ -200,92 +260,26 @@ export default function LiveSessionPage() {
         {/* Left: Question Area */}
         <motion.div variants={fadeUp} className="flex flex-1 flex-col gap-6">
           <div className="glass flex h-full flex-col rounded-2xl border-border/50 p-8">
-            <div className="mb-5 flex items-center gap-2">
-              <Badge variant="primary">Question</Badge>
-              {data?.question?.difficulty && (
-                <span className={`badge-${data.question.difficulty}`}>{data.question.difficulty}</span>
-              )}
-            </div>
-            <h1 className="text-2xl font-bold leading-relaxed tracking-[-0.01em]">
-              {data?.question?.content || 'Loading question…'}
-            </h1>
-
-            <AnimatePresence>
-              {feedback && (
+            <AnimatePresence mode="wait">
+              {preparing ? (
+                <GeneratingQuestion key="gen" label="Thinking about your next question…" />
+              ) : (
                 <motion.div
-                  initial="hidden"
-                  animate="visible"
-                  variants={staggerContainer(0.08)}
-                  className="mt-8 border-t border-border/50 pt-8"
+                  key={question?.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.35 }}
                 >
-                  <motion.h3
-                    variants={fadeUp}
-                    className="mb-5 text-xs font-semibold uppercase tracking-widest text-muted-foreground"
-                  >
-                    AI Evaluation
-                  </motion.h3>
-
-                  <motion.div variants={fadeUp} className="mb-5 flex gap-6">
-                    <ScoreDial label="Technical" value={feedback.tech} accent="primary" />
-                    <ScoreDial label="Communication" value={feedback.comm} accent="violet" />
-                  </motion.div>
-
-                  <motion.p variants={fadeUp} className="text-sm leading-relaxed text-foreground/85">
-                    {feedback.fb}
-                  </motion.p>
-
-                  {feedback.bluffing && (
-                    <motion.div
-                      variants={fadeUp}
-                      className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3"
-                    >
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                      <p className="text-xs font-medium text-amber-300">
-                        This answer sounded confident but may not be fully accurate — review the gaps below.
-                      </p>
-                    </motion.div>
-                  )}
-
-                  {(feedback.strengths.length > 0 || feedback.weaknesses.length > 0) && (
-                    <motion.div variants={fadeUp} className="mt-5 grid gap-4 sm:grid-cols-2">
-                      {feedback.strengths.length > 0 && (
-                        <div>
-                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Strengths
-                          </p>
-                          <ul className="space-y-1.5 text-sm text-foreground/80">
-                            {feedback.strengths.map((s, i) => (
-                              <li key={i} className="flex gap-2">
-                                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-400" />
-                                {s}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {feedback.weaknesses.length > 0 && (
-                        <div>
-                          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-orange-600">
-                            <AlertTriangle className="h-3.5 w-3.5" /> Gaps
-                          </p>
-                          <ul className="space-y-1.5 text-sm text-foreground/80">
-                            {feedback.weaknesses.map((w, i) => (
-                              <li key={i} className="flex gap-2">
-                                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-orange-400" />
-                                {w}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </motion.div>
-                  )}
-
-                  <motion.div variants={fadeUp}>
-                    <Button variant="ghost" className="mt-6 px-0 text-primary hover:bg-transparent hover:opacity-80" onClick={handleNext}>
-                      Next Question <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </motion.div>
+                  <div className="mb-5 flex items-center gap-2">
+                    <Badge variant="primary">Question</Badge>
+                    {question?.difficulty && (
+                      <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
+                    )}
+                  </div>
+                  <h1 className="text-2xl font-bold leading-relaxed tracking-[-0.01em]">
+                    {question?.content}
+                  </h1>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -296,7 +290,10 @@ export default function LiveSessionPage() {
         </motion.div>
 
         {/* Right: Answer Area */}
-        <motion.div variants={fadeUp} className="glass flex flex-1 flex-col rounded-2xl border-border/50 p-6">
+        <motion.div
+          variants={fadeUp}
+          className="glass flex flex-1 flex-col rounded-2xl border-border/50 p-6"
+        >
           <div className="mb-4 flex items-center justify-between">
             <span className="text-sm font-semibold text-muted-foreground">
               {isCoding ? 'Your Solution' : 'Your Answer'}
@@ -309,7 +306,9 @@ export default function LiveSessionPage() {
                   title="Read question aloud"
                   className={cn(
                     'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                    tts.speaking ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                    tts.speaking
+                      ? 'border-primary/30 bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:text-foreground'
                   )}
                 >
                   <Volume2 className="h-3 w-3" /> {tts.speaking ? 'Speaking…' : 'Hear question'}
@@ -318,7 +317,7 @@ export default function LiveSessionPage() {
             </div>
           </div>
 
-          {/* Voice picker — let the candidate choose the interviewer voice. */}
+          {/* Voice picker */}
           {!isCoding && !useTyping && tts.supported && tts.voices.length > 0 && (
             <div className="mb-4 flex items-center gap-2">
               <label className="text-xs text-muted-foreground">Interviewer voice</label>
@@ -345,30 +344,26 @@ export default function LiveSessionPage() {
 
           {isCoding ? (
             <CodingWorkspace
-              disabled={!!feedback}
+              disabled={preparing}
               submitting={submitAnswer.isPending}
               onSubmit={({ language, code }: { language: CodeLanguage; code: string }) =>
                 submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
               }
             />
           ) : useTyping ? (
-            /* Typing fallback (mic/browser unsupported, or candidate opted in). */
+            /* Typing fallback */
             <>
               <textarea
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
-                disabled={!!feedback || submitAnswer.isPending}
+                disabled={preparing}
                 placeholder="Type your answer here as if you were speaking to an interviewer…"
                 className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
               />
               <div className="mt-3 flex items-center justify-between gap-3">
-                {submitAnswer.isPending ? (
-                  <AIWorkingIndicator />
-                ) : (
-                  <span className="text-xs text-muted-foreground/70">
-                    {wordCount} {wordCount === 1 ? 'word' : 'words'}
-                  </span>
-                )}
+                <span className="text-xs text-muted-foreground/70">
+                  {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                </span>
                 <div className="flex items-center gap-3">
                   {stt.supported && (
                     <button
@@ -378,18 +373,18 @@ export default function LiveSessionPage() {
                       Use voice instead
                     </button>
                   )}
-                  <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
-                    <Send className="h-4 w-4" /> Submit Answer
+                  <Button onClick={handleSubmit} disabled={preparing || !answer.trim()} loading={submitAnswer.isPending}>
+                    <Send className="h-4 w-4" /> Submit &amp; Next
                   </Button>
                 </div>
               </div>
             </>
           ) : (
-            /* Voice-first answer UI. */
+            /* Voice-first answer UI */
             <div className="flex flex-1 flex-col items-center justify-center gap-5 py-4">
               <button
                 onClick={toggleMic}
-                disabled={!!feedback || submitAnswer.isPending}
+                disabled={preparing}
                 aria-label={stt.listening ? 'Stop recording' : 'Start recording'}
                 className={cn(
                   'relative flex h-24 w-24 items-center justify-center rounded-full transition-all disabled:opacity-50',
@@ -405,52 +400,46 @@ export default function LiveSessionPage() {
               </button>
 
               <p className="text-sm font-medium text-muted-foreground">
-                {submitAnswer.isPending
-                  ? 'Evaluating your answer…'
-                  : stt.listening
-                    ? 'Listening… tap to stop'
-                    : answer
-                      ? 'Tap the mic to add more, or submit'
-                      : 'Tap the mic and speak your answer'}
+                {stt.listening
+                  ? 'Listening… tap to stop'
+                  : answer
+                    ? 'Tap the mic to add more, or submit'
+                    : 'Tap the mic and speak your answer'}
               </p>
 
-              {/* Live transcript */}
+              {/* Live transcript — filler words in red, pauses marked */}
               <div className="min-h-[96px] w-full flex-1 overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
-                {answer || stt.interim ? (
-                  <span>
-                    {answer}{' '}
-                    <span className="text-muted-foreground/60">{stt.listening ? stt.interim : ''}</span>
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground/50">Your spoken answer will appear here…</span>
-                )}
+                <DeliveryTranscript
+                  text={answer}
+                  pauses={stt.pauses}
+                  interim={stt.listening ? stt.interim : ''}
+                />
               </div>
 
               <div className="flex w-full items-center justify-between gap-3">
-                {submitAnswer.isPending ? (
-                  <AIWorkingIndicator />
-                ) : (
-                  <button
-                    onClick={() => {
-                      stt.stop();
-                      setTyping(true);
-                    }}
-                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  >
-                    Trouble with the mic? Type instead
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    stt.stop();
+                    setTyping(true);
+                  }}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Trouble with the mic? Type instead
+                </button>
                 <div className="flex items-center gap-2">
                   {answer && !submitAnswer.isPending && (
                     <button
-                      onClick={() => { setAnswer(''); stt.reset(); }}
+                      onClick={() => {
+                        setAnswer('');
+                        stt.reset();
+                      }}
                       className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
                     >
                       Clear
                     </button>
                   )}
-                  <Button onClick={handleSubmit} disabled={!!feedback || !answer.trim()} loading={submitAnswer.isPending}>
-                    <Send className="h-4 w-4" /> Submit Answer
+                  <Button onClick={handleSubmit} disabled={preparing || !answer.trim()} loading={submitAnswer.isPending}>
+                    <Send className="h-4 w-4" /> Submit &amp; Next
                   </Button>
                 </div>
               </div>

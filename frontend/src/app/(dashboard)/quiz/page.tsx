@@ -56,6 +56,22 @@ export default function QuizPage() {
 
   const starting = startQuiz.isPending || startBankQuiz.isPending;
 
+  // The topic field is a comma-separated list so several preset topics can be
+  // combined (e.g. "Core Java & OOP, SQL & Databases"). Clicking a chip toggles
+  // it in or out; typing custom text still works alongside the chips.
+  const selectedTopics = topic
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const toggleTopic = (t: string) => {
+    const exists = selectedTopics.some((s) => s.toLowerCase() === t.toLowerCase());
+    const next = exists
+      ? selectedTopics.filter((s) => s.toLowerCase() !== t.toLowerCase())
+      : [...selectedTopics, t];
+    setTopic(next.join(', '));
+  };
+
   const handleStart = () => {
     const onSuccess = (data: { quiz_id: string; questions: QuizQuestion[]; minutes: number }) => {
       setQuizId(data.quiz_id);
@@ -186,7 +202,7 @@ export default function QuizPage() {
 
                 <div>
                   <label htmlFor="quiz-topic" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Topic or request <span className="font-normal normal-case">(optional)</span>
+                    Topic or request <span className="font-normal normal-case">(optional — pick one or more)</span>
                   </label>
                   <Input
                     id="quiz-topic"
@@ -195,19 +211,25 @@ export default function QuizPage() {
                     placeholder="e.g. HashMap internals, SQL joins, OOP concepts…"
                   />
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {PRESET_TOPICS.map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setTopic(t)}
-                        className={cn(
-                          'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                          topic === t ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
-                        )}
-                      >
-                        {t}
-                      </button>
-                    ))}
+                    {PRESET_TOPICS.map((t) => {
+                      const active = selectedTopics.some((s) => s.toLowerCase() === t.toLowerCase());
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => toggleTopic(t)}
+                          className={cn(
+                            'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                            active
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground hover:text-foreground'
+                          )}
+                        >
+                          {t}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </>

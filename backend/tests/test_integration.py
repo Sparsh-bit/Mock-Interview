@@ -184,15 +184,14 @@ class TestInterviewEndpoints:
         assert "session_id" in data
         assert data["status"] == "active"
 
-    async def test_submit_answer_real_ai_evaluation(
+    async def test_submit_answer_records_without_scoring(
         self, async_client: AsyncClient, auth_headers: dict, db_session
     ):
         """
         End-to-end: start a session, fetch a question, submit an answer, and
-        confirm the response is a REAL AI-scored evaluation (not the old
-        hardcoded heuristic fallback) -- exercises the full
-        PromptBuilder -> GLMProvider -> ResponseParser -> Pydantic pipeline
-        against the live configured AI provider.
+        confirm the answer is simply RECORDED. Scoring is deferred to the final
+        report (so the interview stays fluent and no score is shown per
+        question) -- the submit response must NOT contain per-answer scores.
         """
         company = Company(name="TestCo", slug=f"testco-{uuid.uuid4().hex[:6]}", description="Test")
         db_session.add(company)
@@ -238,17 +237,14 @@ class TestInterviewEndpoints:
         assert answer_resp.status_code == 200, answer_resp.text
         data = answer_resp.json()
 
-        for key in (
-            "technical_score", "communication_score", "completeness_score",
-            "confidence_score", "overall_score", "strengths", "weaknesses",
-            "feedback", "is_bluffing_detected",
-        ):
-            assert key in data, f"missing '{key}' in evaluation response"
+        # New store-only contract: the answer is recorded, no scoring here.
+        assert data["status"] == "recorded"
+        assert data["questions_answered"] >= 1
 
-        assert 0.0 <= data["overall_score"] <= 10.0
-        assert isinstance(data["feedback"], str) and len(data["feedback"]) > 0
-        assert isinstance(data["strengths"], list)
-        assert isinstance(data["weaknesses"], list)
+        # Per-answer scores must NOT leak into the submit response anymore --
+        # they belong to the end-of-interview report.
+        for key in ("technical_score", "overall_score", "feedback"):
+            assert key not in data, f"'{key}' should not be in the submit response"
 
     async def test_get_next_question_no_session(self, async_client: AsyncClient, auth_headers: dict):
         """A nonexistent (or not-owned) session must 404, not silently return an empty question."""

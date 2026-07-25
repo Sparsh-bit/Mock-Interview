@@ -26,6 +26,7 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import cache_delete, cache_get, cache_set, get_redis
 from app.db.session import AsyncSession, get_db
+from app.services.activity import log_activity
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -273,6 +274,7 @@ async def submit_quiz(
     request: SubmitQuizRequest,
     current_user: CurrentUser,
     redis: Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
 ):
     """Grade a submitted quiz against the server-side answer key."""
     raw = await cache_get(redis, f"quiz:answers:{quiz_id}")
@@ -308,9 +310,25 @@ async def submit_quiz(
     # One-shot quiz: the key is consumed on submit so it can't be re-graded.
     await cache_delete(redis, f"quiz:answers:{quiz_id}")
 
+    percentage = round((score / total) * 100, 1) if total else 0.0
+    topics = sorted({meta.get("topic", "General") for meta in answer_key.values()})
+    await log_activity(
+        db,
+        current_user.user_id,
+        activity_type="quiz",
+        title=f"Quiz — {', '.join(topics) or 'General'}",
+        score=percentage,
+        details={
+            "score": score,
+            "total": total,
+            "percentage": percentage,
+            "topics": topics,
+        },
+    )
+
     return SubmitQuizResponse(
         score=score,
         total=total,
-        percentage=round((score / total) * 100, 1) if total else 0.0,
+        percentage=percentage,
         results=results,
     )

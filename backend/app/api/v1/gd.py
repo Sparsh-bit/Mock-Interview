@@ -16,9 +16,12 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.session import get_db
+from app.services.activity import log_activity
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -139,7 +142,11 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
 
 
 @router.post("/evaluate", response_model=GDEvaluateResponse, dependencies=[Depends(_gd_rate_limit)])
-async def gd_evaluate(request: GDEvaluateRequest, current_user: CurrentUser):
+async def gd_evaluate(
+    request: GDEvaluateRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
     """Score the candidate's participation in the discussion."""
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
@@ -160,5 +167,13 @@ async def gd_evaluate(request: GDEvaluateRequest, current_user: CurrentUser):
         max_tokens=800,
         attempts_per_provider=2,
         context="gd_evaluation",
+    )
+    await log_activity(
+        db,
+        current_user.user_id,
+        activity_type="group_discussion",
+        title=f"Group Discussion — {request.topic}",
+        score=round(evaluation.overall_score * 10, 1),
+        details=evaluation.model_dump(),
     )
     return GDEvaluateResponse(**evaluation.model_dump())

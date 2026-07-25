@@ -66,6 +66,8 @@ class SessionSummaryResponse(BaseModel):
     id: uuid.UUID
     track_name: str
     company_name: str
+    program: str | None = None
+    topics: list[str] = []
     status: str
     mode: str
     questions_asked: int
@@ -214,6 +216,12 @@ async def get_session_history(
         .join(Company, InterviewTrack.company_id == Company.id)
         .outerjoin(Report, Report.session_id == InterviewSession.id)
         .where(InterviewSession.user_id == current_user.user_id)
+        # Hide empty, abandoned plan sessions (created but never answered) so the
+        # history shows real interviews only, not clutter.
+        .where(
+            (InterviewSession.questions_asked > 0)
+            | (InterviewSession.status == "completed")
+        )
         .order_by(InterviewSession.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -221,18 +229,29 @@ async def get_session_history(
 
     rows = result.all()
 
-    return [
-        SessionSummaryResponse(
-            id=row.InterviewSession.id,
-            track_name=row.track_name,
-            company_name=row.company_name,
-            status=row.InterviewSession.status,
-            mode=row.InterviewSession.mode,
-            questions_asked=row.InterviewSession.questions_asked,
-            overall_score=row.overall_score,
-            started_at=row.InterviewSession.started_at,
-            completed_at=row.InterviewSession.completed_at,
-            duration_seconds=row.InterviewSession.duration_seconds,
+    summaries: list[SessionSummaryResponse] = []
+    for row in rows:
+        # Prefer the company/program the candidate actually chose in setup
+        # (stored on the session) over the generic track name, so each interview
+        # is named for what it really was.
+        meta = row.InterviewSession.session_metadata or {}
+        meta_company = (meta.get("company") or "").strip()
+        meta_program = (meta.get("program") or "").strip()
+        topics = meta.get("topics") or []
+        summaries.append(
+            SessionSummaryResponse(
+                id=row.InterviewSession.id,
+                track_name=meta_program or row.track_name,
+                company_name=meta_company or row.company_name,
+                program=meta_program or None,
+                topics=topics if isinstance(topics, list) else [],
+                status=row.InterviewSession.status,
+                mode=row.InterviewSession.mode,
+                questions_asked=row.InterviewSession.questions_asked,
+                overall_score=row.overall_score,
+                started_at=row.InterviewSession.started_at,
+                completed_at=row.InterviewSession.completed_at,
+                duration_seconds=row.InterviewSession.duration_seconds,
+            )
         )
-        for row in rows
-    ]
+    return summaries

@@ -33,6 +33,8 @@ export interface SessionSummary {
   id: string;
   track_name: string;
   company_name: string;
+  program: string | null;
+  topics: string[];
   status: string;
   mode: string;
   questions_asked: number;
@@ -94,6 +96,20 @@ export interface ReportData {
   is_shared: boolean;
   created_at: string;
   pdf_url: string | null;
+  delivery: {
+    filler_count?: number;
+    pause_count?: number;
+    total_pause_seconds?: number;
+    words?: number;
+    speaking_seconds?: number;
+    wpm?: number;
+    answers?: number;
+  } | null;
+  previous: {
+    overall_score: number;
+    readiness_level: string;
+    created_at: string | null;
+  } | null;
 }
 
 export function useTracks() {

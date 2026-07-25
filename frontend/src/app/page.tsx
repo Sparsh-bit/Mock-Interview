@@ -11,7 +11,12 @@ import {
   Mic,
   Target,
   TrendingUp,
-  Zap,
+  MessageSquare,
+  ListChecks,
+  Camera,
+  Sparkles,
+  ShieldCheck,
+  Cpu,
 } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -19,41 +24,41 @@ import { cn } from '@/lib/utils';
 const FEATURES = [
   {
     icon: Brain,
-    title: 'Adaptive AI Interviewer',
+    title: 'Company & Program Tailored',
     description:
-      'Questions get harder when you answer well and easier when you struggle. Just like a real technical interview.',
+      'Tell us the company and program — Cognizant GenC, GenC Next, TCS, Infosys — and the AI builds a realistic, ordered interview: warm-up first, then technical, scenario and HR.',
     color: 'from-blue-500/20 to-blue-600/5',
     iconColor: 'text-blue-600',
   },
   {
     icon: FileText,
-    title: 'Resume-Personalized Sessions',
+    title: 'Resume-Aware Questions',
     description:
-      'Upload your resume and get interviews tailored to YOUR experience. Java in your resume? Expect deep Java questions.',
+      'Add your resume and the interviewer asks about YOUR actual projects, skills and experience — exactly like a real panel that read it beforehand.',
     color: 'from-purple-500/20 to-purple-600/5',
     iconColor: 'text-accent-violet',
   },
   {
-    icon: Zap,
-    title: 'Real-Time Evaluation',
-    description:
-      'Get scored after every single answer — technical accuracy, communication clarity, completeness, and confidence.',
-    color: 'from-yellow-500/20 to-yellow-600/5',
-    iconColor: 'text-amber-600',
-  },
-  {
     icon: Mic,
-    title: 'Voice Interview Mode',
+    title: 'Voice-First Interview',
     description:
-      'Practice speaking your answers aloud. Whisper transcription converts speech to text for full evaluation.',
+      'Speak your answers aloud with a natural interviewer voice reading each question. Typing is always there as a fallback, so you are never stuck.',
     color: 'from-green-500/20 to-green-600/5',
     iconColor: 'text-emerald-600',
   },
   {
-    icon: TrendingUp,
-    title: 'Detailed Performance Reports',
+    icon: Sparkles,
+    title: 'Live Cross-Questions',
     description:
-      'After each session, get an interview-readiness assessment, topic-by-topic scores, and an exact improvement roadmap.',
+      'The AI listens to what you actually said and occasionally follows up — probing a claim or asking for a concrete example — just like a real interviewer.',
+    color: 'from-amber-500/20 to-amber-600/5',
+    iconColor: 'text-amber-600',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Full Report at the End',
+    description:
+      'No score pop-ups mid-interview to break your flow. At the end you get an interview-readiness assessment, topic-by-topic scores and an improvement roadmap.',
     color: 'from-red-500/20 to-red-600/5',
     iconColor: 'text-red-600',
   },
@@ -61,21 +66,34 @@ const FEATURES = [
     icon: Target,
     title: 'Bluffing Detection',
     description:
-      'The AI can detect when you sound confident but are factually wrong — and it challenges you. No easy passes.',
+      'The report flags answers that sounded confident but were factually thin — so you fix the gaps you did not know you had. No easy passes.',
     color: 'from-orange-500/20 to-orange-600/5',
     iconColor: 'text-orange-600',
   },
 ];
 
-const STATS = [
-  { label: 'Mock Sessions Completed', value: '12,400+' },
-  { label: 'Average Score Improvement', value: '38%' },
-  { label: 'Companies Covered', value: '50+' },
-  { label: 'Questions in Knowledge Base', value: '2,000+' },
+const MODES = [
+  { icon: MessageSquare, title: 'Group Discussion', text: 'An AI panel debates a topic; you contribute and get scored on clarity, relevance and engagement.' },
+  { icon: Mic, title: 'Communication Round', text: 'AI-proctored spoken answers scored on pace, structure, filler words and confidence.' },
+  { icon: ListChecks, title: 'Practice Quizzes', text: 'Timed MCQs — curated fresher banks or fresh AI-generated sets, different every time.' },
+  { icon: Code2, title: 'Coding Round', text: 'A real in-browser editor wired to a compiler for hands-on coding questions.' },
+  { icon: Camera, title: 'Presence Analysis', text: 'Optional on-device camera & mic check for eye-contact and delivery — never stored, never uploaded.' },
+  { icon: FileText, title: 'Unified Activity Report', text: 'Every interview, GD, communication round and quiz in one history, newest first.' },
 ];
 
-const COMPANIES = [
-  'Cognizant', 'TCS', 'Infosys', 'Wipro', 'Capgemini', 'Accenture',
+const STATS = [
+  { label: 'Interview Rounds', value: '6+' },
+  { label: 'Fresher Topics Covered', value: '40+' },
+  { label: 'Company Tracks', value: '50+' },
+  { label: 'Question Bank', value: '2,000+' },
+];
+
+const COMPANIES = ['Cognizant', 'TCS', 'Infosys', 'Wipro', 'Capgemini', 'Accenture'];
+
+const PERSONAS = [
+  { name: 'Riya', role: 'Friendly HR', from: '#6366f1', to: '#8b5cf6' },
+  { name: 'Arjun', role: 'Tech Lead', from: '#0ea5e9', to: '#2563eb' },
+  { name: 'Meera', role: 'Senior Panelist', from: '#10b981', to: '#059669' },
 ];
 
 const containerVariants: Variants = {
@@ -88,32 +106,50 @@ const itemVariants: Variants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
 };
 
+function PersonaAvatar({ name, from, to }: { name: string; from: string; to: string }) {
+  const initial = name.charAt(0);
+  return (
+    <svg viewBox="0 0 64 64" className="h-12 w-12 shrink-0" aria-hidden>
+      <defs>
+        <linearGradient id={`g-${name}`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={from} />
+          <stop offset="100%" stopColor={to} />
+        </linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="32" fill={`url(#g-${name})`} />
+      <text x="32" y="41" textAnchor="middle" fontSize="26" fontWeight="700" fill="white">
+        {initial}
+      </text>
+    </svg>
+  );
+}
+
 export default function LandingPage() {
   return (
     <div className="hero-wash relative min-h-screen overflow-hidden bg-background">
-      {/* Background grid */}
+      {/* Background grid + gradient orbs for depth */}
       <div className="pointer-events-none absolute inset-0 grid-bg opacity-100" />
+      <div className="pointer-events-none absolute -left-40 top-20 h-96 w-96 rounded-full bg-primary/20 blur-[120px]" />
+      <div className="pointer-events-none absolute -right-40 top-96 h-96 w-96 rounded-full bg-accent-violet/20 blur-[120px]" />
 
       {/* ── Navbar ─────────────────────────────────────────────────────────── */}
-      <nav className="relative z-10 flex items-center justify-between px-8 py-6 max-w-7xl mx-auto">
+      <nav className="relative z-10 mx-auto flex max-w-7xl items-center justify-between px-8 py-6">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
             <Code2 className="h-4 w-4 text-primary-foreground" />
           </div>
           <span className="text-lg font-bold tracking-tight">InterviewOS</span>
         </div>
 
-        <div className="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
-          <Link href="#features" className="hover:text-foreground transition-colors">Features</Link>
-          <Link href="#companies" className="hover:text-foreground transition-colors">Companies</Link>
-          <Link href="#how-it-works" className="hover:text-foreground transition-colors">How It Works</Link>
+        <div className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
+          <Link href="#features" className="transition-colors hover:text-foreground">Features</Link>
+          <Link href="#rounds" className="transition-colors hover:text-foreground">Rounds</Link>
+          <Link href="#companies" className="transition-colors hover:text-foreground">Companies</Link>
+          <Link href="#tech" className="transition-colors hover:text-foreground">Technology</Link>
         </div>
 
         <div className="flex items-center gap-3">
-          <Link
-            href="/login"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
+          <Link href="/login" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
             Sign in
           </Link>
           <Link href="/register" className={cn(buttonVariants({ size: 'sm' }))}>
@@ -124,34 +160,31 @@ export default function LandingPage() {
       </nav>
 
       {/* ── Hero ───────────────────────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-5xl px-8 pt-20 pb-32 text-center">
+      <section className="relative z-10 mx-auto max-w-5xl px-8 pb-32 pt-20 text-center">
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
         >
-          {/* Tag */}
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-medium text-primary">
-            <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-            Cognizant Digital Nurture • Java FSE Track Now Live
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+            Cognizant Digital Nurture • Java FSE / GenC / GenC Next
           </div>
 
-          {/* Headline */}
           <h1 className="mx-auto max-w-4xl text-5xl font-bold tracking-tight sm:text-7xl">
-            Ace Your Technical Interview with{' '}
-            <span className="gradient-text">AI That Thinks Like a Recruiter</span>
+            The most realistic{' '}
+            <span className="gradient-text">AI mock interview</span> for freshers
           </h1>
 
           <p className="mx-auto mt-8 max-w-2xl text-lg text-muted-foreground">
-            Practice Cognizant, TCS, Infosys, and Wipro interviews with an AI interviewer
-            that adapts in real time — probing deeper when you&apos;re strong, simplifying
-            when you struggle, and detecting when you&apos;re bluffing.
+            Pick your company and program, add your resume, and step into a fluent, voice-first
+            interview that adapts to your answers — then get a full readiness report scored at the end.
           </p>
 
-          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link
               href="/register"
-              className="group inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:shadow-glow-lg hover:bg-primary/90"
+              className="group inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
             >
               Start Free Mock Interview
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
@@ -166,79 +199,61 @@ export default function LandingPage() {
           </div>
         </motion.div>
 
-        {/* Hero visual — mock interview UI */}
+        {/* Hero visual — plan approval + voice interview mock */}
         <motion.div
-          className="mt-20 mx-auto max-w-4xl"
+          className="mx-auto mt-20 max-w-4xl"
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.2, ease: 'easeOut' }}
         >
-          <div className="glass rounded-2xl border border-border/50 overflow-hidden shadow-card">
-            {/* Window chrome */}
+          <div className="glass overflow-hidden rounded-2xl border border-border/50 shadow-card">
             <div className="flex items-center gap-2 border-b border-border/50 bg-surface/50 px-4 py-3">
               <div className="h-3 w-3 rounded-full bg-red-500/60" />
               <div className="h-3 w-3 rounded-full bg-yellow-500/60" />
               <div className="h-3 w-3 rounded-full bg-green-500/60" />
-              <span className="ml-3 text-xs text-muted-foreground">
-                Cognizant Java FSE — Question 4/20
-              </span>
+              <span className="ml-3 text-xs text-muted-foreground">Cognizant GenC — Live Interview</span>
               <div className="ml-auto flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-xs text-green-400 font-medium">Live</span>
+                <div className="h-2 w-2 animate-pulse rounded-full bg-green-400" />
+                <span className="text-xs font-medium text-green-400">Live</span>
               </div>
             </div>
 
-            {/* Interview UI mock */}
-            <div className="grid grid-cols-2 divide-x divide-border/50 min-h-[280px]">
+            <div className="grid min-h-[280px] grid-cols-2 divide-x divide-border/50">
               {/* Question panel */}
-              <div className="p-6 space-y-4">
-                <div className="flex items-center gap-2 mb-4">
-                  <span className="badge-medium">Medium</span>
-                  <span className="text-xs text-muted-foreground">Java Collections • 2:45 remaining</span>
+              <div className="space-y-4 p-6 text-left">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="badge-medium">Warm-up</span>
+                  <span className="text-xs text-muted-foreground">Introduction</span>
                 </div>
-                <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                  <div className="h-full w-[40%] bg-primary rounded-full" />
-                </div>
-                <p className="text-sm font-medium text-foreground leading-relaxed">
-                  Explain the internal implementation of{' '}
-                  <code className="text-primary">HashMap</code> in Java. What happens
-                  when two keys hash to the same bucket?
+                <p className="text-sm font-medium leading-relaxed text-foreground">
+                  To start, tell me a little about yourself and walk me through the project
+                  you&apos;re most proud of from your resume.
                 </p>
-                <div className="pt-2 space-y-2">
-                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Evaluating:</p>
+                <div className="pt-2">
+                  <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Planned topics
+                  </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {['Hash function', 'Collision handling', 'Load factor', 'Resizing'].map(k => (
+                    {['Introduction', 'Java Collections', 'Spring Boot', 'SQL', 'HR'].map((k) => (
                       <span key={k} className="badge-outline">{k}</span>
                     ))}
                   </div>
                 </div>
               </div>
 
-              {/* Answer panel */}
-              <div className="p-6 flex flex-col">
-                <p className="text-sm text-muted-foreground mb-3 font-medium">Your Answer</p>
-                <div className="flex-1 rounded-lg border border-border bg-surface p-3">
-                  <p className="text-sm text-foreground/90 leading-relaxed">
-                    HashMap uses an array of linked lists (buckets). The{' '}
-                    <code className="text-primary text-xs">hashCode()</code> determines the bucket index.
-                    When collision occurs, Java 8 uses a balanced tree instead of linked list
-                    when bucket size exceeds 8...
-                  </p>
-                  <span className="inline-block h-4 w-0.5 bg-primary animate-pulse mt-1" />
+              {/* Answer panel — voice-first */}
+              <div className="flex flex-col items-center justify-center gap-4 p-6">
+                <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-glow">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-30" />
+                  <Mic className="relative h-8 w-8" />
                 </div>
-
-                {/* Live score */}
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {[
-                    { label: 'Technical', value: '8.5', color: 'text-emerald-600' },
-                    { label: 'Clarity', value: '7.0', color: 'text-blue-600' },
-                    { label: 'Depth', value: '—', color: 'text-muted-foreground' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="rounded-lg bg-surface-elevated p-2 text-center">
-                      <p className={`text-sm font-bold ${color}`}>{value}</p>
-                      <p className="text-[10px] text-muted-foreground">{label}</p>
-                    </div>
-                  ))}
+                <p className="text-xs font-medium text-muted-foreground">Listening… speak your answer</p>
+                <div className="w-full rounded-lg border border-border bg-surface p-3 text-left">
+                  <p className="text-sm leading-relaxed text-foreground/90">
+                    Sure — I&apos;m a final-year CS student. My favourite project was a Spring Boot
+                    inventory API where I…
+                    <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-primary align-middle" />
+                  </p>
                 </div>
               </div>
             </div>
@@ -257,12 +272,8 @@ export default function LandingPage() {
             viewport={{ once: true }}
           >
             {STATS.map(({ label, value }) => (
-              <motion.div
-                key={label}
-                variants={itemVariants}
-                className="text-center"
-              >
-                <p className="text-3xl font-bold gradient-text-blue">{value}</p>
+              <motion.div key={label} variants={itemVariants} className="text-center">
+                <p className="gradient-text-blue text-3xl font-bold">{value}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{label}</p>
               </motion.div>
             ))}
@@ -283,9 +294,9 @@ export default function LandingPage() {
             Built Different.{' '}
             <span className="gradient-text">Interviews, Not Quizzes.</span>
           </h2>
-          <p className="mt-4 text-muted-foreground max-w-2xl mx-auto">
-            Most interview tools are just Q&A databases. InterviewOS is a simulation engine
-            that reproduces the full experience of a real technical interview round.
+          <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
+            Most interview tools are just Q&amp;A databases. InterviewOS is a simulation engine that
+            reproduces the full experience of a real technical interview round.
           </p>
         </motion.div>
 
@@ -300,19 +311,79 @@ export default function LandingPage() {
             <motion.div
               key={title}
               variants={itemVariants}
-              className="glass-hover group relative rounded-xl p-6 overflow-hidden cursor-default"
+              className="glass-hover group relative cursor-default overflow-hidden rounded-xl p-6"
             >
-              <div className={`absolute inset-0 bg-gradient-to-br ${color} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+              <div className={`absolute inset-0 bg-gradient-to-br ${color} opacity-0 transition-opacity duration-300 group-hover:opacity-100`} />
               <div className="relative">
-                <div className={`mb-4 inline-flex items-center justify-center h-10 w-10 rounded-lg bg-muted ${iconColor}`}>
+                <div className={`mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted ${iconColor}`}>
                   <Icon className="h-5 w-5" />
                 </div>
-                <h3 className="text-base font-semibold mb-2">{title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+                <h3 className="mb-2 text-base font-semibold">{title}</h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
               </div>
             </motion.div>
           ))}
         </motion.div>
+      </section>
+
+      {/* ── Rounds / Modes ─────────────────────────────────────────────────── */}
+      <section id="rounds" className="relative z-10 mx-auto max-w-7xl px-8 py-12">
+        <motion.div
+          className="mb-12 text-center"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+        >
+          <p className="section-label mb-3">Every Round in One Place</p>
+          <h2 className="text-4xl font-bold">Practice the whole placement process</h2>
+          <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
+            From the technical panel to the group discussion, the aptitude quiz and the HR round —
+            all in one platform, all scored.
+          </p>
+        </motion.div>
+
+        <motion.div
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          variants={containerVariants}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+        >
+          {MODES.map(({ icon: Icon, title, text }) => (
+            <motion.div key={title} variants={itemVariants} className="glass rounded-xl border border-border/50 p-6">
+              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Icon className="h-5 w-5" />
+              </div>
+              <h3 className="mb-2 text-base font-semibold">{title}</h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">{text}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+      </section>
+
+      {/* ── Interviewer personas ───────────────────────────────────────────── */}
+      <section className="relative z-10 mx-auto max-w-5xl px-8 py-16">
+        <div className="glass rounded-2xl border border-border/50 p-10">
+          <div className="mb-8 text-center">
+            <p className="section-label mb-3">Meet Your Panel</p>
+            <h2 className="text-3xl font-bold">Interviewers with real personalities</h2>
+            <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
+              Choose the panel style you want to rehearse against — from a warm HR chat to a
+              no-nonsense senior technical grill.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {PERSONAS.map((p) => (
+              <div key={p.name} className="flex items-center gap-4 rounded-xl border border-border/50 bg-surface p-5">
+                <PersonaAvatar name={p.name} from={p.from} to={p.to} />
+                <div>
+                  <p className="font-semibold">{p.name}</p>
+                  <p className="text-sm text-muted-foreground">{p.role}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* ── Companies ──────────────────────────────────────────────────────── */}
@@ -330,9 +401,36 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Technology / Models ────────────────────────────────────────────── */}
+      <section id="tech" className="relative z-10 mx-auto max-w-5xl px-8 py-16">
+        <div className="mb-10 text-center">
+          <p className="section-label mb-3">Under the Hood</p>
+          <h2 className="text-3xl font-bold">Powered by frontier AI models</h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
+            A resilient multi-model pipeline keeps interviews flowing even under load, with
+            automatic fallback between providers.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {[
+            { icon: Cpu, title: 'GLM-4.5', text: 'Primary reasoning model driving question generation, cross-questions and scoring.' },
+            { icon: Cpu, title: 'NVIDIA Nemotron', text: 'Automatic fallback provider so sessions stay reliable when the primary is busy.' },
+            { icon: ShieldCheck, title: 'Private by design', text: 'Camera & mic analysis runs on-device only. Nothing is recorded, uploaded or stored.' },
+          ].map(({ icon: Icon, title, text }) => (
+            <div key={title} className="glass rounded-xl border border-border/50 p-6">
+              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-accent-violet/10 text-accent-violet">
+                <Icon className="h-5 w-5" />
+              </div>
+              <h3 className="mb-2 text-base font-semibold">{title}</h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">{text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* ── CTA ────────────────────────────────────────────────────────────── */}
       <section className="relative z-10 mx-auto max-w-4xl px-8 py-24 text-center">
-        <div className="glass rounded-2xl border border-primary/20 p-12 relative overflow-hidden glow">
+        <div className="glass glow relative overflow-hidden rounded-2xl border border-primary/20 p-12">
           <div className="pointer-events-none absolute inset-0 bg-gradient-radial from-primary/10 via-transparent to-transparent" />
           <div className="relative">
             <h2 className="text-4xl font-bold">
@@ -340,13 +438,13 @@ export default function LandingPage() {
               <br />
               <span className="gradient-text">Start Today — Free.</span>
             </h2>
-            <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
-              No credit card required. Start with the Cognizant Java FSE track
-              and see exactly where you stand.
+            <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
+              No credit card required. Pick your company and program, add your resume, and see
+              exactly where you stand.
             </p>
             <Link
               href="/register"
-              className="group mt-8 inline-flex items-center gap-2 rounded-xl bg-primary px-10 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:shadow-glow-lg hover:bg-primary/90"
+              className="group mt-8 inline-flex items-center gap-2 rounded-xl bg-primary px-10 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
             >
               Start Free Mock Interview
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
@@ -357,12 +455,12 @@ export default function LandingPage() {
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-border/50 py-8">
-        <div className="mx-auto max-w-7xl px-8 flex items-center justify-between text-sm text-muted-foreground">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-8 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Code2 className="h-4 w-4 text-primary" />
             <span className="font-medium">InterviewOS</span>
           </div>
-          <p>© 2025 InterviewOS. Built for real offers.</p>
+          <p>© 2026 InterviewOS. Built for real offers.</p>
         </div>
       </footer>
     </div>

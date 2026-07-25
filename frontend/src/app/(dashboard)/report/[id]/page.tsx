@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+import { cn } from '@/lib/utils';
 
 const REPORT_GENERATION_MESSAGES = [
   'Reading through your full session…',
@@ -37,6 +38,21 @@ const READINESS_META: Record<string, { label: string; variant: 'success' | 'warn
   significant_gaps: { label: 'Significant Gaps', variant: 'danger' },
   needs_more_practice: { label: 'Needs More Practice', variant: 'warning' },
 };
+
+/**
+ * Resolve a resource to a link that ALWAYS works. The AI supplies a URL for
+ * some resources but leaves others null (they're study tasks, e.g. "record
+ * yourself answering…"), and it can occasionally hallucinate a broken URL. So
+ * we use the given URL only when it's a well-formed http(s) link, and otherwise
+ * fall back to a Google search of the title (+author) — which reliably lands on
+ * the real resource — so no pill is ever a dead "#" link.
+ */
+function resourceHref(res: { title: string; url: string | null; author: string | null }): string {
+  const url = res.url?.trim() ?? '';
+  if (/^https?:\/\/\S+\.\S+/i.test(url)) return url;
+  const query = [res.title, res.author].filter(Boolean).join(' ');
+  return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
 
 function OverallScoreRing({ score, label }: { score: number; label: string }) {
   const circumference = 2 * Math.PI * 54;
@@ -153,6 +169,87 @@ export default function ReportDetailPage() {
           </div>
         </Card>
       </motion.div>
+
+      {/* Progress vs last interview + delivery (pauses / fillers / pace) */}
+      {(report.previous || report.delivery) && (
+        <motion.div variants={fadeUp}>
+          <Card className="p-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* Comparison */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  vs your last interview
+                </p>
+                {report.previous ? (
+                  (() => {
+                    const delta = Math.round((report.overall_score - report.previous.overall_score) * 10) / 10;
+                    const improved = delta >= 0;
+                    return (
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            'text-2xl font-bold',
+                            improved ? 'text-emerald-600' : 'text-red-600'
+                          )}
+                        >
+                          {improved ? '▲' : '▼'} {Math.abs(delta)}
+                        </span>
+                        <span className="text-sm text-muted-foreground">
+                          {improved ? 'points higher' : 'points lower'} than last time
+                          {' '}({report.previous.overall_score}/100 → {report.overall_score}/100)
+                        </span>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    This is your first interview — great start! Future reports will compare against it.
+                  </p>
+                )}
+              </div>
+
+              {/* Delivery */}
+              {report.delivery && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Delivery
+                  </p>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span
+                      className={cn(
+                        'rounded-full border px-2.5 py-1',
+                        (report.delivery.pause_count ?? 0) > 4
+                          ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                          : 'border-border text-muted-foreground'
+                      )}
+                    >
+                      {report.delivery.pause_count ?? 0} pauses
+                      {report.delivery.total_pause_seconds
+                        ? ` · ${report.delivery.total_pause_seconds}s`
+                        : ''}
+                    </span>
+                    <span
+                      className={cn(
+                        'rounded-full border px-2.5 py-1',
+                        (report.delivery.filler_count ?? 0) > 5
+                          ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                          : 'border-border text-muted-foreground'
+                      )}
+                    >
+                      {report.delivery.filler_count ?? 0} filler words
+                    </span>
+                    {!!report.delivery.wpm && (
+                      <span className="rounded-full border border-border px-2.5 py-1 text-muted-foreground">
+                        {report.delivery.wpm} wpm
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        </motion.div>
+      )}
 
       {/* Grid: Strengths & Weaknesses */}
       <div className="grid gap-6 md:grid-cols-2">
@@ -283,7 +380,7 @@ export default function ReportDetailPage() {
                         {item.resources.map((res, rIdx) => (
                           <a
                             key={rIdx}
-                            href={res.url || '#'}
+                            href={resourceHref(res)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-primary/20"

@@ -1,6 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PauseEvent } from '@/lib/speech/delivery';
+
+// Silence longer than this (between recognized speech) counts as a pause worth
+// surfacing — shorter gaps are natural speech rhythm.
+const PAUSE_THRESHOLD_MS = 1800;
 
 /* ─── Types for the (non-standardised) Web Speech API ──────────────────────── */
 interface SpeechRecognitionResultLike {
@@ -42,7 +47,13 @@ export function useSpeechRecognition() {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interim, setInterim] = useState('');
+  // Pauses (silences) detected while recording, tied to word positions in the
+  // finalized transcript so the UI can mark exactly where they happened.
+  const [pauses, setPauses] = useState<PauseEvent[]>([]);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  // Timing state for pause detection (refs so handlers see live values).
+  const lastActivityRef = useRef<number>(0);
+  const wordCountRef = useRef<number>(0);
 
   useEffect(() => {
     const Ctor = getRecognitionCtor();
@@ -53,6 +64,19 @@ export function useSpeechRecognition() {
     rec.continuous = true;
     rec.interimResults = true;
     rec.onresult = (e) => {
+      const now = Date.now();
+      // Gap since the last recognized speech → a pause. Attributed to the
+      // current word position so we can render a marker right there.
+      if (lastActivityRef.current) {
+        const gapMs = now - lastActivityRef.current;
+        if (gapMs >= PAUSE_THRESHOLD_MS) {
+          const seconds = Math.round(gapMs / 1000);
+          const at = wordCountRef.current;
+          setPauses((prev) => [...prev, { wordIndex: at, seconds }]);
+        }
+      }
+      lastActivityRef.current = now;
+
       let finalChunk = '';
       let interimChunk = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -60,7 +84,11 @@ export function useSpeechRecognition() {
         if (r.isFinal) finalChunk += r[0].transcript;
         else interimChunk += r[0].transcript;
       }
-      if (finalChunk) setTranscript((prev) => (prev ? prev + ' ' : '') + finalChunk.trim());
+      if (finalChunk) {
+        const clean = finalChunk.trim();
+        wordCountRef.current += clean.split(/\s+/).filter(Boolean).length;
+        setTranscript((prev) => (prev ? prev + ' ' : '') + clean);
+      }
       setInterim(interimChunk);
     };
     rec.onerror = () => setListening(false);
@@ -77,6 +105,8 @@ export function useSpeechRecognition() {
   const start = useCallback(() => {
     if (!recognitionRef.current || listening) return;
     setInterim('');
+    // Reset the pause clock so the first utterance isn't counted as a pause.
+    lastActivityRef.current = Date.now();
     try {
       recognitionRef.current.start();
       setListening(true);
@@ -91,9 +121,12 @@ export function useSpeechRecognition() {
   const reset = useCallback(() => {
     setTranscript('');
     setInterim('');
+    setPauses([]);
+    lastActivityRef.current = 0;
+    wordCountRef.current = 0;
   }, []);
 
-  return { supported, listening, transcript, interim, start, stop, reset };
+  return { supported, listening, transcript, interim, pauses, start, stop, reset };
 }
 
 /**

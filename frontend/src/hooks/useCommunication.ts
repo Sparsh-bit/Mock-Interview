@@ -6,6 +6,13 @@ export interface CommunicationPrompt {
   text: string;
 }
 
+export interface ReadingPassage {
+  id: number;
+  title: string;
+  text: string;
+  seconds: number;
+}
+
 export interface CommunicationResult {
   clarity_score: number;
   structure_score: number;
@@ -20,6 +27,8 @@ export interface CommunicationResult {
   words_per_minute: number;
   filler_count: number;
   eye_contact_pct: number | null;
+  pause_count: number;
+  total_pause_seconds: number;
 }
 
 export interface EvaluateArgs {
@@ -29,6 +38,9 @@ export interface EvaluateArgs {
   filler_count: number;
   words_per_minute: number;
   eye_contact_pct?: number | null;
+  pause_count?: number;
+  total_pause_seconds?: number;
+  mode?: 'speaking' | 'reading';
 }
 
 export function useCommunicationPrompts() {
@@ -42,11 +54,36 @@ export function useCommunicationPrompts() {
   });
 }
 
+export function useReadingPassages() {
+  return useQuery({
+    queryKey: ['communication', 'passages'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/communication/passages');
+      return res.data as ReadingPassage[];
+    },
+    staleTime: 30 * 60 * 1000,
+  });
+}
+
 export function useEvaluateCommunication() {
   return useMutation({
     mutationFn: async (args: EvaluateArgs) => {
       const res = await getBrowserApiClient().post('/api/v1/communication/evaluate', args);
       return res.data as CommunicationResult;
+    },
+  });
+}
+
+/** Fetch ONE spoken cross-question that probes the candidate's answer. */
+export function useCommunicationCrossQuestion() {
+  return useMutation({
+    mutationFn: async (args: { prompt_text: string; transcript: string }) => {
+      const res = await getBrowserApiClient().post(
+        '/api/v1/communication/cross-question',
+        args,
+        { timeout: 60_000 }
+      );
+      return (res.data as { question: string }).question;
     },
   });
 }

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
+import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import { useSpeechRecognition } from '@/hooks/useSpeech';
 import { useGD, useGDTopics, type GDTurn, type GDEvaluation } from '@/hooks/useGD';
 import { fadeUp, staggerContainer } from '@/lib/motion';
@@ -240,11 +241,12 @@ export default function GDPage() {
         ) : (
           <>
             <div className="min-h-[44px] rounded-lg border border-border/50 bg-surface-elevated p-2.5 text-sm">
-              {draft || stt.interim ? (
-                <span>{draft} <span className="text-muted-foreground/60">{stt.listening ? stt.interim : ''}</span></span>
-              ) : (
-                <span className="text-muted-foreground/50">Tap the mic and speak your point…</span>
-              )}
+              <DeliveryTranscript
+                text={draft}
+                pauses={stt.pauses}
+                interim={stt.listening ? stt.interim : ''}
+                emptyLabel="Tap the mic and speak your point…"
+              />
             </div>
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
