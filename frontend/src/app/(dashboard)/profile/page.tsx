@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 
+export const runtime = 'edge';
 export default function ProfilePage() {
   const { user } = useAuth();
   const { data: profile, isLoading } = useUserProfile();

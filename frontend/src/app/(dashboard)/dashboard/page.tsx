@@ -23,6 +23,8 @@ import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
+
 interface StatCardProps {
   label: string;
   value: string;

@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 
+export const runtime = 'edge';
 export default function AchievementsPage() {
   const { data: stats } = useUserStats();
 

@@ -20,6 +20,8 @@ import { summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
+
 type Mode = 'speaking' | 'reading';
 
 function ScoreBar({ label, value }: { label: string; value: number }) {

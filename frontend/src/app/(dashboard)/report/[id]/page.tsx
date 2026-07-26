@@ -24,6 +24,8 @@ import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
+
 const REPORT_GENERATION_MESSAGES = [
   'Reading through your full session…',
   'Scoring each answer against the ideal response…',

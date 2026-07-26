@@ -16,6 +16,8 @@ import {
   ChevronDown,
 } from 'lucide-react';
 
+export const runtime = 'edge';
+
 const ACTIVITY_META: Record<
   ActivityType,
   { label: string; icon: typeof FileText; tint: string }

@@ -27,6 +27,8 @@ import { summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
+
 /**
  * Full-panel "generating the next question" animation. Scoring is deferred to
  * the final report, so between questions the candidate sees this calm indicator

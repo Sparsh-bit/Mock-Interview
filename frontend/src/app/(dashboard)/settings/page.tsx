@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 
+export const runtime = 'edge';
 const NOTIFY_KEY = 'interviewos:emailNotifications';
 
 export default function SettingsPage() {

@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
 
+export const runtime = 'edge';
 const schema = z.object({
   email: z.string().email('Enter a valid email address'),
 });

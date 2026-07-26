@@ -10,6 +10,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
 export default function TracksPage() {
   const { data: tracks, isLoading } = useTracks();
 

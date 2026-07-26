@@ -1,0 +1,7 @@
+name = "interviewos"
+main = "frontend"
+
+[env.production]
+routes = [
+  { pattern = "*.pages.dev", zone_name = "pages.dev" }
+]

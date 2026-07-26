@@ -13,6 +13,7 @@ import { useGD, useGDTopics, type GDTurn, type GDEvaluation } from '@/hooks/useG
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
 
 const YOU = 'You';

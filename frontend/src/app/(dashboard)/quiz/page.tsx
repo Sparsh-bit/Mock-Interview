@@ -13,6 +13,7 @@ import { useQuiz, useBankTopics, type QuizQuestion, type SubmitQuizResponse } fr
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
+export const runtime = 'edge';
 type Phase = 'setup' | 'exam' | 'results';
 type Mode = 'instant' | 'ai';
 

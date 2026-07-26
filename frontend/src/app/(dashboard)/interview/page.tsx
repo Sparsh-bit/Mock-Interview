@@ -7,6 +7,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
+export const runtime = 'edge';
 export default function InterviewSetupPage() {
   return (
     <Suspense fallback={<div className="mt-10 text-center text-sm text-muted-foreground">Loading…</div>}>
