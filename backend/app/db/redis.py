@@ -29,9 +29,9 @@ def _create_pool() -> ConnectionPool:
     """Create the Redis connection pool from settings."""
     redis_url = settings.REDIS_URL
 
-    # Upstash Redis requires SSL (rediss://)
-    ssl_required = redis_url.startswith("rediss://")
-
+    # The rediss:// scheme automatically enables TLS; don't pass ssl manually
+    # (ConnectionPool.from_url handles it). Upstash requires TLS, so ensure URL
+    # uses rediss://, not redis://.
     return ConnectionPool.from_url(
         redis_url,
         max_connections=settings.REDIS_MAX_CONNECTIONS,
@@ -40,7 +40,6 @@ def _create_pool() -> ConnectionPool:
         retry_on_error=[ConnectionRefusedError, TimeoutError],
         socket_timeout=5.0,
         socket_connect_timeout=5.0,
-        **({"ssl": True, "ssl_cert_reqs": "none"} if ssl_required else {}),
     )
 
 
