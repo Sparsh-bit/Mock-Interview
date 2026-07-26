@@ -33,7 +33,11 @@ This deploys the whole app for **$0**, with **no credit card** on any provider.
    - Pick a region **close to your users** (India → Mumbai/Singapore) for low lag.
 2. **Settings → API** — copy: **Project URL**, **anon public key**, **service_role key**.
 3. **Settings → API → JWT Settings** — copy the **JWT Secret** (this app verifies Supabase tokens).
-4. **Storage** → create 3 public buckets: `resumes`, `reports`, `avatars`.
+4. **Storage** → create 3 buckets with the CORRECT privacy (this matters — resumes are personal data):
+   - `avatars` → **Public ON** (profile pictures, non-sensitive).
+   - `resumes` → **Public OFF (private)** — the backend reads/writes these with the `service_role` key, which works on private buckets; public would needlessly expose candidates' CVs.
+   - `reports` → **Public OFF (private)** — personal evaluation data; when PDF export is added, serve it via signed URLs.
+   > Rule of thumb: only `avatars` is public. The backend's service-role key accesses `resumes`/`reports` regardless of privacy, so keep them private.
 5. **Authentication → URL Configuration** → set **Site URL** to your future frontend URL (fill in after step 6) and add it to **Redirect URLs**.
 
 > Migrations (tables, RLS, `activity_logs`) run automatically on backend deploy (step 5). To run manually instead: `cd backend && DATABASE_URL="<supabase-uri>" uv run alembic upgrade head`.
