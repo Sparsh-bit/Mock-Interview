@@ -20,15 +20,15 @@ export default function DemoReportPage() {
 
   const answers = [
     {
-      q: 'Tell me about yourself and walk me through the project you're most proud of.',
-      a: 'I'm a final-year Computer Science student. My most proud project was a Spring Boot inventory management system where I designed the REST API and integrated it with PostgreSQL. I handled 50,000+ records and optimized queries to reduce latency by 40%. The system is used by 5 small retailers locally.',
+      q: "Tell me about yourself and walk me through the project you're most proud of.",
+      a: "I'm a final-year Computer Science student. My most proud project was a Spring Boot inventory management system where I designed the REST API and integrated it with PostgreSQL. I handled 50,000+ records and optimized queries to reduce latency by 40%. The system is used by 5 small retailers locally.",
       keywords: ['Spring Boot', 'REST API', 'PostgreSQL', 'optimization'],
       clarity_score: 8.2,
       confidence_score: 8.5,
     },
     {
-      q: 'Explain Java Collections and when you'd use a HashMap vs LinkedHashMap.',
-      a: 'Collections are interfaces and classes in java.util for storing groups of objects. HashMap is a hash table that provides O(1) average lookup but doesn't maintain insertion order. LinkedHashMap maintains insertion order by using a doubly linked list. I'd use HashMap for caches where order doesn't matter and LinkedHashMap when I need to preserve insertion order like in LRU caches.',
+      q: "Explain Java Collections and when you'd use a HashMap vs LinkedHashMap.",
+      a: "Collections are interfaces and classes in java.util for storing groups of objects. HashMap is a hash table that provides O(1) average lookup but doesn't maintain insertion order. LinkedHashMap maintains insertion order by using a doubly linked list. I'd use HashMap for caches where order doesn't matter and LinkedHashMap when I need to preserve insertion order like in LRU caches.",
       keywords: ['HashMap', 'LinkedHashMap', 'O(1)', 'insertion order'],
       clarity_score: 8.8,
       confidence_score: 8.0,
