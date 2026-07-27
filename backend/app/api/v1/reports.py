@@ -194,6 +194,7 @@ async def generate_report(
     from app.models.session import Answer, InterviewSession  # noqa: PLC0415
     from app.models.user import Profile  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import ReportGeneratorResponse  # noqa: PLC0415
@@ -326,8 +327,12 @@ async def generate_report(
         ai_report, last_raw_content = await generate_structured(
             ReportGeneratorResponse,
             messages,
-            max_tokens=3000,
+            # On Claude, max_tokens is a combined ceiling for reasoning AND the
+            # visible answer. The DEEP tier buys thinking here, so leave room
+            # for both or the JSON truncates mid-report.
+            max_tokens=4096,
             attempts_per_provider=2,
+            cost_tier=CostTier.DEEP,
             context="report_generation",
         )
     except AIProviderUnavailableError:

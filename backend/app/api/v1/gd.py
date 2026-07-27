@@ -105,6 +105,7 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
     """Generate the next 1-2 AI-panelist contributions."""
     from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import GDPanelTurn  # noqa: PLC0415
@@ -125,6 +126,7 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
             max_tokens=600,
             attempts_per_provider=2,
             is_valid=lambda t: bool(t.contributions),
+            cost_tier=CostTier.BALANCED,
             context="gd_panel_turn",
         )
     except AIProviderUnavailableError:
@@ -149,6 +151,7 @@ async def gd_evaluate(
 ):
     """Score the candidate's participation in the discussion."""
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import GDEvaluation  # noqa: PLC0415
@@ -166,6 +169,7 @@ async def gd_evaluate(
         messages,
         max_tokens=800,
         attempts_per_provider=2,
+        cost_tier=CostTier.CHEAP,
         context="gd_evaluation",
     )
     await log_activity(

@@ -9,9 +9,39 @@ class directly. All AI access flows through provider_factory.get_ai_provider().
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+# ─── Cost tiers ───────────────────────────────────────────────────────────────
+
+
+class CostTier(StrEnum):
+    """
+    How much reasoning a call is worth paying for.
+
+    Deliberately provider-agnostic: it describes the *task*, not any vendor's
+    knobs. Providers that bill for reasoning (Anthropic's thinking + effort)
+    map these to real parameters; providers without the concept ignore them.
+
+    Output tokens cost ~5x input, and reasoning tokens are billed as output —
+    so picking the right tier per call site is the single biggest lever on
+    spend. Choose by what the task actually needs:
+
+    CHEAP    — mechanical extraction/scoring against an explicit rubric where
+               the prompt already states the criteria (answer scoring,
+               communication + GD evaluation). No reasoning purchased.
+    BALANCED — generation that needs to be good but not deliberated
+               (interview questions, quizzes, cross-questions, GD turns).
+    DEEP     — genuine multi-step reasoning over a long input, where a wrong
+               answer wastes the whole session (the final hire/no-hire report).
+    """
+
+    CHEAP = "cheap"
+    BALANCED = "balanced"
+    DEEP = "deep"
+
 
 # ─── Request / Response value objects ────────────────────────────────────────
 
@@ -35,8 +65,14 @@ class ProviderRequest(BaseModel):
     """
 
     messages: list[ProviderMessage]
+    #: Sampling temperature. Honoured by OpenAI-compatible providers; the
+    #: Anthropic provider DROPS it, because Claude Sonnet 5 and the Opus 4.7+
+    #: family reject non-default sampling params with a 400. Steer Claude via
+    #: the prompt (and `cost_tier`) instead.
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1, le=32_768)
+    #: How much reasoning this call is worth paying for. See CostTier.
+    cost_tier: CostTier = CostTier.BALANCED
     #: When True, instructs the provider to return valid JSON.
     #: Providers that support a native JSON mode will enable it;
     #: others receive a prompt-level instruction.
@@ -59,6 +95,15 @@ class ProviderResponse(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     finish_reason: str  # "stop" | "length" | "content_filter" | etc.
+    #: Input tokens served from the prompt cache at ~0.1x price. Providers
+    #: without prompt caching leave this at 0.
+    cached_input_tokens: int = 0
+    #: Input tokens written to the prompt cache at ~1.25x price (paid once,
+    #: then read cheaply for the cache lifetime).
+    cache_write_tokens: int = 0
+    #: Estimated USD cost of this single call, when the provider knows its
+    #: own price sheet. None when unpriced (e.g. free-tier providers).
+    estimated_cost_usd: float | None = None
 
     @property
     def total_tokens(self) -> int:

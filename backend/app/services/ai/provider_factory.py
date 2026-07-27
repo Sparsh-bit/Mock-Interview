@@ -46,14 +46,15 @@ def _lazy_register() -> None:
     """
     global _PROVIDER_REGISTRY  # noqa: PLW0603
 
+    from .anthropic_provider import AnthropicProvider  # noqa: PLC0415
     from .glm_provider import OpenAICompatibleProvider  # noqa: PLC0415
 
     _PROVIDER_REGISTRY = {
         "glm": OpenAICompatibleProvider,
         "nvidia": OpenAICompatibleProvider,
+        "anthropic": AnthropicProvider,
         # Future providers — implement the class, uncomment the line, done:
         # "openai": OpenAIProvider,
-        # "anthropic": AnthropicProvider,
         # "gemini": GeminiProvider,
         # "local": LocalOllamaProvider,
     }
@@ -242,10 +243,17 @@ def _build_provider(name: str, cls: type[BaseAIProvider]) -> BaseAIProvider:
                 # noticeably longer than GLM's flash-tier models.
                 read_timeout=180.0,
             )
+        case "anthropic":
+            return cls(
+                api_key=settings.ANTHROPIC_API_KEY,
+                model=settings.ANTHROPIC_MODEL,
+                provider_name="anthropic",
+                # Cost guards — see anthropic_provider.py.
+                prompt_caching=settings.ANTHROPIC_PROMPT_CACHING,
+                max_output_tokens=settings.ANTHROPIC_MAX_OUTPUT_TOKENS,
+            )
         # case "openai":
         #     return cls(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL)
-        # case "anthropic":
-        #     return cls(api_key=settings.ANTHROPIC_API_KEY, model=settings.ANTHROPIC_MODEL)
         case _:
             raise ValueError(
                 f"Provider '{name}' is registered but has no build configuration. "

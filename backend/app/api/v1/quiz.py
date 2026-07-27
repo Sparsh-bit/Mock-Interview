@@ -106,6 +106,7 @@ async def start_quiz(
     from app.models.company import InterviewTrack, QuestionCategory  # noqa: PLC0415
     from app.models.question import Topic  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import QuizGeneration  # noqa: PLC0415
@@ -154,6 +155,7 @@ async def start_quiz(
         max_tokens=max_tokens,
         attempts_per_provider=2,
         is_valid=lambda q: bool(q.questions),
+        cost_tier=CostTier.BALANCED,
         context="quiz_generation",
     )
 

@@ -16,3 +16,6 @@ build/
 backend/.coverage
 .coverage
 frontend/tsconfig.tsbuildinfo
+
+# Cloudflare/Vercel build output
+.vercel/

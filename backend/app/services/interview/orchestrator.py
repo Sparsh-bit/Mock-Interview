@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import hashlib
 import json
 import random
 import uuid
@@ -19,6 +18,8 @@ from app.models.question import Question, Topic
 from app.models.report import ResumeFile
 from app.models.session import Answer, InterviewSession, Score, SessionStatus
 from app.prompts.prompt_loader import get_prompt_loader
+from app.services.ai import semantic_cache
+from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
@@ -132,15 +133,21 @@ class InterviewOrchestrator:
         plan: InterviewPlan | None = None
 
         # 1) Try to reuse a previously-generated plan variant (instant, no LLM).
-        cache_key = self._plan_cache_key(company, program, focus)
+        # Look for a semantically-equivalent setup we've already paid to plan —
+        # "Cognizant / Gen C / Java FSE" should reuse "Cognizant / GenC / Java
+        # Full Stack Engineer" rather than regenerate it. On a hit we also top
+        # this bucket up below, so near-identical setups pool their variants.
+        cache_key: str | None = None
         variants: list[dict] = []
         if not personalized:
-            variants = await self._load_plan_variants(cache_key)
-            if len(variants) >= _MAX_PLAN_VARIANTS:
-                with contextlib.suppress(Exception):
-                    plan = InterviewPlan(**random.choice(variants))
-                if plan is not None:
-                    logger.info("interview_plan_cache_hit", key=cache_key, variants=len(variants))
+            cache_key = await semantic_cache.find_similar_key(company, program, focus)
+            if cache_key:
+                variants = await self._load_plan_variants(cache_key)
+                if len(variants) >= _MAX_PLAN_VARIANTS:
+                    with contextlib.suppress(Exception):
+                        plan = InterviewPlan(**random.choice(variants))
+                    if plan is not None:
+                        logger.info("interview_plan_cache_hit", key=cache_key, variants=len(variants))
 
         # 2) Cache miss (or personalised) → generate with the AI. Keep it snappy:
         # one attempt per provider, lean tokens, and a HARD time cap so we never
@@ -163,6 +170,7 @@ class InterviewOrchestrator:
                         max_tokens=2500,
                         attempts_per_provider=1,
                         is_valid=lambda p: len(p.questions) >= 4,
+                        cost_tier=CostTier.BALANCED,
                         context="interview_plan",
                     ),
                     timeout=_PLAN_AI_BUDGET_SECONDS,
@@ -170,9 +178,12 @@ class InterviewOrchestrator:
             except (AIProviderUnavailableError, TimeoutError):
                 logger.warning("interview_plan_ai_unavailable_using_fallback", session_id=str(session.id))
 
-            # Store a freshly-generated generic plan as a reusable variant.
+            # Store a freshly-generated generic plan as a reusable variant. On a
+            # semantic hit we top up that bucket; on a miss we register this
+            # signature so the next similar setup finds it.
             if plan is not None and len(plan.questions) >= 4 and not personalized:
-                await self._save_plan_variant(cache_key, variants, plan)
+                store_key = cache_key or await semantic_cache.register(company, program, focus)
+                await self._save_plan_variant(store_key, variants, plan)
 
         if plan is not None and len(plan.questions) >= 4:
             planned_ids, topics = await self._persist_plan(track_id, plan)
@@ -193,16 +204,6 @@ class InterviewOrchestrator:
         await self.db.refresh(session)
 
         return {"session_id": session.id, "topics": topics, "question_count": len(planned_ids)}
-
-    @staticmethod
-    def _plan_cache_key(company: str, program: str, focus: str) -> str:
-        """Stable cache key for a (company, program, focus) plan signature."""
-        sig = "|".join(
-            part.strip().lower()
-            for part in (company or "", program or "", focus or "")
-        )
-        digest = hashlib.sha1(sig.encode("utf-8")).hexdigest()[:16]  # noqa: S324 — cache key, not security
-        return f"plan:variants:{digest}"
 
     async def _load_plan_variants(self, cache_key: str) -> list[dict]:
         """Load cached plan variants for a signature (best-effort, never raises)."""
@@ -520,6 +521,7 @@ class InterviewOrchestrator:
                 max_tokens=1200,
                 attempts_per_provider=1,
                 is_valid=lambda q: len(q.content.strip()) >= 15,
+                cost_tier=CostTier.BALANCED,
                 context="cross_question",
             )
         except AIProviderUnavailableError:
@@ -599,6 +601,7 @@ class InterviewOrchestrator:
                 max_tokens=1600,
                 attempts_per_provider=1,
                 is_valid=lambda q: len(q.content.strip()) >= 15,
+                cost_tier=CostTier.BALANCED,
                 context="question_generation",
             )
         except AIProviderUnavailableError:

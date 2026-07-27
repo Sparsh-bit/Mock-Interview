@@ -179,6 +179,7 @@ async def communication_cross_question(request: CrossQuestionRequest, current_us
     """
     from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import GeneratedQuestion  # noqa: PLC0415
@@ -198,6 +199,7 @@ async def communication_cross_question(request: CrossQuestionRequest, current_us
             max_tokens=1000,
             attempts_per_provider=1,
             is_valid=lambda q: len(q.content.strip()) >= 12,
+            cost_tier=CostTier.BALANCED,
             context="communication_cross_question",
         )
         return CrossQuestionResponse(question=parsed.content.strip())
@@ -215,6 +217,7 @@ async def evaluate_communication(
 ):
     """Score a spoken answer's delivery via the communication_evaluator prompt."""
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import CommunicationEvaluation  # noqa: PLC0415
@@ -249,6 +252,7 @@ async def evaluate_communication(
         messages,
         max_tokens=900,
         attempts_per_provider=2,
+        cost_tier=CostTier.CHEAP,
         context="communication_evaluation",
     )
 

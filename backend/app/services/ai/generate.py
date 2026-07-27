@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from app.core.exceptions import AIProviderUnavailableError
 
-from .base_provider import ProviderError, ProviderMessage, ProviderRequest
+from .base_provider import CostTier, ProviderError, ProviderMessage, ProviderRequest
 from .json_validator import AIValidationError, JSONValidator
 from .provider_factory import get_ai_providers
 from .response_parser import ResponseParser
@@ -44,6 +44,7 @@ async def generate_structured(
     *,
     max_tokens: int,
     temperature: float = 0.7,
+    cost_tier: CostTier = CostTier.BALANCED,
     attempts_per_provider: int = 2,
     is_valid: Callable[[T], bool] | None = None,
     context: str = "ai_generation",
@@ -52,10 +53,15 @@ async def generate_structured(
     Generate a validated `schema` instance from the model, trying each provider
     in the chain with retries. Returns (parsed, raw_content).
 
+    `cost_tier` declares how much reasoning the task is worth paying for on
+    metered providers (see CostTier); free-tier providers ignore it. Pass it at
+    every call site — the default is deliberately mid-range, not cheapest.
+
     Raises AIProviderUnavailableError if no provider produced a valid result.
     """
     providers = get_ai_providers()
     last_raw = ""
+    spend_usd = 0.0
 
     for provider in providers:
         for attempt in range(attempts_per_provider):
@@ -66,6 +72,7 @@ async def generate_structured(
                         json_mode=True,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        cost_tier=cost_tier,
                     )
                 )
             except ProviderError:
@@ -76,6 +83,10 @@ async def generate_structured(
                     attempt=attempt,
                 )
                 continue
+
+            # Every completed call is billed, including ones we reject below —
+            # so accumulate before validating, not after.
+            spend_usd += resp.estimated_cost_usd or 0.0
 
             last_raw = resp.content
             try:
@@ -98,9 +109,25 @@ async def generate_structured(
                 )
                 continue
 
+            if spend_usd:
+                logger.info(
+                    "ai_generate_spend",
+                    context=context,
+                    provider=provider.provider_name,
+                    cost_tier=cost_tier.value,
+                    billed_calls=attempt + 1,
+                    estimated_cost_usd=round(spend_usd, 6),
+                )
             return parsed, last_raw
 
         if len(providers) > 1:
             logger.warning("ai_generate_falling_back", context=context, exhausted=provider.provider_name)
 
+    # Wasted spend: every attempt was billed and none produced a usable result.
+    logger.error(
+        "ai_generate_exhausted",
+        context=context,
+        cost_tier=cost_tier.value,
+        wasted_cost_usd=round(spend_usd, 6),
+    )
     raise AIProviderUnavailableError(provider=providers[0].provider_name if providers else "unknown")

@@ -123,9 +123,32 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="", description="OpenAI API key (future)")
     OPENAI_MODEL: str = Field(default="gpt-4o-mini", description="OpenAI model name")
 
-    # Anthropic (future)
-    ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key (future)")
-    ANTHROPIC_MODEL: str = Field(default="claude-3-5-haiku-latest")
+    # Anthropic — Claude (paid; cost-controlled, see services/ai/anthropic_provider.py)
+    ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key")
+    ANTHROPIC_MODEL: str = Field(
+        default="claude-sonnet-5",
+        description=(
+            "Claude model id. Sonnet 5 is the cost/quality pick for this app "
+            "($3/$15 per MTok, intro $2/$10 through 2026-08-31). Note Sonnet 5 "
+            "rejects temperature/top_p/top_k, so the provider drops them."
+        ),
+    )
+    ANTHROPIC_PROMPT_CACHING: bool = Field(
+        default=True,
+        description=(
+            "Mark the system prompt as cacheable. Repeat calls with an identical "
+            "system prefix bill input at ~0.1x. Only prefixes >=1024 tokens cache "
+            "on Sonnet 5; shorter ones are a silent no-op (no error, no benefit)."
+        ),
+    )
+    ANTHROPIC_MAX_OUTPUT_TOKENS: int = Field(
+        default=4096,
+        description=(
+            "Hard per-request ceiling on output tokens, applied after each call "
+            "site's own max_tokens. Output is 5x the price of input, so this is "
+            "the main guard against a single runaway response burning the budget."
+        ),
+    )
 
     # ── Storage ───────────────────────────────────────────────────────────
     SUPABASE_STORAGE_BUCKET_RESUMES: str = "resumes"
