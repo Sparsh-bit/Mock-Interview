@@ -18,12 +18,20 @@ Four levers, in descending order of impact:
    `thinking` field is omitted** — so saying nothing silently buys reasoning on
    every call. We always set it explicitly from the request's CostTier, and
    only the final report pays for thinking.
-2. Prompt caching. Our prompts are `[system, user]`, so the system block is a
-   stable prefix. Marking it cacheable bills repeat calls at ~0.1x input.
+2. A daily spend cap (AI_DAILY_BUDGET_USD). Checked in Redis before every call;
+   once hit we raise ProviderError so the chain degrades to the free provider
+   instead of draining the balance.
 3. Output ceiling. Every call is clamped to ANTHROPIC_MAX_OUTPUT_TOKENS on top
    of the call site's own max_tokens, so one runaway response can't drain the
    balance.
 4. Not calling at all — handled upstream by the Redis/semantic plan cache.
+
+Prompt caching is supported but OFF by default, which is counter-intuitive
+enough to spell out: PromptBuilder substitutes per-request variables into the
+*system* template, so every request has a unique prefix. Enabling it would bill
+a cache write at 1.25x input on every call and never score a read — worse than
+not caching. It only pays off once prompts are restructured to keep the system
+block byte-identical, with the variables moved into the user turn.
 
 ── Two API constraints this provider absorbs ────────────────────────────────
 Sonnet 5 rejects things the OpenAI-compatible providers accept, so the
@@ -35,6 +43,8 @@ translation layer is not a passthrough:
 """
 
 from __future__ import annotations
+
+from datetime import UTC
 
 import anthropic
 import structlog
@@ -48,6 +58,52 @@ from .base_provider import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# ─── Daily spend circuit breaker ──────────────────────────────────────────────
+
+
+async def _spend_key() -> str:
+    """Redis key holding today's total metered spend (UTC day)."""
+    from datetime import datetime  # noqa: PLC0415
+
+    return f"ai:spend:{datetime.now(UTC):%Y-%m-%d}"
+
+
+async def _spend_today() -> float:
+    """Total USD spent today. Returns 0.0 if Redis is unavailable."""
+    from app.db.redis import cache_get, get_redis  # noqa: PLC0415
+
+    try:
+        raw = await cache_get(get_redis(), await _spend_key())
+        return float(raw) if raw else 0.0
+    except Exception:  # noqa: BLE001 — never let accounting break a request
+        return 0.0
+
+
+async def _record_spend(amount: float) -> None:
+    """Add to today's spend counter. Best-effort."""
+    if amount <= 0:
+        return
+    from app.db.redis import get_redis  # noqa: PLC0415
+
+    try:
+        redis = get_redis()
+        key = await _spend_key()
+        await redis.incrbyfloat(key, amount)
+        # Expire well after the day rolls over so the key can't leak forever.
+        await redis.expire(key, 60 * 60 * 48)
+    except Exception:  # noqa: BLE001
+        logger.warning("ai_spend_record_failed", amount=amount)
+
+
+class BudgetExceededError(ProviderError):
+    """
+    Today's metered AI budget is spent.
+
+    Subclasses ProviderError so generate_structured's existing handling moves on
+    to the next provider in the chain — i.e. the app degrades to the free
+    provider rather than failing or overspending.
+    """
 
 # ─── Price sheet (USD per million tokens) ─────────────────────────────────────
 # Used only to log an estimated per-call cost so spend is observable without
@@ -98,8 +154,9 @@ class AnthropicProvider(BaseAIProvider):
         model: str,
         provider_name: str = "anthropic",
         *,
-        prompt_caching: bool = True,
+        prompt_caching: bool = False,
         max_output_tokens: int = 4096,
+        daily_budget_usd: float = 2.0,
         timeout: float = 120.0,
         max_retries: int = 2,
     ) -> None:
@@ -109,6 +166,7 @@ class AnthropicProvider(BaseAIProvider):
         self._provider_name = provider_name
         self._prompt_caching = prompt_caching
         self._max_output_tokens = max_output_tokens
+        self._daily_budget_usd = daily_budget_usd
         # max_retries covers 429/5xx/connection errors with backoff in-SDK.
         self._client = anthropic.AsyncAnthropic(
             api_key=api_key,
@@ -127,6 +185,23 @@ class AnthropicProvider(BaseAIProvider):
         return self._model
 
     async def complete(self, request: ProviderRequest) -> ProviderResponse:
+        # Refuse before spending, not after. Raising ProviderError lets the
+        # generation layer fall through to the free provider, so features keep
+        # working once the daily budget is gone.
+        if self._daily_budget_usd > 0:
+            spent = await _spend_today()
+            if spent >= self._daily_budget_usd:
+                logger.error(
+                    "ai_daily_budget_exceeded",
+                    spent_usd=round(spent, 4),
+                    budget_usd=self._daily_budget_usd,
+                )
+                raise BudgetExceededError(
+                    f"Daily AI budget of ${self._daily_budget_usd:.2f} reached "
+                    f"(${spent:.4f} spent). Falling back to the free provider.",
+                    provider=self.provider_name,
+                )
+
         model = request.model_override or self._model
         system_blocks, messages = self._split_messages(request)
 
@@ -194,7 +269,9 @@ class AnthropicProvider(BaseAIProvider):
                 provider=self.provider_name,
             ) from exc
 
-        return self._to_response(message, model, log)
+        response = self._to_response(message, model, log)
+        await _record_spend(response.estimated_cost_usd or 0.0)
+        return response
 
     async def health_check(self) -> bool:
         """

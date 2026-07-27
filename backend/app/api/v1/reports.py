@@ -9,6 +9,7 @@ PATCH  /api/v1/reports/{report_id}/share      — Toggle report sharing
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from datetime import datetime
@@ -25,6 +26,11 @@ from app.events.emitter import EventEmitter
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+#: Wall-clock ceiling on AI report generation. Managed hosts cut requests at
+#: their gateway (~100s on Render) with a CORS-header-less 502, so we must
+#: always answer before that and fall back to the heuristic report instead.
+_REPORT_AI_BUDGET_SECONDS = 55.0
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -324,18 +330,35 @@ async def generate_report(
     ai_report: ReportGeneratorResponse | None = None
     last_raw_content = ""
     try:
-        ai_report, last_raw_content = await generate_structured(
-            ReportGeneratorResponse,
-            messages,
-            # On Claude, max_tokens is a combined ceiling for reasoning AND the
-            # visible answer. The DEEP tier buys thinking here, so leave room
-            # for both or the JSON truncates mid-report.
-            max_tokens=4096,
-            attempts_per_provider=2,
-            cost_tier=CostTier.DEEP,
-            context="report_generation",
+        # HARD time budget. Managed hosts (Render included) cut the request at
+        # their gateway after ~100s and return a 502 that carries no CORS
+        # headers — which reaches the browser as an opaque CORS error instead of
+        # a real failure. Report generation is the slowest AI path in the app
+        # (DEEP tier buys reasoning), so it must be capped well inside that
+        # window and degrade to the heuristic report rather than be killed.
+        ai_report, last_raw_content = await asyncio.wait_for(
+            generate_structured(
+                ReportGeneratorResponse,
+                messages,
+                # Output is 5x the price of input and this is the largest
+                # response in the app, so the ceiling is set to what a report
+                # actually needs rather than left generous.
+                max_tokens=2600,
+                # One attempt per provider: a second full retry cannot fit in the
+                # budget below, and the heuristic fallback is a better use of the
+                # remaining time than a retry that gets cut off.
+                attempts_per_provider=1,
+                # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
+                # as output and roughly doubled the cost of the single most
+                # expensive call in the app. The scoring rubric is already
+                # explicit in the prompt, so it does not need to reason its way
+                # to the criteria.
+                cost_tier=CostTier.BALANCED,
+                context="report_generation",
+            ),
+            timeout=_REPORT_AI_BUDGET_SECONDS,
         )
-    except AIProviderUnavailableError:
+    except (AIProviderUnavailableError, TimeoutError):
         logger.warning("ai_report_unavailable_using_heuristic", session_id=str(session_id))
 
     if ai_report is not None:

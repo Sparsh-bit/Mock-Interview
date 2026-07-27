@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, Mic, MicOff, Send, Users, Play, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,6 +17,31 @@ export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
 
 const YOU = 'You';
+
+// ─── Realistic GD pacing ──────────────────────────────────────────────────────
+// A real GD runs on a clock, not on turn-taking: the panel keeps talking whether
+// or not you contribute, and staying quiet costs you the round. These constants
+// are what make silence expensive.
+
+/** Total length of the round. Campus GDs are typically 8-10 minutes. */
+const GD_DURATION_SEC = 480;
+/** How long the panel waits before speaking again on its own. */
+const PANEL_INTERVAL_SEC = 18;
+/** Seconds before the end when panelists start converging on a conclusion. */
+const CLOSING_WINDOW_SEC = 90;
+/**
+ * How long you may hold the floor (mic live or a draft in progress) before the
+ * panel talks over you anyway — as they would in a real room.
+ */
+const MAX_FLOOR_HOLD_SEC = 20;
+/**
+ * Hard cap on panel turns per round. The clock fires AI calls autonomously, so
+ * without a ceiling one abandoned tab could generate turns until the timer ends.
+ */
+const MAX_PANEL_TURNS = 26;
+
+const fmtClock = (s: number) =>
+  `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, '0')}`;
 // Deterministic accent per panelist name (avatar tint).
 const PANEL_COLORS: Record<string, string> = {
   Riya: 'bg-accent-violet/15 text-accent-violet',
@@ -56,7 +81,29 @@ export default function GDPage() {
   const [result, setResult] = useState<GDEvaluation | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // ─── Live discussion state ────────────────────────────────────────────────
+  /** Seconds left in the round. */
+  const [timeLeft, setTimeLeft] = useState(GD_DURATION_SEC);
+  /** Seconds until the panel speaks again unprompted. */
+  const [nextTurnIn, setNextTurnIn] = useState(PANEL_INTERVAL_SEC);
+  /** The panel has asked you something and is waiting. */
+  const [awaiting, setAwaiting] = useState(false);
+  /** Direct questions you never answered. At 2 the panel writes you off. */
+  const [ignored, setIgnored] = useState(0);
+  const [silentFor, setSilentFor] = useState(0);
+  const [panelTurns, setPanelTurns] = useState(0);
+
+  // Refs mirror state the 1s tick reads, so the interval never needs to be torn
+  // down and rebuilt on every keystroke (which would reset the countdown).
+  const holdRef = useRef(0);
+  const firingRef = useRef(false);
+  const stateRef = useRef({ history, awaiting, ignored, silentFor, panelTurns, timeLeft });
+  stateRef.current = { history, awaiting, ignored, silentFor, panelTurns, timeLeft };
+
   const topic = customTopic.trim() || topics?.[topicIdx]?.text || 'Is remote work better than working from the office?';
+
+  const gdPhase: 'opening' | 'discussion' | 'closing' =
+    history.length === 0 ? 'opening' : timeLeft <= CLOSING_WINDOW_SEC ? 'closing' : 'discussion';
 
   useEffect(() => {
     if (stt.transcript) setDraft(stt.transcript);
@@ -66,18 +113,128 @@ export default function GDPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [history]);
 
+  /** Ask the panel for its next contributions, carrying the current pressure state. */
+  const firePanelTurn = useCallback(
+    (overrides?: { history?: GDTurn[]; resetPressure?: boolean }) => {
+      if (firingRef.current) return;
+
+      const s = stateRef.current;
+      const hist = overrides?.history ?? s.history;
+
+      // If they were asked and still haven't spoken, that's one more unanswered
+      // question — counted here, at the moment the panel gives up waiting.
+      let nextIgnored = overrides?.resetPressure ? 0 : s.ignored;
+      if (!overrides?.resetPressure && s.awaiting) {
+        nextIgnored = s.ignored + 1;
+        setIgnored(nextIgnored);
+      }
+
+      firingRef.current = true;
+      setNextTurnIn(PANEL_INTERVAL_SEC);
+      holdRef.current = 0;
+
+      panelTurn.mutate(
+        {
+          topic,
+          history: hist,
+          awaiting_candidate: overrides?.resetPressure ? false : s.awaiting,
+          ignored_questions: nextIgnored,
+          candidate_silent_seconds: overrides?.resetPressure ? 0 : s.silentFor,
+          phase: hist.length === 0 ? 'opening' : s.timeLeft <= CLOSING_WINDOW_SEC ? 'closing' : 'discussion',
+        },
+        {
+          onSuccess: (data) => {
+            if (data.contributions.length) {
+              setHistory((h) => [...h, ...data.contributions]);
+              setPanelTurns((n) => n + 1);
+            }
+            // Being addressed puts you on the spot; otherwise the panel is
+            // talking amongst itself and the slate is clean again.
+            setAwaiting(data.addressed_candidate);
+            if (nextIgnored >= 2) setIgnored(0); // panel moved on — stop nagging
+          },
+          onError: (e: Error) => toast.error(e.message || 'Panel could not respond.'),
+          onSettled: () => { firingRef.current = false; },
+        }
+      );
+    },
+    [panelTurn, topic]
+  );
+
+  // ─── The clock: this is what makes the GD feel real ───────────────────────
+  // One 1s tick drives the round timer, the "panel speaks next" countdown, and
+  // your silence counter. The panel advances on this clock whether or not you
+  // say anything.
+  useEffect(() => {
+    if (phase !== 'discussion') return;
+
+    const id = setInterval(() => {
+      const s = stateRef.current;
+
+      setTimeLeft((t) => Math.max(0, t - 1));
+      setSilentFor((n) => n + 1);
+
+      // You "hold the floor" while the mic is live or a draft is in progress —
+      // but only for so long, then the panel talks over you.
+      const holdingFloor = stt.listening || draft.trim().length > 0;
+      if (holdingFloor && holdRef.current < MAX_FLOOR_HOLD_SEC) {
+        holdRef.current += 1;
+        return;
+      }
+
+      if (s.panelTurns >= MAX_PANEL_TURNS) return;
+
+      setNextTurnIn((n) => {
+        if (n <= 1) {
+          firePanelTurn();
+          return PANEL_INTERVAL_SEC;
+        }
+        return n - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [phase, stt.listening, draft, firePanelTurn]);
+
+  // Guards against the time-up effect firing twice (and against ending a round
+  // that's already being scored).
+  const endingRef = useRef(false);
+
+  const endDiscussion = useCallback(() => {
+    if (endingRef.current) return;
+    endingRef.current = true;
+    evaluate.mutate(
+      { topic, history: stateRef.current.history, ignored_questions: stateRef.current.ignored },
+      {
+        onSuccess: (data) => { setResult(data); setPhase('results'); },
+        onError: (e: Error) => {
+          endingRef.current = false;
+          toast.error(e.message || 'Could not score the discussion.');
+        },
+      }
+    );
+  }, [evaluate, topic]);
+
+  // Time's up — score it automatically, the way a real round gets called.
+  useEffect(() => {
+    if (phase === 'discussion' && timeLeft === 0) endDiscussion();
+  }, [phase, timeLeft, endDiscussion]);
+
   const start = () => {
     setHistory([]);
     setResult(null);
+    setTimeLeft(GD_DURATION_SEC);
+    setNextTurnIn(PANEL_INTERVAL_SEC);
+    setAwaiting(false);
+    setIgnored(0);
+    setSilentFor(0);
+    setPanelTurns(0);
+    holdRef.current = 0;
+    firingRef.current = false;
+    endingRef.current = false;
     setPhase('discussion');
-    // Kick off with opening panelist statements.
-    panelTurn.mutate(
-      { topic, history: [] },
-      {
-        onSuccess: (data) => setHistory(data.contributions),
-        onError: (e: Error) => toast.error(e.message || 'Could not start the discussion.'),
-      }
-    );
+    // Opening positions, so the room is already talking when you arrive.
+    firePanelTurn({ history: [], resetPressure: true });
   };
 
   const toggleMic = () => {
@@ -92,27 +249,17 @@ export default function GDPage() {
     setHistory(next);
     setDraft('');
     stt.reset();
-    // Panelists respond to the candidate's point.
-    panelTurn.mutate(
-      { topic, history: next },
-      {
-        onSuccess: (data) => data.contributions.length && setHistory((h) => [...h, ...data.contributions]),
-        onError: (e: Error) => toast.error(e.message || 'Panel could not respond.'),
-      }
-    );
-  };
-
-  const endDiscussion = () => {
-    evaluate.mutate(
-      { topic, history },
-      {
-        onSuccess: (data) => { setResult(data); setPhase('results'); },
-        onError: (e: Error) => toast.error(e.message || 'Could not score the discussion.'),
-      }
-    );
+    // You answered: pressure clears and the panel reacts to you immediately.
+    setAwaiting(false);
+    setIgnored(0);
+    setSilentFor(0);
+    holdRef.current = 0;
+    firePanelTurn({ history: next, resetPressure: true });
   };
 
   const myContributions = history.filter((t) => t.speaker === YOU).length;
+  /** The most recent thing said to you — echoed in the "answer now" banner. */
+  const lastPanelLine = [...history].reverse().find((t) => t.speaker !== YOU);
 
   // ─── Setup ──────────────────────────────────────────────────────────────
   if (phase === 'setup') {
@@ -204,10 +351,73 @@ export default function GDPage() {
   // ─── Discussion ─────────────────────────────────────────────────────────
   return (
     <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-3xl flex-col gap-4">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topic</p>
-        <h2 className="text-lg font-bold leading-snug">{topic}</h2>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topic</p>
+          <h2 className="text-lg font-bold leading-snug">{topic}</h2>
+        </div>
+        <div className="shrink-0 text-right">
+          <p
+            className={cn(
+              'font-mono text-2xl font-bold tabular-nums',
+              timeLeft <= CLOSING_WINDOW_SEC ? 'text-amber-600' : 'text-foreground'
+            )}
+          >
+            {fmtClock(timeLeft)}
+          </p>
+          <p className="text-[11px] font-medium text-muted-foreground">
+            {gdPhase === 'closing' ? 'wrapping up' : `${myContributions} point${myContributions === 1 ? '' : 's'} made`}
+          </p>
+        </div>
       </div>
+
+      {/* The panel advances on this bar whether or not you speak. */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+          <span>
+            {panelTurn.isPending
+              ? 'someone is jumping in…'
+              : stt.listening || draft.trim()
+                ? `you have the floor — ${Math.max(0, MAX_FLOOR_HOLD_SEC - holdRef.current)}s`
+                : `panel speaks again in ${nextTurnIn}s`}
+          </span>
+          {ignored > 0 && (
+            <span className="font-semibold text-red-600">
+              {ignored} question{ignored === 1 ? '' : 's'} unanswered
+            </span>
+          )}
+        </div>
+        <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
+          <div
+            className={cn(
+              'h-full rounded-full transition-[width] duration-1000 ease-linear',
+              awaiting ? 'bg-red-500' : 'bg-primary/60'
+            )}
+            style={{ width: `${(1 - nextTurnIn / PANEL_INTERVAL_SEC) * 100}%` }}
+          />
+        </div>
+      </div>
+
+      {/* You've been put on the spot — answer or get talked over. */}
+      {awaiting && !panelTurn.isPending && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3"
+        >
+          <p className="text-xs font-bold uppercase tracking-wider text-red-600">
+            They&apos;re asking you directly
+          </p>
+          {lastPanelLine && (
+            <p className="mt-1 text-sm leading-snug text-foreground/85">
+              <span className="font-semibold">{lastPanelLine.speaker}:</span> {lastPanelLine.text}
+            </p>
+          )}
+          <p className="mt-1.5 text-[11px] text-red-600/80">
+            Answer before the panel moves on — silence costs you marks.
+          </p>
+        </motion.div>
+      )}
 
       <Card className="flex-1 overflow-hidden p-0">
         <div ref={scrollRef} className="h-full space-y-4 overflow-y-auto p-6">

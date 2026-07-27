@@ -44,6 +44,10 @@ class GDPanelTurn(BaseModel):
     """Matches the output of app/prompts/gd_panel.md."""
 
     contributions: list[GDContribution] = Field(default_factory=list)
+    #: True when this turn puts a direct question or invitation to the real
+    #: candidate. The client uses it to show that the candidate is on the spot
+    #: and to start counting unanswered questions against them.
+    addressed_candidate: bool = False
 
 
 class GDEvaluation(BaseModel):

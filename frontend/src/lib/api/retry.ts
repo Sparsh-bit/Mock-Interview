@@ -47,12 +47,33 @@ export function mergeRetryConfig(
  * - Always retry retryableStatusCodes (429, 502–504)
  * - Respect the maxAttempts ceiling unconditionally
  */
+/**
+ * HTTP methods that are safe to replay. Everything else may have already been
+ * applied server-side even though we never saw the response.
+ */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']);
+
 export function shouldRetry(
   error: unknown,
   attempt: number,
   config: Required<RetryConfig>,
+  method?: string,
 ): boolean {
   if (attempt >= config.maxAttempts) return false;
+
+  // Never replay a non-idempotent request that timed out or 5xx'd. The server
+  // may still be working on the first one — and for our AI endpoints (report
+  // generation, interview plans) each replay starts a fresh, separately BILLED
+  // model call. Retrying a slow report was silently costing multiples of one
+  // report. A 429 is still safe: it means the request was rejected, not run.
+  if (
+    method &&
+    !IDEMPOTENT_METHODS.has(method.toUpperCase()) &&
+    error instanceof ApiError &&
+    error.status !== 429
+  ) {
+    return false;
+  }
 
   if (error instanceof ApiError) {
     // Never retry user-cancelled requests

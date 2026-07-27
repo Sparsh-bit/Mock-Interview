@@ -211,7 +211,7 @@ export class ApiClient {
           : await normalizeError(processedError);
 
       // Retry decision
-      if (retryConfig && shouldRetry(finalError, attempt, retryConfig)) {
+      if (retryConfig && shouldRetry(finalError, attempt, retryConfig, prepared.init.method)) {
         const retryAfter = rawResponse?.headers.get('Retry-After');
         const delay = calculateDelay(attempt, retryConfig, retryAfter);
         await sleep(delay);

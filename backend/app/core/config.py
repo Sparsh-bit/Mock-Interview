@@ -134,11 +134,24 @@ class Settings(BaseSettings):
         ),
     )
     ANTHROPIC_PROMPT_CACHING: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Mark the system prompt as cacheable. Repeat calls with an identical "
-            "system prefix bill input at ~0.1x. Only prefixes >=1024 tokens cache "
-            "on Sonnet 5; shorter ones are a silent no-op (no error, no benefit)."
+            "Mark the system prompt as cacheable. OFF by default and that is "
+            "deliberate: PromptBuilder substitutes per-request variables (company, "
+            "transcript, ...) INTO the system template, so every request has a "
+            "unique prefix. That means a cache WRITE at 1.25x input on every call "
+            "and never a read — strictly worse than not caching. Turn this on only "
+            "after restructuring prompts so the system block is byte-identical "
+            "across requests and the variables live in the user turn."
+        ),
+    )
+    AI_DAILY_BUDGET_USD: float = Field(
+        default=2.0,
+        description=(
+            "Circuit breaker on metered AI spend per UTC day, across all users. "
+            "When exceeded, the paid provider refuses further calls and the chain "
+            "degrades to the free fallback provider instead of draining the "
+            "balance. 0 disables the cap (not recommended)."
         ),
     )
     ANTHROPIC_MAX_OUTPUT_TOKENS: int = Field(
@@ -169,6 +182,23 @@ class Settings(BaseSettings):
     PISTON_BASE_URL: str = Field(
         default="http://localhost:2000/api/v2",
         description="Piston code-execution API base URL (self-hosted via docker-compose)",
+    )
+    CODE_EXEC_PROVIDER: str = Field(
+        default="judge0",
+        description=(
+            "Code runner: judge0 | piston. Judge0 CE is the default because it "
+            "is free, needs no key, and works on hosts where we cannot run "
+            "privileged containers. Piston is for local dev via docker-compose "
+            "(its public API went whitelist-only in Feb 2026 and returns 401)."
+        ),
+    )
+    JUDGE0_BASE_URL: str = Field(
+        default="https://ce.judge0.com",
+        description="Judge0 CE base URL. Self-host or use a RapidAPI host for higher limits.",
+    )
+    JUDGE0_API_KEY: str = Field(
+        default="",
+        description="Optional RapidAPI key. Empty = use the free public CE instance.",
     )
 
     # ── Sentry (error tracking, optional) ─────────────────────────────────

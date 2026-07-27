@@ -251,6 +251,7 @@ def _build_provider(name: str, cls: type[BaseAIProvider]) -> BaseAIProvider:
                 # Cost guards — see anthropic_provider.py.
                 prompt_caching=settings.ANTHROPIC_PROMPT_CACHING,
                 max_output_tokens=settings.ANTHROPIC_MAX_OUTPUT_TOKENS,
+                daily_budget_usd=settings.AI_DAILY_BUDGET_USD,
             )
         # case "openai":
         #     return cls(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL)

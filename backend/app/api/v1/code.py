@@ -3,9 +3,24 @@ Code Execution Endpoints — api/v1/code.py
 
 POST /api/v1/code/execute — compile & run a coding-round submission.
 
-Execution is delegated to Piston (a sandboxed, free, no-key code runner).
-We never execute candidate code in our own process. Only a fixed allowlist
-of languages is accepted; everything else is rejected before any network call.
+Execution is delegated to an external sandbox — we never run candidate code in
+our own process. Only a fixed allowlist of languages is accepted; anything else
+is rejected before a network call is made.
+
+Two runners are supported, selected by CODE_EXEC_PROVIDER:
+
+  judge0 (default)  Judge0 CE — free, no API key, works on hosts that cannot run
+                    privileged containers (Render free tier included).
+  piston            Self-hosted Piston via docker-compose, for local dev.
+                    NOTE: Piston's *public* API (emkc.org) went whitelist-only
+                    on 2026-02-15 and now answers 401, so it can only be used
+                    self-hosted. Pointing production at it is what broke this
+                    endpoint previously.
+
+This endpoint never returns 5xx for a runner problem. A failed run comes back as
+a normal 200 with the reason in `stderr`, because a 5xx here surfaces in the
+browser console as an opaque network/CORS error instead of something the
+candidate can act on.
 """
 
 from __future__ import annotations
@@ -23,8 +38,9 @@ from app.db.redis import CacheKeys
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-# Allowlist: our language id -> (Piston language, pinned version).
-# Versions are pinned to what /runtimes reports so behavior is reproducible.
+# Allowlist: our language id -> (Piston language, pinned version, filename).
+# Versions are pinned to what Piston's /runtimes reports so behavior is
+# reproducible across self-hosted deployments.
 _LANGUAGES: dict[str, tuple[str, str, str]] = {
     # id: (piston_language, version, source_filename)
     "java": ("java", "15.0.2", "Main.java"),
@@ -32,6 +48,18 @@ _LANGUAGES: dict[str, tuple[str, str, str]] = {
     "cpp": ("c++", "10.2.0", "main.cpp"),
     "sql": ("sqlite3", "3.36.0", "main.sql"),
 }
+
+# Judge0 numeric language ids, verified against ce.judge0.com/languages.
+# Java 17 matters most here — the product is Java-FSE focused.
+_JUDGE0_LANGUAGE_IDS: dict[str, int] = {
+    "java": 91,    # Java (JDK 17.0.6)
+    "python": 92,  # Python (3.11.2)
+    "cpp": 54,     # C++ (GCC 9.2.0)
+    "sql": 82,     # SQL (SQLite 3.27.2)
+}
+
+#: Judge0 status ids that mean the program was killed for exceeding its limits.
+_JUDGE0_TIMEOUT_STATUS = 5
 
 
 class CodeExecuteRequest(BaseModel):
@@ -71,15 +99,98 @@ async def execute_code(
             detail=f"Unsupported language '{request.language}'. Supported: {sorted(_LANGUAGES)}",
         )
 
+    provider = settings.CODE_EXEC_PROVIDER.lower().strip()
+    try:
+        if provider == "piston":
+            stdout, stderr, exit_code, timed_out = await _run_on_piston(lang, request)
+        else:
+            stdout, stderr, exit_code, timed_out = await _run_on_judge0(lang, request)
+    except _RunnerUnavailable as exc:
+        # Deliberately a 200: a 5xx here shows up in the browser console as an
+        # opaque network/CORS failure, which tells the candidate nothing. Put
+        # the reason where they will actually read it.
+        logger.error("code_exec_unavailable", provider=provider, error=str(exc))
+        return CodeExecuteResponse(
+            language=lang,
+            stdout="",
+            stderr=f"Could not reach the code execution service ({provider}). {exc}",
+            exit_code=None,
+            supported_languages=sorted(_LANGUAGES),
+        )
+
+    return CodeExecuteResponse(
+        language=lang,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        supported_languages=sorted(_LANGUAGES),
+    )
+
+
+class _RunnerUnavailable(RuntimeError):
+    """The external sandbox could not be reached or refused the request."""
+
+
+async def _run_on_judge0(
+    lang: str, request: CodeExecuteRequest
+) -> tuple[str, str, int | None, bool]:
+    """
+    Execute on Judge0 CE. `wait=true` makes this a single synchronous call, so
+    there is no token to poll.
+    """
+    headers = {"Content-Type": "application/json"}
+    if settings.JUDGE0_API_KEY:
+        # RapidAPI-hosted Judge0 needs these; the public CE instance ignores them.
+        headers["X-RapidAPI-Key"] = settings.JUDGE0_API_KEY
+        headers["X-RapidAPI-Host"] = settings.JUDGE0_BASE_URL.replace("https://", "")
+
+    payload = {
+        "language_id": _JUDGE0_LANGUAGE_IDS[lang],
+        "source_code": request.source,
+        "stdin": request.stdin,
+        # Guardrails so a runaway submission can't hang the request.
+        "cpu_time_limit": 5,
+        "wall_time_limit": 10,
+    }
+
+    url = f"{settings.JUDGE0_BASE_URL.rstrip('/')}/submissions?base64_encoded=false&wait=true"
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+    except httpx.RequestError as exc:
+        raise _RunnerUnavailable(str(exc)) from exc
+
+    if resp.status_code not in (200, 201):
+        raise _RunnerUnavailable(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    status = (data.get("status") or {}).get("id")
+    # Compile errors arrive in compile_output, not stderr — surface them first
+    # or a Java candidate sees an empty box.
+    stderr = data.get("compile_output") or data.get("stderr") or ""
+    if not stderr and data.get("message"):
+        stderr = data["message"]
+
+    return (
+        data.get("stdout") or "",
+        stderr,
+        data.get("exit_code"),
+        status == _JUDGE0_TIMEOUT_STATUS,
+    )
+
+
+async def _run_on_piston(
+    lang: str, request: CodeExecuteRequest
+) -> tuple[str, str, int | None, bool]:
+    """Execute on a SELF-HOSTED Piston instance (docker-compose, local dev)."""
     piston_lang, version, filename = _LANGUAGES[lang]
     payload = {
         "language": piston_lang,
         "version": version,
         "files": [{"name": filename, "content": request.source}],
         "stdin": request.stdin,
-        # Guardrails so a runaway submission can't hang the request. Kept
-        # within self-hosted Piston's default configured caps (compile 10s,
-        # run 3s).
+        # Within self-hosted Piston's default caps (compile 10s, run 3s).
         "compile_timeout": 10_000,
         "run_timeout": 3_000,
     }
@@ -88,28 +199,20 @@ async def execute_code(
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{settings.PISTON_BASE_URL}/execute", json=payload)
     except httpx.RequestError as exc:
-        logger.error("piston_network_error", error=str(exc))
-        raise HTTPException(status_code=503, detail="Code execution service is unavailable.") from exc
+        raise _RunnerUnavailable(str(exc)) from exc
 
     if resp.status_code != 200:
-        logger.error("piston_api_error", status=resp.status_code, body=resp.text[:300])
-        raise HTTPException(status_code=502, detail="Code execution service returned an error.")
+        raise _RunnerUnavailable(f"HTTP {resp.status_code}: {resp.text[:200]}")
 
     data = resp.json()
     run = data.get("run", {}) or {}
     compile_stage = data.get("compile", {}) or {}
 
-    # Surface a compile error (e.g. Java/C++) ahead of empty run output.
-    stderr = compile_stage.get("stderr") or run.get("stderr") or ""
-    stdout = run.get("stdout") or ""
-
-    return CodeExecuteResponse(
-        language=lang,
-        stdout=stdout,
-        stderr=stderr,
-        exit_code=run.get("code"),
-        timed_out=run.get("signal") == "SIGKILL",
-        supported_languages=sorted(_LANGUAGES),
+    return (
+        run.get("stdout") or "",
+        compile_stage.get("stderr") or run.get("stderr") or "",
+        run.get("code"),
+        run.get("signal") == "SIGKILL",
     )
 
 

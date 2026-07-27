@@ -33,18 +33,37 @@ export function useGDTopics() {
   });
 }
 
+/** Where the discussion is in its lifecycle — drives how the panel behaves. */
+export type GDPhase = 'opening' | 'discussion' | 'closing';
+
+export interface GDTurnArgs {
+  topic: string;
+  history: GDTurn[];
+  /** The panel already asked the candidate something and is still waiting. */
+  awaiting_candidate?: boolean;
+  /** Direct questions the candidate has left unanswered (2+ → panel moves on). */
+  ignored_questions?: number;
+  /** Seconds since the candidate last spoke. */
+  candidate_silent_seconds?: number;
+  phase?: GDPhase;
+}
+
 export function useGD() {
   const api = getBrowserApiClient();
 
   const panelTurn = useMutation({
-    mutationFn: async (args: { topic: string; history: GDTurn[] }) => {
+    mutationFn: async (args: GDTurnArgs) => {
       const res = await api.post('/api/v1/gd/turn', args);
-      return res.data as { contributions: GDTurn[] };
+      return res.data as { contributions: GDTurn[]; addressed_candidate: boolean };
     },
   });
 
   const evaluate = useMutation({
-    mutationFn: async (args: { topic: string; history: GDTurn[] }) => {
+    mutationFn: async (args: {
+      topic: string;
+      history: GDTurn[];
+      ignored_questions?: number;
+    }) => {
       const res = await api.post('/api/v1/gd/evaluate', args);
       return res.data as GDEvaluation;
     },
