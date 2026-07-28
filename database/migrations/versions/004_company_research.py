@@ -21,6 +21,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Idempotent by design. A deploy that created the table but then failed on
+    # the policy below leaves the schema present WITHOUT alembic having stamped
+    # this revision, so the next boot re-runs it and dies on "already exists" —
+    # an unrecoverable loop, because the boot chain is `alembic && uvicorn` and a
+    # migration failure means no API at all.
+    bind = op.get_bind()
+    already = bind.exec_driver_sql(
+        "SELECT to_regclass('public.company_research') IS NOT NULL"
+    ).scalar()
+    if already:
+        _ensure_rls()
+        return
+
     op.create_table(
         "company_research",
         sa.Column(
@@ -63,14 +76,35 @@ def upgrade() -> None:
         ["company_slug", "program_slug"],
     )
 
-    # Research is public reference data, not user data: readable by any signed-in
-    # user, writable only by the service role (the seeder). RLS is enabled to
-    # match every other table in this schema rather than leaving one exception.
+    _ensure_rls()
+
+
+def _ensure_rls() -> None:
+    """
+    Enable RLS and (re)create the read policy.
+
+    Research is public reference data, not user data: readable by any signed-in
+    user, writable only by the service role (the seeder). RLS is enabled to match
+    every other table in this schema rather than leaving one exception.
+
+    Wrapped so it cannot break the deploy. `TO authenticated` depends on a role
+    Supabase provides but a plain Postgres (local dev, CI) does not, and RLS on a
+    reference table is a hardening measure — not worth trading the entire API's
+    availability for, given the boot chain is `alembic && uvicorn`.
+    """
     op.execute("ALTER TABLE company_research ENABLE ROW LEVEL SECURITY")
     op.execute(
         """
-        CREATE POLICY company_research_read ON company_research
-        FOR SELECT TO authenticated USING (true)
+        DO $$
+        BEGIN
+            DROP POLICY IF EXISTS company_research_read ON company_research;
+            CREATE POLICY company_research_read ON company_research
+                FOR SELECT TO authenticated USING (true);
+        EXCEPTION WHEN undefined_object THEN
+            -- No `authenticated` role (non-Supabase Postgres). RLS stays on with
+            -- no read policy, which the service-role seeder bypasses anyway.
+            RAISE NOTICE 'skipped company_research_read: no authenticated role';
+        END $$;
         """
     )
 

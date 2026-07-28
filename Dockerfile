@@ -32,4 +32,4 @@ EXPOSE 8000
 # handful of rows, so running it on every boot keeps production in sync with
 # knowledge/research/*.yaml with no manual step. It is deliberately non-fatal:
 # failing to refresh reference data must never stop the API from starting.
-CMD ["sh", "-c", "uv run alembic upgrade head && (uv run python scripts/seed_research.py || echo 'research seed skipped') && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uv run alembic upgrade head && (uv run python scripts/seed_db.py || echo 'catalogue seed skipped') && (uv run python scripts/seed_research.py || echo 'research seed skipped') && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
