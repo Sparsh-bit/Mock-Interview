@@ -206,7 +206,7 @@ export default function DashboardPage() {
                       </div>
                       <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
                     </div>
-                    <p className="mt-1.5 text-[10px] text-muted-foreground">{track.question_count} questions available</p>
+                    <p className="mt-1.5 text-[10px] text-muted-foreground">{track.interview_question_count} questions per interview</p>
                   </Link>
                 ))}
 

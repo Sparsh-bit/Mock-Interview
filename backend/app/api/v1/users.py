@@ -36,6 +36,10 @@ class UpdateProfileRequest(BaseModel):
     experience_years: int | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
+    #: Profile picture. Editable so the field the profile page shows actually
+    #: persists; it was previously read-only, so any value the UI sent was
+    #: silently dropped.
+    avatar_url: str | None = None
     timezone: str | None = None
 
 
@@ -154,7 +158,8 @@ async def get_stats(
     """Aggregate interview performance statistics for the current user."""
     from sqlalchemy import case  # noqa: PLC0415
 
-    from app.models.session import Score  # noqa: PLC0415
+    from app.models.report import Report  # noqa: PLC0415
+    from app.models.session import Answer  # noqa: PLC0415
 
     # Session counts
     sessions_result = await db.execute(
@@ -170,16 +175,27 @@ async def get_stats(
     )
     session_row = sessions_result.one()
 
-    # Score stats
-    scores_result = await db.execute(
-        select(
-            func.avg(Score.overall_score).label("avg_score"),
-            func.max(Score.overall_score).label("best_score"),
-            func.count(Score.id).label("total_answers"),
-        ).join(InterviewSession, Score.session_id == InterviewSession.id)
+    # Questions answered comes from Answer rows, NOT Score rows. Per-answer
+    # scoring was moved to report generation, so no Score row is ever written
+    # any more — counting them made analytics permanently report zero.
+    answers_result = await db.execute(
+        select(func.count(Answer.id))
+        .join(InterviewSession, Answer.session_id == InterviewSession.id)
         .where(InterviewSession.user_id == current_user.user_id)
     )
-    score_row = scores_result.one()
+    total_answers = answers_result.scalar() or 0
+
+    # Scores now live on the generated Report (0-100), which the UI shows on a
+    # 0-100 scale, so no rescaling here.
+    reports_result = await db.execute(
+        select(
+            func.avg(Report.overall_score).label("avg_score"),
+            func.max(Report.overall_score).label("best_score"),
+        )
+        .join(InterviewSession, Report.session_id == InterviewSession.id)
+        .where(InterviewSession.user_id == current_user.user_id)
+    )
+    score_row = reports_result.one()
 
     total_seconds = session_row.total_seconds or 0
     hours = round(total_seconds / 3600, 1)
@@ -188,7 +204,7 @@ async def get_stats(
         total_sessions=session_row.total or 0,
         completed_sessions=session_row.completed or 0,
         average_score=round(score_row.avg_score, 2) if score_row.avg_score else None,
-        total_questions_answered=score_row.total_answers or 0,
+        total_questions_answered=total_answers,
         hours_practiced=hours,
         best_score=round(score_row.best_score, 2) if score_row.best_score else None,
         streak_days=0,  # Phase 9: implement streak calculation

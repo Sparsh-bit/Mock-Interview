@@ -10,7 +10,10 @@ export interface Track {
   description: string | null;
   difficulty_level: string;
   duration_minutes: number;
+  /** Size of the track's question bank. */
   question_count: number;
+  /** How many questions an interview actually asks — show this to users. */
+  interview_question_count: number;
   company: {
     id: string;
     name: string;

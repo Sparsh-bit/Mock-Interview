@@ -145,6 +145,23 @@ class Settings(BaseSettings):
             "across requests and the variables live in the user turn."
         ),
     )
+    INTERVIEW_QUESTION_COUNT: int = Field(
+        default=12,
+        ge=4,
+        le=25,
+        description=(
+            "How many questions a planned interview actually asks. This is the "
+            "number the UI must advertise — a track's `question_count` is the "
+            "size of its question BANK, not the interview length, and showing "
+            "that made a 12-question interview look like a 20-question one."
+        ),
+    )
+    INTERVIEW_MAX_CROSS_QUESTIONS: int = Field(
+        default=4,
+        ge=0,
+        le=10,
+        description="Max live follow-up cross-questions injected during an interview.",
+    )
     AI_DAILY_BUDGET_USD: float = Field(
         default=2.0,
         description=(

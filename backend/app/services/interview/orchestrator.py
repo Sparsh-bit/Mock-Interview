@@ -9,6 +9,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import AIProviderUnavailableError
 from app.db.redis import cache_get, cache_set, get_redis
 from app.events.base import InterviewStartedEvent, InterviewStartedPayload
@@ -26,11 +27,13 @@ from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
 
 logger = structlog.get_logger(__name__)
 
-# How many questions the AI pre-generates for a planned interview, and the
-# max number of live cross-questions injected during it (kept small so the
-# interview stays fluent — most questions are served instantly from the plan).
-_PLANNED_QUESTION_COUNT = 6
-_MAX_CROSS_QUESTIONS = 2
+# How many questions the AI pre-generates for a planned interview, and the max
+# number of live cross-questions injected during it. Both come from settings so
+# the interview length is configurable and, crucially, so the UI can advertise
+# the SAME number it will actually ask — these were hardcoded at 6 and 2 while
+# the track card advertised its 20-question bank.
+_PLANNED_QUESTION_COUNT = settings.INTERVIEW_QUESTION_COUNT
+_MAX_CROSS_QUESTIONS = settings.INTERVIEW_MAX_CROSS_QUESTIONS
 # Plan reuse cache: we accumulate up to N distinct AI-generated plan variants
 # per (company, program, focus) signature in Redis. Once N exist, a matching
 # request instantly reuses a random variant instead of waiting on the slow

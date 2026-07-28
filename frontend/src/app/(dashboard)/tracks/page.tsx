@@ -57,7 +57,7 @@ export default function TracksPage() {
                     </div>
                     <div className="rounded-xl border border-border/40 bg-surface/50 p-3">
                       <span className="text-muted-foreground">Questions:</span>
-                      <p className="mt-0.5 font-semibold">{track.question_count} Available</p>
+                      <p className="mt-0.5 font-semibold">{track.interview_question_count} Asked</p>
                     </div>
                   </div>
                 </div>

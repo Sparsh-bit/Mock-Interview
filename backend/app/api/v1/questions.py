@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
 from app.models.company import Company, InterviewTrack, QuestionCategory
@@ -58,7 +59,11 @@ class TrackListResponse(BaseModel):
     description: str | None
     difficulty_level: str
     duration_minutes: int
+    #: Size of this track's question BANK (not the interview length).
     question_count: int
+    #: How many questions an interview on this track actually asks. The UI must
+    #: show this, not question_count, or it advertises the bank size.
+    interview_question_count: int
     company: CompanyResponse
 
 
@@ -70,6 +75,7 @@ class TrackDetailResponse(BaseModel):
     difficulty_level: str
     duration_minutes: int
     question_count: int
+    interview_question_count: int
     company: CompanyResponse
     categories: list[CategoryResponse]
 
@@ -133,6 +139,7 @@ async def list_tracks(
             difficulty_level=t.difficulty_level,
             duration_minutes=t.duration_minutes,
             question_count=t.question_count,
+            interview_question_count=settings.INTERVIEW_QUESTION_COUNT,
             company=CompanyResponse(
                 id=t.company.id,
                 name=t.company.name,
@@ -172,6 +179,7 @@ async def get_track(
         difficulty_level=track.difficulty_level,
         duration_minutes=track.duration_minutes,
         question_count=track.question_count,
+        interview_question_count=settings.INTERVIEW_QUESTION_COUNT,
         company=CompanyResponse(
             id=track.company.id,
             name=track.company.name,
