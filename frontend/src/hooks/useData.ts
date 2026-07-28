@@ -123,6 +123,10 @@ export function useTracks() {
       const res = await api.get('/api/v1/questions/tracks');
       return res.data as Track[];
     },
+    // Reference data: changes on deploy, not per session. Serving it from cache
+    // for the session avoids a backend round trip on nearly every navigation.
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   });
 }
 
@@ -134,6 +138,11 @@ export function useUserStats() {
       const res = await api.get('/api/v1/users/me/stats');
       return res.data as UserStats;
     },
+    // Keep the previous numbers on screen while refetching instead of falling
+    // back to spinners — on a slow backend that flicker is most of the
+    // "everything is loading again" feeling.
+    placeholderData: (prev) => prev,
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -145,6 +154,8 @@ export function useUserSessions(limit: number = 10) {
       const res = await api.get(`/api/v1/users/me/sessions?limit=${limit}`);
       return res.data as SessionSummary[];
     },
+    placeholderData: (prev) => prev,
+    staleTime: 2 * 60 * 1000,
   });
 }
 
@@ -156,6 +167,8 @@ export function useUserProfile() {
       const res = await api.get('/api/v1/users/me/profile');
       return res.data as UserProfile;
     },
+    placeholderData: (prev) => prev,
+    staleTime: 10 * 60 * 1000,
   });
 }
 

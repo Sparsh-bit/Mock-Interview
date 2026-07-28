@@ -10,7 +10,7 @@ This deploys the whole app for **$0**, with **no credit card** on any provider.
 | Backend (FastAPI) | **Render** (free web service) | ✅ no card | Handles the long ~110 s AI calls. Sleeps after 15 min idle → first request cold-starts (~50 s). Mitigated with a free keep-warm ping (step 8). |
 | Database (Postgres) | **Supabase** | ✅ no card | You already have this project. |
 | Cache/Redis | **Upstash** | ✅ no card | 256 MB / 500 k commands/mo free. |
-| Code compiler | **Public Piston API** | ✅ no host needed | `https://emkc.org/api/v2/piston` — free, public. |
+| Code compiler | **Judge0 CE** | ✅ no key needed | `https://ce.judge0.com` — free, no signup. (Piston's public API went whitelist-only in Feb 2026 and now returns 401.) |
 | AI models | **GLM + NVIDIA** free keys | ✅ | Already configured. |
 | DNS / CDN / WAF | **Cloudflare** | ✅ no card | Front the whole app. |
 
@@ -51,10 +51,21 @@ This deploys the whole app for **$0**, with **no credit card** on any provider.
 
 ---
 
-## 3. Piston (code execution) — nothing to deploy
+## 3. Judge0 (code execution) — nothing to deploy
 
-Use the free public API. You'll just set:
-`PISTON_BASE_URL=https://emkc.org/api/v2/piston`
+Use the free public Judge0 CE instance. You'll just set:
+
+```
+CODE_EXEC_PROVIDER=judge0
+JUDGE0_BASE_URL=https://ce.judge0.com
+```
+
+> ⚠️ **Do not point this at Piston's public API** (`emkc.org`). It went
+> whitelist-only on 2026-02-15 and answers `401` for every request, which
+> surfaced as a 502 on `/api/v1/code/execute` and broke the whole coding round.
+> Piston still works **self-hosted** (`CODE_EXEC_PROVIDER=piston` +
+> `docker compose up -d piston`) for local dev, but it needs privileged
+> containers, which Render's free tier does not allow.
 
 ---
 
@@ -95,7 +106,8 @@ A production `Dockerfile` is in the repo root (build context = repo root, becaus
    | `NVIDIA_API_KEY` | your NVIDIA key |
    | `NVIDIA_MODEL` | your NVIDIA model |
    | `NVIDIA_BASE_URL` | your NVIDIA base URL |
-   | `PISTON_BASE_URL` | `https://emkc.org/api/v2/piston` |
+   | `CODE_EXEC_PROVIDER` | `judge0` |
+   | `JUDGE0_BASE_URL` | `https://ce.judge0.com` |
    | `CORS_ORIGINS` | `["https://YOUR-FRONTEND-URL"]` ⚠️ JSON array string |
 
    > **`CORS_ORIGINS` must be a JSON array string**, e.g. `["https://interviewos.pages.dev","https://yourdomain.com"]`. A bare URL will fail to parse.
@@ -145,13 +157,31 @@ Next.js 15 App Router on Pages uses the Cloudflare adapter.
 
 ---
 
-## 8. Kill cold-start lag (free)
+## 8. Kill cold-start lag — do this, it is the single biggest perceived-speed fix
 
-Render free sleeps after 15 min idle. Keep it warm with a free pinger:
-- [cron-job.org](https://cron-job.org) or [UptimeRobot](https://uptimerobot.com) (both free, no card).
-- Ping `https://YOUR-RENDER-URL/api/v1/health` every **10 minutes**.
+**Render free sleeps after 15 minutes idle.** Measured on this deployment:
 
-This removes the ~50 s wake delay for real users. (The ~110 s *first-plan* generation is the free AI model's speed, not hosting — it's already cached after the first run per company/program, so repeats are instant.)
+| Request | Time |
+|---|---|
+| First request after sleeping | **37 s** |
+| Warm | 1.8-3.5 s |
+
+A 37-second wait on the first page load is what makes the app feel broken, and
+no amount of frontend caching can fix it — the browser is simply waiting for a
+container to boot. Nothing in the code can prevent this; only traffic can.
+
+Keep it warm with a free pinger (no card required):
+- [cron-job.org](https://cron-job.org) or [UptimeRobot](https://uptimerobot.com)
+- Ping `https://YOUR-RENDER-URL/api/v1/health` every **10 minutes** (under the
+  15-minute sleep threshold, with margin).
+
+That alone turns a 37 s first load into ~2 s. It is the highest-value 5 minutes
+of setup in this document.
+
+Remaining latency after that is the round trip from Render to Supabase and
+Upstash. If ~2 s still bothers you, the fix is co-locating regions (put the
+Render service, the Supabase project and the Upstash database in the same
+region) — a free change, but it means recreating those resources.
 
 ---
 
@@ -167,18 +197,47 @@ SUPABASE_URL=https://<ref>.supabase.co
 SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_KEY=<service_role key>
 SUPABASE_JWT_SECRET=<jwt secret>
-AI_PROVIDER=glm
-AI_FALLBACK_PROVIDER=nvidia
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=<anthropic key>
+ANTHROPIC_MODEL=claude-sonnet-5
+AI_FALLBACK_PROVIDER=glm
 GLM_API_KEY=<glm key>
 GLM_MODEL=glm-4.5-flash
 GLM_BASE_URL=<glm base url>
-NVIDIA_API_KEY=<nvidia key>
-NVIDIA_MODEL=<nvidia model>
-NVIDIA_BASE_URL=<nvidia base url>
-PISTON_BASE_URL=https://emkc.org/api/v2/piston
+CODE_EXEC_PROVIDER=judge0
+JUDGE0_BASE_URL=https://ce.judge0.com
 CORS_ORIGINS=["https://interviewos.pages.dev"]
 ```
-Optional: `SENTRY_DSN`, `DB_POOL_SIZE`, `REDIS_DEFAULT_TTL_SECONDS`, `RATE_LIMIT_*`.
+
+### Cost controls — set these, they are not optional in spirit
+
+`AI_PROVIDER=anthropic` is metered, so these three decide whether a bug can
+drain the balance:
+
+```
+AI_DAILY_BUDGET_USD=2          # hard ceiling per UTC day, across all users
+ANTHROPIC_MAX_OUTPUT_TOKENS=4096
+ANTHROPIC_PROMPT_CACHING=False
+```
+
+- `AI_DAILY_BUDGET_USD` is checked before every paid call. On breach the paid
+  provider refuses and the chain degrades to the free `AI_FALLBACK_PROVIDER`, so
+  the app keeps working instead of spending. Set it to what you can afford to
+  lose in a day, not to your balance.
+- `ANTHROPIC_PROMPT_CACHING` must stay **False** until prompts are restructured.
+  Prompt templates interpolate per-request variables into the *system* block, so
+  every request is a unique prefix: enabling it bills a 1.25x cache **write** on
+  every call and never scores a read — strictly worse than off.
+
+Interview shape (safe to tune):
+
+```
+INTERVIEW_QUESTION_COUNT=12      # questions actually asked; the UI advertises this
+INTERVIEW_MAX_CROSS_QUESTIONS=4  # live follow-ups injected during the interview
+```
+
+Optional: `SENTRY_DSN`, `DB_POOL_SIZE`, `REDIS_DEFAULT_TTL_SECONDS`, `RATE_LIMIT_*`,
+`JUDGE0_API_KEY` (RapidAPI, for higher compiler limits).
 
 ### Frontend (Cloudflare Pages / Vercel)
 ```
@@ -204,7 +263,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 - **Render free**: sleeps after 15 min idle (keep-warm ping fixes it); 512 MB RAM, shared CPU — fine because AI calls are network-bound.
 - **Supabase free**: 500 MB DB; project **pauses after ~1 week of zero activity** (a login/query wakes it).
 - **Upstash free**: 256 MB, 500 k commands/month.
-- **Public Piston**: rate-limited but ample for early usage.
+- **Judge0 CE (public)**: rate-limited but ample for early usage; self-host or add a RapidAPI key (`JUDGE0_API_KEY`) if you outgrow it.
 - **Cloudflare Pages**: 500 builds/month, unlimited requests.
 
 When you have revenue, the only paid upgrades worth making first: an always-on backend instance (no sleep) and a faster AI model.

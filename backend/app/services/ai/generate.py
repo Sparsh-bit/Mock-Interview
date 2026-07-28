@@ -8,8 +8,8 @@ from the model. It centralizes what used to be duplicated per call site:
   - Try the primary provider; on failure fall through to the fallback
     (see provider_factory.get_ai_providers) — doubles effective capacity and
     survives one provider being down/slow.
-  - Retry each provider a few times, since the free-tier reasoning models
-    intermittently return empty or malformed content.
+  - Retry each provider a few times, since a provider can intermittently return
+    empty or malformed content even on a success status.
   - Parse + Pydantic-validate the response, with an optional `is_valid`
     predicate for "schema-valid but useless" cases (e.g. an empty quiz).
   - Fail closed with AIProviderUnavailableError only after every provider and

@@ -153,7 +153,7 @@ export default function LandingPage() {
             Sign in
           </Link>
           <Link href="/register" className={cn(buttonVariants({ size: 'sm' }))}>
-            Get Started Free
+            Get Started
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
@@ -186,7 +186,7 @@ export default function LandingPage() {
               href="/register"
               className="group inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
             >
-              Start Free Mock Interview
+              Start Your Mock Interview
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
             <Link
@@ -436,17 +436,17 @@ export default function LandingPage() {
             <h2 className="text-4xl font-bold">
               Your Interview. Your Terms.
               <br />
-              <span className="gradient-text">Start Today — Free.</span>
+              <span className="gradient-text">Start Today.</span>
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-              No credit card required. Pick your company and program, add your resume, and see
-              exactly where you stand.
+              Pick your company and program, add your resume, and see exactly where you stand
+              before the real interview does.
             </p>
             <Link
               href="/register"
               className="group mt-8 inline-flex items-center gap-2 rounded-xl bg-primary px-10 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
             >
-              Start Free Mock Interview
+              Start Your Mock Interview
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
           </div>

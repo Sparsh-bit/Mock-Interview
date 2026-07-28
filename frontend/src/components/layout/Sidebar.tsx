@@ -130,7 +130,7 @@ export function AppSidebar({ user }: SidebarProps) {
           {!collapsed && (
             <div className="min-w-0">
               <p className="truncate text-xs font-medium">{user.email}</p>
-              <p className="text-[10px] text-muted-foreground">Free Plan</p>
+              <p className="text-[10px] text-muted-foreground">View profile</p>
             </div>
           )}
         </Link>

@@ -33,10 +33,10 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 const PERKS = [
-  'Free Cognizant Java FSE mock interview',
-  'Real-time AI evaluation after every answer',
+  'Cognizant Java FSE mock interview, grounded in real past questions',
+  'Voice-first rounds with live cross-questions',
   'Detailed performance report at the end',
-  'No credit card required',
+  'Coding round with a real compiler',
 ];
 
 export default function RegisterPage() {
@@ -133,7 +133,7 @@ export default function RegisterPage() {
           <Card className="p-8">
             <div className="mb-6">
               <h1 className="text-2xl font-bold tracking-tight">Create your account</h1>
-              <p className="mt-1 text-sm text-muted-foreground">Free forever. No credit card needed.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Set up your interview profile in under a minute.</p>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

@@ -145,8 +145,8 @@ async def start_quiz(
     )
 
     # Budget tokens to the quiz size (~300 tokens/question + buffer). Tries the
-    # primary then fallback provider, retrying each; the free-tier model is slow
-    # and occasionally returns empty content, so a non-empty question list is
+    # primary then fallback provider, retrying each; a provider can return empty
+    # content even on a success status, so a non-empty question list is
     # required (raises AIProviderUnavailableError if all attempts fail).
     max_tokens = min(300 * request.count + 600, 8000)
     quiz, _ = await generate_structured(

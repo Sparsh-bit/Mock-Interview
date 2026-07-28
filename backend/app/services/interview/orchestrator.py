@@ -37,10 +37,10 @@ _PLANNED_QUESTION_COUNT = settings.INTERVIEW_QUESTION_COUNT
 _MAX_CROSS_QUESTIONS = settings.INTERVIEW_MAX_CROSS_QUESTIONS
 # Plan reuse cache: we accumulate up to N distinct AI-generated plan variants
 # per (company, program, focus) signature in Redis. Once N exist, a matching
-# request instantly reuses a random variant instead of waiting on the slow
-# free-tier model — fast AND still varied (and live cross-questions make every
-# run different regardless). This is the free "now" phase; the same lookup seam
-# can later be swapped for pgvector semantic matching without touching callers.
+# request instantly reuses a random variant instead of paying for another
+# generation — fast, cheaper, AND still varied (live cross-questions make every
+# run different regardless). The same lookup seam can later be swapped for
+# pgvector semantic matching without touching callers.
 _MAX_PLAN_VARIANTS = 4
 _PLAN_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
 # Hard cap on how long we wait for the AI to build the plan before falling back

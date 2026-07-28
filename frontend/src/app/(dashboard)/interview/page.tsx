@@ -233,8 +233,8 @@ function InterviewSetup() {
         </button>
         {createPlan.isPending && (
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            Crafting questions for your company, program and resume — this can take up to a minute
-            or two on our free tier. Hang tight.
+            Crafting questions for your company, program and resume — this usually takes a few
+            seconds. Hang tight.
           </p>
         )}
       </div>
