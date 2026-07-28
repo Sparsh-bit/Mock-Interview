@@ -142,41 +142,88 @@ export function useSpeechRecognition() {
 const INDIAN_VOICE_NAMES = ['neerja', 'prabhat', 'rishi', 'veena', 'heera', 'ravi', 'aditi'];
 
 /**
+ * How good an engine actually sounds, which matters more than accent.
+ *
+ * Only the top tier is genuinely neural — Microsoft's "Online (Natural)" voices
+ * stream from their cloud and are the closest this browser API gets to a Gemini
+ * or ChatGPT-style voice. Apple's default voices are formant-synthesis and sound
+ * robotic no matter how you tune rate and pitch.
+ */
+export function qualityTier(name: string): number {
+  // Neural, cloud-streamed (Edge). "Neerja Online (Natural)" is both neural AND
+  // Indian, which is the ideal case.
+  if (name.includes('natural') || name.includes('online')) return 1000;
+  // Chrome's network-backed voices — clearly better than local synthesis.
+  if (name.includes('google')) return 800;
+  // Apple's downloadable higher-quality voices.
+  if (name.includes('premium')) return 400;
+  if (name.includes('enhanced')) return 300;
+  // Default local synthesis.
+  return 10;
+}
+
+/**
  * Ranks an available voice for interview narration. Higher = better.
  *
- * The interviewer should sound like one consistent Indian-English person, so
- * en-IN outranks everything else by a wide margin. Non-Indian English voices
- * are still scored (rather than rejected) because a machine may have no en-IN
- * voice installed at all, and silence would be worse than a US accent.
+ * Quality tier dominates, then accent within that tier. This ordering is
+ * deliberate and was a correction: ranking accent first picked Apple's local
+ * `Rishi` over Microsoft's neural `Neerja`, which is exactly the robotic
+ * "sounds like a TTS engine" result we were trying to avoid. A neural voice
+ * reading in a non-Indian accent still sounds far more human than a synthetic
+ * Indian one — and where a neural Indian voice exists it wins outright.
  */
-function scoreVoice(v: SpeechSynthesisVoice): number {
+export function scoreVoice(v: SpeechSynthesisVoice): number {
   const name = v.name.toLowerCase();
   const lang = v.lang?.toLowerCase() ?? '';
   if (!lang.startsWith('en')) return -1;
 
-  let score = 0;
+  // Known novelty/robotic voices are never acceptable, whatever else matches.
+  if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|superstar|trinoids|whisper|wobble|zarvox|compact/.test(name)) {
+    return -1;
+  }
 
-  // Accent is the dominant factor — a natural US voice must never outrank a
-  // plain Indian one, so this gap has to exceed every quality bonus below.
-  if (lang === 'en-in') score += 100;
+  let score = qualityTier(name);
+
+  // Accent, applied within the tier.
+  if (lang === 'en-in') score += 50;
   else if (lang === 'en-gb') score += 5; // closer to Indian English than en-US
   else if (lang === 'en-us') score += 3;
-  else score += 1;
 
-  // Prefer a recognised Indian voice by name, in order.
+  // Named Indian voices, best first — breaks ties inside the same tier+accent.
   const idx = INDIAN_VOICE_NAMES.findIndex((n) => name.includes(n));
-  if (idx !== -1) score += 40 - idx * 2;
+  if (idx !== -1) score += 20 - idx;
 
-  // Quality tie-breakers within the same accent.
-  if (name.includes('natural') || name.includes('online')) score += 8;
-  if (name.includes('google')) score += 6;
-  if (name.includes('premium') || name.includes('enhanced')) score += 5;
-
-  // Penalize known novelty/robotic voices.
-  if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|superstar|trinoids|whisper|wobble|zarvox/.test(name)) {
-    score -= 200;
-  }
   return score;
+}
+
+/**
+ * Split text into utterance-sized chunks at sentence boundaries.
+ *
+ * One long utterance is read as an undifferentiated run, which is a large part
+ * of why it sounds mechanical — the engine inserts a natural breath between
+ * utterances but not reliably mid-string. Very short fragments are merged back
+ * so the delivery doesn't become choppy.
+ */
+export function toSpeechChunks(text: string, minChars = 12): string[] {
+  const sentences = text
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  for (const sentence of sentences) {
+    const last = chunks[chunks.length - 1];
+    // Merge a stub onto the previous chunk rather than speaking it alone. Only
+    // the incoming sentence's length matters — testing the previous chunk too
+    // chained normal sentences together and undid the per-sentence pacing.
+    if (last && (sentence.length < minChars || last.length < minChars)) {
+      chunks[chunks.length - 1] = `${last} ${sentence}`;
+    } else {
+      chunks.push(sentence);
+    }
+  }
+  return chunks.length ? chunks : [text];
 }
 
 /**
@@ -213,25 +260,39 @@ export function useSpeechSynthesis() {
     (text: string) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
+
       const chosen =
         window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) ?? null;
-      if (chosen) {
-        utter.voice = chosen;
-        utter.lang = chosen.lang;
-      } else {
-        // Ask for Indian English even without a matching voice object — some
-        // engines will still pick an en-IN variant from the lang hint alone.
-        utter.lang = 'en-IN';
-      }
-      // Conversational, not newsreader: a touch slower than default with a
-      // neutral pitch is the closest this API gets to a real interviewer.
-      utter.rate = 0.92;
-      utter.pitch = 1.0;
-      utter.onstart = () => setSpeaking(true);
-      utter.onend = () => setSpeaking(false);
-      utter.onerror = () => setSpeaking(false);
-      window.speechSynthesis.speak(utter);
+      const isNeural = /natural|online|google/i.test(chosen?.name ?? '');
+
+      // Speak sentence by sentence. The engine puts a natural breath between
+      // utterances, so this alone makes long questions read like speech instead
+      // of one flat run — and it keeps very long text from being truncated.
+      const chunks = toSpeechChunks(text);
+
+      chunks.forEach((chunk, i) => {
+        const utter = new SpeechSynthesisUtterance(chunk);
+        if (chosen) {
+          utter.voice = chosen;
+          utter.lang = chosen.lang;
+        } else {
+          // Ask for Indian English even without a matching voice object — some
+          // engines still pick an en-IN variant from the lang hint alone.
+          utter.lang = 'en-IN';
+        }
+        // Neural voices are already well paced; slowing them down is what makes
+        // them sound artificial. Local synthesis needs the extra room.
+        utter.rate = isNeural ? 1.0 : 0.92;
+        utter.pitch = 1.0;
+
+        // Track speaking across the whole queue, not per chunk, so the UI
+        // indicator doesn't flicker between sentences.
+        if (i === 0) utter.onstart = () => setSpeaking(true);
+        if (i === chunks.length - 1) utter.onend = () => setSpeaking(false);
+        utter.onerror = () => setSpeaking(false);
+
+        window.speechSynthesis.speak(utter);
+      });
     },
     [voiceURI]
   );

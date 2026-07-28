@@ -199,18 +199,38 @@ export function useReport(sessionId: string) {
     queryKey: ['report', sessionId],
     queryFn: async () => {
       const api = getBrowserApiClient();
+
+      const statusOf = (e: unknown) =>
+        (e as { status?: number; response?: { status?: number } })?.status ??
+        (e as { response?: { status?: number } })?.response?.status;
+
       try {
         const res = await api.get(`/api/v1/reports/${sessionId}`);
         return res.data as ReportData;
-      } catch (err: any) {
-        if (err.status === 404 || err.response?.status === 404) {
+      } catch (err: unknown) {
+        if (statusOf(err) !== 404) throw err;
+
+        // No report yet — generate it on demand.
+        try {
           const genRes = await api.post(`/api/v1/reports/${sessionId}/generate`, {});
           return genRes.data as ReportData;
+        } catch (genErr: unknown) {
+          // 409 means the request was understood but the session isn't in a
+          // reportable state. "Report already exists" is a race we can resolve
+          // ourselves (another tab or an earlier attempt won); the other 409s
+          // carry a reason the candidate needs to read, so let them through
+          // with their message rather than collapsing to "not found".
+          if (statusOf(genErr) === 409) {
+            const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
+            if (retry) return retry.data as ReportData;
+          }
+          throw genErr;
         }
-        throw err;
       }
     },
     enabled: !!sessionId,
+    // Generation is a billed AI call; never retry it automatically.
+    retry: false,
   });
 }
 

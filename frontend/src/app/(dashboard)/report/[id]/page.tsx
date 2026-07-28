@@ -86,7 +86,7 @@ export default function ReportDetailPage() {
   const sessionId = params.id as string;
   const router = useRouter();
 
-  const { data: report, isLoading, error } = useReport(sessionId);
+  const { data: report, isLoading, isFetching, error, refetch } = useReport(sessionId);
   const toggleShare = useToggleShareReport();
 
   const handleShare = () => {
@@ -108,17 +108,32 @@ export default function ReportDetailPage() {
   }
 
   if (error || !report) {
+    // The API explains exactly why a report can't be produced — the session was
+    // never completed, or no answers were recorded. Showing a generic "not
+    // found" threw that away and left the candidate with nothing to act on.
+    const reason = (error as { message?: string } | null)?.message?.trim();
+    const generic = 'Could not load the report for this session.';
     return (
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
         <Card className="border-destructive/20 p-8 text-center">
           <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-bold">Report Not Found</h2>
-          <p className="mb-6 text-sm text-muted-foreground">
-            Could not load the report for this session. Please make sure the session is complete.
+          <h2 className="mb-2 text-xl font-bold">Report Unavailable</h2>
+          <p className="text-sm text-muted-foreground">{reason || generic}</p>
+          <p className="mt-3 text-xs text-muted-foreground">
+            A report needs a finished session with at least one answered question. If you left the
+            interview early, open it again and use “End interview” so it can be scored.
           </p>
-          <Button onClick={() => router.push('/dashboard')}>
-            <ChevronLeft className="h-4 w-4" /> Back to Dashboard
-          </Button>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Button variant="secondary" onClick={() => refetch()} loading={isFetching}>
+              Try again
+            </Button>
+            <Button onClick={() => router.push(`/session/${sessionId}`)}>
+              Resume interview
+            </Button>
+            <Button variant="ghost" onClick={() => router.push('/dashboard')}>
+              <ChevronLeft className="h-4 w-4" /> Dashboard
+            </Button>
+          </div>
         </Card>
       </motion.div>
     );
