@@ -1,11 +1,13 @@
 import asyncio
 import uuid
+
 import yaml
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
+
 from app.db.session import AsyncSessionFactory
 from app.models.company import Company, InterviewTrack, QuestionCategory
-from app.models.question import Question, FollowUpQuestion, QuestionDifficulty, QuestionType, Topic
+from app.models.question import FollowUpQuestion, Question, QuestionDifficulty, QuestionType, Topic
+
 
 async def seed_knowledge_base():
     """Seed the database with the core Cognizant Java FSE questions."""
@@ -43,11 +45,11 @@ async def seed_knowledge_base():
 
         # Parse YAML
         try:
-            with open("knowledge/questions/java_core.yaml", "r") as f:
+            with open("knowledge/questions/java_core.yaml") as f:
                 data = yaml.safe_load(f)
-        except Exception as e:
+        except Exception:
             try:
-                with open("backend/knowledge/questions/java_core.yaml", "r") as f:
+                with open("backend/knowledge/questions/java_core.yaml") as f:
                     data = yaml.safe_load(f)
             except Exception as e2:
                 print(f"Error reading YAML: {e2}")

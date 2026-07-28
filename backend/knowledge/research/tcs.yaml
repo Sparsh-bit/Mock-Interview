@@ -1,0 +1,274 @@
+# TCS interview research — cached so we never pay for a live web search during
+# an interview. Refresh by editing this file and re-running:
+#   uv run python scripts/seed_research.py
+#
+# Researched: 2026-07-28
+
+- company_slug: tcs
+  company_name: TCS
+  program_slug: ninja
+  program_name: Ninja (NQT)
+  sources:
+    - https://gdpi.hitbullseye.com/tcs-ninja-interview-questions.php
+    - https://prepinsta.com/interview-preparation/tcs-ninja-interview-experience/
+    - https://www.edureka.co/blog/interview-questions/tcs-interview-questions/
+  rounds:
+    - name: NQT Online Test
+      duration_minutes: 90
+      description: Numerical, verbal and reasoning ability plus a programming section.
+    - name: Technical Interview
+      duration_minutes: 25
+      description: >-
+        Short and fundamentals-heavy. Basic programming, OOP, DBMS and the
+        candidate's project. Often merged with the HR round on the same day.
+    - name: Managerial / HR Round
+      duration_minutes: 20
+      description: >-
+        Relocation, night shifts, academic gaps and backlogs, family background
+        and service-agreement willingness.
+  focus_topics:
+    - OOP concepts
+    - C and C++ fundamentals
+    - Java basics
+    - Data structures
+    - DBMS and SQL
+    - Project discussion
+  tips:
+    - The Ninja technical round is short (20-30 minutes) and stays on fundamentals — depth matters less than crisp, confident definitions.
+    - TCS asks about academic dips, backlogs and gaps directly. Have a calm, honest answer ready.
+    - Relocation and night-shift willingness are asked in almost every reported interview.
+    - Non-CSE candidates get core-branch questions too, plus "why are you switching to IT?".
+  previous_questions:
+    - question: What are OOPS concepts? Give an example.
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is an object?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Differentiate between an abstract class and an interface.
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between C and C++?
+      topic: C and C++ fundamentals
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is an array?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is a structure, what is a union, and what is the difference between them?
+      topic: C and C++ fundamentals
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What are pointers, and how do they relate to arrays?
+      topic: C and C++ fundamentals
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between a stack and a queue?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is a linked list, and what is a circular linked list?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between an array and a linked list?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is a tree?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Differentiate between Set and List in Java.
+      topic: Java basics
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Differentiate between Vector and ArrayList.
+      topic: Java basics
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What do you mean by applet and servlet?
+      topic: Java basics
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Write a Java program to check whether a number is prime.
+      topic: Java basics
+      round: Technical Interview
+      difficulty: easy
+      kind: coding
+    - question: Can you improve that program in any way?
+      topic: Java basics
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: Write a C program to implement a calculator with two operations.
+      topic: C and C++ fundamentals
+      round: Technical Interview
+      difficulty: easy
+      kind: coding
+    - question: Write a program to swap two numbers without using a third variable.
+      topic: C and C++ fundamentals
+      round: Technical Interview
+      difficulty: easy
+      kind: coding
+    - question: Write code to insert into and delete from a linked list.
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: What are DDL, DML and DCL commands in MySQL?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What do you mean by joins in SQL? Explain outer join.
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Explain your project to me.
+      topic: Project discussion
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: Introduce yourself along with your family background.
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: easy
+      kind: scenario
+    - question: Why TCS?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: easy
+      kind: scenario
+    - question: Are you ready to relocate anywhere across India?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: easy
+      kind: scenario
+    - question: Are you comfortable with night shifts?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: easy
+      kind: scenario
+    - question: Why is there a dip in your B.Tech percentage?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: medium
+      kind: scenario
+    - question: Do you have any gaps or backlogs? Which semester and which subject?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: medium
+      kind: scenario
+    - question: What does TCS do, and how would you classify the IT industry?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: medium
+      kind: scenario
+    - question: Do you believe in teamwork? How do you handle having to work alone?
+      topic: Project discussion
+      round: Managerial / HR Round
+      difficulty: easy
+      kind: scenario
+
+- company_slug: tcs
+  company_name: TCS
+  program_slug: digital
+  program_name: Digital
+  sources:
+    - https://www.edureka.co/blog/interview-questions/tcs-interview-questions/
+    - https://talentbattle.in/tcs/interview-questions
+  rounds:
+    - name: NQT Advanced Test
+      duration_minutes: 90
+      description: Advanced aptitude plus an advanced coding section.
+    - name: Technical Interview
+      duration_minutes: 65
+      description: >-
+        Substantially deeper than Ninja — DSA with complexity discussion,
+        DBMS design, OS internals and real project architecture. Can run past
+        90 minutes.
+    - name: Managerial / HR Round
+      duration_minutes: 20
+      description: Motivation, relocation, and long-term career intent.
+  focus_topics:
+    - Data structures and algorithms
+    - Java and OOP
+    - DBMS and SQL
+    - Operating systems
+    - System design basics
+    - Project discussion
+  tips:
+    - TCS Digital runs 60-90 minutes versus Ninja's 20-30 — expect follow-ups that keep drilling until you reach your limit.
+    - Be ready to state time and space complexity for every solution you give.
+    - Your project is treated as real engineering work: expect design trade-off questions, not just a description.
+  previous_questions:
+    - question: What is the time and space complexity of your solution, and can you do better?
+      topic: Data structures and algorithms
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: Differentiate between an abstract class and an interface, and say when you would use each.
+      topic: Java and OOP
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Explain the four pillars of OOP with examples from your own code.
+      topic: Java and OOP
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: What do you mean by joins in SQL? Explain outer join with an example.
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Design the database schema for the project you just described.
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: hard
+      kind: scenario
+    - question: What is normalization, and to which normal form did you take your schema?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: hard
+      kind: conceptual
+    - question: What is a deadlock, and how would you prevent one?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: hard
+      kind: conceptual
+    - question: What is the difference between a process and a thread?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: How would you scale the system you built to ten times the traffic?
+      topic: System design basics
+      round: Technical Interview
+      difficulty: hard
+      kind: scenario
+    - question: Which design decision in your project would you change today, and why?
+      topic: Project discussion
+      round: Technical Interview
+      difficulty: hard
+      kind: scenario

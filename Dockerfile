@@ -25,5 +25,11 @@ RUN uv sync --no-dev
 
 EXPOSE 8000
 
-# Apply migrations, then start Uvicorn. Render/Cloud Run inject $PORT.
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Apply migrations, seed the company interview research, then start Uvicorn.
+# Render/Cloud Run inject $PORT.
+#
+# The research seed is idempotent (upserts by company+program) and only writes a
+# handful of rows, so running it on every boot keeps production in sync with
+# knowledge/research/*.yaml with no manual step. It is deliberately non-fatal:
+# failing to refresh reference data must never stop the API from starting.
+CMD ["sh", "-c", "uv run alembic upgrade head && (uv run python scripts/seed_research.py || echo 'research seed skipped') && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

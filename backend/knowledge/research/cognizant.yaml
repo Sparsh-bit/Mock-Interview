@@ -1,0 +1,312 @@
+# Cognizant interview research — cached so we never pay for a live web search
+# during an interview. Refresh by editing this file and re-running:
+#   uv run python scripts/seed_research.py
+#
+# Researched: 2026-07-28
+# Sources are recorded per-entry so a stale row can be re-verified rather than
+# guessed at.
+
+- company_slug: cognizant
+  company_name: Cognizant
+  program_slug: genc
+  program_name: GenC
+  sources:
+    - https://www.interviewbit.com/genc-interview-questions/
+    - https://prepinsta.com/cognizant/genc-technical-interview-questions/
+    - https://unstop.com/blog/cognizant-genc-interview-questions
+  rounds:
+    - name: Aptitude Assessment
+      duration_minutes: 90
+      description: Quantitative aptitude, logical reasoning and verbal ability.
+    - name: Technical Interview
+      duration_minutes: 40
+      description: >-
+        Programming fundamentals, OOP, DBMS and the candidate's own project.
+        Expect to write code on paper or a shared editor.
+    - name: HR Round
+      duration_minutes: 15
+      description: Motivation, relocation, background and document verification.
+  focus_topics:
+    - OOP concepts
+    - DBMS and SQL
+    - Data structures
+    - Operating systems
+    - Programming fundamentals (C/C++/Java)
+    - SDLC
+    - Project discussion
+  tips:
+    - Be ready to write code by hand — Fibonacci, sorting and string reversal come up repeatedly.
+    - Know your own project deeply; every reported interview drills into it.
+    - Definition-style questions are common, so crisp one-line answers score well.
+  previous_questions:
+    - question: What is a constructor?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What do you mean by polymorphism?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is the difference between overloaded and overridden methods?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is static and dynamic binding?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What are the types of inheritance?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is the difference between object-oriented and object-based programming?
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is exception handling, and what do the try and catch blocks do?
+      topic: Programming fundamentals (C/C++/Java)
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is the difference between DDL and DML commands?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Differentiate DELETE and TRUNCATE.
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is indexing, and what are its types?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What are the types of joins?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Write a SQL query to report the second highest salary.
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: What is functional dependency?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between a database and a DBMS?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Define the stack data structure. How would you implement it?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: easy
+      kind: practical
+    - question: Write a program for binary search using recursion.
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: Write a program to print the Fibonacci series.
+      topic: Programming fundamentals (C/C++/Java)
+      round: Technical Interview
+      difficulty: easy
+      kind: coding
+    - question: Write a program to implement merge sort.
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: Write a program to reverse a string.
+      topic: Programming fundamentals (C/C++/Java)
+      round: Technical Interview
+      difficulty: easy
+      kind: coding
+    - question: Rotate a matrix by 90 degrees.
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: How many ways are there to climb n stairs?
+      topic: Data structures
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: What is a kernel?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What do you mean by a process and a thread?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the purpose of multithreading?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between primary memory and secondary memory?
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: What is SDLC, and what are its phases?
+      topic: SDLC
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Explain client-server architecture.
+      topic: SDLC
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is MVC?
+      topic: SDLC
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What are singleton classes? Implement one.
+      topic: OOP concepts
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: Explain your final-year project and the technologies you used.
+      topic: Project discussion
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: Why do you want to join Cognizant?
+      topic: Project discussion
+      round: HR Round
+      difficulty: easy
+      kind: scenario
+    - question: Are you willing to relocate anywhere in India?
+      topic: Project discussion
+      round: HR Round
+      difficulty: easy
+      kind: scenario
+
+- company_slug: cognizant
+  company_name: Cognizant
+  program_slug: genc-next
+  program_name: GenC Next
+  sources:
+    - https://www.interviewbit.com/genc-interview-questions/
+    - https://www.fita.in/cognizant-recruitment-process/
+  rounds:
+    - name: Technical Skill Assessment
+      duration_minutes: 180
+      description: >-
+        Three sections — 30 MCQs (OOP, OS, DBMS, Java, HTML/CSS); 4 DSA coding
+        questions (dynamic programming, greedy, graphs, trees); 2 SQL questions
+        on an ER diagram using joins and nested queries.
+    - name: Technical Interview
+      duration_minutes: 50
+      description: >-
+        Deeper than GenC — full-stack reasoning, DSA follow-ups and design
+        discussion on top of core fundamentals.
+    - name: HR Round
+      duration_minutes: 15
+      description: Motivation, relocation and document verification.
+  focus_topics:
+    - Java and OOP
+    - Data structures and algorithms
+    - DBMS and SQL
+    - Web and full-stack basics
+    - Operating systems
+    - System design basics
+    - Project discussion
+  tips:
+    - GenC Next is the highest package tier, so the DSA bar is genuinely higher — dynamic programming, graphs and trees all appear.
+    - The assessment includes HTML/CSS, so don't neglect the front-end half of full-stack.
+    - Expect SQL against an ER diagram, not just definitions — practise joins and nested queries.
+  previous_questions:
+    - question: Serialize a binary tree into a string, and deserialize it back.
+      topic: Data structures and algorithms
+      round: Technical Interview
+      difficulty: hard
+      kind: coding
+    - question: How many distinct ways are there to climb n stairs?
+      topic: Data structures and algorithms
+      round: Technical Skill Assessment
+      difficulty: medium
+      kind: coding
+    - question: Rotate a matrix by 90 degrees in place.
+      topic: Data structures and algorithms
+      round: Technical Skill Assessment
+      difficulty: medium
+      kind: coding
+    - question: Transpose a matrix.
+      topic: Data structures and algorithms
+      round: Technical Skill Assessment
+      difficulty: easy
+      kind: coding
+    - question: Write a SQL query to report the second highest salary.
+      topic: DBMS and SQL
+      round: Technical Skill Assessment
+      difficulty: medium
+      kind: coding
+    - question: Given this ER diagram, write a query joining the tables to fetch the required rows.
+      topic: DBMS and SQL
+      round: Technical Skill Assessment
+      difficulty: medium
+      kind: coding
+    - question: What are singleton classes? Implement one in Java.
+      topic: Java and OOP
+      round: Technical Interview
+      difficulty: medium
+      kind: coding
+    - question: What is the difference between overloaded and overridden methods?
+      topic: Java and OOP
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: Explain static versus dynamic memory management.
+      topic: Operating systems
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is MVC, and how does it apply to a web application you have built?
+      topic: Web and full-stack basics
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario
+    - question: Explain client-server architecture.
+      topic: System design basics
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is an SSL certificate, and what does it actually protect?
+      topic: Web and full-stack basics
+      round: Technical Interview
+      difficulty: medium
+      kind: conceptual
+    - question: What is the difference between OLAP and data mining?
+      topic: DBMS and SQL
+      round: Technical Interview
+      difficulty: hard
+      kind: conceptual
+    - question: What is ERP?
+      topic: System design basics
+      round: Technical Interview
+      difficulty: easy
+      kind: conceptual
+    - question: Walk me through the architecture of your project and why you chose it.
+      topic: Project discussion
+      round: Technical Interview
+      difficulty: medium
+      kind: scenario

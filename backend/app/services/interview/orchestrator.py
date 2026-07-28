@@ -24,6 +24,7 @@ from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
+from app.services.interview.research_lookup import find_research, render_research
 
 logger = structlog.get_logger(__name__)
 
@@ -164,6 +165,11 @@ class InterviewOrchestrator:
                 focus=focus.strip() or "(no specific focus — cover the standard areas for this role)",
                 resume=resume_summary,
                 question_count=str(_PLANNED_QUESTION_COUNT),
+                # Cached research on how this company really interviews. Costs a
+                # single indexed row read — the alternative, a live web search
+                # per interview, would be billed every session for information
+                # that changes a few times a year.
+                research=render_research(await find_research(self.db, company, program)),
             )
             try:
                 plan, _ = await asyncio.wait_for(

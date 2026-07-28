@@ -10,6 +10,7 @@ from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .company import Company, InterviewTrack, QuestionCategory
 from .question import FollowUpQuestion, Question, Subtopic, Topic
 from .report import Report, ResumeFile
+from .research import CompanyResearch
 from .session import Answer, InterviewSession, Score, VoiceTranscript
 from .system import AuditLog, SystemPrompt
 from .user import Profile, User
@@ -38,6 +39,7 @@ __all__ = [
     "VoiceTranscript",
     # Report
     "Report",
+    "CompanyResearch",
     "ResumeFile",
     # System
     "AuditLog",
