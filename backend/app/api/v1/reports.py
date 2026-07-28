@@ -522,10 +522,43 @@ async def toggle_share(
     return {"is_shared": report.is_shared, "report_id": str(report_id)}
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    """Coerce a stored value to float, tolerating strings like "8" or "7.5"."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().split("/")[0])  # tolerates "8/10"
+        except ValueError:
+            return default
+    return default
+
+
+def _as_score_map(value: object) -> dict[str, float]:
+    """Coerce a stored mapping to {str: float}, dropping unusable entries."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): _as_float(v) for k, v in value.items()}
+
+
+def _as_dicts(value: object) -> list[dict]:
+    """Keep only the dict entries of a stored list."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _as_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(v) for v in value if v is not None]
+
+
 def _build_report_response(report) -> ReportResponse:
-    roadmap = report.improvement_roadmap or []
     parsed_roadmap = []
-    for item in roadmap:
+    for item in _as_dicts(report.improvement_roadmap):
         resources = [
             ImprovementResource(
                 type=r.get("type", ""),
@@ -533,15 +566,15 @@ def _build_report_response(report) -> ReportResponse:
                 url=r.get("url"),
                 author=r.get("author"),
             )
-            for r in item.get("resources", [])
+            for r in _as_dicts(item.get("resources"))
         ]
         parsed_roadmap.append(
             ImprovementItem(
-                priority=item.get("priority", 1),
+                priority=int(_as_float(item.get("priority"), 1)),
                 topic=item.get("topic", ""),
-                current_score=item.get("current_score", 0),
-                target_score=item.get("target_score", 0),
-                study_hours_estimate=item.get("study_hours_estimate", 0),
+                current_score=_as_float(item.get("current_score")),
+                target_score=_as_float(item.get("target_score")),
+                study_hours_estimate=int(_as_float(item.get("study_hours_estimate"))),
                 resources=resources,
             )
         )
@@ -552,31 +585,31 @@ def _build_report_response(report) -> ReportResponse:
             question_id=str(qa.get("question_id", "")),
             question=qa.get("question", ""),
             answer_quality=qa.get("answer_quality", ""),
-            score=qa.get("score", 0),
-            missing_concepts=qa.get("missing_concepts", []),
+            score=_as_float(qa.get("score")),
+            missing_concepts=_as_str_list(qa.get("missing_concepts")),
             ideal_answer_summary=qa.get("ideal_answer_summary", ""),
         )
-        for qa in raw.get("question_analysis", [])
+        for qa in _as_dicts(raw.get("question_analysis"))
     ]
 
     return ReportResponse(
         id=report.id,
         session_id=report.session_id,
-        overall_score=report.overall_score,
+        overall_score=_as_float(report.overall_score),
         overall_score_label=report.overall_score_label,
         executive_summary=report.executive_summary,
         readiness_level=report.readiness_level,
         readiness_reasoning=raw.get("readiness_reasoning", ""),
-        strengths=report.strengths or [],
-        weaknesses=report.weaknesses or [],
-        topic_scores=report.topic_scores or {},
-        dimension_scores=raw.get("dimension_scores", {}),
-        performance_percentile=raw.get("performance_percentile", 50),
+        strengths=_as_str_list(report.strengths),
+        weaknesses=_as_str_list(report.weaknesses),
+        topic_scores=_as_score_map(report.topic_scores),
+        dimension_scores=_as_score_map(raw.get("dimension_scores")),
+        performance_percentile=int(_as_float(raw.get("performance_percentile"), 50)),
         question_analysis=question_analysis,
         improvement_roadmap=parsed_roadmap,
         is_shared=report.is_shared,
         created_at=report.created_at,
         pdf_url=report.pdf_url,
-        delivery=raw.get("delivery"),
-        previous=raw.get("previous"),
+        delivery=raw.get("delivery") if isinstance(raw.get("delivery"), dict) else None,
+        previous=raw.get("previous") if isinstance(raw.get("previous"), dict) else None,
     )

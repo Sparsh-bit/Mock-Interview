@@ -136,6 +136,7 @@ def _error_response(
     code: str,
     message: str,
     details: dict | None = None,
+    headers: dict[str, str] | None = None,
 ) -> ORJSONResponse:
     return ORJSONResponse(
         status_code=status_code,
@@ -146,7 +147,35 @@ def _error_response(
                 "details": details or {},
             }
         },
+        headers=headers,
     )
+
+
+def _cors_headers(request: Request) -> dict[str, str]:
+    """
+    CORS headers for an error response, echoing an allowed Origin.
+
+    Needed because a handler registered for bare `Exception` is invoked by
+    Starlette's ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware — so its
+    response never passes through the CORS layer and carries no
+    Access-Control-Allow-Origin. The browser then reports the 500 as "blocked by
+    CORS policy" and hides the real error entirely, which makes every unhandled
+    server error look like a CORS misconfiguration and is genuinely hard to debug.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+
+    from app.core.config import settings  # noqa: PLC0415
+
+    allowed = set(settings.CORS_ORIGINS)
+    if origin not in allowed and not settings.is_development:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin",
+    }
 
 
 # ─── Exception handlers ───────────────────────────────────────────────────────
@@ -191,4 +220,5 @@ def register_exception_handlers(app: FastAPI) -> None:
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "INTERNAL_ERROR",
             "An unexpected error occurred. Our team has been notified.",
+            headers=_cors_headers(request),
         )
