@@ -72,9 +72,10 @@ export default function ProfilePage() {
 
       <motion.div variants={fadeUp}>
         <form onSubmit={handleSubmit}>
-          {/* Details on the left, picture panel on the right. Stacks on mobile
-              with the picture first, so the identity is visible above the fold. */}
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          {/* Details on the left, a large picture panel of equal height on the
+              right. Stacks on mobile with the picture first, so the identity is
+              visible above the fold. */}
+          <div className="grid items-stretch gap-6 lg:grid-cols-[1.15fr_1fr]">
             {/* ── Left: the details ─────────────────────────────────────── */}
             <Card className="order-2 space-y-6 p-8 lg:order-1">
               <div className="grid gap-6 sm:grid-cols-2">
@@ -171,9 +172,12 @@ export default function ProfilePage() {
             </Card>
 
             {/* ── Right: the picture ────────────────────────────────────── */}
-            <Card className="order-1 h-fit p-6 lg:order-2 lg:sticky lg:top-6">
-              <div className="flex flex-col items-center text-center">
-                <div className="relative flex h-40 w-40 items-center justify-center overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-primary/10 to-accent-violet/10">
+            <Card className="order-1 flex flex-col p-6 lg:order-2">
+              <div className="flex flex-1 flex-col items-center justify-center text-center">
+                {/* Large, dominant picture panel — the focal point of this
+                    column, matching the reference layout rather than a small
+                    avatar chip. */}
+                <div className="relative flex aspect-square w-full max-w-[22rem] items-center justify-center overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/10 via-secondary/40 to-accent-violet/10">
                   {formData.avatar_url ? (
                     /* Avatars are user-supplied URLs from arbitrary hosts, and
                        next/image requires every remote host to be allow-listed
@@ -186,13 +190,13 @@ export default function ProfilePage() {
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
                   ) : (
-                    <span className="text-5xl font-bold text-primary">
+                    <span className="text-8xl font-bold text-primary/70">
                       {(formData.full_name || user?.email || 'U')[0]?.toUpperCase()}
                     </span>
                   )}
                 </div>
 
-                <h3 className="mt-4 w-full truncate text-lg font-bold">
+                <h3 className="mt-6 w-full truncate text-xl font-bold">
                   {formData.full_name || user?.email?.split('@')[0]}
                 </h3>
                 <p className="w-full truncate text-xs text-muted-foreground">{user?.email}</p>

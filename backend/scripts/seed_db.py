@@ -9,9 +9,81 @@ from app.models.company import Company, InterviewTrack, QuestionCategory
 from app.models.question import FollowUpQuestion, Question, QuestionDifficulty, QuestionType, Topic
 
 
+async def seed_companies_and_tracks(session):
+    """
+    Ensure every company/track we have research for exists as a real, selectable
+    track. Previously only Cognizant was seeded while the UI carried a hardcoded
+    "TCS Digital — Coming Soon" card, so TCS could never actually be started.
+
+    Tracks are keyed by slug and upserted, so re-running is safe.
+    """
+    # (company_slug, company_name, description, [(track_slug, track_name, track_description)])
+    CATALOG = [
+        (
+            "cognizant",
+            "Cognizant",
+            "Cognizant Digital Nurture program",
+            [
+                ("java-fse", "Digital Nurture — Java FSE", "Java Full Stack Engineer Track"),
+                ("genc", "GenC", "Aptitude, core fundamentals, OOP, DBMS and project discussion"),
+                ("genc-next", "GenC Next", "Highest tier — DSA-heavy assessment plus full-stack and design depth"),
+            ],
+        ),
+        (
+            "tcs",
+            "TCS",
+            "Tata Consultancy Services fresher hiring (NQT)",
+            [
+                ("ninja", "Ninja (NQT)", "Short fundamentals-first technical round plus managerial/HR"),
+                ("digital", "Digital", "Deeper 60-90 minute round — DSA with complexity, DBMS design and system design"),
+            ],
+        ),
+    ]
+
+    for company_slug, company_name, company_desc, tracks in CATALOG:
+        company = await session.scalar(select(Company).where(Company.slug == company_slug))
+        if not company:
+            company = Company(
+                id=uuid.uuid4(),
+                name=company_name,
+                slug=company_slug,
+                description=company_desc,
+                is_active=True,
+            )
+            session.add(company)
+            await session.flush()
+        else:
+            company.is_active = True
+
+        for track_slug, track_name, track_desc in tracks:
+            track = await session.scalar(
+                select(InterviewTrack).where(InterviewTrack.slug == track_slug)
+            )
+            if not track:
+                track = InterviewTrack(
+                    id=uuid.uuid4(),
+                    company_id=company.id,
+                    name=track_name,
+                    slug=track_slug,
+                    description=track_desc,
+                    is_active=True,
+                )
+                session.add(track)
+            else:
+                track.company_id = company.id
+                track.name = track_name
+                track.description = track_desc
+                track.is_active = True
+        await session.flush()
+        print(f"  {company_name}: {len(tracks)} track(s)")
+
+
 async def seed_knowledge_base():
     """Seed the database with the core Cognizant Java FSE questions."""
     async with AsyncSessionFactory() as session:
+        # Every company and track we support, so none of them are UI-only stubs.
+        await seed_companies_and_tracks(session)
+
         # Create Company
         company = await session.scalar(select(Company).where(Company.slug == "cognizant"))
         if not company:

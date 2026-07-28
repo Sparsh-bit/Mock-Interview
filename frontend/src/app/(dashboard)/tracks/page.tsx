@@ -74,33 +74,6 @@ export default function TracksPage() {
             </motion.div>
           ))}
 
-          {/* Upcoming Track */}
-          <motion.div variants={fadeUp}>
-            <Card className="flex h-full flex-col justify-between p-6 opacity-60">
-              <div>
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary">
-                      <Sparkles className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-bold">TCS Digital</h3>
-                      <p className="text-xs text-muted-foreground">Java & Data Structures</p>
-                    </div>
-                  </div>
-                  <Badge>Coming Soon</Badge>
-                </div>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  TCS Digital recruitment track focusing on advanced algorithmic problem solving and Java ecosystem.
-                </p>
-              </div>
-              <div className="mt-6 border-t border-border/40 pt-4">
-                <button disabled className="w-full cursor-not-allowed rounded-xl bg-secondary px-4 py-3 text-sm font-bold text-muted-foreground">
-                  Coming Soon
-                </button>
-              </div>
-            </Card>
-          </motion.div>
         </div>
       )}
     </motion.div>
