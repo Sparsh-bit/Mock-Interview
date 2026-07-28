@@ -30,15 +30,19 @@ router = APIRouter()
 
 #: Wall-clock ceiling on AI report generation.
 #:
-#: This has to fit inside the host's gateway timeout (~100s on Render) INCLUDING
-#: a cold start. A sleeping free instance takes ~37s to wake, so the old 55s
-#: budget could total 92s+ and get cut at the gateway — which returns a 502 with
-#: no CORS headers and therefore reaches the browser as an opaque CORS error, not
-#: a timeout. 25s keeps the worst case near 62s with real margin.
+#: Sized to fit the host's gateway timeout (~100s on Render) in BOTH states,
+#: rather than assuming the instance is warm:
 #:
-#: Exceeding it is not a failure: the handler falls back to the honest
-#: unscored report, which the candidate can regenerate once the box is warm.
-_REPORT_AI_BUDGET_SECONDS = 25.0
+#:   warm (keep-warm ping active, measured ~1.5s):  1.5 + 50 =  52s
+#:   cold (ping failed / instance restarted, ~37s): 37  + 50 =  87s
+#:
+#: Both are inside the limit, so a missed ping degrades latency but cannot
+#: produce a gateway 502 — which matters because that 502 carries no CORS headers
+#: and surfaces in the browser as an opaque CORS error rather than a timeout.
+#:
+#: Exceeding the budget is not a failure: the handler falls back to the honest
+#: unscored report, which the candidate can regenerate.
+_REPORT_AI_BUDGET_SECONDS = 50.0
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────

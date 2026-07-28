@@ -74,6 +74,11 @@ _SYNONYMS: dict[str, str] = {
     "gen": "genc",          # "gen c" → genc (paired with the 'c' drop below)
     "gencnext": "gencnext",
     "next": "gencnext",     # only meaningful following genc; see _canonicalize
+    # TCS fresher programs. "NQT" is the test everyone names the Ninja track
+    # after, so the two must fold together or every TCS setup pays twice.
+    "ninja": "ninja",
+    "nqt": "ninja",
+    "digital": "digital",
     "dn": "digitalnurture",
     "digitalnurture": "digitalnurture",
     "nurture": "digitalnurture",
@@ -132,6 +137,12 @@ def _canonicalize(tokens: list[str]) -> list[str]:
                 i += 3
                 continue
             out.append("genc")
+            i += 2
+            continue
+
+        # "data structures" → datastructures (matches the "dsa" synonym)
+        if tok == "data" and i + 1 < len(tokens) and tokens[i + 1].startswith("structure"):
+            out.append("datastructures")
             i += 2
             continue
 
