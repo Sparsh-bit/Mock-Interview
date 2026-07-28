@@ -44,6 +44,42 @@ router = APIRouter()
 #: unscored report, which the candidate can regenerate.
 _REPORT_AI_BUDGET_SECONDS = 50.0
 
+#: Marker for the placeholder report written when AI scoring is unavailable. It
+#: is never a final result: generation retries and replaces it.
+_UNSCORED = "unscored_fallback"
+
+#: How many times a placeholder may retry AI scoring before it stops trying.
+#:
+#: Bounds spend. The client requests the report on every page view, and each
+#: retry is a separately billed model call — so an unbounded retry would turn a
+#: persistent provider outage into an open-ended bill just from someone reloading
+#: the page. After this many failures the stored placeholder is served as-is.
+_MAX_UNSCORED_ATTEMPTS = 3
+
+
+def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
+    """
+    Decide whether a stored report warrants another (billed) AI scoring call.
+
+    Returns ``(regenerate, attempts_already_made)``.
+
+    This is the whole cost policy for report generation, in one place:
+
+    * A real scored report is final — serve it from the database, forever, for
+      free. Generation is called on every page view, so this is what keeps a
+      report from being re-billed every time someone opens it.
+    * An unscored placeholder is not a result. Its own text tells the candidate
+      to retry, so it is retried and replaced in place.
+    * ...but only ``_MAX_UNSCORED_ATTEMPTS`` times. A provider outage must not
+      become an open-ended bill funded by page reloads.
+    """
+    raw = raw_report or {}
+    if raw.get("generated_by") != _UNSCORED:
+        return False, 0
+    attempts = raw.get("unscored_attempts", 0)
+    attempts = attempts if isinstance(attempts, int) and attempts >= 0 else 0
+    return attempts < _MAX_UNSCORED_ATTEMPTS, attempts
+
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -246,8 +282,31 @@ async def generate_report(
         select(Report).where(Report.session_id == session_id)
     )
     existing_report = existing.scalar_one_or_none()
+
+    # A previously-saved UNSCORED report is not a result — it is a placeholder
+    # written because the AI was unavailable at the time, and its own text tells
+    # the candidate to retry. Returning it forever would make that instruction a
+    # lie and permanently trap the session on an empty report. So only a real
+    # scored report short-circuits; a placeholder is retried and upgraded in place.
+    unscored_attempts = 0
     if existing_report:
-        return _build_report_response(existing_report)
+        regenerate, unscored_attempts = should_regenerate(existing_report.raw_report)
+        if not regenerate:
+            # Either a real scored report, or a placeholder that has used up its
+            # retries. Served straight from the database — no model call, no cost.
+            logger.info(
+                "report_served_from_database",
+                session_id=str(session_id),
+                unscored_attempts=unscored_attempts,
+            )
+            return _build_report_response(existing_report)
+
+        logger.info(
+            "regenerating_unscored_report",
+            session_id=str(session_id),
+            attempt=unscored_attempts + 1,
+            max_attempts=_MAX_UNSCORED_ATTEMPTS,
+        )
 
     # Load full transcript: question + answer per turn. Scoring is deferred to
     # this report step, so there are no per-answer Score rows -- the AI scores
@@ -454,14 +513,34 @@ async def generate_report(
             topic_scores={},
             improvement_roadmap=[],
             raw_report={
-                "generated_by": "unscored_fallback",
+                "generated_by": _UNSCORED,
+                # Counts toward _MAX_UNSCORED_ATTEMPTS so repeated page views
+                # cannot keep paying for a model that is failing.
+                "unscored_attempts": unscored_attempts + 1,
                 "topics_attempted": topics_attempted,
                 "delivery": delivery_block,
                 "previous": previous_block,
             },
         )
 
-    db.add(report)
+    if existing_report is not None:
+        # Upgrade the placeholder row in place rather than inserting — session_id
+        # is unique, so a second row is impossible anyway.
+        for field, value in {
+            "overall_score": report.overall_score,
+            "overall_score_label": report.overall_score_label,
+            "executive_summary": report.executive_summary,
+            "readiness_level": report.readiness_level,
+            "strengths": report.strengths,
+            "weaknesses": report.weaknesses,
+            "topic_scores": report.topic_scores,
+            "improvement_roadmap": report.improvement_roadmap,
+            "raw_report": report.raw_report,
+        }.items():
+            setattr(existing_report, field, value)
+        report = existing_report
+    else:
+        db.add(report)
     await db.commit()
     await db.refresh(report)
     overall_score = report.overall_score
