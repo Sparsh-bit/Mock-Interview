@@ -216,14 +216,30 @@ drain the balance:
 
 ```
 AI_DAILY_BUDGET_USD=2          # hard ceiling per UTC day, across all users
-ANTHROPIC_MAX_OUTPUT_TOKENS=4096
+ANTHROPIC_MAX_OUTPUT_TOKENS=8192
 ANTHROPIC_PROMPT_CACHING=False
 ```
+
+> **If you already deployed with `ANTHROPIC_MAX_OUTPUT_TOKENS=4096`, raise it to
+> 8192.** 4096 was wrong and this file previously recommended it. A full interview
+> report for a 16-question session measures ~5.1k output tokens, so 4096 cut the
+> JSON mid-object, validation rejected the fragment, and every long interview
+> produced an unscored "AI scoring is temporarily unavailable" placeholder instead
+> of a report. The symptom looked like a provider outage; the cause was this
+> setting. Either set it to 8192 or remove it and let the application default
+> apply.
 
 - `AI_DAILY_BUDGET_USD` is checked before every paid call. On breach the paid
   provider refuses and the chain degrades to the free `AI_FALLBACK_PROVIDER`, so
   the app keeps working instead of spending. Set it to what you can afford to
   lose in a day, not to your balance.
+- `ANTHROPIC_MAX_OUTPUT_TOKENS` is a **safety net for a runaway response, not a
+  budget knob.** It must sit above what the largest legitimate response needs, or
+  it stops being a cost control and becomes a correctness bug — a truncated
+  response fails validation and the whole call is wasted, so you pay for the
+  tokens and get nothing. Per-call spend is controlled by each call site's own
+  `max_tokens` (report generation scales its budget to the question count) and by
+  `AI_DAILY_BUDGET_USD`.
 - `ANTHROPIC_PROMPT_CACHING` must stay **False** until prompts are restructured.
   Prompt templates interpolate per-request variables into the *system* block, so
   every request is a unique prefix: enabling it bills a 1.25x cache **write** on
