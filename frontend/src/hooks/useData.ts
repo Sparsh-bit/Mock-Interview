@@ -212,7 +212,17 @@ export function useReport(sessionId: string) {
 
         // No report yet — generate it on demand.
         try {
-          const genRes = await api.post(`/api/v1/reports/${sessionId}/generate`, {});
+          // Must outlast the server's own ceiling, or the client abandons a
+          // request that is still working and the candidate sees a timeout for a
+          // report that then quietly succeeds. The server caps AI generation at
+          // 50s and the host gateway cuts anything past ~100s, so 120s means the
+          // client is never the first to give up. This is the slowest call in the
+          // app and was the only AI call left on the 30s default.
+          const genRes = await api.post(
+            `/api/v1/reports/${sessionId}/generate`,
+            {},
+            { timeout: 120_000 },
+          );
           return genRes.data as ReportData;
         } catch (genErr: unknown) {
           // 409 means the request was understood but the session isn't in a
@@ -220,7 +230,12 @@ export function useReport(sessionId: string) {
           // ourselves (another tab or an earlier attempt won); the other 409s
           // carry a reason the candidate needs to read, so let them through
           // with their message rather than collapsing to "not found".
-          if (statusOf(genErr) === 409) {
+          // Either the report already exists (409 — another tab or an earlier
+          // attempt won), or we gave up waiting while the server may have
+          // finished anyway. Both are resolved by simply looking again, which is
+          // a cheap read rather than a second billed generation.
+          const isTimeout = (genErr as { isTimeout?: boolean })?.isTimeout === true;
+          if (statusOf(genErr) === 409 || isTimeout) {
             const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
             if (retry) return retry.data as ReportData;
           }
