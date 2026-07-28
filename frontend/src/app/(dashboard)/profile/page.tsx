@@ -190,9 +190,15 @@ export default function ProfilePage() {
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
                   ) : (
-                    <span className="text-8xl font-bold text-primary/70">
-                      {(formData.full_name || user?.email || 'U')[0]?.toUpperCase()}
-                    </span>
+                    /* Default panel artwork, served from /public. Local asset,
+                       so next/image would work — but keeping one <img> code path
+                       for both cases avoids the two branches drifting apart. */
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src="/profile-illustration.png"
+                      alt=""
+                      className="h-full w-full object-contain p-6"
+                    />
                   )}
                 </div>
 

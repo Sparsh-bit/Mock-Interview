@@ -7,7 +7,7 @@
     "backend"
   ],
   "scripts": {
-    "vercel-build": "NEXT_DIST_ROOT=1 npm run build -w frontend",
+    "vercel-build": "NEXT_DIST_ROOT=1 npm run build -w frontend && rm -rf ./public && cp -R ./frontend/public ./public",
     "dev:frontend": "npm run dev -w frontend",
     "dev:backend": "cd backend && uv run uvicorn app.main:app --reload --port 8000",
     "dev": "npx concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",

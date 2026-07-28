@@ -19,3 +19,9 @@ frontend/tsconfig.tsbuildinfo
 
 # Cloudflare/Vercel build output
 .vercel/
+
+# Staged at build time from frontend/public (see root vercel-build script)
+/public/
+
+# Stray screenshots dropped in the repo root (canonical copy lives in frontend/public)
+/Screenshot*.png
