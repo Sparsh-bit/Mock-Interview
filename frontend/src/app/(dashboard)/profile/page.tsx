@@ -3,7 +3,7 @@
 import { useUserProfile, useUpdateProfile } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
 import { useState, useEffect } from 'react';
-import { Image as ImageIcon, Loader2, Save } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
@@ -214,21 +214,6 @@ export default function ProfilePage() {
                 )}
               </div>
 
-              <div className="mt-6 border-t border-border/50 pt-5">
-                <label htmlFor="avatar_url" className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  <ImageIcon className="h-3.5 w-3.5" /> Picture URL
-                </label>
-                <Input
-                  id="avatar_url"
-                  type="url"
-                  value={formData.avatar_url}
-                  onChange={(e) => setFormData({ ...formData, avatar_url: e.target.value })}
-                  placeholder="https://…/photo.jpg"
-                />
-                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                  Paste a link to your photo. Direct file upload isn&apos;t wired up yet.
-                </p>
-              </div>
             </Card>
           </div>
         </form>

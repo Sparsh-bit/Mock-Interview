@@ -101,3 +101,45 @@ describe('calculateDelay', () => {
     expect(delay).toBeLessThanOrEqual(config.maxDelayMs);
   });
 });
+
+describe('shouldRetry — idempotency guard', () => {
+  const config = DEFAULT_RETRY_CONFIG;
+
+  // Replaying a non-idempotent request is not just wasteful here: the AI
+  // endpoints (report generation, interview plans) start a fresh, separately
+  // BILLED model call per attempt. A slow report that timed out client-side was
+  // silently costing multiples of one report.
+  it('never replays a POST that 5xx-ed', () => {
+    expect(shouldRetry(makeError({ status: 500 }), 0, config, 'POST')).toBe(false);
+  });
+
+  it('never replays a POST that timed out', () => {
+    const timeout = makeError({ status: 408, code: 'TIMEOUT' });
+    expect(shouldRetry(timeout, 0, config, 'POST')).toBe(false);
+  });
+
+  it('is case-insensitive about the method', () => {
+    expect(shouldRetry(makeError({ status: 503 }), 0, config, 'post')).toBe(false);
+  });
+
+  // 429 means the request was rejected before running, so replaying it cannot
+  // double-charge — and backing off is the correct response.
+  it('still retries a POST on 429, which was rejected rather than executed', () => {
+    const rateLimited = makeError({ status: 429, code: 'RATE_LIMITED' });
+    expect(shouldRetry(rateLimited, 0, config, 'POST')).toBe(true);
+  });
+
+  it('retries idempotent methods on 5xx', () => {
+    for (const method of ['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']) {
+      expect(shouldRetry(makeError({ status: 500 }), 0, config, method)).toBe(true);
+    }
+  });
+
+  it('falls back to status-based behaviour when no method is supplied', () => {
+    expect(shouldRetry(makeError({ status: 500 }), 0, config)).toBe(true);
+  });
+
+  it('still respects the attempt ceiling for idempotent methods', () => {
+    expect(shouldRetry(makeError({ status: 500 }), config.maxAttempts, config, 'GET')).toBe(false);
+  });
+});
