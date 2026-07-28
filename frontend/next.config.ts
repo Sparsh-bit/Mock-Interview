@@ -1,6 +1,15 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  // Emit the build to the REPO ROOT (../.next) rather than frontend/.next.
+  //
+  // @cloudflare/next-on-pages resolves two things relative to its own cwd: the
+  // build directory, and the asset paths recorded by `vercel build`. In an npm
+  // workspace those disagree — Vercel records `frontend/.next/...` (relative to
+  // the monorepo root) while the adapter runs in `frontend/`, so it looks for
+  // `frontend/frontend/.next/...` and dies copying the edge-runtime wasm.
+  // Building from the root with the output at the root makes both agree.
+  distDir: process.env.NEXT_DIST_ROOT === '1' ? '../.next' : '.next',
   // Enable React strict mode for better development warnings
   reactStrictMode: true,
 
