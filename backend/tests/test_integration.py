@@ -2,29 +2,32 @@
 Integration tests for InterviewOS backend.
 Run with: pytest tests/test_integration.py -v --tb=short
 """
-import os
 import sys
 import uuid
-import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
-from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy import text
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
-from app.main import app
-from app.core.config import settings
-from app.db.session import engine, AsyncSessionFactory
-from app.models.base import Base
-from app.models.user import User, Profile
-from app.models.company import Company, InterviewTrack, QuestionCategory
-from app.models.question import Topic, Question, QuestionDifficulty, QuestionType
-from app.models.session import InterviewSession, SessionStatus, Answer, Score
-from app.models.report import Report, ResumeFile
+from app import models as _register_models  # noqa: E402, F401 -- see note below
+from app.core.config import settings  # noqa: E402
+from app.db.session import AsyncSessionFactory, engine  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models.base import Base  # noqa: E402
+from app.models.company import Company, InterviewTrack  # noqa: E402
+from app.models.user import Profile, User  # noqa: E402
+
+# `_register_models` above is deliberate and must not be pruned as unused: it
+# registers every mapper on Base.metadata, which _setup_schema's create_all needs
+# in order to create the full schema. Importing app.main happens to pull them in
+# transitively today, but the routers import models lazily inside handlers, so
+# relying on that chain would make table creation depend on an import order
+# nothing states. Naming the dependency here keeps it true if that changes.
 
 
 def _unique_email() -> str:
@@ -66,7 +69,7 @@ async def db_session():
     async with engine.begin() as conn:
         # Truncate in reverse dependency order
         await conn.execute(text("TRUNCATE TABLE system_prompts, audit_logs, reports, scores, answers, voice_transcripts, interview_sessions, resume_files, follow_up_questions, questions, subtopics, topics, question_categories, interview_tracks, companies, profiles, users RESTART IDENTITY CASCADE"))
-    
+
     async with AsyncSessionFactory() as session:
         yield session
         await session.rollback()
@@ -114,8 +117,8 @@ async def auth_headers(db_session):
         "sub": str(test_user_id),
         "email": test_email,
         "aud": "authenticated",
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
-        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(UTC) + timedelta(days=7),
+        "iat": datetime.now(UTC),
     }
     token = jwt.encode(
         payload,

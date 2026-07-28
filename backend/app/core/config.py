@@ -172,11 +172,20 @@ class Settings(BaseSettings):
         ),
     )
     ANTHROPIC_MAX_OUTPUT_TOKENS: int = Field(
-        default=4096,
+        default=8192,
         description=(
             "Hard per-request ceiling on output tokens, applied after each call "
             "site's own max_tokens. Output is 5x the price of input, so this is "
-            "the main guard against a single runaway response burning the budget."
+            "the main guard against a single runaway response burning the budget. "
+            "8192, not 4096: a full interview report for a 16-question session "
+            "measures ~5.1k output tokens, so 4096 silently truncated every one "
+            "of them mid-JSON -- the response then failed validation and the "
+            "candidate got an unscored placeholder. This is a SAFETY ceiling for "
+            "runaway responses, not a budget knob; it must sit above what the "
+            "largest legitimate response needs, or it converts a cost control "
+            "into a correctness bug. Per-call cost is controlled at the call "
+            "sites (which set their own, lower max_tokens) and by "
+            "AI_DAILY_BUDGET_USD."
         ),
     )
 

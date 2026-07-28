@@ -195,8 +195,15 @@ class BaseAIProvider(ABC):
 
     # ─── Lifecycle ────────────────────────────────────────────────────────
 
-    async def close(self) -> None:
-        """Release HTTP connections and other resources. Override if needed."""
+    async def close(self) -> None:  # noqa: B027
+        """
+        Release HTTP connections and other resources.
+
+        Intentionally a concrete no-op rather than abstract: a provider with
+        nothing to release (a stub, a local model, a test double) should not be
+        forced to write an empty override just to be instantiable. Providers that
+        hold a client — every real one — override it.
+        """
 
     async def __aenter__(self) -> BaseAIProvider:
         return self

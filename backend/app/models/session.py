@@ -21,7 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class SessionStatus(str, enum.Enum):
+class SessionStatus(enum.StrEnum):
     PENDING = "pending"
     ACTIVE = "active"
     COMPLETED = "completed"

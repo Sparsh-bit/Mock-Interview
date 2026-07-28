@@ -56,6 +56,41 @@ _UNSCORED = "unscored_fallback"
 #: the page. After this many failures the stored placeholder is served as-is.
 _MAX_UNSCORED_ATTEMPTS = 3
 
+#: Output-token budget for report generation, as (fixed, per-question).
+#:
+#: A single constant cannot be right here. The report's largest section is
+#: `question_analysis`, which carries one entry PER QUESTION, so the response
+#: grows with the interview: a 6-question session needs far less than a
+#: 16-question one. A fixed ceiling therefore either wastes money on short
+#: sessions or truncates long ones -- and truncation is not a soft failure. The
+#: JSON is cut mid-object, validation rejects it, and the candidate gets an
+#: unscored placeholder instead of a report. That is exactly what happened: a
+#: flat 2600 (clamped to 4096 by the provider) against a measured requirement of
+#: ~5.1k output tokens for 16 questions, so every long interview failed.
+#:
+#: Calibrated against a real 16-question generation (measured 5078 output
+#: tokens): 1500 + 16 * 260 = 5660, ~11% headroom. Do not tune these by
+#: intuition -- measure, because being 1 token short costs the whole report.
+_REPORT_TOKENS_FIXED = 1500
+_REPORT_TOKENS_PER_QUESTION = 260
+
+#: Ceiling on the computed budget, so a pathological session (hundreds of rows)
+#: cannot request an unbounded response.
+_REPORT_TOKENS_MAX = 8000
+
+
+def report_token_budget(question_count: int) -> int:
+    """
+    Output-token budget for a report covering ``question_count`` questions.
+
+    Scales with the interview because the response does. Never returns less than
+    the fixed part, so a session with no recorded answers still gets a budget
+    large enough for the summary sections.
+    """
+    count = max(0, question_count)
+    budget = _REPORT_TOKENS_FIXED + count * _REPORT_TOKENS_PER_QUESTION
+    return min(budget, _REPORT_TOKENS_MAX)
+
 
 def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     """
@@ -424,9 +459,11 @@ async def generate_report(
                 ReportGeneratorResponse,
                 messages,
                 # Output is 5x the price of input and this is the largest
-                # response in the app, so the ceiling is set to what a report
-                # actually needs rather than left generous.
-                max_tokens=2600,
+                # response in the app, so the budget is what THIS report needs
+                # -- scaled to the question count -- rather than a flat constant
+                # that is simultaneously wasteful for short interviews and too
+                # small for long ones.
+                max_tokens=report_token_budget(len(transcript_rows)),
                 # One attempt per provider: a second full retry cannot fit in the
                 # budget below, and the heuristic fallback is a better use of the
                 # remaining time than a retry that gets cut off.

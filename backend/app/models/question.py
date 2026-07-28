@@ -20,12 +20,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class QuestionDifficulty(str, enum.Enum):
+class QuestionDifficulty(enum.StrEnum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
 
-class QuestionType(str, enum.Enum):
+class QuestionType(enum.StrEnum):
     CONCEPTUAL = "conceptual"
     PRACTICAL = "practical"
     SCENARIO = "scenario"
