@@ -56,6 +56,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("database_connected")
 
+        # Surface schema drift loudly. A missing column only shows up as a 500 on
+        # whichever endpoint touches it, and those 500s reach the browser as CORS
+        # errors — so without this it is near-invisible. Logged, never fatal.
+        from app.db.session import check_schema_drift  # noqa: PLC0415
+
+        drift = await check_schema_drift()
+        if drift:
+            logger.error(
+                "schema_drift_detected",
+                tables=drift,
+                hint="run `alembic upgrade head`; endpoints touching these tables will 500",
+            )
+        else:
+            logger.info("schema_matches_models")
+
     # Verify Redis connection
     from app.db.redis import check_redis_connection
     redis_ok = await check_redis_connection()

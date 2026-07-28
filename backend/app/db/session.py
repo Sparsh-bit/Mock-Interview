@@ -132,3 +132,50 @@ async def check_db_connection() -> bool:
 
 # Re-export for type hints in other modules
 __all__ = ["AsyncSession", "get_db", "get_db_session", "check_db_connection", "engine"]
+
+
+async def check_schema_drift() -> dict[str, list[str]]:
+    """
+    Report columns the ORM models declare that the database does not have.
+
+    Exists because this class of bug is silent and expensive: production's
+    `reports` table was missing `readiness_level`, so every read of that table
+    raised UndefinedColumnError. Because FastAPI's bare-Exception handler sits
+    outside CORSMiddleware, the 500 reached the browser as a CORS error with no
+    status and no message — the interview report was unfetchable for days and the
+    console pointed at the wrong subsystem entirely.
+
+    Drift arises when a database is created outside Alembic (a hand-made schema,
+    or `alembic stamp` without a run), so migrations that would have added the
+    columns are recorded as already applied.
+
+    Never raises: this is diagnostics, and it must not be able to stop startup.
+    Returns {table: [missing columns]}, empty when the schema matches.
+    """
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+
+    from app.models.base import Base  # noqa: PLC0415
+
+    drift: dict[str, list[str]] = {}
+    try:
+        async with engine.connect() as conn:
+            def _collect(sync_conn) -> dict[str, list[str]]:
+                inspector = sa_inspect(sync_conn)
+                present = set(inspector.get_table_names())
+                found: dict[str, list[str]] = {}
+                for table in Base.metadata.sorted_tables:
+                    if table.name not in present:
+                        found[table.name] = ["<table missing>"]
+                        continue
+                    actual = {c["name"] for c in inspector.get_columns(table.name)}
+                    missing = [c.name for c in table.columns if c.name not in actual]
+                    if missing:
+                        found[table.name] = missing
+                return found
+
+            drift = await conn.run_sync(_collect)
+    except Exception:  # noqa: BLE001 — diagnostics must never break startup
+        logger.warning("schema_drift_check_failed")
+        return {}
+
+    return drift
