@@ -167,10 +167,30 @@ async def check_schema_drift() -> dict[str, list[str]]:
                     if table.name not in present:
                         found[table.name] = ["<table missing>"]
                         continue
-                    actual = {c["name"] for c in inspector.get_columns(table.name)}
-                    missing = [c.name for c in table.columns if c.name not in actual]
-                    if missing:
-                        found[table.name] = missing
+                    db_cols = {c["name"]: c for c in inspector.get_columns(table.name)}
+                    model_cols = {c.name for c in table.columns}
+
+                    problems = [
+                        f"model-only:{c.name}"
+                        for c in table.columns
+                        if c.name not in db_cols
+                    ]
+                    # The reverse direction breaks WRITES rather than reads, so it
+                    # is easy to miss: a leftover NOT NULL column with no default
+                    # that the model never populates makes every INSERT fail while
+                    # every SELECT keeps working. Columns that are nullable or
+                    # defaulted are harmless, so only flag the ones that block
+                    # inserts.
+                    problems += [
+                        f"db-only-required:{name}"
+                        for name, col in db_cols.items()
+                        if name not in model_cols
+                        and not col.get("nullable", True)
+                        and col.get("default") is None
+                        and not col.get("autoincrement", False)
+                    ]
+                    if problems:
+                        found[table.name] = problems
                 return found
 
             drift = await conn.run_sync(_collect)

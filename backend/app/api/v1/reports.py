@@ -184,7 +184,9 @@ async def get_report(
 @router.post(
     "/{session_id}/generate",
     response_model=ReportResponse,
-    status_code=status.HTTP_201_CREATED,
+    # 200, not 201: this is idempotent and returns an existing report unchanged
+    # as often as it creates a new one.
+    status_code=status.HTTP_200_OK,
 )
 async def generate_report(
     session_id: uuid.UUID,
@@ -231,12 +233,21 @@ async def generate_report(
     if session.status not in ("completed", "active"):
         raise HTTPException(status_code=409, detail="Session must be completed before generating report")
 
-    # Check if report already exists
+    # Idempotent: if the report already exists, return it rather than erroring.
+    #
+    # This makes the endpoint "ensure a report exists and give it to me", which
+    # lets the client reach a report in ONE call. Probing with a GET first meant
+    # the normal path — no report yet — logged a 404 in the browser console on
+    # every first view, and a 404 cannot be suppressed from JavaScript because
+    # the browser records it at the network layer. Returning early here also
+    # makes concurrent requests and client retries safe: no duplicate row, and
+    # no second billed generation.
     existing = await db.execute(
         select(Report).where(Report.session_id == session_id)
     )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Report already exists for this session")
+    existing_report = existing.scalar_one_or_none()
+    if existing_report:
+        return _build_report_response(existing_report)
 
     # Load full transcript: question + answer per turn. Scoring is deferred to
     # this report step, so there are no per-answer Score rows -- the AI scores
@@ -395,9 +406,9 @@ async def generate_report(
             session_id=session_id,
             user_id=current_user.user_id,
             overall_score=ai_report.overall_score,
-            overall_score_label=ai_report.overall_score_label,
+            overall_score_label=_fit(Report.overall_score_label, ai_report.overall_score_label),
             executive_summary=ai_report.executive_summary,
-            readiness_level=ai_report.readiness_level,
+            readiness_level=_fit(Report.readiness_level, ai_report.readiness_level),
             strengths=ai_report.strengths,
             weaknesses=ai_report.weaknesses,
             topic_scores=ai_report.topic_scores,
@@ -524,6 +535,33 @@ async def toggle_share(
     await db.commit()
 
     return {"is_shared": report.is_shared, "report_id": str(report_id)}
+
+
+def _fit(model_column, value: str) -> str:
+    """
+    Clamp a string to its database column's length.
+
+    The model writes some of these values as free text — `overall_score_label`
+    has no max_length in the response schema but lands in a VARCHAR(50). One
+    over-long label makes Postgres raise StringDataRightTruncation on commit, so
+    report generation 500s for that session on every retry, permanently.
+
+    Clamping here rather than adding max_length to the response schema is
+    deliberate: a validation failure would discard the whole response and pay for
+    a retry, when a slightly shortened label is a perfectly good report. The limit
+    is read from the column so it cannot drift out of sync with the schema.
+    """
+    limit = getattr(model_column.type, "length", None)
+    text = (value or "").strip()
+    if limit and len(text) > limit:
+        logger.warning(
+            "report_field_truncated",
+            column=model_column.name,
+            limit=limit,
+            length=len(text),
+        )
+        return text[:limit]
+    return text
 
 
 def _as_float(value: object, default: float = 0.0) -> float:

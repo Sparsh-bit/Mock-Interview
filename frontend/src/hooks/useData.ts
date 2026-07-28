@@ -200,47 +200,30 @@ export function useReport(sessionId: string) {
     queryFn: async () => {
       const api = getBrowserApiClient();
 
-      const statusOf = (e: unknown) =>
-        (e as { status?: number; response?: { status?: number } })?.status ??
-        (e as { response?: { status?: number } })?.response?.status;
-
+      // One call. `generate` is idempotent — it returns the existing report if
+      // there is one and creates it otherwise — so there is nothing to probe
+      // for first. Probing with a GET meant the normal path (no report yet)
+      // logged a 404 in the console on every first view, and a 404 cannot be
+      // suppressed from JavaScript: the browser records it at the network layer.
+      //
+      // 120s outlasts the server's own ceiling. The server caps AI generation at
+      // 50s and the host gateway cuts anything past ~100s, so the client is never
+      // the first to give up and a timeout here always means a real failure.
       try {
-        const res = await api.get(`/api/v1/reports/${sessionId}`);
+        const res = await api.post(
+          `/api/v1/reports/${sessionId}/generate`,
+          {},
+          { timeout: 120_000 },
+        );
         return res.data as ReportData;
       } catch (err: unknown) {
-        if (statusOf(err) !== 404) throw err;
-
-        // No report yet — generate it on demand.
-        try {
-          // Must outlast the server's own ceiling, or the client abandons a
-          // request that is still working and the candidate sees a timeout for a
-          // report that then quietly succeeds. The server caps AI generation at
-          // 50s and the host gateway cuts anything past ~100s, so 120s means the
-          // client is never the first to give up. This is the slowest call in the
-          // app and was the only AI call left on the 30s default.
-          const genRes = await api.post(
-            `/api/v1/reports/${sessionId}/generate`,
-            {},
-            { timeout: 120_000 },
-          );
-          return genRes.data as ReportData;
-        } catch (genErr: unknown) {
-          // 409 means the request was understood but the session isn't in a
-          // reportable state. "Report already exists" is a race we can resolve
-          // ourselves (another tab or an earlier attempt won); the other 409s
-          // carry a reason the candidate needs to read, so let them through
-          // with their message rather than collapsing to "not found".
-          // Either the report already exists (409 — another tab or an earlier
-          // attempt won), or we gave up waiting while the server may have
-          // finished anyway. Both are resolved by simply looking again, which is
-          // a cheap read rather than a second billed generation.
-          const isTimeout = (genErr as { isTimeout?: boolean })?.isTimeout === true;
-          if (statusOf(genErr) === 409 || isTimeout) {
-            const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
-            if (retry) return retry.data as ReportData;
-          }
-          throw genErr;
+        // If we stopped waiting, the server may still have committed the report.
+        // Looking once more is a cheap read, never a second billed generation.
+        if ((err as { isTimeout?: boolean })?.isTimeout === true) {
+          const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
+          if (retry) return retry.data as ReportData;
         }
+        throw err;
       }
     },
     enabled: !!sessionId,
