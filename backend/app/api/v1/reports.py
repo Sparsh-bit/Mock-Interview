@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import uuid
 from datetime import datetime
+from time import perf_counter
 
 import structlog
 from fastapi import APIRouter, Depends, status
@@ -27,10 +28,17 @@ from app.events.emitter import EventEmitter
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-#: Wall-clock ceiling on AI report generation. Managed hosts cut requests at
-#: their gateway (~100s on Render) with a CORS-header-less 502, so we must
-#: always answer before that and fall back to the heuristic report instead.
-_REPORT_AI_BUDGET_SECONDS = 55.0
+#: Wall-clock ceiling on AI report generation.
+#:
+#: This has to fit inside the host's gateway timeout (~100s on Render) INCLUDING
+#: a cold start. A sleeping free instance takes ~37s to wake, so the old 55s
+#: budget could total 92s+ and get cut at the gateway — which returns a 502 with
+#: no CORS headers and therefore reaches the browser as an opaque CORS error, not
+#: a timeout. 25s keeps the worst case near 62s with real margin.
+#:
+#: Exceeding it is not a failure: the handler falls back to the honest
+#: unscored report, which the candidate can regenerate once the box is warm.
+_REPORT_AI_BUDGET_SECONDS = 25.0
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -329,6 +337,7 @@ async def generate_report(
 
     ai_report: ReportGeneratorResponse | None = None
     last_raw_content = ""
+    _ai_started = perf_counter()
     try:
         # HARD time budget. Managed hosts (Render included) cut the request at
         # their gateway after ~100s and return a 502 that carries no CORS
@@ -358,8 +367,24 @@ async def generate_report(
             ),
             timeout=_REPORT_AI_BUDGET_SECONDS,
         )
-    except (AIProviderUnavailableError, TimeoutError):
-        logger.warning("ai_report_unavailable_using_heuristic", session_id=str(session_id))
+    except (AIProviderUnavailableError, TimeoutError) as exc:
+        logger.warning(
+            "ai_report_unavailable_using_heuristic",
+            session_id=str(session_id),
+            reason=type(exc).__name__,
+            elapsed_s=round(perf_counter() - _ai_started, 1),
+        )
+    except Exception:
+        # Deliberately broad. Anything unexpected here — a provider SDK raising
+        # an unmapped error, a malformed response — must still yield a report.
+        # A 500 from this endpoint reaches the browser as an opaque CORS failure
+        # (the error page carries no CORS headers), which tells the candidate
+        # nothing and looks like the app is broken.
+        logger.exception(
+            "ai_report_unexpected_error_using_heuristic",
+            session_id=str(session_id),
+            elapsed_s=round(perf_counter() - _ai_started, 1),
+        )
 
     if ai_report is not None:
         report = Report(
