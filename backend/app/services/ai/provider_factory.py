@@ -19,6 +19,8 @@ Adding a new provider:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import structlog
 
 from .base_provider import BaseAIProvider
@@ -216,7 +218,7 @@ def _create_provider(provider_name: str) -> BaseAIProvider:
     return instance
 
 
-def _build_provider(name: str, cls: type[BaseAIProvider]) -> BaseAIProvider:
+def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProvider:
     """
     Construct a provider instance with config values from settings.
 

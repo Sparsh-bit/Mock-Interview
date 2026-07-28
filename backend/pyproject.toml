@@ -87,3 +87,7 @@ addopts = "-v --cov=app --cov-report=term-missing"
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
+# Required for pydantic models. Without it mypy reports every `Settings()` call as
+# missing its required fields, because it cannot see that pydantic-settings
+# populates them from the environment.
+plugins = ["pydantic.mypy"]

@@ -87,7 +87,7 @@ async def sync_profile(
         db.add(user)
         await db.flush()  # Get the user.id without committing
 
-        profile = Profile(
+        profile: Profile | None = Profile(
             user_id=user.id,
             full_name=body.full_name,
             avatar_url=body.avatar_url,
@@ -101,10 +101,13 @@ async def sync_profile(
         )
     else:
         # Returning user — update profile if fields provided
-        result = await db.execute(
+        # May legitimately be None: a user row can exist without a profile row
+        # (created before profiles, or a partial signup). The response below
+        # handles that; the annotation on the create branch above makes it
+        # explicit rather than leaving the two branches to disagree.
+        profile = await db.scalar(
             select(Profile).where(Profile.user_id == user.id)
         )
-        profile = result.scalar_one_or_none()
 
         if profile and (body.full_name or body.avatar_url):
             if body.full_name:

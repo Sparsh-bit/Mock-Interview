@@ -48,6 +48,7 @@ from datetime import UTC
 
 import anthropic
 import structlog
+from anthropic.types import TextBlock
 
 from .base_provider import (
     BaseAIProvider,
@@ -391,7 +392,7 @@ class AnthropicProvider(BaseAIProvider):
         # Concatenate text blocks, skipping thinking blocks (which carry no
         # text under the default display setting anyway).
         text = "".join(
-            block.text for block in message.content if getattr(block, "type", None) == "text"
+            block.text for block in message.content if isinstance(block, TextBlock)
         )
 
         usage = message.usage

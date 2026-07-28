@@ -53,7 +53,7 @@ _PROMPTS = [
 # Reading-comprehension passages: the candidate reads one aloud within a time
 # limit; we measure reading pace, fillers and pauses, and the AI rates fluency.
 # Each has a suggested time budget (seconds) sized to a calm ~130 wpm read.
-_PASSAGES = [
+_PASSAGES: list[dict[str, str | int]] = [
     {
         "title": "Cloud Computing",
         "seconds": 45,

@@ -10,6 +10,7 @@ controlled error — never crash the interview engine.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any, TypeVar
 
 import structlog
@@ -32,7 +33,7 @@ class AIValidationError(Exception):
     def __init__(
         self,
         schema_name: str,
-        validation_errors: list[dict[str, Any]],
+        validation_errors: Sequence[Mapping[str, Any]],
         raw_data: Any,
     ) -> None:
         self.schema_name = schema_name

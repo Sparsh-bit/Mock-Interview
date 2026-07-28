@@ -101,9 +101,19 @@ async def cache_set(redis: Redis, key: str, value: str, ttl: int | None = None) 
 
 
 async def cache_get(redis: Redis, key: str) -> str | None:
-    """Get a string value. Returns None on miss or error."""
+    """
+    Get a string value. Returns None on miss or error.
+
+    Decodes explicitly rather than trusting the pool's decode_responses flag: if
+    that is ever turned off, every caller would start receiving bytes, and the
+    failures would be silent (float(b"1.5") works, but string comparisons and
+    JSON parsing do not behave the same way).
+    """
     try:
-        return await redis.get(key)
+        raw = await redis.get(key)
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
     except RedisError:
         logger.exception("cache_get_failed", key=key)
         return None
