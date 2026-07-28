@@ -25,6 +25,8 @@ candidate can act on.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import structlog
 from fastapi import APIRouter, Depends
@@ -37,6 +39,10 @@ from app.db.redis import CacheKeys
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+#: Keep the AI review inside the host gateway timeout so a slow model degrades
+#: to an honest "unavailable" instead of a CORS-header-less 502.
+_ANALYSE_AI_BUDGET_SECONDS = 45.0
 
 # Allowlist: our language id -> (Piston language, pinned version, filename).
 # Versions are pinned to what Piston's /runtimes reports so behavior is
@@ -220,3 +226,76 @@ async def _run_on_piston(
 async def list_languages(current_user: CurrentUser):  # noqa: ARG001
     """List supported coding-round languages."""
     return {"languages": sorted(_LANGUAGES)}
+
+
+# ─── AI code review ───────────────────────────────────────────────────────────
+
+
+class CodeAnalyseRequest(BaseModel):
+    language: str
+    source: str = Field(min_length=1, max_length=50_000)
+    problem_title: str = Field(default="Coding question", max_length=300)
+    problem_description: str = Field(default="", max_length=4_000)
+    difficulty: str = Field(default="medium", max_length=20)
+    #: Output from the last run, when the candidate ran it before submitting.
+    #: Evidence for the reviewer, not a verdict on its own.
+    stdout: str = Field(default="", max_length=4_000)
+    stderr: str = Field(default="", max_length=4_000)
+
+
+@router.post("/analyse", dependencies=[Depends(_code_exec_rate_limit)])
+async def analyse_code(request: CodeAnalyseRequest, current_user: CurrentUser):
+    """
+    Review a coding submission the way an interviewer would: graded correctness
+    (correct / nearly / partially / incorrect), what approach was taken and
+    whether a brute-force solution is sound, plus a soft flag when the code
+    looks AI-authored.
+
+    Never 5xx on an AI failure — the candidate gets an honest "not available"
+    payload instead of a console error.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
+    from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
+    from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
+    from app.services.ai.schemas import CodingEvaluation  # noqa: PLC0415
+
+    lang = request.language.lower().strip()
+    if lang not in _LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported language '{request.language}'. Supported: {sorted(_LANGUAGES)}",
+        )
+
+    builder = PromptBuilder(get_prompt_loader())
+    messages = builder.chat(
+        system_template="coding_evaluator",
+        user_content=f"Review this {lang} submission:\n\n```{lang}\n{request.source}\n```",
+        language=lang,
+        problem_title=request.problem_title,
+        problem_description=request.problem_description or "(not provided — infer it from the code)",
+        difficulty=request.difficulty,
+        stdout=request.stdout.strip() or "(not run)",
+        stderr=request.stderr.strip() or "(none)",
+    )
+
+    try:
+        evaluation, _ = await asyncio.wait_for(
+            generate_structured(
+                CodingEvaluation,
+                messages,
+                max_tokens=1600,
+                attempts_per_provider=1,
+                cost_tier=CostTier.BALANCED,
+                context="code_analysis",
+            ),
+            timeout=_ANALYSE_AI_BUDGET_SECONDS,
+        )
+    except (AIProviderUnavailableError, TimeoutError):
+        logger.warning("code_analysis_unavailable", language=lang)
+        return {"available": False, "evaluation": None}
+
+    return {"available": True, "evaluation": evaluation.model_dump()}

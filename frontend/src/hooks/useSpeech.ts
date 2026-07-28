@@ -60,7 +60,9 @@ export function useSpeechRecognition() {
     if (!Ctor) return;
     setSupported(true);
     const rec = new Ctor();
-    rec.lang = 'en-US';
+    // en-IN, not en-US: the candidates are Indian, and the recogniser
+    // transcribes Indian-accented English markedly better with this hint.
+    rec.lang = 'en-IN';
     rec.continuous = true;
     rec.interimResults = true;
     rec.onresult = (e) => {
@@ -130,32 +132,49 @@ export function useSpeechRecognition() {
 }
 
 /**
+ * Named Indian-English voices, best first. These are the platform voices that
+ * actually sound like an Indian interviewer:
+ *   neerja/prabhat — Microsoft "Online (Natural)" on Edge, the most natural
+ *   rishi          — macOS / iOS en-IN
+ *   veena          — older macOS en-IN
+ *   heera/ravi     — Windows en-IN
+ */
+const INDIAN_VOICE_NAMES = ['neerja', 'prabhat', 'rishi', 'veena', 'heera', 'ravi', 'aditi'];
+
 /**
  * Ranks an available voice for interview narration. Higher = better.
- * The browser default on macOS Chrome is often a low-quality/compact voice,
- * so we explicitly prefer the natural network/enhanced voices that are
- * actually pleasant to listen to.
+ *
+ * The interviewer should sound like one consistent Indian-English person, so
+ * en-IN outranks everything else by a wide margin. Non-Indian English voices
+ * are still scored (rather than rejected) because a machine may have no en-IN
+ * voice installed at all, and silence would be worse than a US accent.
  */
 function scoreVoice(v: SpeechSynthesisVoice): number {
   const name = v.name.toLowerCase();
-  const isEnglish = v.lang?.toLowerCase().startsWith('en');
-  if (!isEnglish) return -1;
+  const lang = v.lang?.toLowerCase() ?? '';
+  if (!lang.startsWith('en')) return -1;
+
   let score = 0;
-  if (v.lang.toLowerCase() === 'en-us') score += 3;
-  else if (v.lang.toLowerCase().startsWith('en')) score += 1;
-  // High-quality network voice Chrome exposes on macOS/desktop.
-  if (name.includes('google')) score += 10;
-  // macOS downloadable natural voices.
-  if (name.includes('premium') || name.includes('enhanced') || name.includes('natural')) score += 8;
-  // Microsoft "Online (Natural)" voices on Edge/Windows.
-  if (name.includes('natural') || name.includes('online')) score += 6;
-  // Decent built-in macOS voices, in rough quality order.
-  for (const [i, good] of ['samantha', 'ava', 'allison', 'alex', 'victoria'].entries()) {
-    if (name.includes(good)) score += 5 - i * 0.5;
-  }
+
+  // Accent is the dominant factor — a natural US voice must never outrank a
+  // plain Indian one, so this gap has to exceed every quality bonus below.
+  if (lang === 'en-in') score += 100;
+  else if (lang === 'en-gb') score += 5; // closer to Indian English than en-US
+  else if (lang === 'en-us') score += 3;
+  else score += 1;
+
+  // Prefer a recognised Indian voice by name, in order.
+  const idx = INDIAN_VOICE_NAMES.findIndex((n) => name.includes(n));
+  if (idx !== -1) score += 40 - idx * 2;
+
+  // Quality tie-breakers within the same accent.
+  if (name.includes('natural') || name.includes('online')) score += 8;
+  if (name.includes('google')) score += 6;
+  if (name.includes('premium') || name.includes('enhanced')) score += 5;
+
   // Penalize known novelty/robotic voices.
   if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|superstar|trinoids|whisper|wobble|zarvox/.test(name)) {
-    score -= 20;
+    score -= 200;
   }
   return score;
 }
@@ -201,10 +220,13 @@ export function useSpeechSynthesis() {
         utter.voice = chosen;
         utter.lang = chosen.lang;
       } else {
-        utter.lang = 'en-US';
+        // Ask for Indian English even without a matching voice object — some
+        // engines will still pick an en-IN variant from the lang hint alone.
+        utter.lang = 'en-IN';
       }
-      // Slightly slower + natural pitch reads more clearly for an interviewer.
-      utter.rate = 0.95;
+      // Conversational, not newsreader: a touch slower than default with a
+      // neutral pitch is the closest this API gets to a real interviewer.
+      utter.rate = 0.92;
       utter.pitch = 1.0;
       utter.onstart = () => setSpeaking(true);
       utter.onend = () => setSpeaking(false);
@@ -220,5 +242,12 @@ export function useSpeechSynthesis() {
     setSpeaking(false);
   }, []);
 
-  return { supported, speaking, speak, cancel, voices, voiceURI, setVoiceURI };
+  // The single voice actually in use, for display. Resolved from the live voice
+  // list because `voices` state can lag the engine's async load.
+  const activeVoice =
+    typeof window !== 'undefined' && 'speechSynthesis' in window && voiceURI
+      ? (window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) ?? null)
+      : null;
+
+  return { supported, speaking, speak, cancel, voices, voiceURI, setVoiceURI, activeVoice };
 }

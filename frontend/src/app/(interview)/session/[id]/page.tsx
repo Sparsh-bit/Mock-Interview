@@ -89,9 +89,11 @@ export default function LiveSessionPage() {
   // (initial load, refetch after submit, or a live cross-question being built).
   const preparing = isLoading || (isFetching && !question) || submitAnswer.isPending;
 
-  // Read each new question aloud (voice-first feel) unless typing.
+  // Read each new question aloud (voice-first feel) unless typing. Coding
+  // questions are read too — a real interviewer states the problem out loud,
+  // and they were previously the one type left silent.
   useEffect(() => {
-    if (!useTyping && !isCoding && questionText && tts.supported) {
+    if (!useTyping && questionText && tts.supported) {
       tts.speak(questionText);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,7 +304,7 @@ export default function LiveSessionPage() {
             </span>
             <div className="flex items-center gap-2">
               {isCoding && <Badge variant="violet">Coding round</Badge>}
-              {!isCoding && tts.supported && questionText && (
+              {tts.supported && questionText && (
                 <button
                   onClick={() => (tts.speaking ? tts.cancel() : tts.speak(questionText))}
                   title="Read question aloud"
@@ -319,21 +321,23 @@ export default function LiveSessionPage() {
             </div>
           </div>
 
-          {/* Voice picker */}
-          {!isCoding && !useTyping && tts.supported && tts.voices.length > 0 && (
+          {/* One consistent interviewer voice — Indian English, auto-selected.
+              No picker: the interviewer is a person, and letting the voice
+              change mid-session broke that illusion. */}
+          {!useTyping && tts.supported && tts.activeVoice && (
             <div className="mb-4 flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">Interviewer voice</label>
-              <select
-                value={tts.voiceURI ?? ''}
-                onChange={(e) => tts.setVoiceURI(e.target.value)}
-                className="flex-1 rounded-lg border border-border bg-surface-elevated px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                {tts.voices.map((v) => (
-                  <option key={v.voiceURI} value={v.voiceURI}>
-                    {v.name} ({v.lang})
-                  </option>
-                ))}
-              </select>
+              <span className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
+                <Volume2 className="h-3 w-3" />
+                Interviewer voice: {tts.activeVoice.name}
+                {!tts.activeVoice.lang.toLowerCase().startsWith('en-in') && (
+                  <span
+                    className="text-amber-600"
+                    title="No Indian English voice is installed on this device, so the closest available one is used."
+                  >
+                    · not en-IN
+                  </span>
+                )}
+              </span>
               <button
                 type="button"
                 onClick={() => tts.speak('Hi, I will be your interviewer today. Let us begin.')}
@@ -348,6 +352,9 @@ export default function LiveSessionPage() {
             <CodingWorkspace
               disabled={preparing}
               submitting={submitAnswer.isPending}
+              problemTitle="Coding question"
+              problemDescription={question?.content ?? ''}
+              difficulty={question?.difficulty ?? 'medium'}
               onSubmit={({ language, code }: { language: CodeLanguage; code: string }) =>
                 submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
               }

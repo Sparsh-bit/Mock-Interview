@@ -175,9 +175,10 @@ export default function ProfilePage() {
               <div className="flex flex-col items-center text-center">
                 <div className="relative flex h-40 w-40 items-center justify-center overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-primary/10 to-accent-violet/10">
                   {formData.avatar_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- remote
-                    // avatar of arbitrary origin; next/image would need every
-                    // host allow-listed in next.config.
+                    /* Avatars are user-supplied URLs from arbitrary hosts, and
+                       next/image requires every remote host to be allow-listed
+                       in next.config — so a plain <img> is correct here. */
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={formData.avatar_url}
                       alt=""

@@ -169,3 +169,50 @@ class ReportGeneratorResponse(BaseModel):
     weaknesses: list[str] = Field(default_factory=list)
     question_analysis: list[QuestionAnalysisItem] = Field(default_factory=list)
     improvement_roadmap: list[ImprovementRoadmapItem] = Field(default_factory=list)
+
+
+class CodeBug(BaseModel):
+    """A single defect found in a coding submission."""
+
+    description: str
+    severity: Literal["critical", "major", "minor", "style"] = "minor"
+    #: The model often cannot pin a line; treat it as a hint, not a guarantee.
+    line: int | None = None
+    fix: str = ""
+
+
+class CodingEvaluation(BaseModel):
+    """Matches the output of app/prompts/coding_evaluator.md."""
+
+    #: Graded rather than binary — freshers are usually partly right, and
+    #: "incorrect" is useless feedback.
+    correctness_level: Literal["correct", "nearly_correct", "partially_correct", "incorrect"]
+    summary: str
+    #: Whether they reached for the obvious solution or something better. A
+    #: working brute force is a legitimate interview pass.
+    approach: Literal["brute_force", "optimised", "optimal", "wrong_approach"]
+    is_brute_force_sound: bool = True
+
+    time_complexity: str = ""
+    optimal_time_complexity: str = ""
+    space_complexity: str = ""
+    optimal_space_complexity: str = ""
+
+    correctness_score: float = Field(ge=0.0, le=10.0)
+    efficiency_score: float = Field(ge=0.0, le=10.0)
+    code_quality_score: float = Field(ge=0.0, le=10.0)
+    overall_score: float = Field(ge=0.0, le=10.0)
+
+    bugs: list[CodeBug] = Field(default_factory=list)
+    edge_cases_missed: list[str] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+    optimisation_hint: str = ""
+    follow_up_questions: list[str] = Field(default_factory=list)
+
+    # Soft, explicitly-fallible signal that the submission may not be the
+    # candidate's own work. Never presented as fact — see the prompt's rules.
+    ai_authorship_suspected: bool = False
+    ai_authorship_confidence: Literal["low", "medium", "high"] = "low"
+    ai_authorship_signals: list[str] = Field(default_factory=list)
+    ai_authorship_note: str = ""

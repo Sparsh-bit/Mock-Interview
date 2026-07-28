@@ -69,31 +69,58 @@ async def _spend_key() -> str:
     return f"ai:spend:{datetime.now(UTC):%Y-%m-%d}"
 
 
+# In-process spend fallback, keyed by UTC day.
+#
+# Redis is the source of truth because it is shared across workers, but a money
+# guard must not fail OPEN: if Redis is unreachable, a Redis-only implementation
+# reads 0.0 forever and the cap silently stops existing. This local counter means
+# an unlimited-spend window can never open — worst case (Redis down, N workers)
+# the effective ceiling is per-worker rather than global.
+_local_spend: dict[str, float] = {}
+
+
 async def _spend_today() -> float:
-    """Total USD spent today. Returns 0.0 if Redis is unavailable."""
+    """
+    Total USD spent today — the higher of the shared Redis counter and this
+    process's own tally, so neither source failing can under-report.
+    """
+    key = await _spend_key()
+    local = _local_spend.get(key, 0.0)
+
     from app.db.redis import cache_get, get_redis  # noqa: PLC0415
 
     try:
-        raw = await cache_get(get_redis(), await _spend_key())
-        return float(raw) if raw else 0.0
+        raw = await cache_get(get_redis(), key)
+        shared = float(raw) if raw else 0.0
     except Exception:  # noqa: BLE001 — never let accounting break a request
-        return 0.0
+        logger.warning("ai_spend_read_failed_using_local", local_usd=round(local, 4))
+        return local
+
+    return max(shared, local)
 
 
 async def _record_spend(amount: float) -> None:
-    """Add to today's spend counter. Best-effort."""
+    """Add to today's spend counters. Local first so it cannot be skipped."""
     if amount <= 0:
         return
+
+    key = await _spend_key()
+    # Record locally before the network call — if Redis throws, the spend is
+    # still counted and the cap still converges.
+    _local_spend[key] = _local_spend.get(key, 0.0) + amount
+    # Keep only the current day; this dict must not grow forever.
+    for stale in [k for k in _local_spend if k != key]:
+        del _local_spend[stale]
+
     from app.db.redis import get_redis  # noqa: PLC0415
 
     try:
         redis = get_redis()
-        key = await _spend_key()
         await redis.incrbyfloat(key, amount)
         # Expire well after the day rolls over so the key can't leak forever.
         await redis.expire(key, 60 * 60 * 48)
     except Exception:  # noqa: BLE001
-        logger.warning("ai_spend_record_failed", amount=amount)
+        logger.warning("ai_spend_record_failed_counted_locally", amount=amount)
 
 
 class BudgetExceededError(ProviderError):
