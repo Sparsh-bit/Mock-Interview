@@ -34,6 +34,53 @@ const REPORT_GENERATION_MESSAGES = [
   'Almost done…',
 ];
 
+/**
+ * The four competencies the report scores, in the order a real assessment reads
+ * them: what they knew, how completely they answered, how clearly they explained
+ * it, how assured they seemed.
+ *
+ * Explicit rather than derived from Object.keys so the order is stable between
+ * reports and the labels are presentable — a candidate should not be shown
+ * `technical_accuracy`. Any dimension the model returns that isn't listed here is
+ * still rendered (title-cased) rather than silently dropped.
+ */
+const DIMENSION_LABELS: Record<string, string> = {
+  technical_accuracy: 'Technical Accuracy',
+  answer_completeness: 'Answer Completeness',
+  communication_clarity: 'Communication Clarity',
+  confidence: 'Confidence & Composure',
+};
+
+const DIMENSION_ORDER = Object.keys(DIMENSION_LABELS);
+
+function dimensionLabel(key: string): string {
+  return (
+    DIMENSION_LABELS[key] ??
+    key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
+/** Known dimensions first in their canonical order, then anything unexpected. */
+function orderedDimensions(scores: Record<string, number>): Array<[string, number]> {
+  const entries = Object.entries(scores);
+  return entries.sort(([a], [b]) => {
+    const ia = DIMENSION_ORDER.indexOf(a);
+    const ib = DIMENSION_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
+/** Bar colour by band, so the breakdown is readable at a glance. */
+function scoreTone(score: number): string {
+  if (score >= 75) return 'from-emerald-500 to-emerald-400';
+  if (score >= 50) return 'from-primary to-accent-violet';
+  if (score >= 30) return 'from-amber-500 to-amber-400';
+  return 'from-red-500 to-red-400';
+}
+
 const READINESS_META: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
   interview_ready: { label: 'Interview Ready', variant: 'success' },
   close_to_ready: { label: 'Close to Ready', variant: 'warning' },
@@ -200,19 +247,30 @@ export default function ReportDetailPage() {
                 {report.previous ? (
                   (() => {
                     const delta = Math.round((report.overall_score - report.previous.overall_score) * 10) / 10;
-                    const improved = delta >= 0;
+                    // Three cases, not two. Treating 0 as "improved" rendered a
+                    // green up-arrow reading "0 points higher than last time",
+                    // which is both wrong and the kind of detail that makes a
+                    // report look unfinished.
+                    const direction = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
                     return (
                       <div className="flex items-center gap-3">
                         <span
                           className={cn(
                             'text-2xl font-bold',
-                            improved ? 'text-emerald-600' : 'text-red-600'
+                            direction === 'up' && 'text-emerald-600',
+                            direction === 'down' && 'text-red-600',
+                            direction === 'flat' && 'text-muted-foreground'
                           )}
                         >
-                          {improved ? '▲' : '▼'} {Math.abs(delta)}
+                          {direction === 'up' ? '▲' : direction === 'down' ? '▼' : '='}{' '}
+                          {Math.abs(delta)}
                         </span>
                         <span className="text-sm text-muted-foreground">
-                          {improved ? 'points higher' : 'points lower'} than last time
+                          {direction === 'up'
+                            ? 'points higher than last time'
+                            : direction === 'down'
+                              ? 'points lower than last time'
+                              : 'no change from last time'}
                           {' '}({report.previous.overall_score}/100 → {report.overall_score}/100)
                         </span>
                       </div>
@@ -305,6 +363,51 @@ export default function ReportDetailPage() {
         </motion.div>
       </div>
 
+      {/* Competency Assessment — the four dimension scores plus the percentile.
+          Both are produced by the report model and were previously discarded,
+          which is what left the report thin: a real evaluation reports HOW the
+          candidate performed, not just a single number. */}
+      {Object.keys(report.dimension_scores || {}).length > 0 && (
+        <motion.div variants={fadeUp}>
+          <Card className="p-6">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="flex items-center gap-2 text-base font-bold">
+                <ShieldCheck className="h-5 w-5 text-primary" /> Competency Assessment
+              </h3>
+              {!!report.performance_percentile && (
+                // Stated as "better than N%", not "top N%". A 3rd-percentile
+                // result inverts to "Top 97%", which reads as praise for a poor
+                // performance — the one thing an assessment report must not do.
+                <span className="rounded-full border border-border bg-secondary/60 px-3 py-1 text-xs font-semibold text-muted-foreground">
+                  Better than {Math.round(report.performance_percentile)}% of candidates on this track
+                </span>
+              )}
+            </div>
+            <div className="grid gap-5 sm:grid-cols-2">
+              {orderedDimensions(report.dimension_scores).map(([key, score]) => (
+                <div key={key} className="space-y-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-semibold">{dimensionLabel(key)}</span>
+                    <span className="text-sm font-bold tabular-nums text-foreground">
+                      {Math.round(score)}
+                      <span className="text-[11px] font-medium text-muted-foreground">/100</span>
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                    <motion.div
+                      className={cn('h-full rounded-full bg-gradient-to-r', scoreTone(score))}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(Math.max(score, 0), 100)}%` }}
+                      transition={{ duration: 0.8, ease: easeOutExpo }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </motion.div>
+      )}
+
       {/* Topic Breakdown */}
       {Object.keys(report.topic_scores || {}).length > 0 && (
         <motion.div variants={fadeUp}>
@@ -386,9 +489,15 @@ export default function ReportDetailPage() {
                   </div>
                   <h4 className="text-sm font-bold">{item.topic}</h4>
                   <div className="flex items-center gap-4 text-xs">
-                    <span>Current: <strong className="text-amber-600">{item.current_score}</strong></span>
+                    <span>
+                      Current: <strong className="text-amber-600">{item.current_score}</strong>
+                      <span className="text-muted-foreground">/10</span>
+                    </span>
                     <span>→</span>
-                    <span>Target: <strong className="text-emerald-600">{item.target_score}</strong></span>
+                    <span>
+                      Target: <strong className="text-emerald-600">{item.target_score}</strong>
+                      <span className="text-muted-foreground">/10</span>
+                    </span>
                   </div>
                   {item.resources && item.resources.length > 0 && (
                     <div className="border-t border-border/40 pt-2">
