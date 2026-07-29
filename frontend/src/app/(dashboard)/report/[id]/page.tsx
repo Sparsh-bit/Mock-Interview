@@ -11,7 +11,6 @@ import {
   ExternalLink,
   ListChecks,
   Loader2,
-  Share2,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -19,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
+import { ShareMenu } from '@/components/report/ShareMenu';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
@@ -210,18 +210,13 @@ export default function ReportDetailPage() {
             <ListChecks className="h-3.5 w-3.5" />
             Detailed Analysis
           </button>
-          <button
-          onClick={handleShare}
-          disabled={toggleShare.isPending}
-          className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold transition-all ${
-            report.is_shared
-              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600'
-              : 'border-border bg-surface text-muted-foreground hover:bg-secondary'
-          }`}
-        >
-          <Share2 className="h-3.5 w-3.5" />
-          {report.is_shared ? 'Publicly Shared' : 'Share Report'}
-          </button>
+          <ShareMenu
+            reportId={report.id}
+            isShared={report.is_shared}
+            onToggleShare={handleShare}
+            toggling={toggleShare.isPending}
+            summary={`${Math.round(report.overall_score)}/100 · ${readiness.label}`}
+          />
         </div>
       </motion.div>
 

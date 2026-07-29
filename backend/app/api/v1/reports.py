@@ -627,6 +627,85 @@ async def generate_report(
     return _build_report_response(report)
 
 
+class PublicReport(BaseModel):
+    """
+    A shared report as seen by someone without an account.
+
+    A deliberately narrowed view. It carries the assessment — score, readiness,
+    summary, strengths, weaknesses, topic and competency breakdowns — and omits
+    everything that is not the candidate's own to publish or that a viewer has no
+    business seeing: the session id, the per-question transcript, the improvement
+    roadmap, and the delivery analysis of how they spoke.
+    """
+
+    report_id: uuid.UUID
+    candidate_name: str
+    track_name: str
+    company_name: str
+    overall_score: float
+    overall_score_label: str
+    readiness_level: str
+    executive_summary: str
+    strengths: list[str]
+    weaknesses: list[str]
+    topic_scores: dict[str, float]
+    dimension_scores: dict[str, float]
+    created_at: datetime
+
+
+@router.get("/public/{report_id}", response_model=PublicReport)
+async def get_public_report(
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch a shared report. NO AUTHENTICATION — this is the whole point of sharing.
+
+    Access is gated on the owner having explicitly enabled sharing, and on knowing
+    the report's UUID, which is unguessable. Turning sharing off makes the link
+    dead immediately, so the candidate keeps control after publishing.
+
+    A report that is not shared returns 404, not 403: a 403 would confirm that a
+    report with that id exists, which is information the caller has not earned.
+
+    Declared BEFORE "/{session_id}" would otherwise match it — FastAPI resolves in
+    declaration order, and "public" would be parsed as a session UUID and fail.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
+    from app.models.report import Report  # noqa: PLC0415
+    from app.models.session import InterviewSession  # noqa: PLC0415
+    from app.models.user import Profile  # noqa: PLC0415
+
+    report = await db.scalar(select(Report).where(Report.id == report_id))
+    if report is None or not report.is_shared:
+        raise HTTPException(status_code=404, detail="This report is not shared, or does not exist.")
+
+    session = await db.get(InterviewSession, report.session_id)
+    track = await db.get(InterviewTrack, session.track_id) if session and session.track_id else None
+    company = await db.get(Company, track.company_id) if track else None
+    profile = await db.scalar(select(Profile).where(Profile.user_id == report.user_id))
+
+    raw = report.raw_report or {}
+
+    return PublicReport(
+        report_id=report.id,
+        candidate_name=(profile.full_name if profile and profile.full_name else "Candidate"),
+        track_name=track.name if track else "Technical Interview",
+        company_name=company.name if company else "",
+        overall_score=_as_float(report.overall_score),
+        overall_score_label=report.overall_score_label or "",
+        readiness_level=report.readiness_level or "",
+        executive_summary=report.executive_summary or "",
+        strengths=_as_str_list(report.strengths),
+        weaknesses=_as_str_list(report.weaknesses),
+        topic_scores=_as_score_map(report.topic_scores),
+        dimension_scores=_as_score_map(raw.get("dimension_scores")),
+        created_at=report.created_at,
+    )
+
+
 @router.patch("/{report_id}/share")
 async def toggle_share(
     report_id: uuid.UUID,

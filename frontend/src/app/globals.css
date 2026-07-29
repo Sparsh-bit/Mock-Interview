@@ -257,3 +257,66 @@
     @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
   }
 }
+
+/* ─── Print / Save-as-PDF ──────────────────────────────────────────────────
+   "Download PDF" uses the browser's own print pipeline rather than a JS PDF
+   library. That gives a real vector PDF with selectable, searchable text at the
+   correct paper size, with no dependency and identical behaviour on desktop and
+   mobile. Canvas-based libraries (html2canvas/jsPDF) rasterise the page: heavier
+   files, blurry text, and nothing a recruiter can copy out of.
+
+   The app is dark-mode-first, which would print as a solid dark block and drain
+   a cartridge, so print forces a light document. */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Neutralise the design system's dark surfaces and glows for paper. */
+  .glass,
+  .hero-wash,
+  .glow,
+  [class*='bg-surface'],
+  [class*='bg-secondary'] {
+    background: #fff !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Chrome and Safari drop background colours by default, which would erase the
+     score bars entirely — they are the data, not decoration. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Anything that cannot be actioned on paper. */
+  nav,
+  aside,
+  header button,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Keep a card from being split across a page break mid-sentence. */
+  section,
+  article,
+  .print-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  a[href^='http']::after {
+    /* Print the URL, since a printed link is otherwise dead. */
+    content: ' (' attr(href) ')';
+    font-size: 9pt;
+    color: #555;
+  }
+}
