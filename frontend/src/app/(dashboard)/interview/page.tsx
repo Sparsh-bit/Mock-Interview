@@ -1,10 +1,11 @@
 'use client';
 
 import { useInterview } from '@/hooks/useInterview';
-import { useTracks } from '@/hooks/useData';
-import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks } from 'lucide-react';
+import { useTracks, usePrimaryResume } from '@/hooks/useData';
+import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2 } from 'lucide-react';
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { toast } from 'sonner';
 
 export const runtime = 'edge';
@@ -27,6 +28,8 @@ function InterviewSetup() {
   const [program, setProgram] = useState('');
   const [prompt, setPrompt] = useState('');
   const [resumeText, setResumeText] = useState('');
+  // Shown so a blank box does not look like opting out of personalisation.
+  const { data: storedResume } = usePrimaryResume();
 
   useEffect(() => {
     if (!tracks || tracks.length === 0 || selectedTrackId) return;
@@ -202,18 +205,55 @@ function InterviewSetup() {
           />
         </div>
 
-        {/* Resume */}
+        {/* Resume.
+
+            When an uploaded resume exists the server uses it automatically, so
+            this box has to say so — otherwise leaving it blank looks like opting
+            out of personalisation when it is in fact the normal path. Pasted text
+            still takes precedence, which is why it remains editable rather than
+            being hidden once a file is on record. */}
         <div className="mb-8">
           <label className="mb-1.5 block text-sm font-medium">
-            Your resume <span className="text-muted-foreground">(optional — paste skills & projects)</span>
+            Your resume{' '}
+            <span className="text-muted-foreground">
+              {storedResume?.has_text ? '(optional — overrides your uploaded resume)' : '(optional — paste skills & projects)'}
+            </span>
           </label>
+
+          {storedResume?.has_text && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+              <FileCheck2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span className="text-muted-foreground">
+                Using <span className="font-semibold text-foreground">{storedResume.filename}</span> — leave this
+                blank to keep using it.
+              </span>
+              <Link href="/profile" className="font-semibold text-primary hover:underline">
+                Change
+              </Link>
+            </div>
+          )}
+
           <textarea
             value={resumeText}
             onChange={(e) => setResumeText(e.target.value)}
             rows={4}
-            placeholder="Paste your resume or key points here. The interviewer will ask about your actual projects, skills and experience."
+            placeholder={
+              storedResume?.has_text
+                ? 'Leave blank to use your uploaded resume, or paste different details to use just for this interview.'
+                : 'Paste your resume or key points here. The interviewer will ask about your actual projects, skills and experience.'
+            }
             className="w-full resize-none rounded-xl border border-border/50 bg-surface-elevated px-4 py-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
+
+          {!storedResume?.has_text && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Tip:{' '}
+              <Link href="/profile" className="font-semibold text-primary hover:underline">
+                upload your resume once
+              </Link>{' '}
+              and every interview will use it automatically.
+            </p>
+          )}
         </div>
 
         <button

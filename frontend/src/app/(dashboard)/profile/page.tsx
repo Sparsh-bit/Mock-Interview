@@ -7,6 +7,7 @@ import { Loader2, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
+import { ResumeUploadCard } from '@/components/resume/ResumeUploadCard';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
@@ -217,6 +218,14 @@ export default function ProfilePage() {
             </Card>
           </div>
         </form>
+      </motion.div>
+
+      {/* Resume — outside the profile form on purpose: uploading is its own
+          action that saves immediately, so nesting it inside a form the user has
+          to submit separately would imply their file is not stored until they
+          press Save. */}
+      <motion.div variants={fadeUp}>
+        <ResumeUploadCard />
       </motion.div>
     </motion.div>
   );

@@ -245,3 +245,68 @@ export function useToggleShareReport() {
     },
   });
 }
+
+export interface StoredResume {
+  id: string;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  is_primary: boolean;
+  /** "completed" | "text_only" | "failed" | "pending" */
+  parsing_status: string;
+  parsed_skills: string[] | null;
+  created_at: string;
+  parsing_error: string | null;
+  /** Whether readable text was extracted — this, not parsing_status, decides
+   *  whether an interview can be personalised at all. */
+  has_text: boolean;
+  project_count: number;
+  priority_topics: string[];
+}
+
+/** The candidate's active resume, or null if they have not uploaded one. */
+export function usePrimaryResume() {
+  return useQuery({
+    queryKey: ['resume', 'primary'],
+    queryFn: async () => {
+      const api = getBrowserApiClient();
+      const res = await api.get('/api/v1/resume/primary');
+      return (res.data ?? null) as StoredResume | null;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUploadResume() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const api = getBrowserApiClient();
+      const form = new FormData();
+      form.append('file', file);
+      // Generous timeout: the request extracts the text AND runs the AI analysis
+      // before responding, so it is bounded by the server's 45s analysis budget
+      // rather than by network latency.
+      const res = await api.post('/api/v1/resume/upload', form, { timeout: 120_000 });
+      return res.data as StoredResume;
+    },
+    onSuccess: () => {
+      // Both the active resume and the full list change: the new upload becomes
+      // primary and demotes the previous one.
+      queryClient.invalidateQueries({ queryKey: ['resume'] });
+    },
+  });
+}
+
+export function useDeleteResume() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (resumeId: string) => {
+      const api = getBrowserApiClient();
+      await api.delete(`/api/v1/resume/${resumeId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['resume'] });
+    },
+  });
+}
