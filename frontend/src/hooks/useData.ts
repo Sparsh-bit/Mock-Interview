@@ -310,3 +310,96 @@ export function useDeleteResume() {
     },
   });
 }
+
+export interface AnalysedAnswer {
+  answer_id: string;
+  question_id: string;
+  question: string;
+  question_type: string;
+  topic: string;
+  /** Exactly what the candidate said — never tidied up. */
+  answer: string;
+  answered_at: string;
+  delivery: {
+    filler_count: number;
+    pause_count: number;
+    total_pause_seconds: number;
+    words: number;
+    speaking_seconds: number;
+    pauses: Array<{ wordIndex: number; seconds: number }>;
+  } | null;
+  model_answer: {
+    model_answer: string;
+    what_was_missing: string[];
+    key_points: string[];
+    verdict_line: string;
+  } | null;
+  is_coding: boolean;
+}
+
+export interface DetailedAnalysis {
+  session_id: string;
+  track_name: string;
+  company_name: string;
+  completed_at: string | null;
+  answers: AnalysedAnswer[];
+}
+
+/** Every question with the candidate's verbatim answer. Free — no AI call. */
+export function useDetailedAnalysis(sessionId: string) {
+  return useQuery({
+    queryKey: ['analysis', sessionId],
+    queryFn: async () => {
+      const api = getBrowserApiClient();
+      const res = await api.get(`/api/v1/analysis/${sessionId}`);
+      return res.data as DetailedAnalysis;
+    },
+    enabled: !!sessionId,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * Generate the model answer for one answer.
+ *
+ * `retry: false` deliberately — this is a billed AI call, so a transient failure
+ * must not silently become three charges.
+ */
+export function useGenerateModelAnswer(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (answerId: string) => {
+      const api = getBrowserApiClient();
+      const res = await api.post(
+        `/api/v1/analysis/${sessionId}/answers/${answerId}/model-answer`,
+        {},
+        { timeout: 90_000 },
+      );
+      return res.data as AnalysedAnswer['model_answer'] & { answer_id: string; cached: boolean };
+    },
+    retry: false,
+    onSuccess: (result) => {
+      // Write it into the cached analysis so it stays visible without a refetch.
+      queryClient.setQueryData<DetailedAnalysis>(['analysis', sessionId], (prev) =>
+        prev
+          ? {
+              ...prev,
+              answers: prev.answers.map((a) =>
+                a.answer_id === result.answer_id
+                  ? {
+                      ...a,
+                      model_answer: {
+                        model_answer: result.model_answer,
+                        what_was_missing: result.what_was_missing,
+                        key_points: result.key_points,
+                        verdict_line: result.verdict_line,
+                      },
+                    }
+                  : a,
+              ),
+            }
+          : prev,
+      );
+    },
+  });
+}
