@@ -216,3 +216,73 @@ class CodingEvaluation(BaseModel):
     ai_authorship_confidence: Literal["low", "medium", "high"] = "low"
     ai_authorship_signals: list[str] = Field(default_factory=list)
     ai_authorship_note: str = ""
+
+
+# ─── Resume analysis ──────────────────────────────────────────────────────────
+
+
+class ResumeSkill(BaseModel):
+    """One skill claimed on the resume, with how strongly it was claimed."""
+
+    name: str
+    domain: str = ""
+    years_experience: float | None = None
+    #: How the claim was made. "explicit" is a stated proficiency, "inferred" is
+    #: deduced from a project, "mentioned_once" is a passing reference — the
+    #: interviewer treats these very differently when deciding how hard to probe.
+    confidence: Literal["explicit", "inferred", "mentioned_once"] = "inferred"
+    proficiency_level: Literal["beginner", "intermediate", "advanced", "expert"] = "intermediate"
+
+
+class ResumeProject(BaseModel):
+    """A project described on the resume — the richest source of real questions."""
+
+    name: str
+    description: str = ""
+    technologies: list[str] = Field(default_factory=list)
+    role: str = ""
+    scale_indicators: list[str] = Field(default_factory=list)
+    relevance_to_track: Literal["high", "medium", "low"] = "medium"
+
+
+class ResumeExperience(BaseModel):
+    """Overall shape of the candidate's experience."""
+
+    total_years: float = 0.0
+    seniority_level: Literal["junior", "mid", "senior", "principal"] = "junior"
+    primary_stack: list[str] = Field(default_factory=list)
+    domain: str = ""
+
+
+class ResumeInterviewFocus(BaseModel):
+    """
+    How the interview should be steered for this candidate.
+
+    This is the part that actually changes the interview: priority_topics drives
+    question selection and personalization_notes is handed to the interviewer so
+    it can say "as you mentioned in your resume…" about something real.
+    """
+
+    strong_areas: list[str] = Field(default_factory=list)
+    weak_areas: list[str] = Field(default_factory=list)
+    priority_topics: list[str] = Field(default_factory=list)
+    recommended_difficulty: Literal["easy", "medium", "hard"] = "medium"
+    personalization_notes: str = ""
+
+
+class ResumeQuality(BaseModel):
+    """Feedback on the resume itself, shown to the candidate."""
+
+    completeness_score: float = Field(ge=0.0, le=10.0, default=5.0)
+    technical_depth_score: float = Field(ge=0.0, le=10.0, default=5.0)
+    concerns: list[str] = Field(default_factory=list)
+
+
+class ResumeAnalysisResponse(BaseModel):
+    """Matches the output of app/prompts/resume_analyzer.md."""
+
+    skills: list[ResumeSkill] = Field(default_factory=list)
+    projects: list[ResumeProject] = Field(default_factory=list)
+    experience: ResumeExperience = Field(default_factory=ResumeExperience)
+    interview_focus: ResumeInterviewFocus = Field(default_factory=ResumeInterviewFocus)
+    resume_quality: ResumeQuality = Field(default_factory=ResumeQuality)

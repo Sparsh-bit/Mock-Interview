@@ -96,6 +96,15 @@ class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     # Only one resume can be primary at a time (enforced by application logic)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # The extracted plain text. Stored because it is what the interviewer
+    # ultimately reads: the structured columns above are a condensed view, and if
+    # AI analysis fails the raw text still personalises the interview on its own.
+    # Keeping it also means re-analysis never needs the original file back out of
+    # storage.
+    parsed_text: Mapped[str | None] = mapped_column(Text)
+    # Why parsing failed, in words the candidate can act on ("that PDF is a scan,
+    # upload the original export"). Null when parsing succeeded.
+    parsing_error: Mapped[str | None] = mapped_column(Text)
     # "pending" | "parsing" | "completed" | "failed"
     parsing_status: Mapped[str] = mapped_column(
         String(20), default="pending", nullable=False,
