@@ -57,6 +57,12 @@ interface CodingWorkspaceProps {
   problemTitle?: string;
   problemDescription?: string;
   difficulty?: string;
+  /**
+   * Hide "Submit for Evaluation". Standalone practice has no session to record an
+   * answer against, and a button that silently does nothing is worse than no
+   * button — Run and Review are the whole point there.
+   */
+  hideSubmit?: boolean;
 }
 
 export function CodingWorkspace({
@@ -66,6 +72,7 @@ export function CodingWorkspace({
   problemTitle,
   problemDescription,
   difficulty,
+  hideSubmit = false,
 }: CodingWorkspaceProps) {
   const [language, setLanguage] = useState<CodeLanguage>('java');
   const [code, setCode] = useState<string>(STARTERS.java);
@@ -168,9 +175,11 @@ export function CodingWorkspace({
         >
           <ScanSearch className="h-4 w-4" /> Review my code
         </Button>
-        <Button onClick={() => onSubmit({ language, code })} loading={submitting} disabled={disabled}>
-          Submit for Evaluation
-        </Button>
+        {!hideSubmit && (
+          <Button onClick={() => onSubmit({ language, code })} loading={submitting} disabled={disabled}>
+            Submit for Evaluation
+          </Button>
+        )}
       </div>
 
       {/* AI review */}
@@ -181,7 +190,7 @@ export function CodingWorkspace({
       )}
       {analyse.data && !analyse.data.available && (
         <div className="rounded-2xl border border-border bg-surface p-4 text-sm text-muted-foreground">
-          Code review isn&apos;t available right now. Your code still runs and submits normally.
+          Code review isn&apos;t available right now. Your code still runs normally.
         </div>
       )}
       {analyse.data?.evaluation && <CodeReview evaluation={analyse.data.evaluation} />}

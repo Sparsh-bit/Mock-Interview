@@ -207,3 +207,61 @@ async def get_track(
             for cat in sorted(track.categories, key=lambda x: x.order_index)
         ],
     )
+
+
+class PracticeQuestionResponse(BaseModel):
+    """A single question, for practising it on its own outside an interview."""
+
+    id: uuid.UUID
+    content: str
+    question_type: str
+    difficulty: str
+    topic: str
+    #: Keywords a strong answer should contain, already stored on the question.
+    #: Shown while practising: this is not a live interview, so there is nothing
+    #: to withhold.
+    expected_keywords: list[str] = []
+    #: The reference answer, where the question bank has one.
+    ideal_answer: str | None = None
+    time_limit_seconds: int | None = None
+
+
+@router.get("/{question_id}", response_model=PracticeQuestionResponse)
+async def get_question(
+    question_id: uuid.UUID,
+    current_user: CurrentUser,  # noqa: ARG001 - auth required, identity unused
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fetch one question by id.
+
+    Declared after the /tracks routes so those static paths are matched first —
+    FastAPI resolves in declaration order, and a leading path parameter would
+    otherwise swallow them and fail UUID parsing.
+
+    Exists for the standalone practice screen: retrying a coding question must not
+    require an interview session, so the question has to be reachable on its own.
+    """
+    from app.models.question import Question, Topic  # noqa: PLC0415
+
+    row = (
+        await db.execute(
+            select(Question, Topic.name)
+            .outerjoin(Topic, Question.topic_id == Topic.id)
+            .where(Question.id == question_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    question, topic_name = row
+    return PracticeQuestionResponse(
+        id=question.id,
+        content=question.content,
+        question_type=str(question.question_type or "conceptual"),
+        difficulty=str(question.difficulty or "medium"),
+        topic=topic_name or "General",
+        expected_keywords=list(question.expected_keywords or []),
+        ideal_answer=question.ideal_answer,
+        time_limit_seconds=question.time_limit_seconds,
+    )

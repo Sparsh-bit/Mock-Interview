@@ -127,7 +127,7 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
                 Show the ideal answer
               </Button>
               {item.is_coding && (
-                <Button variant="ghost" onClick={() => router.push(`/practice/${item.question_id}`)}>
+                <Button variant="ghost" onClick={() => router.push(`/practice/${item.question_id}?from=/report/${sessionId}/analysis`)}>
                   <Code2 className="h-3.5 w-3.5" />
                   Retry this question
                   <ChevronRight className="h-3.5 w-3.5" />
@@ -192,7 +192,7 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
               </div>
 
               {item.is_coding && (
-                <Button variant="secondary" onClick={() => router.push(`/practice/${item.question_id}`)}>
+                <Button variant="secondary" onClick={() => router.push(`/practice/${item.question_id}?from=/report/${sessionId}/analysis`)}>
                   <Code2 className="h-3.5 w-3.5" />
                   Retry this question with optimised code
                   <ChevronRight className="h-3.5 w-3.5" />
