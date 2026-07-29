@@ -142,6 +142,45 @@ def create_app() -> FastAPI:
         expose_headers=["*"],
     )
 
+    # ── Security headers ──────────────────────────────────────────────────
+    #
+    # This service returns JSON, so the browser-facing risks are narrower than for
+    # a page — but a JSON endpoint can still be framed, sniffed into a different
+    # content type, or leak its URLs through the Referer header on any redirect.
+    # These are cheap, have no downside for an API, and are the difference between
+    # "we never thought about it" and a deliberate posture.
+    #
+    # No Content-Security-Policy here on purpose: the API serves no HTML, and a CSP
+    # belongs on the frontend origin (Cloudflare), where the scripts actually load.
+    @app.middleware("http")
+    async def security_headers_middleware(request, call_next):
+        response = await call_next(request)
+
+        # Never let a browser second-guess our declared content type. This is what
+        # stops a JSON response containing attacker-supplied text from being
+        # sniffed and executed as HTML or JavaScript.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        # An API has no legitimate reason to be embedded in a frame.
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        # Send no Referer to other origins: request paths here contain session and
+        # report UUIDs, which should not travel to third parties.
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        # Nothing here needs a camera, microphone or location. Deny by default so
+        # the answer does not depend on a future handler remembering to.
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
+
+        # HSTS only in production, and only over TLS. Sending it in development
+        # would pin localhost to https and break the dev server in a way that is
+        # painful to undo — browsers cache it aggressively.
+        if settings.is_production:
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+
+        return response
+
     # ── Request ID middleware ─────────────────────────────────────────────
     @app.middleware("http")
     async def request_id_middleware(request, call_next):

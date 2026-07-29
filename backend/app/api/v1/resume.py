@@ -19,7 +19,9 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import AsyncSession, get_db
 from app.events import (
     ResumeUploadedEvent,
@@ -45,6 +47,16 @@ router = APIRouter()
 #: an opaque CORS error rather than a timeout. Exceeding it is not a failure: the
 #: extracted text is stored regardless, so the interview is still personalised.
 _RESUME_ANALYSIS_BUDGET_SECONDS = 45.0
+
+#: Rate limit on upload. Each one reads a file AND runs a billed AI analysis, so
+#: an unthrottled upload endpoint is both a spend and a CPU amplifier: a loop of
+#: 10 MB PDFs would pin the worker parsing them. Shares the AI bucket.
+_resume_upload_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_AI_REQUESTS_PER_MINUTE,
+    window_seconds=60,
+    key_builder=lambda user_id: CacheKeys.rate_limit_ai(user_id),
+    action="uploading a resume",
+)
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -100,6 +112,7 @@ def _resume_response(resume) -> ResumeResponse:  # noqa: ANN001 - ResumeFile, im
     "/upload",
     response_model=ResumeResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_resume_upload_rate_limit)],
 )
 async def upload_resume(
     current_user: CurrentUser,

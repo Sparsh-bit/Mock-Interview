@@ -23,6 +23,18 @@ COPY database/ /app/database/
 WORKDIR /app/backend
 RUN uv sync --no-dev
 
+# ── Drop root ─────────────────────────────────────────────────────────────
+# The container defaults to running as root, which means a remote-code-execution
+# bug anywhere in the app — or in any dependency — would own the whole container
+# rather than one unprivileged account. Nothing here needs root at runtime: the
+# app writes no files outside /tmp and binds a high port.
+#
+# Done AFTER dependency install so the build steps keep root and the resulting
+# tree stays owned correctly.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 # Apply migrations, seed the company interview research, then start Uvicorn.

@@ -25,7 +25,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import AsyncSession, get_db
 
 logger = structlog.get_logger(__name__)
@@ -43,6 +46,19 @@ _MODEL_ANSWER_MAX_TOKENS = 900
 #: Wall-clock cap, well inside a managed host's ~100s gateway cut. A gateway 502
 #: carries no CORS headers and reaches the browser as an opaque CORS error.
 _MODEL_ANSWER_BUDGET_SECONDS = 45.0
+
+#: Rate limit on model-answer generation.
+#:
+#: This is a BILLED call reachable by any authenticated user, one per answer, so
+#: without a limit a single account could generate them in a loop and drain the
+#: daily AI budget for everyone. The daily cap is the backstop; this is the door.
+#: Shares the AI bucket so it cannot be used to sidestep the interview limits.
+_model_answer_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_AI_REQUESTS_PER_MINUTE,
+    window_seconds=60,
+    key_builder=lambda user_id: CacheKeys.rate_limit_ai(user_id),
+    action="generating an ideal answer",
+)
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -242,6 +258,7 @@ async def get_detailed_analysis(
     response_model=ModelAnswerResult,
     # 200, not 201: idempotent, and returns a cached result as often as it creates one.
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_model_answer_rate_limit)],
 )
 async def generate_model_answer(
     session_id: uuid.UUID,
