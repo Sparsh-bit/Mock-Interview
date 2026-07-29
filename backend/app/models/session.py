@@ -104,6 +104,20 @@ class Answer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     response_time_seconds: Mapped[int | None] = mapped_column(Integer)
     word_count: Mapped[int | None] = mapped_column(Integer)
+    #: Delivery for THIS answer, including where each pause fell:
+    #: {filler_count, pause_count, total_pause_seconds, words, speaking_seconds,
+    #:  pauses: [{wordIndex, seconds}]}
+    #:
+    #: The session keeps running totals for the report's headline metrics; this
+    #: keeps the detail, which is what makes it possible to replay a candidate's
+    #: own answer back to them with the hesitations marked. A total cannot do that.
+    delivery: Mapped[dict | None] = mapped_column(JSONB)
+    #: Cached coaching for this answer: the model answer the candidate should have
+    #: given, what was missing, the key points, and a verdict line. Written against
+    #: what they actually said, generated on demand, and stored whole so a reload
+    #: never costs a second billed call or silently drops half the content.
+    model_answer: Mapped[dict | None] = mapped_column(JSONB)
+    model_answer_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ── Relationships ──────────────────────────────────────────────────────
     session: Mapped[InterviewSession] = relationship("InterviewSession", back_populates="answers")

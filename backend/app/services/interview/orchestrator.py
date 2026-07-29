@@ -826,9 +826,18 @@ class InterviewOrchestrator:
         AI wait and no score shown mid-interview; the flow stays fluent.
 
         `delivery` (optional) carries the client-measured speaking metrics for
-        this answer — filler words, pauses, words and speaking seconds — which
-        we accumulate on the session so the final report can analyse delivery
-        (e.g. "you paused a lot") across the whole interview.
+        this answer — filler words, pauses, words and speaking seconds. It is
+        stored BOTH ways on purpose:
+
+          on the answer   in full, including where each pause fell, so the
+                          detailed analysis can replay the candidate's own answer
+                          back to them with the hesitations marked in position.
+          on the session   as running totals, which is what the report's headline
+                          delivery figures ("16 filler words, 131 wpm") are built
+                          from.
+
+        Only the totals were kept before, so the pause positions were discarded at
+        the point of submission and the detail could never be recovered.
         """
         session = await self.db.get(InterviewSession, session_id)
         if not session:
@@ -839,6 +848,11 @@ class InterviewOrchestrator:
             session_id=session_id,
             question_id=question_id,
             content=content,
+            delivery=delivery or None,
+            word_count=int(delivery.get("words") or 0) if delivery else None,
+            response_time_seconds=(
+                int(delivery.get("speaking_seconds") or 0) if delivery else None
+            ),
         )
         self.db.add(ans)
         session.questions_asked = (session.questions_asked or 0) + 1

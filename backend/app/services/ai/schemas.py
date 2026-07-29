@@ -286,3 +286,25 @@ class ResumeAnalysisResponse(BaseModel):
     experience: ResumeExperience = Field(default_factory=ResumeExperience)
     interview_focus: ResumeInterviewFocus = Field(default_factory=ResumeInterviewFocus)
     resume_quality: ResumeQuality = Field(default_factory=ResumeQuality)
+
+
+# ─── Model answer coaching ────────────────────────────────────────────────────
+
+
+class ModelAnswerResponse(BaseModel):
+    """
+    Matches the output of app/prompts/model_answer.md.
+
+    Deliberately NOT part of the report schema. Generating a full spoken model
+    answer for every question would roughly double the report's output tokens (the
+    single most expensive call in the app) for content most candidates read for
+    only a few questions. This is produced on demand per answer and cached.
+    """
+
+    #: The answer as the candidate should have spoken it. Length is set by the
+    #: question — a definition gets ~50 words, a design question ~250 — because a
+    #: padded answer to a simple question reads as waffle to a real interviewer.
+    model_answer: str
+    what_was_missing: list[str] = Field(default_factory=list)
+    key_points: list[str] = Field(default_factory=list)
+    verdict_line: str = ""

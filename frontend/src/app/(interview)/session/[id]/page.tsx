@@ -143,6 +143,11 @@ export default function LiveSessionPage() {
           total_pause_seconds: summary.totalPauseSec,
           words: summary.words,
           speaking_seconds: seconds,
+          // The individual pauses, not just the count. The detailed analysis
+          // replays the answer with hesitations marked in position, which a
+          // total cannot reconstruct — and this is the only moment the
+          // positions exist, so dropping them here loses them for good.
+          pauses: stt.pauses,
         };
 
     submitAnswer.mutate(

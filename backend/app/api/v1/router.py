@@ -8,6 +8,7 @@ This is the only file that needs to change when adding a new endpoint group.
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    analysis,
     auth,
     code,
     communication,
@@ -36,4 +37,5 @@ v1_router.include_router(communication.router, prefix="/communication", tags=["C
 v1_router.include_router(gd.router, prefix="/gd", tags=["Group Discussion"])
 v1_router.include_router(code.router, prefix="/code", tags=["Code Execution"])
 v1_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
+v1_router.include_router(analysis.router, prefix="/analysis", tags=["Detailed Analysis"])
 v1_router.include_router(resume.router, prefix="/resume", tags=["Resume"])

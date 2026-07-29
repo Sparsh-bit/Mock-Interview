@@ -2,7 +2,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,12 +56,24 @@ class PlanRequest(BaseModel):
     prompt: str = ""
     resume_text: str = ""
 
+class PauseMark(BaseModel):
+    """Where a pause fell, as a word offset into the answer."""
+
+    #: Index of the word the pause preceded, so the transcript can be rendered
+    #: with the hesitation shown in position rather than as a bare count.
+    wordIndex: int = 0  # noqa: N815 - matches the browser payload exactly
+    seconds: int = 0
+
+
 class DeliveryMetrics(BaseModel):
     filler_count: int = 0
     pause_count: int = 0
     total_pause_seconds: int = 0
     words: int = 0
     speaking_seconds: int = 0
+    #: Individual pauses. Bounded so a pathological client cannot post an
+    #: unbounded array into a JSONB column.
+    pauses: list[PauseMark] = Field(default_factory=list, max_length=200)
 
 class SubmitAnswerRequest(BaseModel):
     question_id: uuid.UUID

@@ -107,6 +107,9 @@ export function useInterview() {
         total_pause_seconds: number;
         words: number;
         speaking_seconds: number;
+        /** Where each pause fell, as a word offset — needed to render the
+         *  answer back with hesitations marked, which a count cannot do. */
+        pauses?: Array<{ wordIndex: number; seconds: number }>;
       };
     }) => {
       const response = await api.post(`/api/v1/interview/${sessionId}/answer`, {
