@@ -413,8 +413,8 @@ export default function LandingPage() {
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
           {[
-            { icon: Cpu, title: 'GLM-4.5', text: 'Primary reasoning model driving question generation, cross-questions and scoring.' },
-            { icon: Cpu, title: 'NVIDIA Nemotron', text: 'Automatic fallback provider so sessions stay reliable when the primary is busy.' },
+            { icon: Cpu, title: 'Claude Sonnet 5', text: 'Primary reasoning model driving question generation, cross-questions and scoring.' },
+            { icon: Cpu, title: 'GLM-4.5 fallback', text: 'Automatic fallback provider so sessions stay reliable when the primary is busy.' },
             { icon: ShieldCheck, title: 'Private by design', text: 'Camera & mic analysis runs on-device only. Nothing is recorded, uploaded or stored.' },
           ].map(({ icon: Icon, title, text }) => (
             <div key={title} className="glass rounded-xl border border-border/50 p-6">
@@ -449,6 +449,77 @@ export default function LandingPage() {
               Start Your Mock Interview
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Developer ──────────────────────────────────────────────────────── */}
+      <section id="developer" className="relative z-10 border-t border-border/50 py-24">
+        <div className="mx-auto max-w-5xl px-8">
+          <div className="mb-12 text-center">
+            <p className="section-label mb-3">The Developer</p>
+            <h2 className="text-3xl font-bold">Built by one engineer</h2>
+          </div>
+
+          <div className="glass relative overflow-hidden rounded-2xl border border-border/50 p-8 md:p-12">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-radial from-primary/[0.07] via-transparent to-transparent" />
+
+            <div className="relative grid items-center gap-10 md:grid-cols-[auto,1fr]">
+              {/* Portrait. object-top keeps the face framed as the container
+                  narrows on mobile — object-cover alone would crop upward. */}
+              <div className="mx-auto w-full max-w-[15rem] md:mx-0">
+                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl border border-border bg-secondary/40 shadow-xl">
+                  {/* Local asset in /public. Plain <img> for the same reason as
+                      the profile page: one image code path, and next/image's
+                      loader needs configuration to work on Cloudflare Pages. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/img/developer.jpg"
+                    alt="Sparsh Sharma, developer of InterviewOS"
+                    width={900}
+                    height={1349}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full object-cover object-top"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-2xl font-bold tracking-[-0.01em]">Sparsh Sharma</h3>
+                <p className="mt-1 text-sm font-semibold text-primary">
+                  Creator &amp; Full-Stack Developer — InterviewOS
+                </p>
+
+                <p className="mt-5 text-sm leading-relaxed text-muted-foreground">
+                  InterviewOS was designed and built end to end by one developer — the adaptive
+                  interview engine, the answer-scoring pipeline, the group-discussion simulation,
+                  the coding evaluator and every screen you have just scrolled through.
+                </p>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  It exists because preparing for a Cognizant or TCS interview usually means
+                  reading someone else&apos;s question list and hoping it comes up. This does the
+                  opposite: it puts you in the room, pushes back when an answer is thin, and tells
+                  you plainly where you stand.
+                </p>
+
+                <div className="mt-7 flex flex-wrap gap-2">
+                  {[
+                    'Next.js 15 · React 19',
+                    'FastAPI · PostgreSQL',
+                    'Claude Sonnet 5',
+                    'Redis · Docker',
+                  ].map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded-full border border-border/70 bg-secondary/50 px-3 py-1 text-xs font-medium text-muted-foreground"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
