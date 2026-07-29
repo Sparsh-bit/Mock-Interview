@@ -9,6 +9,15 @@ interface DeliveryTranscriptProps {
   pauses?: PauseEvent[];
   /** Optional trailing live text (interim STT) shown greyed out. */
   interim?: string;
+  /**
+   * Type-level classes only — font size, colour, leading, weight.
+   *
+   * This component renders an INLINE <span> so it can sit inside a sentence in the
+   * live interview. Box styles (border, padding, background, rounding) must go on
+   * a wrapping element instead: on a multi-line inline element the browser paints
+   * them once per line fragment, so a border is drawn through the middle of the
+   * text and padding only applies to the first and last fragments.
+   */
   className?: string;
   emptyLabel?: string;
 }

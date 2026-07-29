@@ -87,12 +87,21 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
               /* Rendered through DeliveryTranscript so filler words are marked in
                  red and each pause appears inline at the exact word it happened —
                  the same component the live interview uses, so the candidate sees
-                 their delivery presented identically to how they saw it live. */
-              <DeliveryTranscript
-                text={item.answer}
-                pauses={item.delivery?.pauses ?? []}
-                className="rounded-xl border border-border/50 bg-surface/50 p-4 text-sm leading-relaxed"
-              />
+                 their delivery presented identically to how they saw it live.
+
+                 The box lives on this wrapper, NOT on the component: it renders an
+                 inline <span>, and a border/padding/background on an inline element
+                 that wraps is painted once PER LINE FRAGMENT — which drew border
+                 edges straight through the middle of the text and left the last
+                 line hanging outside the box. Only inline-safe type styles may be
+                 passed down. */
+              <div className="overflow-hidden break-words rounded-xl border border-border/50 bg-surface/50 p-4">
+                <DeliveryTranscript
+                  text={item.answer}
+                  pauses={item.delivery?.pauses ?? []}
+                  className="text-sm leading-relaxed"
+                />
+              </div>
             ) : (
               <p className="rounded-xl border border-border/50 bg-surface/50 p-4 text-sm italic text-muted-foreground">
                 You didn&apos;t answer this one.
