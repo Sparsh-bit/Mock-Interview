@@ -1,0 +1,236 @@
+# Study resources, keyed by topic.
+#
+# Keyed by TOPIC rather than by company on purpose. "Data Structures" is tested by
+# eleven of the twelve recruiters in the catalogue, and duplicating the same four
+# links under each of them would mean eleven places to fix a dead URL. Companies
+# reference topics; topics own their resources.
+#
+# `aliases` exist because catalogue topic names vary slightly between companies
+# ("Data Structures" vs "Data Structures & Algorithms"), and a resource list that
+# silently returns empty for a near-miss is worse than no feature — the roadmap
+# would just show a topic with nothing to study.
+#
+# ─── RULES FOR ADDING ────────────────────────────────────────────────────────
+#  * Only resources that genuinely exist and are genuinely used. A hallucinated
+#    link in a study plan wastes a candidate's evening and destroys trust in the
+#    rest of the page.
+#  * Mark cost honestly. "free" means free without an account or trial.
+#  * Prefer one excellent resource over four mediocre ones. This is a plan, not a
+#    link dump — a candidate with eight weeks cannot work through twenty books.
+
+verified: 2026-07-30
+
+topics:
+  data_structures:
+    aliases:
+      - Data Structures
+      - Data Structures & Algorithms
+      - Problem Solving & Complexity
+    resources:
+      - title: "Striver's A2Z DSA Sheet"
+        url: https://takeuforward.org/strivers-a2z-dsa-course/strivers-a2z-dsa-course-sheet-2
+        kind: practice
+        cost: free
+        note: "The most widely followed structured DSA path for Indian placements. Start here."
+      - title: "NeetCode 150"
+        url: https://neetcode.io/practice
+        kind: practice
+        cost: free
+        note: "Pattern-grouped problems with video explanations. Best for interview patterns."
+      - title: "GeeksforGeeks — Data Structures"
+        url: https://www.geeksforgeeks.org/data-structures/
+        kind: reference
+        cost: free
+        note: "Reference for a specific structure you have forgotten."
+      - title: "LeetCode"
+        url: https://leetcode.com/problemset/
+        kind: practice
+        cost: freemium
+        note: "For volume once you know the patterns."
+
+  programming_fundamentals:
+    aliases:
+      - Programming Fundamentals
+      - "C / Java / Python fundamentals"
+      - Java / Programming
+      - Pseudocode
+      - Pseudocode & Programming Logic
+    resources:
+      - title: "Oracle Java Tutorials"
+        url: https://docs.oracle.com/javase/tutorial/
+        kind: docs
+        cost: free
+        note: "First-party and precise. The answer to 'what does this keyword actually do'."
+      - title: "PrepInsta — Pseudocode questions"
+        url: https://prepinsta.com/pseudocode/
+        kind: practice
+        cost: free
+        note: "Pseudocode rounds (Infosys, Capgemini) have a house style. Practise the format, not just the logic."
+      - title: "Head First Java"
+        author: "Kathy Sierra & Bert Bates"
+        kind: book
+        cost: paid
+        note: "If Java has never quite clicked, this is the book that fixes it."
+
+  oop:
+    aliases:
+      - OOP Concepts
+      - Object-Oriented Design
+    resources:
+      - title: "GeeksforGeeks — OOP in Java"
+        url: https://www.geeksforgeeks.org/object-oriented-programming-oops-concept-in-java/
+        kind: reference
+        cost: free
+        note: "Covers the four pillars with the examples interviewers expect back."
+      - title: "Refactoring Guru — Design Patterns"
+        url: https://refactoring.guru/design-patterns
+        kind: reference
+        cost: free
+        note: "For 'have you used any design patterns?' — know Singleton, Factory and Observer properly."
+      - title: "Write and explain five small programs"
+        kind: exercise
+        cost: free
+        note: "Inheritance, polymorphism, encapsulation, abstraction, and one interface-vs-abstract-class comparison. Explaining them out loud is the actual skill being tested."
+
+  dbms:
+    aliases:
+      - DBMS & SQL
+      - SQL
+      - Databases
+    resources:
+      - title: "SQLZoo"
+        url: https://sqlzoo.net/
+        kind: practice
+        cost: free
+        note: "Interactive. You will write more SQL in an hour here than in a week of reading."
+      - title: "LeetCode — Database problems"
+        url: https://leetcode.com/problemset/database/
+        kind: practice
+        cost: freemium
+        note: "Joins and aggregation at interview difficulty."
+      - title: "GeeksforGeeks — DBMS"
+        url: https://www.geeksforgeeks.org/dbms/
+        kind: reference
+        cost: free
+        note: "Normalisation, ACID, indexing and transactions — all standard interview ground."
+      - title: "Use The Index, Luke"
+        url: https://use-the-index-luke.com/
+        kind: reference
+        cost: free
+        note: "Read this if you want to answer indexing questions better than everyone else in the room."
+
+  operating_systems:
+    aliases:
+      - Operating Systems
+      - Operating Systems & Networks
+      - "Cloud & OS basics"
+      - "Networking & Security basics"
+    resources:
+      - title: "Operating Systems: Three Easy Pieces"
+        url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+        kind: book
+        cost: free
+        note: "A genuinely free, genuinely good OS textbook. Read the process and concurrency chapters."
+      - title: "GeeksforGeeks — Operating Systems"
+        url: https://www.geeksforgeeks.org/operating-systems/
+        kind: reference
+        cost: free
+        note: "Deadlock, scheduling, paging — the four or five topics that actually get asked."
+      - title: "GeeksforGeeks — Computer Networks"
+        url: https://www.geeksforgeeks.org/computer-network-tutorials/
+        kind: reference
+        cost: free
+        note: "OSI layers, TCP vs UDP, and what happens when you type a URL."
+
+  aptitude:
+    aliases:
+      - Aptitude
+      - Aptitude & Reasoning
+      - Aptitude & Logical Reasoning
+      - Aptitude & Puzzles
+      - Cognitive & Aptitude
+      - Aptitude & Case Reasoning
+    resources:
+      - title: "IndiaBix — Aptitude"
+        url: https://www.indiabix.com/aptitude/questions-and-answers/
+        kind: practice
+        cost: free
+        note: "The standard drill site. Time yourself — aptitude rounds are lost on speed, not difficulty."
+      - title: "PrepInsta — company-specific aptitude"
+        url: https://prepinsta.com/
+        kind: practice
+        cost: freemium
+        note: "Papers grouped by company. The patterns really do repeat between cycles."
+      - title: "Quantitative Aptitude"
+        author: "R. S. Aggarwal"
+        kind: book
+        cost: paid
+        note: "If you need to rebuild the fundamentals rather than just drill."
+
+  english:
+    aliases:
+      - English & Communication
+      - English Comprehension
+      - English & Written Communication
+      - Communication & HR
+      - HR & Communication
+    resources:
+      - title: "IndiaBix — Verbal Ability"
+        url: https://www.indiabix.com/verbal-ability/questions-and-answers/
+        kind: practice
+        cost: free
+        note: "Comprehension, error-spotting and para-jumbles in the exact exam format."
+      - title: "Wipro-style essay practice"
+        kind: exercise
+        cost: free
+        note: "Write a 200-word essay in 20 minutes on a general topic, three times a week. Wipro's written round is scored on structure and grammar, not opinion."
+
+  system_design:
+    aliases:
+      - System Design
+      - System Design Basics
+    resources:
+      - title: "System Design Primer"
+        url: https://github.com/donnemartin/system-design-primer
+        kind: reference
+        cost: free
+        note: "The standard free starting point. For freshers, the basics section is enough."
+      - title: "ByteByteGo"
+        url: https://bytebytego.com/
+        kind: course
+        cost: freemium
+        note: "Clear diagrams. The free newsletter alone covers most fresher-level ground."
+
+  behavioural:
+    aliases:
+      - Project & HR
+      - HR & Project
+      - HR & Behavioural
+      - Behavioural & HR
+      - "Leadership Principles (STAR)"
+      - Group Discussion & Communication
+    resources:
+      - title: "The STAR method"
+        url: https://www.themuse.com/advice/star-interview-method
+        kind: reference
+        cost: free
+        note: "Situation, Task, Action, Result. Every behavioural answer you give should have this shape."
+      - title: "Amazon Leadership Principles"
+        url: https://www.amazon.jobs/content/en/our-workplace/leadership-principles
+        kind: docs
+        cost: free
+        note: "First-party. If you are targeting Amazon, prepare two STAR stories per principle — this is not optional there."
+      - title: "Write your own project story"
+        kind: exercise
+        cost: free
+        note: "One page per project: what it did, your specific contribution, one hard decision, one thing you would change. Nearly every technical interview ends here."
+
+  cloud:
+    aliases:
+      - "Cloud & MS Office fundamentals"
+    resources:
+      - title: "AWS Cloud Practitioner Essentials"
+        url: https://aws.amazon.com/training/digital/aws-cloud-practitioner-essentials/
+        kind: course
+        cost: free
+        note: "Free and first-party. Enough cloud vocabulary for a services-company interview."

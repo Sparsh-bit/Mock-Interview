@@ -424,7 +424,25 @@ export interface Recruiter {
   topics: RecruiterTopic[];
 }
 
-export interface RoadmapTopic { name: string; weight: number; hours: number; phase: number }
+export interface StudyResource {
+  title: string;
+  /** Absent for exercises — those are instructions, not links. */
+  url: string | null;
+  author: string | null;
+  /** practice | reference | docs | book | course | exercise */
+  kind: string;
+  /** free | freemium | paid */
+  cost: string;
+  note: string;
+}
+
+export interface RoadmapTopic {
+  name: string;
+  weight: number;
+  hours: number;
+  phase: number;
+  resources: StudyResource[];
+}
 export interface RoadmapPhase {
   phase: number;
   title: string;

@@ -27,11 +27,8 @@ from pydantic import BaseModel, Field
 
 logger = structlog.get_logger(__name__)
 
-_CATALOGUE_PATH = (
-    pathlib.Path(__file__).resolve().parents[2].parent
-    / "knowledge"
-    / "companies"
-    / "catalogue.yaml"
+_KNOWLEDGE_DIR = (
+    pathlib.Path(__file__).resolve().parents[2].parent / "knowledge" / "companies"
 )
 
 #: Topic weights must sum to this. Enforced at load so a typo surfaces at startup
@@ -75,12 +72,36 @@ class Catalogue(BaseModel):
     companies: list[Company]
 
 
+class Resource(BaseModel):
+    title: str
+    #: Absent for exercises ("write five small programs"), which are instructions
+    #: rather than links. The UI must handle a resource with no URL.
+    url: str | None = None
+    author: str | None = None
+    #: practice | reference | docs | book | course | exercise
+    kind: str = "reference"
+    #: free | freemium | paid — stated plainly so nobody clicks into a paywall.
+    cost: str = "free"
+    note: str = ""
+
+
+class ResourceLibrary(BaseModel):
+    verified: dt.date
+    topics: dict[str, ResourceTopic]
+
+
+class ResourceTopic(BaseModel):
+    aliases: list[str] = Field(default_factory=list)
+    resources: list[Resource] = Field(default_factory=list)
+
+
 class RoadmapTopic(BaseModel):
     name: str
     weight: float
     hours: int
     #: 1-based phase this topic falls in.
     phase: int
+    resources: list[Resource] = Field(default_factory=list)
 
 
 class RoadmapPhase(BaseModel):
@@ -113,7 +134,7 @@ def load_catalogue() -> Catalogue:
     catalogue — a company silently missing its topics would produce an empty
     roadmap that looks like a working feature.
     """
-    raw = yaml.safe_load(_CATALOGUE_PATH.read_text())
+    raw = yaml.safe_load((_KNOWLEDGE_DIR / "catalogue.yaml").read_text())
     catalogue = Catalogue.model_validate(raw)
 
     for company in catalogue.companies:
@@ -131,6 +152,50 @@ def load_catalogue() -> Catalogue:
         verified=str(catalogue.verified),
     )
     return catalogue
+
+
+@lru_cache(maxsize=1)
+def load_resources() -> ResourceLibrary:
+    """Read the topic -> resources library."""
+    raw = yaml.safe_load((_KNOWLEDGE_DIR / "resources.yaml").read_text())
+    library = ResourceLibrary.model_validate(raw)
+    logger.info("resource_library_loaded", topics=len(library.topics))
+    return library
+
+
+def _normalise(name: str) -> str:
+    """Lowercase and strip punctuation so near-miss topic names still match."""
+    return "".join(ch for ch in name.lower() if ch.isalnum() or ch.isspace()).strip()
+
+
+@lru_cache(maxsize=1)
+def _alias_index() -> dict[str, str]:
+    """
+    Normalised alias -> topic key.
+
+    Built once. Catalogue topic names vary slightly between companies ("Data
+    Structures" vs "Data Structures & Algorithms"), and a lookup that missed would
+    silently show a topic with nothing to study — which looks like the feature is
+    broken rather than like data is missing.
+    """
+    index: dict[str, str] = {}
+    for key, topic in load_resources().topics.items():
+        index[_normalise(key.replace("_", " "))] = key
+        for alias in topic.aliases:
+            index[_normalise(alias)] = key
+    return index
+
+
+def resources_for(topic_name: str) -> list[Resource]:
+    """Resources for a catalogue topic name, or [] if we have none for it."""
+    key = _alias_index().get(_normalise(topic_name))
+    if key is None:
+        # Logged rather than raised: a new topic with no resources yet should
+        # degrade to an empty list, not break the whole roadmap. The log is how it
+        # gets noticed and filled in.
+        logger.info("no_resources_for_topic", topic=topic_name)
+        return []
+    return load_resources().topics[key].resources
 
 
 def get_company(slug: str) -> Company | None:
@@ -182,6 +247,7 @@ def build_roadmap(
                 weight=topic.weight,
                 hours=max(1, round(total_hours * topic.weight / 100)),
                 phase=phase,
+                resources=resources_for(topic.name),
             )
         )
 

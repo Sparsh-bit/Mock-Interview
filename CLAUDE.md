@@ -77,3 +77,13 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 - `prompt.md` tracks phase-by-phase project status (what's built vs. stubbed vs. planned). Treat it as living project context, not just a README — check it when unsure whether a feature (e.g. adaptive questioning, voice mode, PDF reports, Stripe billing) is actually implemented or still a placeholder.
 - `.env.example` currently contains real-looking Supabase/DB and AI provider credentials rather than placeholders — treat these as sensitive; do not copy them into commits, logs, or new example files, and flag if asked to regenerate this file.
 - CI (`.github/workflows/ci.yml`) only runs lint + typecheck for both frontend and backend — it does not run the test suites and there is no deploy step. Don't assume passing CI means tests passed.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

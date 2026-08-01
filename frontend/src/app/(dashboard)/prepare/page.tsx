@@ -8,7 +8,9 @@ import {
   Building2,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
+  ExternalLink,
   Clock,
   GraduationCap,
   Info,
@@ -33,6 +35,24 @@ const TIERS: Array<{ key: string; label: string; blurb: string }> = [
   { key: 'product', label: 'Product companies', blurb: 'Smallest intake. Algorithms dominate.' },
 ];
 
+const COST_TONE: Record<string, string> = {
+  free: 'text-emerald-600 border-emerald-500/30 bg-emerald-500/10',
+  freemium: 'text-amber-600 border-amber-500/30 bg-amber-500/10',
+  paid: 'text-muted-foreground border-border bg-secondary/50',
+};
+
+/**
+ * Turn a resource into a link that always works.
+ *
+ * Exercises ("write five small programs") deliberately have no URL — they are
+ * instructions, not destinations. Rendering them as a dead anchor would be worse
+ * than rendering them as text, so they stay plain.
+ */
+function resourceHref(r: { url: string | null; title: string; author: string | null }): string | null {
+  if (r.url && /^https?:\/\/\S+\.\S+/i.test(r.url)) return r.url;
+  return null;
+}
+
 /** Bar colour by how heavily a topic is weighted — the eye should find the big ones. */
 function weightTone(w: number): string {
   if (w >= 22) return 'from-red-500 to-orange-500';
@@ -48,6 +68,9 @@ export default function PreparePage() {
   const [selected, setSelected] = useState<Recruiter | null>(null);
   const [weeks, setWeeks] = useState(8);
   const [hours, setHours] = useState(10);
+  // One topic open at a time — the plan should stay readable, not become a list of
+  // every link we have.
+  const [openTopic, setOpenTopic] = useState<string | null>(null);
 
   const { data: roadmap, isFetching } = useRoadmap(selected?.slug ?? null, weeks, hours);
 
@@ -220,24 +243,101 @@ export default function PreparePage() {
                     </div>
 
                     <div className="space-y-3">
-                      {phase.topics.map((topic, ti) => (
-                        <div key={topic.name}>
-                          <div className="mb-1.5 flex items-baseline justify-between gap-3 text-xs">
-                            <span className="font-semibold">{topic.name}</span>
-                            <span className="shrink-0 text-muted-foreground tabular-nums">
-                              {topic.weight}% · {topic.hours}h
-                            </span>
+                      {phase.topics.map((topic, ti) => {
+                        const key = `${phase.phase}-${topic.name}`;
+                        const isOpen = openTopic === key;
+                        return (
+                          <div key={topic.name}>
+                            <button
+                              type="button"
+                              onClick={() => setOpenTopic(isOpen ? null : key)}
+                              className="group/topic w-full text-left"
+                              aria-expanded={isOpen}
+                            >
+                              <div className="mb-1.5 flex items-baseline justify-between gap-3 text-xs">
+                                <span className="flex items-center gap-1.5 font-semibold">
+                                  {topic.name}
+                                  {topic.resources.length > 0 && (
+                                    <ChevronDown
+                                      className={cn(
+                                        'h-3 w-3 text-muted-foreground transition-transform',
+                                        isOpen && 'rotate-180',
+                                      )}
+                                    />
+                                  )}
+                                </span>
+                                <span className="shrink-0 text-muted-foreground tabular-nums">
+                                  {topic.weight}% · {topic.hours}h
+                                </span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                                <motion.div
+                                  className={cn('h-full rounded-full bg-gradient-to-r', weightTone(topic.weight))}
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${Math.min(topic.weight * 2.2, 100)}%` }}
+                                  transition={{ duration: 0.7, delay: 0.05 * ti + 0.1 * i, ease: [0.16, 1, 0.3, 1] }}
+                                />
+                              </div>
+                            </button>
+
+                            {/* Resources, revealed on demand. Collapsed by default so the
+                                plan stays scannable — twelve topics with four links each
+                                is a wall, not a roadmap. */}
+                            <AnimatePresence initial={false}>
+                              {isOpen && topic.resources.length > 0 && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="mt-3 space-y-2 border-l-2 pl-3" style={{ borderColor: `${selected.accent}44` }}>
+                                    {topic.resources.map((res) => {
+                                      const href = resourceHref(res);
+                                      const Inner = (
+                                        <>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="text-xs font-semibold">{res.title}</span>
+                                            <span className={cn('rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase', COST_TONE[res.cost] ?? COST_TONE.paid)}>
+                                              {res.cost}
+                                            </span>
+                                            <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                              {res.kind}
+                                            </span>
+                                            {href && <ExternalLink className="h-3 w-3 text-muted-foreground" />}
+                                          </div>
+                                          {res.author && (
+                                            <p className="mt-0.5 text-[11px] text-muted-foreground">by {res.author}</p>
+                                          )}
+                                          {res.note && (
+                                            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{res.note}</p>
+                                          )}
+                                        </>
+                                      );
+                                      return href ? (
+                                        <a
+                                          key={res.title}
+                                          href={href}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="block rounded-lg p-2 transition-colors hover:bg-secondary/60"
+                                        >
+                                          {Inner}
+                                        </a>
+                                      ) : (
+                                        <div key={res.title} className="rounded-lg p-2">
+                                          {Inner}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-                            <motion.div
-                              className={cn('h-full rounded-full bg-gradient-to-r', weightTone(topic.weight))}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${Math.min(topic.weight * 2.2, 100)}%` }}
-                              transition={{ duration: 0.7, delay: 0.05 * ti + 0.1 * i, ease: [0.16, 1, 0.3, 1] }}
-                            />
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </Card>
