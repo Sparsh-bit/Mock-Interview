@@ -95,6 +95,29 @@ class ResourceTopic(BaseModel):
     resources: list[Resource] = Field(default_factory=list)
 
 
+class SubtopicLink(BaseModel):
+    title: str
+    url: str
+    channel: str | None = None
+
+
+class Subtopic(BaseModel):
+    name: str
+    #: Study estimate. Used to spread a topic's hour budget across its subtopics
+    #: proportionally, so a 5-hour DSA allocation weights Trees above Complexity.
+    minutes: int = 60
+    video: SubtopicLink | None = None
+    doc: SubtopicLink | None = None
+    practice: SubtopicLink | None = None
+    #: Stable id for progress tracking. Derived, not authored — see subtopic_id().
+    id: str = ""
+
+
+class SubtopicLibrary(BaseModel):
+    verified: dt.date
+    subtopics: dict[str, list[Subtopic]]
+
+
 class RoadmapTopic(BaseModel):
     name: str
     weight: float
@@ -102,6 +125,9 @@ class RoadmapTopic(BaseModel):
     #: 1-based phase this topic falls in.
     phase: int
     resources: list[Resource] = Field(default_factory=list)
+    #: The actual checklist for this topic, with each subtopic's share of the
+    #: topic's hours. Empty when we have no breakdown for the topic yet.
+    subtopics: list[Subtopic] = Field(default_factory=list)
 
 
 class RoadmapPhase(BaseModel):
@@ -204,6 +230,44 @@ def resources_for(topic_name: str) -> list[Resource]:
     return load_resources().topics[key].resources
 
 
+@lru_cache(maxsize=1)
+def load_subtopics() -> SubtopicLibrary:
+    """Read the topic -> subtopic checklist."""
+    raw = yaml.safe_load((_KNOWLEDGE_DIR / "subtopics.yaml").read_text())
+    library = SubtopicLibrary.model_validate(raw)
+    for key, items in library.subtopics.items():
+        for item in items:
+            item.id = subtopic_id(key, item.name)
+    logger.info(
+        "subtopic_library_loaded",
+        topics=len(library.subtopics),
+        subtopics=sum(len(v) for v in library.subtopics.values()),
+    )
+    return library
+
+
+def subtopic_id(topic_key: str, name: str) -> str:
+    """
+    Stable identifier for one subtopic, used as the progress key.
+
+    Derived from the topic key and the subtopic name rather than an index, so
+    inserting a subtopic into the middle of a list does not silently reassign
+    everyone's completed items to different rows.
+    """
+    slug = "".join(ch if ch.isalnum() else "-" for ch in name.lower())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return f"{topic_key}:{slug.strip('-')}"
+
+
+def subtopics_for(topic_name: str) -> list[Subtopic]:
+    """Subtopics for a catalogue topic name, matched through the same alias index."""
+    key = _alias_index().get(_normalise(topic_name))
+    if key is None:
+        return []
+    return load_subtopics().subtopics.get(key, [])
+
+
 def get_company(slug: str) -> Company | None:
     return next((c for c in load_catalogue().companies if c.slug == slug), None)
 
@@ -284,6 +348,7 @@ def build_roadmap(
                     hours=hours,
                     phase=phase,
                     resources=resources_for(topic.name),
+                    subtopics=subtopics_for(topic.name),
                 )
             )
 

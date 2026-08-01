@@ -68,6 +68,8 @@ companies:
         detail: "Higher band. DSA-heavy assessment plus full-stack and design depth."
       - name: GenC Pro
         detail: "Specialist track for niche skills; usually a separate assessment."
+      - name: Digital Nurture — Java FSE
+        detail: "Full-stack Java track: Spring Boot, REST, SQL and a project deep-dive."
     rounds:
       - "Aptitude assessment"
       - "Automata / coding round"

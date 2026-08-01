@@ -1,0 +1,242 @@
+# Subtopics — the actual checklist a candidate works through.
+#
+# A topic ("Data Structures", 15% of the paper) is too coarse to study. These are
+# the units someone ticks off, each with an estimate, a video, and something to
+# read. Progress is tracked per subtopic, so this file also defines what "done"
+# means.
+#
+# Separate from resources.yaml so each file keeps one job: that one holds the
+# topic-level starting points, this one holds the working checklist. Both are
+# joined onto a topic by the same alias index.
+#
+# ─── LINK POLICY ─────────────────────────────────────────────────────────────
+# Every URL here was fetched and confirmed to resolve on the `verified` date
+# below. YouTube entries are PLAYLISTS, not individual videos: playlists survive
+# a creator re-uploading or re-ordering a video, individual IDs do not.
+#
+# One exception, recorded honestly: leetcode.com returns HTTP 403 to automated
+# checks (Cloudflare bot protection), so it could not be machine-verified. The URL
+# pattern is correct and the site is not in doubt, but nobody has clicked it here.
+#
+# Re-run the check before each hiring cycle. A dead link in a study plan wastes an
+# evening and costs trust in everything else on the page.
+
+verified: 2026-07-30
+
+subtopics:
+  data_structures:
+    - name: "Arrays & Strings"
+      minutes: 240
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Arrays", url: "https://www.geeksforgeeks.org/array-data-structure/" }
+      practice: { title: "Striver A2Z sheet", url: "https://takeuforward.org/strivers-a2z-dsa-course/strivers-a2z-dsa-course-sheet-2" }
+    - name: "Linked Lists"
+      minutes: 180
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Linked List", url: "https://www.geeksforgeeks.org/data-structures/linked-list/" }
+      practice: { title: "NeetCode practice", url: "https://neetcode.io/practice" }
+    - name: "Stacks & Queues"
+      minutes: 150
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Stack", url: "https://www.geeksforgeeks.org/stack-data-structure/" }
+    - name: "Trees & BST"
+      minutes: 300
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Binary Tree", url: "https://www.geeksforgeeks.org/binary-tree-data-structure/" }
+      practice: { title: "NeetCode practice", url: "https://neetcode.io/practice" }
+    - name: "Hashing & Maps"
+      minutes: 150
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "GfG — Hashing", url: "https://www.geeksforgeeks.org/hashing-data-structure/" }
+    - name: "Sorting & Searching"
+      minutes: 180
+      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
+      doc: { title: "GfG — Sorting", url: "https://www.geeksforgeeks.org/sorting-algorithms/" }
+    - name: "Recursion & Backtracking"
+      minutes: 210
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Recursion", url: "https://www.geeksforgeeks.org/introduction-to-recursion-2/" }
+    - name: "Dynamic Programming"
+      minutes: 300
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Dynamic Programming", url: "https://www.geeksforgeeks.org/dynamic-programming/" }
+      practice: { title: "NeetCode practice", url: "https://neetcode.io/practice" }
+    - name: "Graphs, BFS & DFS"
+      minutes: 240
+      video: { title: "Striver's A2Z DSA Course", channel: "take U forward", url: "https://www.youtube.com/playlist?list=PLgUwDviBIf0oF6QL8m22w1hIDC1vJ_BHz" }
+      doc: { title: "GfG — Graphs", url: "https://www.geeksforgeeks.org/graph-data-structure-and-algorithms/" }
+    - name: "Time & Space Complexity"
+      minutes: 90
+      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
+      doc: { title: "GfG — Big-O analysis", url: "https://www.geeksforgeeks.org/analysis-of-algorithms-big-o-analysis/" }
+
+  programming_fundamentals:
+    - name: "Variables, types & operators"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Language Basics", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/" }
+    - name: "Control flow & loops"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Control Flow", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/flow.html" }
+    - name: "Methods & parameter passing"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "GfG — Methods in Java", url: "https://www.geeksforgeeks.org/methods-in-java/" }
+    - name: "Collections framework"
+      minutes: 150
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Collections", url: "https://docs.oracle.com/javase/tutorial/collections/" }
+    - name: "Exception handling"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Exceptions", url: "https://docs.oracle.com/javase/tutorial/essential/exceptions/" }
+    - name: "Reading and writing pseudocode"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "PrepInsta — Pseudocode", url: "https://prepinsta.com/pseudocode/" }
+
+  oop:
+    - name: "Classes, objects & constructors"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Classes and Objects", url: "https://docs.oracle.com/javase/tutorial/java/javaOO/" }
+    - name: "Encapsulation & abstraction"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "GfG — Encapsulation", url: "https://www.geeksforgeeks.org/encapsulation-in-java/" }
+    - name: "Inheritance"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Inheritance", url: "https://docs.oracle.com/javase/tutorial/java/IandI/subclasses.html" }
+    - name: "Polymorphism & overriding"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "GfG — Polymorphism", url: "https://www.geeksforgeeks.org/polymorphism-in-java/" }
+    - name: "Interface vs abstract class"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Oracle — Interfaces", url: "https://docs.oracle.com/javase/tutorial/java/IandI/createinterface.html" }
+    - name: "The three design patterns you must know"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Refactoring Guru — Design Patterns", url: "https://refactoring.guru/design-patterns" }
+
+  dbms:
+    - name: "ER modelling & relational design"
+      minutes: 120
+      video: { title: "DBMS Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiFAN6I8CuViBuCdJgiOkT2Y" }
+      doc: { title: "GfG — ER Model", url: "https://www.geeksforgeeks.org/introduction-of-er-model/" }
+    - name: "Normalisation, 1NF to BCNF"
+      minutes: 150
+      video: { title: "DBMS Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiFAN6I8CuViBuCdJgiOkT2Y" }
+      doc: { title: "GfG — Normal Forms", url: "https://www.geeksforgeeks.org/normal-forms-in-dbms/" }
+    - name: "SQL joins & aggregation"
+      minutes: 180
+      video: { title: "DBMS Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiFAN6I8CuViBuCdJgiOkT2Y" }
+      doc: { title: "SQLZoo — interactive", url: "https://sqlzoo.net/" }
+      practice: { title: "LeetCode SQL", url: "https://leetcode.com/problemset/database/" }
+    - name: "Transactions & ACID"
+      minutes: 120
+      video: { title: "DBMS Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiFAN6I8CuViBuCdJgiOkT2Y" }
+      doc: { title: "GfG — ACID Properties", url: "https://www.geeksforgeeks.org/acid-properties-in-dbms/" }
+    - name: "Indexing & query performance"
+      minutes: 120
+      video: { title: "DBMS Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiFAN6I8CuViBuCdJgiOkT2Y" }
+      doc: { title: "Use The Index, Luke", url: "https://use-the-index-luke.com/" }
+
+  operating_systems:
+    - name: "Processes & threads"
+      minutes: 120
+      video: { title: "Operating System Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiGz9donHRrE9I3Mwn6XdP8p" }
+      doc: { title: "OSTEP — free textbook", url: "https://pages.cs.wisc.edu/~remzi/OSTEP/" }
+    - name: "CPU scheduling"
+      minutes: 120
+      video: { title: "Operating System Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiGz9donHRrE9I3Mwn6XdP8p" }
+      doc: { title: "GfG — CPU Scheduling", url: "https://www.geeksforgeeks.org/cpu-scheduling-in-operating-systems/" }
+    - name: "Deadlock"
+      minutes: 90
+      video: { title: "Operating System Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiGz9donHRrE9I3Mwn6XdP8p" }
+      doc: { title: "GfG — Deadlock", url: "https://www.geeksforgeeks.org/introduction-of-deadlock-in-operating-system/" }
+    - name: "Memory management & paging"
+      minutes: 120
+      video: { title: "Operating System Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiGz9donHRrE9I3Mwn6XdP8p" }
+      doc: { title: "GfG — Paging", url: "https://www.geeksforgeeks.org/paging-in-operating-system/" }
+    - name: "TCP/IP, OSI & what happens when you type a URL"
+      minutes: 120
+      video: { title: "Computer Networks Complete Playlist", channel: "Gate Smashers", url: "https://www.youtube.com/playlist?list=PLxCzCOWd7aiGFBD2-2joCpWOLUrDLvVV_" }
+      doc: { title: "GfG — Computer Networks", url: "https://www.geeksforgeeks.org/computer-network-tutorials/" }
+
+  aptitude:
+    - name: "Percentages, ratio & averages"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Aptitude", url: "https://www.indiabix.com/aptitude/questions-and-answers/" }
+    - name: "Time, speed, distance & work"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Time and Work", url: "https://www.indiabix.com/aptitude/time-and-work/" }
+    - name: "Permutations, combinations & probability"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Probability", url: "https://www.indiabix.com/aptitude/probability/" }
+    - name: "Logical reasoning & puzzles"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Logical Reasoning", url: "https://www.indiabix.com/logical-reasoning/questions-and-answers/" }
+    - name: "Data interpretation"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Data Interpretation", url: "https://www.indiabix.com/data-interpretation/questions-and-answers/" }
+
+  english:
+    - name: "Reading comprehension"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Verbal Ability", url: "https://www.indiabix.com/verbal-ability/questions-and-answers/" }
+    - name: "Grammar & error spotting"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Spotting Errors", url: "https://www.indiabix.com/verbal-ability/spotting-errors/" }
+    - name: "Writing an essay under time pressure"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "IndiaBix — Verbal Ability", url: "https://www.indiabix.com/verbal-ability/questions-and-answers/" }
+
+  system_design:
+    - name: "Scaling, load balancing & caching"
+      minutes: 150
+      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
+      doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
+    - name: "Sharding & replication"
+      minutes: 120
+      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
+      doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
+    - name: "Design a URL shortener, end to end"
+      minutes: 120
+      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
+      doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
+
+  behavioural:
+    - name: "The STAR method"
+      minutes: 60
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
+    - name: "Your project story, written down"
+      minutes: 90
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
+    - name: "Strengths, weaknesses & 'why this company'"
+      minutes: 60
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
+    - name: "Amazon Leadership Principles"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "Amazon — Leadership Principles", url: "https://www.amazon.jobs/content/en/our-workplace/leadership-principles" }
+
+  cloud:
+    - name: "Cloud fundamentals & shared responsibility"
+      minutes: 120
+      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
+      doc: { title: "AWS Cloud Practitioner Essentials", url: "https://aws.amazon.com/training/digital/aws-cloud-practitioner-essentials/" }

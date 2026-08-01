@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 
 import yaml
@@ -11,51 +12,44 @@ from app.models.question import FollowUpQuestion, Question, QuestionDifficulty, 
 
 async def seed_companies_and_tracks(session):
     """
-    Ensure every company/track we have research for exists as a real, selectable
-    track. Previously only Cognizant was seeded while the UI carried a hardcoded
-    "TCS Digital — Coming Soon" card, so TCS could never actually be started.
+    Make every company in the catalogue actually interviewable.
 
-    Tracks are keyed by slug and upserted, so re-running is safe.
+    Driven by knowledge/companies/catalogue.yaml rather than a list hardcoded here.
+    Those were two separate systems and they had already drifted: /prepare offered
+    roadmaps for twelve recruiters while the interview screen only ever showed the
+    two seeded by hand, so a candidate could plan for Infosys and then find no
+    Infosys interview to sit. One source of truth removes the drift by construction
+    — adding a company to the YAML now gives it a roadmap AND an interview.
+
+    Each program in the catalogue becomes a track. Keyed by slug and upserted, so
+    re-running is safe and renaming a program updates rather than duplicates.
     """
-    # (company_slug, company_name, description, [(track_slug, track_name, track_description)])
-    CATALOG = [
-        (
-            "cognizant",
-            "Cognizant",
-            "Cognizant Digital Nurture program",
-            [
-                ("java-fse", "Digital Nurture — Java FSE", "Java Full Stack Engineer Track"),
-                ("genc", "GenC", "Aptitude, core fundamentals, OOP, DBMS and project discussion"),
-                ("genc-next", "GenC Next", "Highest tier — DSA-heavy assessment plus full-stack and design depth"),
-            ],
-        ),
-        (
-            "tcs",
-            "TCS",
-            "Tata Consultancy Services fresher hiring (NQT)",
-            [
-                ("ninja", "Ninja (NQT)", "Short fundamentals-first technical round plus managerial/HR"),
-                ("digital", "Digital", "Deeper 60-90 minute round — DSA with complexity, DBMS design and system design"),
-            ],
-        ),
-    ]
+    from app.services.prep import load_catalogue  # noqa: PLC0415
 
-    for company_slug, company_name, company_desc, tracks in CATALOG:
-        company = await session.scalar(select(Company).where(Company.slug == company_slug))
+    catalogue = load_catalogue()
+    total_tracks = 0
+
+    for entry in catalogue.companies:
+        company = await session.scalar(select(Company).where(Company.slug == entry.slug))
         if not company:
             company = Company(
                 id=uuid.uuid4(),
-                name=company_name,
-                slug=company_slug,
-                description=company_desc,
+                name=entry.name,
+                slug=entry.slug,
+                description=entry.short or entry.name,
                 is_active=True,
             )
             session.add(company)
             await session.flush()
         else:
+            # Keep the name and description in step with the catalogue, and
+            # re-activate anything previously switched off.
+            company.name = entry.name
+            company.description = entry.short or entry.name
             company.is_active = True
 
-        for track_slug, track_name, track_desc in tracks:
+        for program in entry.programs:
+            track_slug = _track_slug(entry.slug, program.name)
             track = await session.scalar(
                 select(InterviewTrack).where(InterviewTrack.slug == track_slug)
             )
@@ -63,19 +57,52 @@ async def seed_companies_and_tracks(session):
                 track = InterviewTrack(
                     id=uuid.uuid4(),
                     company_id=company.id,
-                    name=track_name,
+                    name=program.name,
                     slug=track_slug,
-                    description=track_desc,
+                    description=program.detail or f"{entry.name} {program.name} interview",
                     is_active=True,
                 )
                 session.add(track)
             else:
                 track.company_id = company.id
-                track.name = track_name
-                track.description = track_desc
+                track.name = program.name
+                track.description = program.detail or track.description
                 track.is_active = True
+            total_tracks += 1
+
         await session.flush()
-        print(f"  {company_name}: {len(tracks)} track(s)")
+        print(f"  {entry.name}: {len(entry.programs)} track(s)")
+
+    print(f"  -> {len(catalogue.companies)} companies, {total_tracks} tracks")
+
+
+#: Slugs the original hand-seeded tracks used. Mapped explicitly so the two
+#: companies that existed before the catalogue keep their slugs — a session or
+#: report already pointing at "java-fse" must not be orphaned by a rename.
+_LEGACY_TRACK_SLUGS = {
+    ("cognizant", "GenC"): "genc",
+    ("cognizant", "GenC Next"): "genc-next",
+    ("cognizant", "GenC Pro"): "genc-pro",
+    ("cognizant", "Digital Nurture — Java FSE"): "java-fse",
+    ("tcs", "Ninja"): "ninja",
+    ("tcs", "Digital"): "digital",
+}
+
+
+def _track_slug(company_slug: str, program_name: str) -> str:
+    """
+    Stable slug for a company + program.
+
+    Legacy slugs win, so existing sessions keep resolving. Everything else is
+    namespaced by company, because program names collide across recruiters —
+    "Analyst" belongs to both Capgemini and Deloitte, and an un-namespaced slug
+    would silently hand one company's track to the other.
+    """
+    legacy = _LEGACY_TRACK_SLUGS.get((company_slug, program_name))
+    if legacy:
+        return legacy
+    suffix = re.sub(r"[^a-z0-9]+", "-", program_name.lower()).strip("-")
+    return f"{company_slug}-{suffix}"
 
 
 async def seed_knowledge_base():

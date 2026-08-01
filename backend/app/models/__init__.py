@@ -8,6 +8,7 @@ declarative registry before Alembic introspects the metadata.
 from .activity import ActivityLog
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .company import Company, InterviewTrack, QuestionCategory
+from .prep import PrepProgress
 from .question import FollowUpQuestion, Question, Subtopic, Topic
 from .report import Report, ResumeFile
 from .research import CompanyResearch
@@ -38,6 +39,7 @@ __all__ = [
     "Score",
     "VoiceTranscript",
     # Report
+    "PrepProgress",
     "Report",
     "CompanyResearch",
     "ResumeFile",
