@@ -12,6 +12,7 @@ from app.api.v1 import (
     auth,
     code,
     communication,
+    companies,
     gd,
     health,
     interview,
@@ -31,6 +32,7 @@ v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 # Auth required
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])
 v1_router.include_router(questions.router, prefix="/questions", tags=["Questions"])
+v1_router.include_router(companies.router, prefix="/companies", tags=["Campus Recruiters"])
 v1_router.include_router(interview.router, prefix="/interview", tags=["Interview"])
 v1_router.include_router(quiz.router, prefix="/quiz", tags=["Quiz"])
 v1_router.include_router(communication.router, prefix="/communication", tags=["Communication"])

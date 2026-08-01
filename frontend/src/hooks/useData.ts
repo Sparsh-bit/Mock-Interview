@@ -403,3 +403,77 @@ export function useGenerateModelAnswer(sessionId: string) {
     },
   });
 }
+
+// ─── Campus recruiters & roadmaps ─────────────────────────────────────────────
+
+export interface RecruiterProgram { name: string; detail: string }
+export interface RecruiterTopic { name: string; weight: number }
+
+export interface Recruiter {
+  slug: string;
+  name: string;
+  short: string;
+  /** "mass_recruiter" | "consulting" | "product" */
+  tier: string;
+  hires_per_year: string;
+  drive_window: string;
+  eligibility: string;
+  accent: string;
+  programs: RecruiterProgram[];
+  rounds: string[];
+  topics: RecruiterTopic[];
+}
+
+export interface RoadmapTopic { name: string; weight: number; hours: number; phase: number }
+export interface RoadmapPhase {
+  phase: number;
+  title: string;
+  starts_on: string;
+  ends_on: string;
+  topics: RoadmapTopic[];
+  hours: number;
+}
+export interface Roadmap {
+  company_slug: string;
+  company_name: string;
+  weeks: number;
+  hours_per_week: number;
+  total_hours: number;
+  target_date: string;
+  phases: RoadmapPhase[];
+  disclaimer: string;
+}
+
+/** The recruiter catalogue. Reference data — cached hard, it changes on deploy. */
+export function useRecruiters() {
+  return useQuery({
+    queryKey: ['recruiters'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/companies');
+      return res.data as Recruiter[];
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
+  });
+}
+
+/**
+ * A dated study plan for one recruiter.
+ *
+ * Not cached across parameter changes by accident: weeks and hours are in the key,
+ * so dragging the sliders refetches rather than showing a stale plan.
+ */
+export function useRoadmap(slug: string | null, weeks: number, hoursPerWeek: number) {
+  return useQuery({
+    queryKey: ['roadmap', slug, weeks, hoursPerWeek],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get(
+        `/api/v1/companies/${slug}/roadmap?weeks=${weeks}&hours_per_week=${hoursPerWeek}`,
+      );
+      return res.data as Roadmap;
+    },
+    enabled: !!slug,
+    staleTime: 10 * 60 * 1000,
+    placeholderData: (prev) => prev,
+  });
+}

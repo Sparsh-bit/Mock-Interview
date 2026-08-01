@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
+  Target,
   BarChart3,
   BookOpen,
   ChevronLeft,
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
     group: 'Main',
     items: [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { href: '/prepare', icon: Target, label: 'Target Company' },
       { href: '/interview', icon: Play, label: 'Start Interview' },
       { href: '/quiz', icon: ListChecks, label: 'Practice Quiz' },
       { href: '/communication', icon: MessageSquare, label: 'Communication' },

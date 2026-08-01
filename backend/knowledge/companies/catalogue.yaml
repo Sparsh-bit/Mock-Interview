@@ -1,0 +1,344 @@
+# Campus recruiter catalogue
+#
+# The companies that run large fresher hiring drives on Indian engineering
+# campuses, with what each one actually tests.
+#
+# ─── READ THIS BEFORE EDITING ────────────────────────────────────────────────
+#
+# Eligibility rules and drive windows CHANGE EVERY YEAR. The values here are the
+# pattern that has held across recent cycles, not a guarantee for any particular
+# batch, and the API labels them as indicative for exactly that reason. Never let
+# the UI present them as the official criteria — a candidate who skips a drive
+# because our page said "60% required" when the notification said 65% has been
+# actively harmed by this file.
+#
+# `verified` is the date a human last checked the entry against the company's own
+# notification or a first-party source. An entry more than a cycle old should be
+# re-checked rather than trusted.
+#
+# topic weights are percentages of the technical assessment, and must sum to 100
+# per company — there is a test asserting this, because a silently unbalanced set
+# produces a roadmap that quietly under-weights something important.
+
+verified: 2026-07-30
+
+companies:
+  # ─── Mass recruiters — the volume hirers ──────────────────────────────────
+  - slug: tcs
+    name: TCS
+    short: Tata Consultancy Services
+    tier: mass_recruiter
+    hires_per_year: "~40,000 freshers"
+    drive_window: "Aug – Dec (NQT runs multiple cycles a year)"
+    eligibility: "60% throughout X / XII / UG, no active backlogs, gap ≤ 24 months"
+    accent: "#0f4c9e"
+    programs:
+      - name: Ninja
+        detail: "The standard offer. Fundamentals-first technical round plus managerial and HR."
+      - name: Digital
+        detail: "Higher package. Deeper DSA, DBMS design and a system-design conversation."
+      - name: Prime
+        detail: "Top band. Advanced DSA and CS depth; invitation is score-gated."
+    rounds:
+      - "NQT — aptitude, reasoning, verbal, programming logic"
+      - "Technical interview"
+      - "Managerial round"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Reasoning", weight: 25 }
+      - { name: "C / Java / Python fundamentals", weight: 20 }
+      - { name: "Data Structures", weight: 15 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "OOP Concepts", weight: 10 }
+      - { name: "Operating Systems & Networks", weight: 10 }
+      - { name: "Project & HR", weight: 5 }
+
+  - slug: cognizant
+    name: Cognizant
+    short: Cognizant Technology Solutions
+    tier: mass_recruiter
+    hires_per_year: "~25,000 freshers"
+    drive_window: "Sep – Feb (Digital Nurture)"
+    eligibility: "60% throughout, no active backlogs at the time of joining"
+    accent: "#1a7bc4"
+    programs:
+      - name: GenC
+        detail: "Core offer. Aptitude, fundamentals, OOP, DBMS and a project discussion."
+      - name: GenC Next
+        detail: "Higher band. DSA-heavy assessment plus full-stack and design depth."
+      - name: GenC Pro
+        detail: "Specialist track for niche skills; usually a separate assessment."
+    rounds:
+      - "Aptitude assessment"
+      - "Automata / coding round"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "OOP Concepts", weight: 20 }
+      - { name: "Java / Programming", weight: 20 }
+      - { name: "Data Structures & Algorithms", weight: 15 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "Aptitude", weight: 15 }
+      - { name: "Operating Systems", weight: 8 }
+      - { name: "Project & HR", weight: 7 }
+
+  - slug: infosys
+    name: Infosys
+    short: Infosys Limited
+    tier: mass_recruiter
+    hires_per_year: "~20,000 freshers"
+    drive_window: "Sep – Jan (InfyTQ and off-campus)"
+    eligibility: "60% throughout, no standing arrears; InfyTQ certification is a strong route in"
+    accent: "#007cc3"
+    programs:
+      - name: System Engineer (SE)
+        detail: "The standard role. Fundamentals and one language in depth."
+      - name: Digital Specialist Engineer (DSE)
+        detail: "Higher package. Stronger DSA and applied problem solving."
+      - name: Power Programmer
+        detail: "Top band. Advanced algorithms and design; hardest of the three."
+    rounds:
+      - "InfyTQ / online assessment — aptitude, reasoning, pseudocode, puzzles"
+      - "Hands-on programming round"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Puzzles", weight: 22 }
+      - { name: "Pseudocode & Programming Logic", weight: 20 }
+      - { name: "Data Structures", weight: 18 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "OOP Concepts", weight: 12 }
+      - { name: "Operating Systems", weight: 8 }
+      - { name: "HR & Communication", weight: 5 }
+
+  - slug: wipro
+    name: Wipro
+    short: Wipro Limited
+    tier: mass_recruiter
+    hires_per_year: "~15,000 freshers"
+    drive_window: "Aug – Dec (Elite NTH)"
+    eligibility: "60% throughout, ≤ 3 years gap, no active backlogs"
+    accent: "#341e63"
+    programs:
+      - name: Elite NTH
+        detail: "The main fresher hiring route."
+      - name: Turbo
+        detail: "Higher package for stronger assessment scores."
+      - name: WILP
+        detail: "Work-integrated learning — join after XII / diploma and study alongside."
+    rounds:
+      - "Online assessment — aptitude, English, coding"
+      - "Written communication test (essay)"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Logical Reasoning", weight: 25 }
+      - { name: "English & Written Communication", weight: 15 }
+      - { name: "Programming Fundamentals", weight: 18 }
+      - { name: "Data Structures", weight: 14 }
+      - { name: "DBMS & SQL", weight: 13 }
+      - { name: "OOP Concepts", weight: 10 }
+      - { name: "HR & Project", weight: 5 }
+
+  - slug: accenture
+    name: Accenture
+    short: Accenture Solutions
+    tier: mass_recruiter
+    hires_per_year: "~12,000 freshers"
+    drive_window: "Sep – Jan"
+    eligibility: "65% or 6.5 CGPA throughout, no active backlogs"
+    accent: "#a100ff"
+    programs:
+      - name: Associate Software Engineer
+        detail: "The standard offer."
+      - name: Advanced ASE
+        detail: "Higher band, gated on the coding round."
+    rounds:
+      - "Cognitive & technical assessment"
+      - "Coding round (2 problems)"
+      - "Communication assessment"
+      - "Technical + HR interview"
+    topics:
+      - { name: "Cognitive & Aptitude", weight: 22 }
+      - { name: "Programming Fundamentals", weight: 20 }
+      - { name: "Data Structures", weight: 15 }
+      - { name: "DBMS & SQL", weight: 13 }
+      - { name: "Networking & Security basics", weight: 12 }
+      - { name: "Cloud & MS Office fundamentals", weight: 10 }
+      - { name: "Communication & HR", weight: 8 }
+
+  - slug: capgemini
+    name: Capgemini
+    short: Capgemini India
+    tier: mass_recruiter
+    hires_per_year: "~10,000 freshers"
+    drive_window: "Aug – Dec"
+    eligibility: "60% throughout, no active backlogs"
+    accent: "#0070ad"
+    programs:
+      - name: Analyst
+        detail: "The standard fresher offer."
+      - name: Senior Analyst
+        detail: "Higher band via the Exceller / advanced assessment route."
+    rounds:
+      - "Game-based aptitude assessment"
+      - "Behavioural competency test"
+      - "Technical assessment — pseudocode and English"
+      - "Technical + HR interview"
+    topics:
+      - { name: "Aptitude & Logical Reasoning", weight: 25 }
+      - { name: "Pseudocode", weight: 20 }
+      - { name: "English Comprehension", weight: 15 }
+      - { name: "Programming Fundamentals", weight: 15 }
+      - { name: "DBMS & SQL", weight: 12 }
+      - { name: "OOP Concepts", weight: 8 }
+      - { name: "HR & Behavioural", weight: 5 }
+
+  - slug: hcltech
+    name: HCLTech
+    short: HCL Technologies
+    tier: mass_recruiter
+    hires_per_year: "~10,000 freshers"
+    drive_window: "Year-round (TechBee runs separately after XII)"
+    eligibility: "60% throughout for engineering roles; TechBee is a post-XII programme"
+    accent: "#0f7dc2"
+    programs:
+      - name: Software Engineer
+        detail: "The standard engineering offer."
+      - name: TechBee
+        detail: "Join after class XII, earn while you complete a degree."
+    rounds:
+      - "Online assessment"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Programming Fundamentals", weight: 22 }
+      - { name: "Aptitude & Reasoning", weight: 20 }
+      - { name: "Data Structures", weight: 16 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "OOP Concepts", weight: 12 }
+      - { name: "Operating Systems & Networks", weight: 10 }
+      - { name: "HR & Project", weight: 5 }
+
+  - slug: techmahindra
+    name: Tech Mahindra
+    short: Tech Mahindra Limited
+    tier: mass_recruiter
+    hires_per_year: "~8,000 freshers"
+    drive_window: "Sep – Jan"
+    eligibility: "60% throughout, no active backlogs"
+    accent: "#e4002b"
+    programs:
+      - name: Associate Software Engineer
+        detail: "The standard fresher offer."
+    rounds:
+      - "Online assessment — aptitude, English, coding"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Reasoning", weight: 24 }
+      - { name: "English & Communication", weight: 16 }
+      - { name: "Programming Fundamentals", weight: 20 }
+      - { name: "Data Structures", weight: 14 }
+      - { name: "DBMS & SQL", weight: 13 }
+      - { name: "OOP Concepts", weight: 8 }
+      - { name: "HR & Project", weight: 5 }
+
+  - slug: ltimindtree
+    name: LTIMindtree
+    short: LTIMindtree Limited
+    tier: mass_recruiter
+    hires_per_year: "~6,000 freshers"
+    drive_window: "Aug – Dec"
+    eligibility: "60% throughout, no active backlogs"
+    accent: "#00a3a1"
+    programs:
+      - name: Graduate Engineer Trainee
+        detail: "The standard fresher offer."
+    rounds:
+      - "Online assessment — aptitude and coding"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Reasoning", weight: 22 }
+      - { name: "Data Structures & Algorithms", weight: 20 }
+      - { name: "Programming Fundamentals", weight: 18 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "OOP Concepts", weight: 12 }
+      - { name: "Operating Systems", weight: 8 }
+      - { name: "HR & Project", weight: 5 }
+
+  # ─── Consulting / IT services with a higher bar ───────────────────────────
+  - slug: ibm
+    name: IBM
+    short: IBM India
+    tier: consulting
+    hires_per_year: "~5,000 freshers"
+    drive_window: "Sep – Feb"
+    eligibility: "65% throughout typical, no active backlogs"
+    accent: "#0f62fe"
+    programs:
+      - name: Associate System Engineer
+        detail: "The standard fresher offer."
+    rounds:
+      - "Online assessment — cognitive and coding"
+      - "Technical interview"
+      - "HR / behavioural round"
+    topics:
+      - { name: "Data Structures & Algorithms", weight: 24 }
+      - { name: "Programming Fundamentals", weight: 20 }
+      - { name: "DBMS & SQL", weight: 16 }
+      - { name: "Cognitive & Aptitude", weight: 15 }
+      - { name: "OOP Concepts", weight: 12 }
+      - { name: "Cloud & OS basics", weight: 8 }
+      - { name: "Behavioural & HR", weight: 5 }
+
+  - slug: deloitte
+    name: Deloitte
+    short: Deloitte USI
+    tier: consulting
+    hires_per_year: "~5,000 freshers"
+    drive_window: "Aug – Nov"
+    eligibility: "60-70% throughout depending on role, no active backlogs"
+    accent: "#86bc25"
+    programs:
+      - name: Analyst
+        detail: "Technology consulting analyst — the main campus route."
+    rounds:
+      - "Online assessment"
+      - "Group discussion / case round"
+      - "Technical interview"
+      - "HR round"
+    topics:
+      - { name: "Aptitude & Case Reasoning", weight: 22 }
+      - { name: "Programming Fundamentals", weight: 18 }
+      - { name: "Data Structures", weight: 15 }
+      - { name: "DBMS & SQL", weight: 15 }
+      - { name: "Group Discussion & Communication", weight: 15 }
+      - { name: "OOP Concepts", weight: 10 }
+      - { name: "HR & Project", weight: 5 }
+
+  # ─── Product companies — smallest intake, highest bar ─────────────────────
+  - slug: amazon
+    name: Amazon
+    short: Amazon India
+    tier: product
+    hires_per_year: "~1,000 freshers"
+    drive_window: "Jul – Oct (SDE campus cycle)"
+    eligibility: "No fixed percentage cut-off; the online assessment is the filter"
+    accent: "#ff9900"
+    programs:
+      - name: SDE-1
+        detail: "Software Development Engineer. DSA-dominant, plus Leadership Principles throughout."
+    rounds:
+      - "Online assessment — 2 DSA problems + work simulation"
+      - "Technical interview 1 — DSA"
+      - "Technical interview 2 — DSA + design"
+      - "Bar raiser — Leadership Principles"
+    topics:
+      - { name: "Data Structures & Algorithms", weight: 45 }
+      - { name: "Problem Solving & Complexity", weight: 20 }
+      - { name: "Leadership Principles (STAR)", weight: 15 }
+      - { name: "Object-Oriented Design", weight: 10 }
+      - { name: "DBMS & SQL", weight: 5 }
+      - { name: "Operating Systems", weight: 5 }

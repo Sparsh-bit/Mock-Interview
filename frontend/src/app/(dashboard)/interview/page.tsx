@@ -22,6 +22,9 @@ function InterviewSetup() {
   const { data: tracks, isLoading: tracksLoading } = useTracks();
   const searchParams = useSearchParams();
   const requestedTrackId = searchParams.get('trackId');
+  // Carried over from /prepare so picking a target company there lands here with
+  // the field already filled — otherwise the candidate chooses twice.
+  const requestedCompany = searchParams.get('company');
 
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [company, setCompany] = useState('');
@@ -30,6 +33,10 @@ function InterviewSetup() {
   const [resumeText, setResumeText] = useState('');
   // Shown so a blank box does not look like opting out of personalisation.
   const { data: storedResume } = usePrimaryResume();
+
+  useEffect(() => {
+    if (requestedCompany) setCompany((c) => c || requestedCompany);
+  }, [requestedCompany]);
 
   useEffect(() => {
     if (!tracks || tracks.length === 0 || selectedTrackId) return;
