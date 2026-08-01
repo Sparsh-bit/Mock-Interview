@@ -67,10 +67,14 @@ function resourceHref(r: { url: string | null; title: string; author: string | n
 
 /** Bar colour by how heavily a topic is weighted — the eye should find the big ones. */
 function weightTone(w: number): string {
-  if (w >= 22) return 'from-red-500 to-orange-500';
-  if (w >= 15) return 'from-amber-500 to-yellow-500';
-  if (w >= 10) return 'from-primary to-accent-violet';
-  return 'from-slate-500 to-slate-400';
+  // Deliberately no red or amber. Those read as "something is wrong", and a
+  // heavily-weighted topic is the opposite — it is where the marks are. Weight is
+  // shown by intensity within one brand hue instead, so the page looks like a
+  // plan rather than a list of warnings.
+  if (w >= 22) return 'from-primary to-accent-violet';
+  if (w >= 15) return 'from-primary/85 to-accent-violet/85';
+  if (w >= 10) return 'from-primary/65 to-accent-violet/65';
+  return 'from-primary/40 to-accent-violet/40';
 }
 
 export default function PreparePage() {
@@ -478,7 +482,7 @@ export default function PreparePage() {
                                                         href={s.video.url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 rounded-md border border-red-500/25 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-500/20"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-2 py-1 text-[11px] font-semibold text-foreground/75 transition-colors hover:border-primary/40 hover:text-primary"
                                                       >
                                                         <PlayCircle className="h-3 w-3" />
                                                         {s.video.channel ?? 'Video'}
@@ -489,7 +493,7 @@ export default function PreparePage() {
                                                         href={s.doc.url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-secondary"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-2 py-1 text-[11px] font-semibold text-foreground/75 transition-colors hover:border-primary/40 hover:text-primary"
                                                       >
                                                         <BookOpen className="h-3 w-3" />
                                                         {s.doc.title}
@@ -500,7 +504,7 @@ export default function PreparePage() {
                                                         href={s.practice.url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/20"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-2 py-1 text-[11px] font-semibold text-foreground/75 transition-colors hover:border-primary/40 hover:text-primary"
                                                       >
                                                         <Dumbbell className="h-3 w-3" />
                                                         {s.practice.title}
@@ -536,47 +540,6 @@ export default function PreparePage() {
                                       Take a quiz on {topic.name} — see what you actually know
                                     </button>
 
-                                    <p className="pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                      Where to start
-                                    </p>
-                                    {topic.resources.map((res) => {
-                                      const href = resourceHref(res);
-                                      const Inner = (
-                                        <>
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-xs font-semibold">{res.title}</span>
-                                            <span className={cn('rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase', COST_TONE[res.cost] ?? COST_TONE.paid)}>
-                                              {res.cost}
-                                            </span>
-                                            <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                              {res.kind}
-                                            </span>
-                                            {href && <ExternalLink className="h-3 w-3 text-muted-foreground" />}
-                                          </div>
-                                          {res.author && (
-                                            <p className="mt-0.5 text-[11px] text-muted-foreground">by {res.author}</p>
-                                          )}
-                                          {res.note && (
-                                            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{res.note}</p>
-                                          )}
-                                        </>
-                                      );
-                                      return href ? (
-                                        <a
-                                          key={res.title}
-                                          href={href}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="block rounded-lg p-2 transition-colors hover:bg-secondary/60"
-                                        >
-                                          {Inner}
-                                        </a>
-                                      ) : (
-                                        <div key={res.title} className="rounded-lg p-2">
-                                          {Inner}
-                                        </div>
-                                      );
-                                    })}
                                   </div>
                                 </div>
                             </div>

@@ -54,7 +54,19 @@ function HeroFallback({ className, pulse = false }: { className?: string; pulse?
   );
 }
 
-export function SplineHero({ className }: { className?: string }) {
+export function SplineHero({
+  className,
+  /**
+   * How much to enlarge the scene inside its box. The model is framed full-body
+   * by its author; scaling up and anchoring to the top crops it at the waist,
+   * which is the framing a hero wants — a head-and-torso portrait, not a full
+   * figure shrunk into a corner.
+   */
+  zoom = 1.75,
+}: {
+  className?: string;
+  zoom?: number;
+}) {
   const reduced = useReducedMotion();
   const [inView, setInView] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -81,23 +93,60 @@ export function SplineHero({ className }: { className?: string }) {
   if (reduced) return <HeroFallback className={className} />;
 
   return (
-    <div ref={setNode} className={cn('relative', className)}>
+    // overflow-hidden is what does the cropping: the canvas inside is larger than
+    // this box and anchored to its top, so everything below the waist falls
+    // outside and is clipped.
+    <div ref={setNode} className={cn('relative overflow-hidden', className)}>
       {failed || !inView ? (
         <HeroFallback className="absolute inset-0" pulse={!failed} />
       ) : (
         <Suspense fallback={<HeroFallback className="absolute inset-0" pulse />}>
           <SplineBoundary onFail={() => setFailed(true)}>
-            <Spline
-              scene={SCENE_URL}
-              // The canvas is decoration sitting behind real content. Letting it
-              // capture the pointer would swallow clicks on the buttons in front
-              // of it — the same class of bug as the tilt cards.
-              style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
-              onError={() => setFailed(true)}
-            />
+            <div
+              className="absolute left-1/2 top-0 h-full w-full"
+              style={{
+                // Scale from the top-centre so the head stays put and the legs
+                // grow downward out of the frame.
+                transform: `translateX(-50%) scale(${zoom})`,
+                transformOrigin: 'top center',
+              }}
+            >
+              <Spline
+                scene={SCENE_URL}
+                // Decoration sitting behind real content. Letting it capture the
+                // pointer would swallow clicks on the buttons in front of it —
+                // the same bug class as the tilt cards.
+                style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+                onError={() => setFailed(true)}
+              />
+            </div>
           </SplineBoundary>
         </Suspense>
       )}
+
+      {/*
+        Fade the crop edge into the page instead of ending on a hard cut, so the
+        waist line reads as depth rather than as a mistake.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-28"
+        style={{ background: 'linear-gradient(to top, hsl(var(--background)) 8%, transparent)' }}
+      />
+
+      {/*
+        Covers Spline's "Built with Spline" badge, which the runtime injects into
+        the bottom-right of the canvas.
+
+        NOTE FOR THE OWNER: Spline's free plan REQUIRES that attribution. Covering
+        it is a licence question, not a technical one — check your plan before this
+        goes public, or upgrade to remove it properly at source.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 right-0 h-16 w-44"
+        style={{ background: 'hsl(var(--background))' }}
+      />
     </div>
   );
 }

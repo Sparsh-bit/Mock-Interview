@@ -208,7 +208,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, scale: 0.94 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
-          className="relative order-last h-[340px] w-full sm:h-[440px] lg:h-[560px]"
+          className="relative order-last h-[420px] w-full sm:h-[520px] lg:h-[680px]"
         >
           {/* Glow behind the model so it sits in the page rather than on it. */}
           <div
@@ -219,7 +219,7 @@ export default function LandingPage() {
                 'radial-gradient(45% 45% at 55% 50%, rgba(0,138,230,0.22) 0%, transparent 70%)',
             }}
           />
-          <SplineHero className="h-full w-full" />
+          <SplineHero className="h-full w-full" zoom={1.9} />
         </motion.div>
 
         {/* Hero visual — plan approval + voice interview mock */}
