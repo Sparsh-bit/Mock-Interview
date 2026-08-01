@@ -18,7 +18,6 @@ import {
   ShieldCheck,
   Cpu,
 } from 'lucide-react';
-import { SplineHero } from '@/components/three/SplineHero';
 import { cn } from '@/lib/utils';
 
 const FEATURES = [
@@ -214,11 +213,6 @@ export default function LandingPage() {
           className="pointer-events-none absolute inset-0"
           style={{ background: 'radial-gradient(120% 90% at 50% 50%, transparent 45%, #07070b 100%)' }}
         />
-
-        {/* The robot, centred and behind everything. */}
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <SplineHero className="h-full w-full max-w-5xl" zoom={1.55} stage="#07070b" />
-        </div>
 
         {/* Corner frame — thin rules that turn the viewport into a plate. */}
         <div aria-hidden className="pointer-events-none absolute inset-6 sm:inset-10">
