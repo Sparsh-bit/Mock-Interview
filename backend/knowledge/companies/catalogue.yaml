@@ -31,6 +31,7 @@ companies:
     hires_per_year: "~40,000 freshers"
     drive_window: "Aug – Dec (NQT runs multiple cycles a year)"
     eligibility: "60% throughout X / XII / UG, no active backlogs, gap ≤ 24 months"
+    business_context: "India's largest IT services firm. Signature products: TCS BaNCS (core banking, used by banks worldwide) and ignio (AIOps automation). Heaviest verticals are BFSI and retail. Interviews lean on fundamentals and scale, and a BFSI framing (\"a payments table with millions of rows\") is common."
     accent: "#0f4c9e"
     programs:
       - name: Ninja
@@ -60,6 +61,7 @@ companies:
     hires_per_year: "~25,000 freshers"
     drive_window: "Sep – Feb (Digital Nurture)"
     eligibility: "60% throughout, no active backlogs at the time of joining"
+    business_context: "Healthcare and life sciences is its single largest vertical — it owns TriZetto, which powers claims and benefits administration for US health insurers. BFSI is second. A healthcare-data or claims-processing framing is very characteristic of a Cognizant question."
     accent: "#1a7bc4"
     programs:
       - name: GenC
@@ -91,6 +93,7 @@ companies:
     hires_per_year: "~20,000 freshers"
     drive_window: "Sep – Jan (InfyTQ and off-campus)"
     eligibility: "60% throughout, no standing arrears; InfyTQ certification is a strong route in"
+    business_context: "Known for Finacle (core banking, one of the most widely deployed in the world), Infosys Cobalt (cloud) and Topaz (AI services). Strong consulting arm. Its assessments are unusually pseudocode- and puzzle-heavy compared with peers."
     accent: "#007cc3"
     programs:
       - name: System Engineer (SE)
@@ -120,6 +123,7 @@ companies:
     hires_per_year: "~15,000 freshers"
     drive_window: "Aug – Dec (Elite NTH)"
     eligibility: "60% throughout, ≤ 3 years gap, no active backlogs"
+    business_context: "Consulting-led services with FullStride Cloud as its flagship cloud offering, and a large engineering/R&D services business. Uniquely among the mass recruiters it scores WRITTEN English as its own round, so communication carries real weight."
     accent: "#341e63"
     programs:
       - name: Elite NTH
@@ -149,6 +153,7 @@ companies:
     hires_per_year: "~12,000 freshers"
     drive_window: "Sep – Jan"
     eligibility: "65% or 6.5 CGPA throughout, no active backlogs"
+    business_context: "The largest global consulting and professional services firm. Huge SAP, cloud migration and Accenture Song (customer/design) practices. Questions often frame technology inside a client-delivery or business-outcome context rather than pure CS."
     accent: "#a100ff"
     programs:
       - name: Associate Software Engineer
@@ -176,6 +181,7 @@ companies:
     hires_per_year: "~10,000 freshers"
     drive_window: "Aug – Dec"
     eligibility: "60% throughout, no active backlogs"
+    business_context: "European-headquartered, strong in engineering services, SAP and its Sogeti technology arm. Its first round is a game-based aptitude assessment, which is unusual and catches candidates out who prepare only for a conventional paper."
     accent: "#0070ad"
     programs:
       - name: Analyst
@@ -203,6 +209,7 @@ companies:
     hires_per_year: "~10,000 freshers"
     drive_window: "Year-round (TechBee runs separately after XII)"
     eligibility: "60% throughout for engineering roles; TechBee is a post-XII programme"
+    business_context: "Grew out of engineering and R&D services, and still does more product engineering work for technology vendors than its peers. Runs a Products & Platforms division alongside services. TechBee hires directly after class XII."
     accent: "#0f7dc2"
     programs:
       - name: Software Engineer
@@ -229,6 +236,7 @@ companies:
     hires_per_year: "~8,000 freshers"
     drive_window: "Sep – Jan"
     eligibility: "60% throughout, no active backlogs"
+    business_context: "Telecom is its signature vertical — part of the Mahindra Group, with deep 5G, network and BSS/OSS work, including the Comviva product business. Telecom-flavoured scenarios come up far more here than anywhere else."
     accent: "#e4002b"
     programs:
       - name: Associate Software Engineer
@@ -253,6 +261,7 @@ companies:
     hires_per_year: "~6,000 freshers"
     drive_window: "Aug – Dec"
     eligibility: "60% throughout, no active backlogs"
+    business_context: "Formed in 2022 by merging L&T Infotech with Mindtree. BFSI-heavy, with a strong data and analytics practice. As a post-merger firm it hires across both legacy delivery models."
     accent: "#00a3a1"
     programs:
       - name: Graduate Engineer Trainee
@@ -278,6 +287,7 @@ companies:
     hires_per_year: "~5,000 freshers"
     drive_window: "Sep – Feb"
     eligibility: "65% throughout typical, no active backlogs"
+    business_context: "Hybrid cloud and AI: Red Hat (acquired 2019) and the watsonx AI platform are its strategic centre, alongside mainframe/Z, which still runs a large share of the world's transaction processing. Expect more depth on cloud-native and containers than at a services firm."
     accent: "#0f62fe"
     programs:
       - name: Associate System Engineer
@@ -302,6 +312,7 @@ companies:
     hires_per_year: "~5,000 freshers"
     drive_window: "Aug – Nov"
     eligibility: "60-70% throughout depending on role, no active backlogs"
+    business_context: "One of the Big Four. Technology consulting delivered largely through its USI (US-India) centres. Case-style and group-discussion rounds matter as much as the technical here — you are being assessed as a future client-facing consultant."
     accent: "#86bc25"
     programs:
       - name: Analyst
@@ -328,6 +339,7 @@ companies:
     hires_per_year: "~1,000 freshers"
     drive_window: "Jul – Oct (SDE campus cycle)"
     eligibility: "No fixed percentage cut-off; the online assessment is the filter"
+    business_context: "Retail plus AWS, the largest cloud provider. Engineering culture is built around the 16 Leadership Principles, which are assessed in EVERY round and gate the offer via a dedicated Bar Raiser. Scale and ownership framing dominates; DSA depth is the technical filter."
     accent: "#ff9900"
     programs:
       - name: SDE-1

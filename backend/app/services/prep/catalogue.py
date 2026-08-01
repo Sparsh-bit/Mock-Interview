@@ -60,6 +60,12 @@ class Company(BaseModel):
     hires_per_year: str = ""
     drive_window: str = ""
     eligibility: str = ""
+    #: What this firm actually builds and sells. Threaded into the interview
+    #: planner so questions can be framed the way this company really frames them
+    #: — a Cognizant claims-processing question rather than a generic one. Long-
+    #: standing facts only (flagship products, dominant verticals, how they hire),
+    #: not news, so it does not go stale between hiring cycles.
+    business_context: str = ""
     accent: str = "#008ae6"
     programs: list[Program] = Field(default_factory=list)
     rounds: list[str] = Field(default_factory=list)

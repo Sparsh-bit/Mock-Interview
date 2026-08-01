@@ -24,7 +24,42 @@ from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
-from app.services.interview.research_lookup import find_research, render_research
+from app.services.interview.research_lookup import find_research, render_research, slugify
+
+
+def _business_context(company: str) -> str:
+    """
+    What this company actually does, for the interview planner.
+
+    Matched from the catalogue by slug, then again with separators stripped:
+    candidates type "Tech Mahindra", which slugifies to "tech-mahindra", while the
+    catalogue slug is "techmahindra". Without the second attempt every multi-word
+    company silently fell through to the generic line — the exact failure this
+    function exists to prevent.
+
+    Returns a neutral line when the company genuinely is not one we know, so a
+    candidate typing any firm still gets a working interview, just without the
+    company-specific framing.
+    """
+    from app.services.prep import get_company, load_catalogue  # noqa: PLC0415
+
+    slug = slugify(company)
+    entry = get_company(slug) or get_company(slug.replace("-", ""))
+    if entry is None:
+        # Last resort: match on the display name, so "Cognizant Technology
+        # Solutions" or a trailing "Ltd" still resolves.
+        collapsed = slug.replace("-", "")
+        entry = next(
+            (
+                c
+                for c in load_catalogue().companies
+                if c.slug in collapsed or collapsed.startswith(c.slug)
+            ),
+            None,
+        )
+    if entry is None or not entry.business_context:
+        return "(no specific business context on file for this company)"
+    return entry.business_context
 
 logger = structlog.get_logger(__name__)
 
@@ -170,6 +205,11 @@ class InterviewOrchestrator:
                 # per interview, would be billed every session for information
                 # that changes a few times a year.
                 research=render_research(await find_research(self.db, company, program)),
+                # What the firm actually builds and sells. This is what stops a
+                # "Cognizant" interview being a generic one with the name swapped
+                # in: knowing healthcare claims are its biggest business lets the
+                # planner frame a DBMS question the way Cognizant really would.
+                business_context=_business_context(company),
             )
             try:
                 plan, _ = await asyncio.wait_for(

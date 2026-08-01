@@ -188,3 +188,55 @@ class TestRoadmap:
 
     def test_unknown_company_returns_none(self):
         assert get_company("not-a-real-company") is None
+
+
+class TestBusinessContext:
+    """
+    Guards the company-specific framing of interview questions.
+
+    If the lookup misses, the interview silently degrades to a generic one with the
+    company's name pasted in — which is exactly the thing this feature exists to
+    prevent, and it fails invisibly.
+    """
+
+    @pytest.mark.parametrize("company", CATALOGUE.companies, ids=lambda c: c.slug)
+    def test_every_company_has_context(self, company: Company):
+        assert company.business_context, (
+            f"{company.slug} has no business context — its interviews would be generic"
+        )
+        assert len(company.business_context) > 80, "too thin to shape a question"
+
+    @pytest.mark.parametrize(
+        "typed",
+        [
+            "Cognizant",
+            "cognizant",
+            "TCS",
+            "Tech Mahindra",
+            "tech mahindra",
+            "LTIMindtree",
+            "LTI Mindtree",
+            "HCLTech",
+            "HCL Tech",
+            "Wipro Limited",
+            "Cognizant Technology Solutions",
+            "Amazon",
+        ],
+    )
+    def test_free_text_company_names_resolve(self, typed: str):
+        """
+        Candidates type the company name by hand. "Tech Mahindra" slugifies to
+        "tech-mahindra" while the catalogue slug is "techmahindra" — that mismatch
+        made every multi-word company fall through to the generic line.
+        """
+        from app.services.interview.orchestrator import _business_context
+
+        assert not _business_context(typed).startswith("(no specific"), (
+            f'"{typed}" did not resolve to a catalogue company'
+        )
+
+    def test_unknown_company_degrades_gracefully(self):
+        from app.services.interview.orchestrator import _business_context
+
+        # Must not raise, and must not claim knowledge it does not have.
+        assert _business_context("Some Startup Nobody Has Heard Of").startswith("(no specific")
