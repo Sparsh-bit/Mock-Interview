@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useUserSessions } from '@/hooks/useData';
 import { useActivity, type ActivityType, type ActivityItem } from '@/hooks/useActivity';
+import { DataError } from '@/components/ui/data-error';
 import {
   FileText,
   Loader2,
@@ -169,7 +170,7 @@ function ActivityRow({ a }: { a: ActivityItem }) {
 }
 
 export default function ReportsListPage() {
-  const { data: sessions, isLoading } = useUserSessions(20);
+  const { data: sessions, isLoading, error, refetch, isFetching } = useUserSessions(20);
   const { data: activity, isLoading: activityLoading } = useActivity(100);
 
   return (
@@ -181,7 +182,14 @@ export default function ReportsListPage() {
         </p>
       </div>
 
-      {isLoading ? (
+      {error ? (
+        <DataError
+          title="Could not load your history"
+          error={error}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      ) : isLoading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>

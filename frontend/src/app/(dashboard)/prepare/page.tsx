@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  AlertTriangle,
   ArrowRight,
   Building2,
   CalendarDays,
@@ -16,6 +17,7 @@ import {
   Info,
   Layers,
   Loader2,
+  RefreshCw,
   Target,
   Users,
 } from 'lucide-react';
@@ -63,7 +65,7 @@ function weightTone(w: number): string {
 
 export default function PreparePage() {
   const router = useRouter();
-  const { data: recruiters, isLoading } = useRecruiters();
+  const { data: recruiters, isLoading, error, refetch, isFetching: refetching } = useRecruiters();
 
   const [selected, setSelected] = useState<Recruiter | null>(null);
   const [weeks, setWeeks] = useState(8);
@@ -87,6 +89,38 @@ export default function PreparePage() {
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
+    );
+  }
+
+  // A failed or empty catalogue must SAY so. Falling through to the normal render
+  // produced a page with a heading and nothing under it — indistinguishable from
+  // "there are no companies", and impossible for anyone to debug or act on.
+  if (error || !recruiters?.length) {
+    const message = (error as { message?: string } | null)?.message?.trim();
+    return (
+      <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.06)} className="mx-auto max-w-2xl">
+        <motion.div variants={fadeUp}>
+          <Card className="mt-12 border-destructive/20 p-8 text-center">
+            <AlertTriangle className="mx-auto mb-4 h-10 w-10 text-amber-500" />
+            <h2 className="mb-2 text-xl font-bold">Company list unavailable</h2>
+            <p className="text-sm text-muted-foreground">
+              {message || 'The recruiter catalogue could not be loaded right now.'}
+            </p>
+            <p className="mt-3 text-xs text-muted-foreground">
+              If this persists, the API may be starting up after being idle — give it a
+              few seconds and try again.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Button variant="secondary" onClick={() => refetch()} loading={refetching}>
+                <RefreshCw className="h-4 w-4" /> Try again
+              </Button>
+              <Button variant="ghost" onClick={() => router.push('/interview')}>
+                Start an interview instead
+              </Button>
+            </div>
+          </Card>
+        </motion.div>
+      </motion.div>
     );
   }
 

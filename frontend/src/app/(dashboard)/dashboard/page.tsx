@@ -22,6 +22,7 @@ import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { DataError } from '@/components/ui/data-error';
 
 export const runtime = 'edge';
 
@@ -50,11 +51,25 @@ function StatCard({ label, value, icon, sub, color = 'blue' }: StatCardProps) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { data: stats, isLoading: statsLoading } = useUserStats();
+  const { data: stats, isLoading: statsLoading, error: statsError, refetch: refetchStats, isFetching: statsFetching } = useUserStats();
   const { data: sessions, isLoading: sessionsLoading } = useUserSessions(5);
   const { data: tracks, isLoading: tracksLoading } = useTracks();
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
+
+  // Stats failing is NOT the same as stats being zero. Rendering "0 interviews,
+  // 0% average" when the request errored tells the candidate they have done
+  // nothing, which is both wrong and demoralising.
+  if (statsError) {
+    return (
+      <DataError
+        title="Could not load your dashboard"
+        error={statsError}
+        onRetry={() => refetchStats()}
+        retrying={statsFetching}
+      />
+    );
+  }
 
   return (
     <motion.div

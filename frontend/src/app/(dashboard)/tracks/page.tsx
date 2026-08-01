@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { DataError } from '@/components/ui/data-error';
 import { useTracks } from '@/hooks/useData';
 import { Code2, Loader2, Play, Sparkles } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -12,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
 export default function TracksPage() {
-  const { data: tracks, isLoading } = useTracks();
+  const { data: tracks, isLoading, error, refetch, isFetching } = useTracks();
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
@@ -23,7 +24,14 @@ export default function TracksPage() {
         </p>
       </motion.div>
 
-      {isLoading ? (
+      {error || (!isLoading && !tracks?.length) ? (
+        <DataError
+          title="Interview tracks unavailable"
+          error={error}
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      ) : isLoading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>

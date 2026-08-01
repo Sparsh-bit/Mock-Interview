@@ -5,10 +5,11 @@ import { Award, CheckCircle2, Lock, ShieldCheck, Star, Zap } from 'lucide-react'
 import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { fadeUp, staggerContainer } from '@/lib/motion';
+import { DataError } from '@/components/ui/data-error';
 
 export const runtime = 'edge';
 export default function AchievementsPage() {
-  const { data: stats } = useUserStats();
+  const { data: stats, error, refetch, isFetching } = useUserStats();
 
   const achievements = [
     {
@@ -40,6 +41,19 @@ export default function AchievementsPage() {
       unlocked: (stats?.completed_sessions ?? 0) >= 5,
     },
   ];
+
+  // Without this every achievement renders as locked, which reads as "you have
+  // achieved nothing" rather than "we could not check".
+  if (error) {
+    return (
+      <DataError
+        title="Could not load your achievements"
+        error={error}
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
+    );
+  }
 
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
