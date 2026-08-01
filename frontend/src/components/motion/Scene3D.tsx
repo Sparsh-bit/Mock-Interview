@@ -54,73 +54,112 @@ export const TiltCard: React.FC<{
   lift?: number;
   accent?: string;
   onClick?: () => void;
-}> = ({ children, className, max = 9, lift = 26, accent, onClick }) => {
+  /** Accessible label when the whole card is the control. */
+  label?: string;
+}> = ({ children, className, max = 9, lift = 24, accent, onClick, label }) => {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
 
   const px = useMotionValue(0.5);
   const py = useMotionValue(0.5);
-  const [hovered, setHovered] = useState(false);
+  const hover = useMotionValue(0);
 
-  // Springs, not raw values: a card that snaps to the cursor feels like a cheap
-  // hover effect, one that eases feels like a physical object with weight.
   const spring = { stiffness: 220, damping: 26, mass: 0.6 };
   const rotateY = useSpring(useTransform(px, [0, 1], [-max, max]), spring);
   const rotateX = useSpring(useTransform(py, [0, 1], [max, -max]), spring);
-  const z = useSpring(hovered ? lift : 0, spring);
+  // A motion value, not `useSpring(hovered ? lift : 0)`. Passing a plain number
+  // only seeds the initial value — it never updates on re-render, so the lift
+  // never actually animated.
+  const z = useSpring(useTransform(hover, [0, 1], [0, lift]), spring);
 
-  // Hoisted: a hook cannot live inside the conditional JSX below. React requires
-  // the same hooks in the same order every render, and calling useTransform inside
-  // `{accent && hovered && …}` would break that the first time the card is hovered.
   const sheen = useTransform(
     [px, py],
     ([x, y]: number[]) =>
       `radial-gradient(38% 38% at ${x * 100}% ${y * 100}%, ${accent ?? '#fff'}2e 0%, transparent 70%)`,
   );
 
-  const onMove = useCallback((e: React.MouseEvent) => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    px.set((e.clientX - r.left) / r.width);
-    py.set((e.clientY - r.top) / r.height);
-  }, [px, py]);
+  const onMove = useCallback(
+    (e: React.MouseEvent) => {
+      const el = ref.current;
+      if (!el) return;
+      // Measured from the OUTER, untransformed element. Reading the rect off the
+      // rotating layer made the pointer fraction depend on a box that was itself
+      // moving — a feedback loop that amplified the jitter it was caused by.
+      const r = el.getBoundingClientRect();
+      px.set((e.clientX - r.left) / r.width);
+      py.set((e.clientY - r.top) / r.height);
+      hover.set(1);
+    },
+    [px, py, hover],
+  );
 
   const reset = useCallback(() => {
-    setHovered(false);
+    hover.set(0);
     px.set(0.5);
     py.set(0.5);
-  }, [px, py]);
+  }, [px, py, hover]);
 
-  if (reduced) {
-    return (
-      <div ref={ref} className={className} onClick={onClick}>
-        {children}
-      </div>
-    );
-  }
+  const interactive = Boolean(onClick);
 
   return (
-    <motion.div
+    /*
+     * TWO LAYERS, DELIBERATELY.
+     *
+     * The outer element is the hit target and is NEVER transformed. The inner one
+     * carries the 3D rotation and is pointer-events:none.
+     *
+     * Putting the click handler on the rotating element is what made these cards
+     * take a dozen attempts to click: as the card tilted toward the cursor its
+     * projected edge rotated out from under the pointer, firing mouseleave, which
+     * reset the tilt, which brought the edge back, which fired mouseenter — an
+     * oscillation that swallowed mousedown/mouseup pairs. A static hit area cannot
+     * oscillate, so the click always lands.
+     */
+    <div
       ref={ref}
-      onMouseMove={onMove}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={reset}
+      onMouseMove={reduced ? undefined : onMove}
+      onMouseLeave={reduced ? undefined : reset}
       onClick={onClick}
-      className={cn('relative [transform-style:preserve-3d]', className)}
-      style={{ rotateX, rotateY, translateZ: z }}
-    >
-      {children}
-      {/* Specular sheen that tracks the pointer. This is what sells the surface as
-          tilting rather than just rotating — a flat rotation reads as a sprite. */}
-      {accent && hovered && (
-        <motion.div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-60"
-          style={{ background: sheen }}
-        />
+      onKeyDown={
+        interactive
+          ? (e) => {
+              // Card-as-button must work from the keyboard too.
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={label}
+      className={cn(
+        'relative',
+        interactive &&
+          'cursor-pointer rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+        className,
       )}
-    </motion.div>
+      style={{ transformStyle: 'preserve-3d' }}
+    >
+      {reduced ? (
+        children
+      ) : (
+        <motion.div
+          // pointer-events-none is the other half of the fix: even though this
+          // layer moves, it can never intercept or deflect a click.
+          className="pointer-events-none [transform-style:preserve-3d]"
+          style={{ rotateX, rotateY, translateZ: z }}
+        >
+          {children}
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[inherit]"
+            style={{ background: sheen, opacity: hover }}
+          />
+        </motion.div>
+      )}
+    </div>
   );
 };
 
@@ -161,46 +200,82 @@ export const ParallaxLayer: React.FC<{
   );
 };
 
-/** Number that counts up when it scrolls into view. */
+/**
+ * Number that counts up when it scrolls into view, and re-counts when it changes.
+ *
+ * The re-count matters: this shows the roadmap's total hours, which recomputes
+ * every time the candidate moves the weeks or hours slider. An earlier version
+ * latched a `started` ref on the first animation and never cleared it, so every
+ * later value was ignored — the sliders moved and the number sat frozen, making
+ * the whole control look broken.
+ */
 export const CountUp: React.FC<{
   to: number;
   suffix?: string;
   className?: string;
   duration?: number;
 }> = ({ to, suffix = '', className, duration = 1.1 }) => {
-  const [shown, setShown] = useState(0);
   const reduced = useReducedMotion();
-  const started = useRef(false);
+  const [shown, setShown] = useState(reduced ? to : 0);
+  const [visible, setVisible] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  // Where the current animation starts from, so a slider change eases from the
+  // number already on screen instead of snapping back to zero.
+  const fromRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
 
+  // Reveal on scroll, once.
   React.useEffect(() => {
     if (reduced) {
-      setShown(to);
+      setVisible(true);
       return;
     }
     const el = ref.current;
     if (!el) return;
-
     const io = new IntersectionObserver(
       ([entry]) => {
-        // Only ever run once: a number that re-counts every time it scrolls back
-        // into view is distracting rather than delightful.
-        if (!entry.isIntersecting || started.current) return;
-        started.current = true;
-        const t0 = performance.now();
-        const step = (now: number) => {
-          const p = Math.min(1, (now - t0) / (duration * 1000));
-          // easeOutExpo — fast start, gentle settle.
-          setShown(Math.round(to * (p === 1 ? 1 : 1 - Math.pow(2, -10 * p))));
-          if (p < 1) requestAnimationFrame(step);
-        };
-        requestAnimationFrame(step);
+        if (entry.isIntersecting) {
+          setVisible(true);
+          io.disconnect();
+        }
       },
       { threshold: 0.4 },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [to, duration, reduced]);
+  }, [reduced]);
+
+  // Animate to the CURRENT target. Re-runs whenever `to` changes.
+  React.useEffect(() => {
+    if (!visible) return;
+    if (reduced) {
+      setShown(to);
+      return;
+    }
+
+    const from = fromRef.current;
+    const t0 = performance.now();
+
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / (duration * 1000));
+      // easeOutExpo — fast start, gentle settle.
+      const eased = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+      setShown(Math.round(from + (to - from) * eased));
+      if (p < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        fromRef.current = to;
+      }
+    };
+    rafRef.current = requestAnimationFrame(step);
+
+    return () => {
+      // Cancel in-flight frames before starting the next run, or dragging a slider
+      // leaves several animations fighting over the same state.
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      fromRef.current = to;
+    };
+  }, [to, visible, reduced, duration]);
 
   return (
     <span ref={ref} className={cn('tabular-nums', className)}>

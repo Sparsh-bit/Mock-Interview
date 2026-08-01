@@ -4,27 +4,5 @@
       "Bash(uv run pytest *)",
       "Bash(npx tsc --noEmit)"
     ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/sparsh/.local/bin/graphify hook-guard search"
-          }
-        ]
-      },
-      {
-        "matcher": "Read|Glob",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/sparsh/.local/bin/graphify hook-guard read"
-          }
-        ]
-      }
-    ]
   }
 }

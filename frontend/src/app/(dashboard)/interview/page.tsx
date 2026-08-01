@@ -3,7 +3,7 @@
 import { useInterview } from '@/hooks/useInterview';
 import { useTracks, usePrimaryResume } from '@/hooks/useData';
 import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2 } from 'lucide-react';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -46,6 +46,24 @@ function InterviewSetup() {
       setSelectedTrackId(tracks[0].id);
     }
   }, [tracks, selectedTrackId, requestedTrackId]);
+
+  // Tracks grouped by company: the picker is company-first, and the flat list is
+  // 24 items long now that every catalogue company is interviewable.
+  const companies = useMemo(() => {
+    const map = new Map<string, { name: string; tracks: NonNullable<typeof tracks> }>();
+    (tracks ?? []).forEach((t) => {
+      const entry = map.get(t.company.name) ?? { name: t.company.name, tracks: [] };
+      entry.tracks.push(t);
+      map.set(t.company.name, entry);
+    });
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [tracks]);
+
+  const activeCompanyName = useMemo(
+    () => (tracks ?? []).find((t) => t.id === selectedTrackId)?.company.name ?? '',
+    [tracks, selectedTrackId],
+  );
+  const activeCompany = companies.find((c) => c.name === activeCompanyName);
 
   const plan = createPlan.data;
 
@@ -141,39 +159,81 @@ function InterviewSetup() {
           </p>
         </div>
 
-        {/* Track */}
-        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Track</p>
+        {/* ── Company, then program ────────────────────────────────────────
+            Two compact levels instead of one grid of every track. With twelve
+            companies the flat grid ran to 24 large cards, which pushed the
+            customisation — the resume, the focus box, the whole reason this is
+            not a generic interview — so far below the fold that nobody found it.
+            Twelve chips and a row of programs fit on one screen. */}
+        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Who are you interviewing with?
+        </p>
         {tracksLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : (
-          <div className="mb-8 grid gap-4 md:grid-cols-2">
-            {(tracks || []).map((track) => {
-              const isSelected = selectedTrackId === track.id;
-              return (
-                <button
-                  type="button"
-                  key={track.id}
-                  onClick={() => setSelectedTrackId(track.id)}
-                  className={`rounded-xl border p-5 text-left transition-all ${
-                    isSelected
-                      ? 'border-primary bg-primary/10 shadow-glow'
-                      : 'border-border/50 bg-surface hover:border-primary/50'
-                  }`}
-                >
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20">
-                      <Code2 className="h-4 w-4 text-blue-600" />
-                    </div>
-                    {isSelected && <CheckCircle2 className="h-5 w-5 text-primary" />}
-                  </div>
-                  <h3 className="text-base font-bold">{track.company.name}</h3>
-                  <p className="mt-0.5 text-sm font-medium text-foreground/90">{track.name}</p>
-                </button>
-              );
-            })}
-          </div>
+          <>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {companies.map((c) => {
+                const active = c.name === activeCompanyName;
+                return (
+                  <button
+                    type="button"
+                    key={c.name}
+                    onClick={() => {
+                      // Selecting a company selects its first program, so the form
+                      // is never in a half-chosen state with no track.
+                      setSelectedTrackId(c.tracks[0].id);
+                      setCompany(c.name);
+                    }}
+                    className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all ${
+                      active
+                        ? 'border-primary bg-primary/10 text-primary shadow-glow'
+                        : 'border-border/60 bg-surface text-foreground/80 hover:border-primary/50'
+                    }`}
+                  >
+                    {c.name}
+                    <span className="ml-1.5 text-[11px] font-medium text-muted-foreground">
+                      {c.tracks.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeCompany && (
+              <div className="mb-7">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Program / track
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {activeCompany.tracks.map((track) => {
+                    const isSelected = selectedTrackId === track.id;
+                    return (
+                      <button
+                        type="button"
+                        key={track.id}
+                        onClick={() => setSelectedTrackId(track.id)}
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/10 font-semibold text-primary'
+                            : 'border-border/60 bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                        }`}
+                      >
+                        {isSelected ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : (
+                          <Code2 className="h-4 w-4 opacity-50" />
+                        )}
+                        {track.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         {/* Company + program */}

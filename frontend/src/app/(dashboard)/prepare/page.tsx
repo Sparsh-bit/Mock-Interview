@@ -268,6 +268,44 @@ export default function PreparePage() {
                 />
               </div>
             </div>
+
+            {/* Live consequence of the sliders. Without this the only thing that
+                visibly moved was one number in the header, so it read as though
+                the controls did nothing. */}
+            {roadmap && (
+              <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/50 pt-4 text-xs">
+                <span className="text-muted-foreground">
+                  Total <strong className="text-foreground tabular-nums">{roadmap.total_hours}h</strong>
+                </span>
+                <span className="text-muted-foreground">
+                  Covers{' '}
+                  <strong className="text-foreground tabular-nums">
+                    {roadmap.phases.reduce((n, ph) => n + ph.topics.length, 0)}
+                  </strong>
+                  {' of '}
+                  <strong className="text-foreground tabular-nums">
+                    {roadmap.phases.reduce((n, ph) => n + ph.topics.length, 0) +
+                      roadmap.omitted_topics.length}
+                  </strong>{' '}
+                  topics
+                </span>
+                <span className="text-muted-foreground">
+                  Ready by{' '}
+                  <strong className="text-foreground">
+                    {new Date(roadmap.target_date).toLocaleDateString(undefined, {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </strong>
+                </span>
+                {isFetching && (
+                  <span className="inline-flex items-center gap-1.5 text-primary">
+                    <Loader2 className="h-3 w-3 animate-spin" /> updating
+                  </span>
+                )}
+              </div>
+            )}
           </Card>
         </motion.div>
 

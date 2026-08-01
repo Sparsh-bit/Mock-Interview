@@ -30,3 +30,8 @@ frontend/tsconfig.tsbuildinfo
 # Contains the Remotion motion-graphics source plus large rendered mp4s and
 # licensed audio, none of which belong in the app repo.
 /promo/
+
+# graphify scratch — machine-generated extraction cache and chunk files.
+# 3.7MB of it got committed once; never again. Nothing in the app reads it, and
+# it records absolute paths from whichever machine ran the tool.
+/graphify-out/
