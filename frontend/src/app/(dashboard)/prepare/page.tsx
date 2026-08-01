@@ -15,8 +15,11 @@ import {
   Clock,
   GraduationCap,
   Info,
+  BookOpen,
+  Dumbbell,
   Layers,
   Loader2,
+  PlayCircle,
   RefreshCw,
   Target,
   Users,
@@ -25,7 +28,14 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CountUp, ParallaxLayer, Stage3D, TiltCard } from '@/components/motion/Scene3D';
-import { useRecruiters, useRoadmap, type Recruiter } from '@/hooks/useData';
+import {
+  usePrepProgress,
+  useRecruiters,
+  useRoadmap,
+  useToggleProgress,
+  type Recruiter,
+} from '@/hooks/useData';
+import { PhaseProgress, RoadmapRoad, type RoadMilestone } from '@/components/prep/RoadmapRoad';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -75,6 +85,27 @@ export default function PreparePage() {
   const [openTopic, setOpenTopic] = useState<string | null>(null);
 
   const { data: roadmap, isFetching } = useRoadmap(selected?.slug ?? null, weeks, hours);
+  const { data: progress } = usePrepProgress();
+  const toggleProgress = useToggleProgress();
+
+  const doneSet = useMemo(() => new Set(progress?.completed ?? []), [progress]);
+
+  // Every subtopic across the plan, in phase order — this is what the road draws
+  // and what the percentage is computed from.
+  const milestones: RoadMilestone[] = useMemo(() => {
+    if (!roadmap) return [];
+    return roadmap.phases.flatMap((ph) =>
+      ph.topics.flatMap((tp) =>
+        tp.subtopics.map((s) => ({
+          id: s.id,
+          label: s.name,
+          sublabel: tp.name,
+          done: doneSet.has(s.id),
+          phase: ph.phase,
+        })),
+      ),
+    );
+  }, [roadmap, doneSet]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Recruiter[]>();
@@ -240,9 +271,49 @@ export default function PreparePage() {
           </Card>
         </motion.div>
 
-        {/* The 3D roadmap. Each phase card sits at its own depth and tilts to the
-            pointer, so the plan reads as a path receding into the distance rather
-            than a list. */}
+        {/* The road. Driven by real ticked-off subtopics — it only moves when the
+            candidate actually studies, which is the entire reason to draw it. */}
+        {milestones.length > 0 && (
+          <motion.div variants={fadeUp}>
+            <Card className="p-6">
+              <RoadmapRoad
+                milestones={milestones}
+                accent={selected.accent}
+                onSelect={(id) => {
+                  const owner = roadmap?.phases
+                    .flatMap((ph) => ph.topics)
+                    .find((tp) => tp.subtopics.some((s) => s.id === id));
+                  if (owner) setOpenTopic(`${owner.phase}-${owner.name}`);
+                }}
+              />
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Feasibility — when the budget cannot cover the syllabus, say so here
+            rather than letting the plan imply full coverage. */}
+        {roadmap?.feasibility_warning && (
+          <motion.div variants={fadeUp}>
+            <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-4">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                  Not enough time to cover everything
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {roadmap.feasibility_warning}
+                </p>
+                {roadmap.omitted_topics.length > 0 && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Left out: {roadmap.omitted_topics.join(' · ')}
+                  </p>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* The phase cards. Each sits at its own depth and tilts to the pointer. */}
         <Stage3D depth={1500} className="space-y-5">
           {roadmap?.phases.map((phase, i) => (
             <motion.div key={phase.phase} variants={fadeUp}>
@@ -300,7 +371,14 @@ export default function PreparePage() {
                                     />
                                   )}
                                 </span>
-                                <span className="shrink-0 text-muted-foreground tabular-nums">
+                                <span className="flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums">
+                                  {topic.subtopics.length > 0 && (
+                                    <PhaseProgress
+                                      done={topic.subtopics.filter((s) => doneSet.has(s.id)).length}
+                                      total={topic.subtopics.length}
+                                      accent={selected.accent}
+                                    />
+                                  )}
                                   {topic.weight}% · {topic.hours}h
                                 </span>
                               </div>
@@ -326,7 +404,124 @@ export default function PreparePage() {
                                   transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                                   className="overflow-hidden"
                                 >
-                                  <div className="mt-3 space-y-2 border-l-2 pl-3" style={{ borderColor: `${selected.accent}44` }}>
+                                  <div className="mt-3 space-y-3 border-l-2 pl-3" style={{ borderColor: `${selected.accent}44` }}>
+                                    {/* Subtopics — the actual checklist. Ticking one
+                                        persists immediately and moves the road. */}
+                                    {topic.subtopics.length > 0 && (
+                                      <div className="space-y-1.5">
+                                        {topic.subtopics.map((s) => {
+                                          const done = doneSet.has(s.id);
+                                          return (
+                                            <div
+                                              key={s.id}
+                                              className="group/sub rounded-lg border border-border/50 bg-surface/40 p-2.5"
+                                            >
+                                              <div className="flex items-start gap-2.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    toggleProgress.mutate({
+                                                      subtopicId: s.id,
+                                                      completed: !done,
+                                                      companySlug: selected.slug,
+                                                    })
+                                                  }
+                                                  aria-pressed={done}
+                                                  aria-label={done ? `Mark ${s.name} not done` : `Mark ${s.name} done`}
+                                                  className="mt-0.5 shrink-0"
+                                                >
+                                                  {done ? (
+                                                    <CheckCircle2
+                                                      className="h-4 w-4"
+                                                      style={{ color: selected.accent }}
+                                                    />
+                                                  ) : (
+                                                    <span className="block h-4 w-4 rounded-full border-2 border-border transition-colors group-hover/sub:border-primary" />
+                                                  )}
+                                                </button>
+
+                                                <div className="min-w-0 flex-1">
+                                                  <div className="flex flex-wrap items-baseline gap-x-2">
+                                                    <span
+                                                      className={cn(
+                                                        'text-xs font-semibold',
+                                                        done && 'text-muted-foreground line-through',
+                                                      )}
+                                                    >
+                                                      {s.name}
+                                                    </span>
+                                                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                                                      ~{Math.round(s.minutes / 60)}h
+                                                    </span>
+                                                  </div>
+
+                                                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                                    {s.video && (
+                                                      <a
+                                                        href={s.video.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-red-500/25 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-500/20"
+                                                      >
+                                                        <PlayCircle className="h-3 w-3" />
+                                                        {s.video.channel ?? 'Video'}
+                                                      </a>
+                                                    )}
+                                                    {s.doc && (
+                                                      <a
+                                                        href={s.doc.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-secondary"
+                                                      >
+                                                        <BookOpen className="h-3 w-3" />
+                                                        {s.doc.title}
+                                                      </a>
+                                                    )}
+                                                    {s.practice && (
+                                                      <a
+                                                        href={s.practice.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/20"
+                                                      >
+                                                        <Dumbbell className="h-3 w-3" />
+                                                        {s.practice.title}
+                                                      </a>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    {/* Test yourself on exactly this topic. Goes straight
+                                        into the quiz with the topic pre-set, so the
+                                        candidate never has to configure anything. */}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        router.push(
+                                          `/quiz?topic=${encodeURIComponent(topic.name)}&autostart=1`,
+                                        )
+                                      }
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition-colors"
+                                      style={{
+                                        borderColor: `${selected.accent}55`,
+                                        backgroundColor: `${selected.accent}14`,
+                                        color: selected.accent,
+                                      }}
+                                    >
+                                      <Target className="h-3.5 w-3.5" />
+                                      Take a quiz on {topic.name} — see what you actually know
+                                    </button>
+
+                                    <p className="pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Where to start
+                                    </p>
                                     {topic.resources.map((res) => {
                                       const href = resourceHref(res);
                                       const Inner = (

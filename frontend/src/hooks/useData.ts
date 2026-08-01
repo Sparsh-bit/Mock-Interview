@@ -442,6 +442,7 @@ export interface RoadmapTopic {
   hours: number;
   phase: number;
   resources: StudyResource[];
+  subtopics: Subtopic[];
 }
 export interface RoadmapPhase {
   phase: number;
@@ -459,6 +460,10 @@ export interface Roadmap {
   total_hours: number;
   target_date: string;
   phases: RoadmapPhase[];
+  /** Topics the budget could not fund. Non-empty means the plan is a triage. */
+  omitted_topics: string[];
+  /** Set when the time available cannot cover the syllabus. */
+  feasibility_warning: string | null;
   disclaimer: string;
 }
 
@@ -493,5 +498,71 @@ export function useRoadmap(slug: string | null, weeks: number, hoursPerWeek: num
     enabled: !!slug,
     staleTime: 10 * 60 * 1000,
     placeholderData: (prev) => prev,
+  });
+}
+
+export interface SubtopicLink { title: string; url: string; channel?: string | null }
+export interface Subtopic {
+  id: string;
+  name: string;
+  minutes: number;
+  video: SubtopicLink | null;
+  doc: SubtopicLink | null;
+  practice: SubtopicLink | null;
+}
+
+export interface PrepProgress {
+  completed: string[];
+  minutes_done: number;
+}
+
+/** Everything the candidate has ticked off, across every company plan. */
+export function usePrepProgress() {
+  return useQuery({
+    queryKey: ['prep-progress'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/companies/me/progress');
+      return res.data as PrepProgress;
+    },
+    staleTime: 60 * 1000,
+  });
+}
+
+/**
+ * Tick a subtopic on or off.
+ *
+ * Optimistic: a checkbox that waits for a round trip feels broken, and this is the
+ * single most-tapped control on the page. The server returns the whole state, so
+ * the optimistic value is replaced by truth on success and rolled back on failure
+ * — the UI can never end up disagreeing with the database.
+ */
+export function useToggleProgress() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { subtopicId: string; completed: boolean; companySlug?: string }) => {
+      const res = await getBrowserApiClient().post('/api/v1/companies/me/progress', {
+        subtopic_id: input.subtopicId,
+        completed: input.completed,
+        company_slug: input.companySlug ?? null,
+      });
+      return res.data as PrepProgress;
+    },
+    onMutate: async (input) => {
+      await queryClient.cancelQueries({ queryKey: ['prep-progress'] });
+      const previous = queryClient.getQueryData<PrepProgress>(['prep-progress']);
+      queryClient.setQueryData<PrepProgress>(['prep-progress'], (old) => {
+        const set = new Set(old?.completed ?? []);
+        if (input.completed) set.add(input.subtopicId);
+        else set.delete(input.subtopicId);
+        return { completed: [...set], minutes_done: old?.minutes_done ?? 0 };
+      });
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      // Put it back. Leaving an optimistic tick in place after a failed write is
+      // how a candidate ends up believing they studied something they didn't.
+      if (ctx?.previous) queryClient.setQueryData(['prep-progress'], ctx.previous);
+    },
+    onSuccess: (data) => queryClient.setQueryData(['prep-progress'], data),
   });
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, Clock, Loader2, ListChecks, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -38,15 +39,32 @@ function formatTime(sec: number): string {
 }
 
 export default function QuizPage() {
+  // useSearchParams requires a Suspense boundary in the App Router. Without it the
+  // page opts the whole route into client-side rendering and Next warns at build.
+  return (
+    <Suspense
+      fallback={<div className="mt-10 text-center text-sm text-muted-foreground">Loading…</div>}
+    >
+      <Quiz />
+    </Suspense>
+  );
+}
+
+function Quiz() {
   const { startQuiz, startBankQuiz, submitQuiz } = useQuiz();
+  const searchParams = useSearchParams();
+  // Arriving from a roadmap topic: "Take a quiz on DBMS & SQL" should land the
+  // candidate IN the quiz, not on a settings form they have to fill in again.
+  const presetTopic = searchParams.get('topic') ?? '';
+  const autostart = searchParams.get('autostart') === '1';
   const { data: bankTopics } = useBankTopics();
   const [phase, setPhase] = useState<Phase>('setup');
   const [mode, setMode] = useState<Mode>('instant');
   const [count, setCount] = useState(8);
   const [minutes, setMinutes] = useState(10);
-  const [topic, setTopic] = useState('');
+  const [topic, setTopic] = useState(presetTopic);
   const [company, setCompany] = useState('');
-  const [bankTopic, setBankTopic] = useState(''); // '' = mix of all topics
+  const [bankTopic, setBankTopic] = useState(presetTopic); // '' = mix of all topics
 
   const [quizId, setQuizId] = useState<string>('');
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -90,6 +108,20 @@ export default function QuizPage() {
       startQuiz.mutate({ count, minutes, topic, company }, { onSuccess, onError });
     }
   };
+
+  // Fire the preset quiz exactly once. A ref rather than state because this must
+  // not re-fire when the component re-renders mid-quiz — which would discard the
+  // candidate's answers and restart them without warning.
+  const autostartedRef = useRef(false);
+  useEffect(() => {
+    if (!autostart || autostartedRef.current || phase !== 'setup') return;
+    if (startQuiz.isPending || startBankQuiz.isPending) return;
+    autostartedRef.current = true;
+    handleStart();
+    // handleStart is stable enough for this one-shot; re-running on its identity
+    // would defeat the guard above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autostart, phase]);
 
   const handleSubmit = useCallback(() => {
     if (submittedRef.current) return;
