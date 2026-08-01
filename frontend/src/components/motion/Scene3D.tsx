@@ -146,9 +146,16 @@ export const TiltCard: React.FC<{
         children
       ) : (
         <motion.div
-          // pointer-events-none is the other half of the fix: even though this
-          // layer moves, it can never intercept or deflect a click.
-          className="pointer-events-none [transform-style:preserve-3d]"
+          // NOT pointer-events-none. Disabling pointer events here also disabled
+          // every checkbox, link and button INSIDE the card — the tilt fix broke
+          // the card contents.
+          //
+          // It is not needed: the oscillation this component used to suffer came
+          // from onMouseMove/onMouseLeave living on the rotating element. Those
+          // handlers now sit on the static outer div, so the moving layer cannot
+          // fire them and cannot oscillate. Children stay fully interactive, and
+          // the browser hit-tests them correctly through the 3D transform.
+          className="[transform-style:preserve-3d]"
           style={{ rotateX, rotateY, translateZ: z }}
         >
           {children}
