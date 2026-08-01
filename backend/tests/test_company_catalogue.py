@@ -132,6 +132,52 @@ class TestRoadmap:
         assert r.weeks <= 52
         assert r.hours_per_week <= 60
 
+    @pytest.mark.parametrize(
+        ("weeks", "hours"),
+        [(1, 1), (1, 3), (2, 3), (2, 5), (4, 5), (8, 10), (24, 40)],
+    )
+    def test_plan_never_claims_more_hours_than_the_budget(self, weeks: int, hours: int):
+        """
+        The bug this guards: every topic used to get max(1, ...) hours, so a
+        1-week / 1-hour budget produced a SEVEN hour plan. The page told someone
+        with one hour that they had a full study plan.
+
+        A plan may cover fewer topics than exist. It may never invent time.
+        """
+        r = build_roadmap(self.COMPANY, weeks=weeks, hours_per_week=hours)
+        budget = weeks * hours
+        assert r.total_hours <= budget, (
+            f"plan claims {r.total_hours}h against a {budget}h budget"
+        )
+        assert sum(t.hours for p in r.phases for t in p.topics) == r.total_hours
+
+    def test_topics_that_do_not_fit_are_reported_not_hidden(self):
+        r = build_roadmap(self.COMPANY, weeks=1, hours_per_week=1)
+        planned = {t.name for p in r.phases for t in p.topics}
+        assert r.omitted_topics, "a 1-hour budget cannot cover 7 topics — say so"
+        assert not (planned & set(r.omitted_topics)), "a topic is both planned and omitted"
+        assert planned | set(r.omitted_topics) == {t.name for t in self.COMPANY.topics}, (
+            "every topic must be either planned or explicitly omitted — never silently dropped"
+        )
+        assert r.feasibility_warning and "covers" in r.feasibility_warning
+
+    def test_a_sufficient_budget_omits_nothing(self):
+        r = build_roadmap(self.COMPANY, weeks=8, hours_per_week=10)
+        assert r.omitted_topics == []
+        assert r.feasibility_warning is None, (
+            "warning on a complete plan would train users to ignore it"
+        )
+
+    def test_omitted_topics_are_the_least_weighted_ones(self):
+        r = build_roadmap(self.COMPANY, weeks=1, hours_per_week=3)
+        by_name = {t.name: t.weight for t in self.COMPANY.topics}
+        planned = [t.weight for p in r.phases for t in p.topics]
+        dropped = [by_name[n] for n in r.omitted_topics]
+        if planned and dropped:
+            assert min(planned) >= max(dropped), (
+                "we must drop what costs the fewest marks, not the first thing in the list"
+            )
+
     def test_disclaimer_is_always_present(self):
         """
         Eligibility numbers here are indicative. The response must always carry the

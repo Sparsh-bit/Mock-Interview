@@ -121,6 +121,12 @@ class Roadmap(BaseModel):
     total_hours: int
     target_date: dt.date
     phases: list[RoadmapPhase]
+    #: Topics the budget could not fund at all, heaviest-first order preserved.
+    #: Non-empty means the plan is a triage, not full coverage.
+    omitted_topics: list[str] = Field(default_factory=list)
+    #: Plain warning when the time available cannot cover the syllabus. Null when
+    #: the plan is genuinely complete.
+    feasibility_warning: str | None = None
     #: Restates that eligibility is indicative, so the UI cannot forget to.
     disclaimer: str
 
@@ -238,17 +244,57 @@ def build_roadmap(
     phase_count = min(3, max(1, len(ordered)))
     per_phase = math.ceil(len(ordered) / phase_count)
 
+    # ── Honest allocation ───────────────────────────────────────────────────
+    #
+    # Every topic used to get max(1, ...) hours, which quietly INVENTED time: at
+    # 1 week x 1 hour the budget is 1 hour, but seven topics each floored to 1
+    # produced a "7 hour" plan. The page then told someone with one hour that
+    # they had a full study plan, which is worse than telling them nothing.
+    #
+    # So the floor is still one hour per topic — half an hour on a topic is not a
+    # real study session — but it is funded from the actual budget, and when the
+    # budget runs out the remaining topics are reported as OMITTED rather than
+    # conjured into the plan.
+    fundable = min(len(ordered), total_hours)
+    covered = ordered[:fundable]
+    omitted = ordered[fundable:]
+
     allocations: list[RoadmapTopic] = []
-    for index, topic in enumerate(ordered):
-        phase = index // per_phase + 1
-        allocations.append(
-            RoadmapTopic(
-                name=topic.name,
-                weight=topic.weight,
-                hours=max(1, round(total_hours * topic.weight / 100)),
-                phase=phase,
-                resources=resources_for(topic.name),
+    if covered:
+        # Re-normalise over the topics we can actually fund, so their weights still
+        # sum to 100 among themselves and the split stays proportional.
+        covered_weight = sum(t.weight for t in covered) or 1
+        spent = 0
+        for index, topic in enumerate(covered):
+            phase = index // per_phase + 1
+            is_last = index == len(covered) - 1
+            # The last topic absorbs the rounding remainder so the plan's total is
+            # exactly the budget rather than a hair above it.
+            hours = (
+                total_hours - spent
+                if is_last
+                else max(1, round(total_hours * topic.weight / covered_weight))
             )
+            hours = max(1, min(hours, total_hours - spent - (len(covered) - index - 1)))
+            spent += hours
+            allocations.append(
+                RoadmapTopic(
+                    name=topic.name,
+                    weight=topic.weight,
+                    hours=hours,
+                    phase=phase,
+                    resources=resources_for(topic.name),
+                )
+            )
+
+    warning: str | None = None
+    if omitted:
+        need = len(ordered)
+        warning = (
+            f"{total_hours} hours only covers {len(covered)} of {need} topics. "
+            f"To touch every topic you need at least {need} hours, and realistically "
+            f"{need * 8}. Everything below is ordered by what costs you the most marks "
+            "if you skip it."
         )
 
     titles = {
@@ -290,6 +336,8 @@ def build_roadmap(
         total_hours=sum(a.hours for a in allocations),
         target_date=start + dt.timedelta(weeks=weeks),
         phases=phases,
+        omitted_topics=[t.name for t in omitted],
+        feasibility_warning=warning,
         disclaimer=(
             "Eligibility and drive windows are indicative and change every year. "
             "Always confirm against the company's official notification for your batch."
