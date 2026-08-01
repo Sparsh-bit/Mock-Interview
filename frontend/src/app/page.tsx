@@ -81,11 +81,20 @@ const MODES = [
   { icon: FileText, title: 'Unified Activity Report', text: 'Every interview, GD, communication round and quiz in one history, newest first.' },
 ];
 
+/**
+ * Counted from the code, not rounded up for effect.
+ *
+ * This replaced "50+ company tracks" and a "2,000+ question bank", neither of
+ * which was true — the catalogue holds 12 companies and 24 tracks, and the seeded
+ * bank is a fraction of two thousand. A specific real number is also a better
+ * sell than a vague large one: "87 previous-year questions, researched" is
+ * checkable, and checkable is what makes the rest of the page believable.
+ */
 const STATS = [
-  { label: 'Interview Rounds', value: '6+' },
-  { label: 'Fresher Topics Covered', value: '40+' },
-  { label: 'Company Tracks', value: '50+' },
-  { label: 'Question Bank', value: '2,000+' },
+  { value: '12', label: 'Companies that hire on campus' },
+  { value: '24', label: 'Interview tracks' },
+  { value: '48', label: 'Study subtopics, with videos' },
+  { value: '87', label: 'Real previous-year questions' },
 ];
 
 const COMPANIES = ['Cognizant', 'TCS', 'Infosys', 'Wipro', 'Capgemini', 'Accenture'];
@@ -105,6 +114,24 @@ const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
 };
+
+/** A filler word, marked the way the product marks it. */
+function Filler({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-md bg-red-500/15 px-2 py-0.5 font-semibold text-red-400">
+      {children}
+    </span>
+  );
+}
+
+/** A pause, shown where it actually happened rather than as a total. */
+function Pause({ s }: { s: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-white/15 px-2.5 py-1 text-xs font-semibold text-white/40">
+      ⏸ {s}s
+    </span>
+  );
+}
 
 function PersonaAvatar({ name, from, to }: { name: string; from: string; to: string }) {
   const initial = name.charAt(0);
@@ -288,6 +315,88 @@ export default function LandingPage() {
         </div>
       </section>
 
+
+      {/* ── The proof section ────────────────────────────────────────────────
+          The single strongest thing this product does, given a whole viewport and
+          shown as the real artefact rather than described in a feature card.
+
+          Everyone else's landing page claims "AI feedback". Nobody shows a
+          candidate their own sentence with the hesitations marked in it. That
+          image does the persuading — the copy just points at it. */}
+      <section className="relative z-10 overflow-hidden bg-[#07070b] py-28">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ background: 'radial-gradient(60% 50% at 50% 0%, rgba(0,138,230,0.12) 0%, transparent 70%)' }}
+        />
+        <div className="relative mx-auto max-w-4xl px-8">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-80px' }}
+            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="text-center"
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/35">
+              01 — What nobody tells you
+            </p>
+            <h2 className="mt-5 text-balance text-[clamp(1.9rem,4.4vw,3.2rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-white">
+              You won&apos;t fail because you didn&apos;t know the answer.
+              <br className="hidden sm:block" />
+              <span className="text-white/45"> You&apos;ll fail because of how you said it.</span>
+            </h2>
+          </motion.div>
+
+          {/* The artefact. */}
+          <motion.div
+            initial={{ opacity: 0, y: 26 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-60px' }}
+            transition={{ duration: 0.7, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-12 rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-sm sm:p-8"
+          >
+            <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/30">
+              Your exact words
+            </p>
+
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-3 text-lg leading-relaxed text-white/80 sm:text-xl">
+              <span>I think</span>
+              <Filler>um</Filler>
+              <span>the main thing is</span>
+              <Pause s={3} />
+              <Filler>like</Filler>
+              <Filler>you know</Filler>
+              <span>it just works</span>
+              <Pause s={4} />
+            </p>
+
+            <div className="mt-8 grid grid-cols-2 gap-6 border-t border-white/10 pt-6 sm:grid-cols-4">
+              {[
+                { v: '12', l: 'pauses' },
+                { v: '29s', l: 'of silence' },
+                { v: '10', l: 'filler words' },
+                { v: '125', l: 'words / min' },
+              ].map((m) => (
+                <div key={m.l}>
+                  <p className="text-2xl font-semibold tabular-nums text-white sm:text-3xl">{m.v}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-wider text-white/35">{m.l}</p>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          <motion.p
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6, delay: 0.3 }}
+            className="mt-8 text-center text-sm text-white/45"
+          >
+            Measured from your own answer, then replayed back to you — with the answer you
+            should have given, written next to it.
+          </motion.p>
+        </div>
+      </section>
 
       {/* ── Stats ──────────────────────────────────────────────────────────── */}
       <section className="relative z-10 border-y border-border/50 bg-surface/30 py-12">
