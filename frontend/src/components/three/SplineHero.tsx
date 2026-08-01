@@ -63,9 +63,15 @@ export function SplineHero({
    * figure shrunk into a corner.
    */
   zoom = 1.75,
+  /**
+   * Colour of the stage behind the scene. The bottom fade and the badge cover
+   * both paint in it, so a wrong value shows as a light rectangle on a dark hero.
+   */
+  stage = 'hsl(var(--background))',
 }: {
   className?: string;
   zoom?: number;
+  stage?: string;
 }) {
   const reduced = useReducedMotion();
   const [inView, setInView] = useState(false);
@@ -131,7 +137,7 @@ export function SplineHero({
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 bottom-0 h-28"
-        style={{ background: 'linear-gradient(to top, hsl(var(--background)) 8%, transparent)' }}
+        style={{ background: `linear-gradient(to top, ${stage} 8%, transparent)` }}
       />
 
       {/*
@@ -145,7 +151,7 @@ export function SplineHero({
       <div
         aria-hidden
         className="pointer-events-none absolute bottom-0 right-0 h-16 w-44"
-        style={{ background: 'hsl(var(--background))' }}
+        style={{ background: stage }}
       />
     </div>
   );
