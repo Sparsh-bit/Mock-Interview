@@ -19,6 +19,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
+import { SplineHero } from '@/components/three/SplineHero';
 import { cn } from '@/lib/utils';
 
 const FEATURES = [
@@ -160,8 +161,9 @@ export default function LandingPage() {
       </nav>
 
       {/* ── Hero ───────────────────────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-5xl px-8 pb-32 pt-20 text-center">
+      <section className="relative z-10 mx-auto grid max-w-7xl items-center gap-10 px-8 pb-28 pt-16 lg:grid-cols-[1.05fr_1fr]">
         <motion.div
+          className="text-center lg:text-left"
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
@@ -171,17 +173,17 @@ export default function LandingPage() {
             Cognizant Digital Nurture • Java FSE / GenC / GenC Next
           </div>
 
-          <h1 className="mx-auto max-w-4xl text-5xl font-bold tracking-tight sm:text-7xl">
+          <h1 className="mx-auto max-w-3xl text-5xl font-bold tracking-tight sm:text-6xl lg:mx-0 lg:text-7xl">
             The most realistic{' '}
             <span className="gradient-text">AI mock interview</span> for freshers
           </h1>
 
-          <p className="mx-auto mt-8 max-w-2xl text-lg text-muted-foreground">
+          <p className="mx-auto mt-7 max-w-xl text-lg text-muted-foreground lg:mx-0">
             Pick your company and program, add your resume, and step into a fluent, voice-first
             interview that adapts to your answers — then get a full readiness report scored at the end.
           </p>
 
-          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+          <div className="mt-9 flex flex-col items-center justify-center gap-4 sm:flex-row lg:justify-start">
             <Link
               href="/register"
               className="group inline-flex items-center gap-2 rounded-xl bg-primary px-8 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
@@ -197,6 +199,27 @@ export default function LandingPage() {
               <ChevronRight className="h-4 w-4" />
             </Link>
           </div>
+        </motion.div>
+
+        {/* The robot. Second in the DOM so the headline and CTA are painted and
+            readable before a ~2MB scene has finished downloading — and so a
+            screen reader reaches the actual content first. */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.94 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
+          className="relative order-last h-[340px] w-full sm:h-[440px] lg:h-[560px]"
+        >
+          {/* Glow behind the model so it sits in the page rather than on it. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 blur-3xl"
+            style={{
+              background:
+                'radial-gradient(45% 45% at 55% 50%, rgba(0,138,230,0.22) 0%, transparent 70%)',
+            }}
+          />
+          <SplineHero className="h-full w-full" />
         </motion.div>
 
         {/* Hero visual — plan approval + voice interview mock */}

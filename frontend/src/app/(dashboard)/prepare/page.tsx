@@ -9,7 +9,7 @@ import {
   Building2,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
+
   ChevronLeft,
   ExternalLink,
   Clock,
@@ -80,9 +80,6 @@ export default function PreparePage() {
   const [selected, setSelected] = useState<Recruiter | null>(null);
   const [weeks, setWeeks] = useState(8);
   const [hours, setHours] = useState(10);
-  // One topic open at a time — the plan should stay readable, not become a list of
-  // every link we have.
-  const [openTopic, setOpenTopic] = useState<string | null>(null);
 
   const { data: roadmap, isFetching } = useRoadmap(selected?.slug ?? null, weeks, hours);
   const { data: progress } = usePrepProgress();
@@ -318,10 +315,11 @@ export default function PreparePage() {
                 milestones={milestones}
                 accent={selected.accent}
                 onSelect={(id) => {
-                  const owner = roadmap?.phases
-                    .flatMap((ph) => ph.topics)
-                    .find((tp) => tp.subtopics.some((s) => s.id === id));
-                  if (owner) setOpenTopic(`${owner.phase}-${owner.name}`);
+                  // Nothing is collapsed any more, so clicking a milestone just
+                  // scrolls to it rather than expanding anything.
+                  document
+                    .getElementById(`sub-${id}`)
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }}
               />
             </Card>
@@ -387,27 +385,12 @@ export default function PreparePage() {
 
                     <div className="space-y-3">
                       {phase.topics.map((topic, ti) => {
-                        const key = `${phase.phase}-${topic.name}`;
-                        const isOpen = openTopic === key;
                         return (
-                          <div key={topic.name}>
-                            <button
-                              type="button"
-                              onClick={() => setOpenTopic(isOpen ? null : key)}
-                              className="group/topic w-full text-left"
-                              aria-expanded={isOpen}
-                            >
+                          <div key={topic.name} className="rounded-xl border border-border/50 p-4">
+                            <div>
                               <div className="mb-1.5 flex items-baseline justify-between gap-3 text-xs">
-                                <span className="flex items-center gap-1.5 font-semibold">
+                                <span className="flex items-center gap-1.5 text-sm font-bold">
                                   {topic.name}
-                                  {topic.resources.length > 0 && (
-                                    <ChevronDown
-                                      className={cn(
-                                        'h-3 w-3 text-muted-foreground transition-transform',
-                                        isOpen && 'rotate-180',
-                                      )}
-                                    />
-                                  )}
                                 </span>
                                 <span className="flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums">
                                   {topic.subtopics.length > 0 && (
@@ -428,20 +411,15 @@ export default function PreparePage() {
                                   transition={{ duration: 0.7, delay: 0.05 * ti + 0.1 * i, ease: [0.16, 1, 0.3, 1] }}
                                 />
                               </div>
-                            </button>
+                            </div>
 
-                            {/* Resources, revealed on demand. Collapsed by default so the
-                                plan stays scannable — twelve topics with four links each
-                                is a wall, not a roadmap. */}
-                            <AnimatePresence initial={false}>
-                              {isOpen && topic.resources.length > 0 && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                                  className="overflow-hidden"
-                                >
+                            {/* EVERYTHING VISIBLE. This was an accordion that opened one
+                                topic at a time, so reaching a video meant expand, scroll,
+                                click, collapse, expand the next. The links ARE the content
+                                — hiding them behind a click to keep the page "scannable"
+                                optimised for the wrong thing. */}
+                            <div>
+                                <div>
                                   <div className="mt-3 space-y-3 border-l-2 pl-3" style={{ borderColor: `${selected.accent}44` }}>
                                     {/* Subtopics — the actual checklist. Ticking one
                                         persists immediately and moves the road. */}
@@ -452,7 +430,8 @@ export default function PreparePage() {
                                           return (
                                             <div
                                               key={s.id}
-                                              className="group/sub rounded-lg border border-border/50 bg-surface/40 p-2.5"
+                                              id={`sub-${s.id}`}
+                                              className="group/sub rounded-lg border border-border/50 bg-surface/40 p-2.5 transition-colors hover:border-primary/40"
                                             >
                                               <div className="flex items-start gap-2.5">
                                                 <button
@@ -599,9 +578,8 @@ export default function PreparePage() {
                                       );
                                     })}
                                   </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
+                                </div>
+                            </div>
                           </div>
                         );
                       })}
