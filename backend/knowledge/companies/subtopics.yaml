@@ -20,6 +20,22 @@
 #
 # Re-run the check before each hiring cycle. A dead link in a study plan wastes an
 # evening and costs trust in everything else on the page.
+#
+# ─── WHY SOME SUBTOPICS HAVE NO VIDEO ────────────────────────────────────────
+# Aptitude, English, System Design, Behavioural and Cloud carry a doc and a
+# practice link but NO video. That is deliberate.
+#
+# Every playlist verified for this file is a CS/programming course — Striver and
+# Kunal on DSA, Gate Smashers on DBMS/OS/CN, Abdul Bari on algorithms. An earlier
+# version of this file attached those to every topic, which meant "Percentages,
+# ratio & averages" linked to a Java DSA playlist. A wrong link in a study plan
+# costs a candidate an evening and costs us their trust in everything else on the
+# page, so the field is now absent rather than wrong.
+#
+# To add them: find a real playlist for the topic, verify it resolves (fetch it
+# and check the <title> — YouTube returns HTTP 200 with the string "Video
+# unavailable" in its JS bundle even for live pages, so the status code and a
+# naive grep both lie), then add it here.
 
 verified: 2026-07-30
 
@@ -170,73 +186,57 @@ subtopics:
   aptitude:
     - name: "Percentages, ratio & averages"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Aptitude", url: "https://www.indiabix.com/aptitude/questions-and-answers/" }
     - name: "Time, speed, distance & work"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Time and Work", url: "https://www.indiabix.com/aptitude/time-and-work/" }
     - name: "Permutations, combinations & probability"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Probability", url: "https://www.indiabix.com/aptitude/probability/" }
     - name: "Logical reasoning & puzzles"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Logical Reasoning", url: "https://www.indiabix.com/logical-reasoning/questions-and-answers/" }
     - name: "Data interpretation"
       minutes: 90
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Data Interpretation", url: "https://www.indiabix.com/data-interpretation/questions-and-answers/" }
 
   english:
     - name: "Reading comprehension"
       minutes: 90
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Verbal Ability", url: "https://www.indiabix.com/verbal-ability/questions-and-answers/" }
     - name: "Grammar & error spotting"
       minutes: 90
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Spotting Errors", url: "https://www.indiabix.com/verbal-ability/spotting-errors/" }
     - name: "Writing an essay under time pressure"
       minutes: 90
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "IndiaBix — Verbal Ability", url: "https://www.indiabix.com/verbal-ability/questions-and-answers/" }
 
   system_design:
     - name: "Scaling, load balancing & caching"
       minutes: 150
-      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
       doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
     - name: "Sharding & replication"
       minutes: 120
-      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
       doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
     - name: "Design a URL shortener, end to end"
       minutes: 120
-      video: { title: "Algorithms", channel: "Abdul Bari", url: "https://www.youtube.com/playlist?list=PLDN4rrl48XKpZkf03iYFl-O29szjTrs_O" }
       doc: { title: "System Design Primer", url: "https://github.com/donnemartin/system-design-primer" }
 
   behavioural:
     - name: "The STAR method"
       minutes: 60
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
     - name: "Your project story, written down"
       minutes: 90
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
     - name: "Strengths, weaknesses & 'why this company'"
       minutes: 60
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "The Muse — STAR method", url: "https://www.themuse.com/advice/star-interview-method" }
     - name: "Amazon Leadership Principles"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "Amazon — Leadership Principles", url: "https://www.amazon.jobs/content/en/our-workplace/leadership-principles" }
 
   cloud:
     - name: "Cloud fundamentals & shared responsibility"
       minutes: 120
-      video: { title: "Java + DSA + Interview Preparation", channel: "Kunal Kushwaha", url: "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ" }
       doc: { title: "AWS Cloud Practitioner Essentials", url: "https://aws.amazon.com/training/digital/aws-cloud-practitioner-essentials/" }
