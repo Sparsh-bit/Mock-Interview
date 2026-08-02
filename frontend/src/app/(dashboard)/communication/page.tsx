@@ -365,7 +365,7 @@ export default function CommunicationPage() {
                 onClick={toggleMic}
                 disabled={evaluate.isPending}
                 className={cn(
-                  'relative flex h-24 w-24 items-center justify-center rounded-full transition-all disabled:opacity-50',
+                  'relative flex h-24 w-24 items-center justify-center rounded-full transition-[color,background-color,border-color,box-shadow,transform,opacity] disabled:opacity-50',
                   stt.listening ? 'bg-destructive text-destructive-foreground shadow-glow' : 'bg-primary text-primary-foreground shadow-glow hover:shadow-glow-lg'
                 )}
               >

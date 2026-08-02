@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 
 export const buttonVariants = cva(
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium ' +
-    'transition-all ease-out-expo disabled:pointer-events-none disabled:opacity-40 ' +
+    'transition-[color,background-color,border-color,box-shadow,transform,opacity] ease-out-expo disabled:pointer-events-none disabled:opacity-40 ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ' +
     'focus-visible:ring-offset-background',
   {

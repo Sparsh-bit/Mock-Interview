@@ -199,6 +199,23 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  /* The dashboard's scroll container.
+
+     `overflow: auto` alone leaves the browser assuming a descendant might paint
+     outside the box, so it cannot cheaply bound the damage on each scroll frame.
+     `contain: paint` states that nothing escapes, which is true here — the
+     content is inset and clipped anyway — and lets it clip once and translate a
+     cached layer instead of re-evaluating the subtree.
+
+     `overscroll-behavior: contain` stops a scroll that reaches the end of this
+     container from chaining to the document and triggering the browser's
+     rubber-band, which on macOS is the exact "sticky then jumpy" feel that reads
+     as lag. */
+  main[class*='overflow-auto'] {
+    contain: paint;
+    overscroll-behavior: contain;
+  }
+
   body {
     @apply bg-background text-foreground paper-grain;
     /* Prefer the platform's SF Pro on Apple devices, Inter elsewhere. */
@@ -333,7 +350,7 @@
   }
 
   .glass-hover {
-    @apply glass ease-out-expo transition-all duration-300;
+    @apply glass ease-out-expo transition-shadow duration-300;
   }
 
   .glass-hover:hover {
@@ -341,25 +358,32 @@
   }
 
   /* ── Paper grain ────────────────────────────────────────────────────────
-     A fractal-noise tooth over the page ground, at 3.5% opacity.
+     A fractal-noise tooth over the page ground.
 
-     This is the cheapest and most effective thing on the page. A perfectly
-     even colour field is the single most machine-looking surface there is —
-     nothing physical is that uniform. Breaking it up with a little noise is
-     what separates "a warm beige div" from "paper". It is one inlined SVG, no
-     network request, no layout cost, and it sits behind everything at z-0
-     with pointer-events off so it can never intercept a click.
+     A perfectly even colour field is the most machine-looking surface there
+     is — nothing physical is that uniform — so breaking it up with a little
+     noise is what separates "a warm beige div" from paper. baseFrequency 0.82
+     keeps the grain fine enough to read as tooth rather than static at 1x, and
+     it does not moiré against text.
 
-     baseFrequency 0.82 keeps the grain fine enough to read as tooth rather
-     than as visible static at 1x, and it does not moiré against text.        */
-  .paper-grain::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    opacity: 0.035;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+     A BACKGROUND LAYER, NOT AN OVERLAY. This was `::after { position: fixed;
+     inset: 0; opacity: 0.035 }` — a full-viewport composited layer sitting
+     ABOVE every other element. That is the expensive way to do it: the
+     compositor has to blend a 1440x950 translucent quad over the scrolling
+     content on every single frame, and on integrated graphics that alone can
+     cost frames on a dashboard that is otherwise doing nothing.
+
+     Painting it as part of the element's own background instead means it is
+     rasterised once into that element's layer and costs nothing to scroll. The
+     3.5% is baked into the SVG as `opacity` on the rect, because CSS opacity
+     would apply to the element's whole content, not just its background — and
+     that is exactly what forced the separate layer in the first place.
+
+     `background-color` is repeated in the shorthand-ish pair below so the noise
+     composites over the paper colour rather than over nothing.               */
+  .paper-grain {
+    background-color: hsl(var(--background));
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
   }
 
   /* ── Photographic grade ─────────────────────────────────────────────────

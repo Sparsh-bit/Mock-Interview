@@ -15,8 +15,14 @@ export default async function DashboardLayout({
     redirect('/login');
   }
 
+  // `paper-grain` goes on this shell, not only on <body>. This div is opaque
+  // and covers the viewport, so a body-level texture would be hidden behind it.
+  // Here the grain is painted once into this element's layer and shows through
+  // <main>, which has no background of its own — a static backdrop the scrolling
+  // content moves over, costing nothing per frame. As a fixed overlay above
+  // everything, it cost a full-viewport translucent blend on every scroll frame.
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden bg-background paper-grain">
       {/* Sidebar */}
       <AppSidebar user={user} />
 

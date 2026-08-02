@@ -147,7 +147,7 @@ export default function DemoReportPage() {
                 <div className="mt-3 flex items-center gap-3">
                   <div className="flex-1 overflow-hidden rounded-full bg-muted">
                     <div
-                      className="h-2 bg-gradient-to-r from-primary to-accent-violet transition-all"
+                      className="h-2 bg-gradient-to-r from-primary to-accent-violet transition-[color,background-color,border-color,box-shadow,transform,opacity]"
                       style={{ width: `${(value / 10) * 100}%` }}
                     />
                   </div>

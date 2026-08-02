@@ -213,7 +213,7 @@ export default function ReportDetailPage() {
               generated per question, on request. */}
           <button
             onClick={() => router.push(`/report/${sessionId}/analysis`)}
-            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/20"
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/20"
           >
             <ListChecks className="h-3.5 w-3.5" />
             Detailed Analysis

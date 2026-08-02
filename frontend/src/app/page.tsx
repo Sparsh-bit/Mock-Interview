@@ -80,7 +80,7 @@ const ROUNDS = [
 
 /** The primary call to action. Indigo, because indigo is the product. */
 const CTA =
-  'group inline-flex items-center gap-2 rounded-full bg-accent-indigo px-6 py-3 text-sm font-medium text-white shadow-elev-1 transition-all hover:bg-accent-indigo-ink hover:shadow-elev-2';
+  'group inline-flex items-center gap-2 rounded-full bg-accent-indigo px-6 py-3 text-sm font-medium text-white shadow-elev-1 transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-accent-indigo-ink hover:shadow-elev-2';
 
 export default function LandingPage() {
   return (

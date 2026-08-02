@@ -32,8 +32,18 @@ export function AppHeader({ user }: HeaderProps) {
   const pathname = usePathname();
   const title = getPageTitle(pathname);
 
+  // Opaque, and no backdrop-blur.
+  //
+  // Nothing scrolls behind this header — <main> begins exactly at its bottom
+  // edge, measured — so the blur cost a per-frame backdrop re-sample across
+  // 1200x56 and changed no pixel. The translucency was equally pointless:
+  // bg-background/70 was compositing over bg-background, the same colour.
+  //
+  // `backdrop-blur-xl/60` was also not a real class. Tailwind's backdrop-blur
+  // takes no opacity modifier, so it emitted nothing, and the `backdrop-blur-md`
+  // further along the same string was what actually applied.
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border/60 bg-background/70 backdrop-blur-xl/60 px-6 backdrop-blur-md">
+    <header className="flex h-14 items-center justify-between border-b border-border/60 bg-background px-6">
       {/* Page title */}
       <div>
         <h2 className="text-sm font-semibold tracking-tight">{title}</h2>

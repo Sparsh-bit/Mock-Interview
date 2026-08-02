@@ -158,7 +158,7 @@ export default function ProfilePage() {
                   rows={4}
                   value={formData.bio}
                   onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                  className="ease-out-expo w-full resize-none rounded-lg border border-border bg-surface p-4 text-sm transition-all focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  className="ease-out-expo w-full resize-none rounded-lg border border-border bg-surface p-4 text-sm transition-[color,background-color,border-color,box-shadow,transform,opacity] focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
                   placeholder="Brief overview of your technical background, skills, and goals…"
                 />
                 <p className="mt-2 text-[11px] text-muted-foreground">

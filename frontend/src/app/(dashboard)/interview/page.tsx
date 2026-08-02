@@ -122,7 +122,7 @@ function InterviewSetup() {
             <button
               onClick={handleStart}
               disabled={approvePlan.isPending}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 disabled:opacity-50"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/90 disabled:opacity-50"
             >
               {approvePlan.isPending ? (
                 <>
@@ -187,7 +187,7 @@ function InterviewSetup() {
                       setSelectedTrackId(c.tracks[0].id);
                       setCompany(c.name);
                     }}
-                    className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all ${
+                    className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-[color,background-color,border-color,box-shadow,transform,opacity] ${
                       active
                         ? 'border-primary bg-primary/10 text-primary shadow-glow'
                         : 'border-border/60 bg-surface text-foreground/80 hover:border-primary/50'
@@ -215,7 +215,7 @@ function InterviewSetup() {
                         type="button"
                         key={track.id}
                         onClick={() => setSelectedTrackId(track.id)}
-                        className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm transition-all ${
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm transition-[color,background-color,border-color,box-shadow,transform,opacity] ${
                           isSelected
                             ? 'border-primary bg-primary/10 font-semibold text-primary'
                             : 'border-border/60 bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground'
@@ -326,7 +326,7 @@ function InterviewSetup() {
         <button
           onClick={handleGenerate}
           disabled={createPlan.isPending || !selectedTrackId}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/90 disabled:opacity-50"
         >
           {createPlan.isPending ? (
             <>

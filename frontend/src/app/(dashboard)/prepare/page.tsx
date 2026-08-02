@@ -87,7 +87,7 @@ function CompanyCard({ r, onPick }: { r: Recruiter; onPick: () => void }) {
     <button
       type="button"
       onClick={onPick}
-      className="group relative overflow-hidden rounded-2xl border border-border bg-surface-elevated p-5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      className="group relative overflow-hidden rounded-2xl border border-border bg-surface-elevated p-5 text-left transition-[color,background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       {/* A single hairline of the company's colour. The whole card is not tinted —
           twelve tinted cards in a grid is a colour-chart, not a page. */}
@@ -100,7 +100,7 @@ function CompanyCard({ r, onPick }: { r: Recruiter; onPick: () => void }) {
         >
           {r.name.slice(0, 2).toUpperCase()}
         </div>
-        <ArrowRight className="mt-1 h-4 w-4 text-muted-foreground/40 transition-all group-hover:translate-x-0.5 group-hover:text-foreground" />
+        <ArrowRight className="mt-1 h-4 w-4 text-muted-foreground/40 transition-[color,background-color,border-color,box-shadow,transform,opacity] group-hover:translate-x-0.5 group-hover:text-foreground" />
       </div>
 
       <h3 className="mt-4 text-base font-semibold tracking-[-0.01em]">{r.name}</h3>

@@ -67,7 +67,14 @@ export function AppSidebar({ user }: SidebarProps) {
       // `bg-surface` is the warm recessed fill, so the rail reads as part of the
       // same sheet of paper as the page. At 70% over a white body it came out
       // cooler than the content beside it.
-      className="relative flex flex-shrink-0 flex-col border-r border-border/70 bg-surface backdrop-blur-xl"
+      //
+      // NO backdrop-blur. It was here, and it was doing nothing at all: the
+      // sidebar sits BESIDE <main>, never over it — measured, aside.right is
+      // exactly main.left — so no content ever passes behind it, and the
+      // background is opaque anyway so the backdrop is never visible. What it
+      // did do was force the compositor to re-sample and re-blur a 240x950
+      // region every frame the page scrolled.
+      className="relative flex flex-shrink-0 flex-col border-r border-border/70 bg-surface"
     >
       {/* Logo */}
       <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center')}>

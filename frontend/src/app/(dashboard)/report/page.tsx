@@ -202,7 +202,7 @@ export default function ReportsListPage() {
           </p>
           <Link
             href="/interview"
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-all shadow-glow"
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-[color,background-color,border-color,box-shadow,transform,opacity] shadow-glow"
           >
             <Play className="h-4 w-4" /> Start Interview
           </Link>
