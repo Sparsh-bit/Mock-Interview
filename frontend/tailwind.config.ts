@@ -85,13 +85,17 @@ const config: Config = {
         'accent-cyan': 'hsl(var(--accent-cyan))',
         'accent-emerald': 'hsl(var(--accent-emerald))',
       },
+      // Mapped onto the ladder in globals.css so the Tailwind name and the
+      // design step mean the same thing. See the comment there for the nesting
+      // rule these exist to make possible.
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'var(--radius-sm)',
-        xl: 'var(--radius-lg)',
-        '2xl': 'var(--radius-xl)',
+        sm: 'var(--radius-xs)',   //  6px — chips
+        md: 'var(--radius-sm)',   // 10px — inputs, buttons
+        lg: 'var(--radius)',      // 14px — inner panels, rows
+        xl: 'var(--radius-lg)',   // 20px — cards
+        '2xl': 'var(--radius-xl)', // 28px — page surfaces, sheets
       },
+
       transitionTimingFunction: {
         'out-expo': 'var(--ease-out-expo)',
         spring: 'var(--ease-spring)',
@@ -150,6 +154,14 @@ const config: Config = {
         glow: 'glow 2s ease-in-out infinite',
       },
       boxShadow: {
+        // The elevation ladder. Each level pairs a wide ambient shadow with a
+        // tighter contact shadow, which is how a real object sits on a surface;
+        // a single large blur reads as a sticker. Values live in globals.css so
+        // they can differ between light and dark — the same alpha over a dark
+        // surface is invisible.
+        'elev-1': 'var(--elev-1)',
+        'elev-2': 'var(--elev-2)',
+        'elev-3': 'var(--elev-3)',
         // Soft, diffuse Apple-style elevation — no colored glows.
         glow: '0 1px 2px rgba(20,20,25,0.04), 0 8px 24px rgba(20,20,25,0.06)',
         'glow-lg': '0 2px 4px rgba(20,20,25,0.05), 0 20px 48px rgba(20,20,25,0.10)',

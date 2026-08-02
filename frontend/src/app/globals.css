@@ -54,10 +54,35 @@
     --ring: 211 100% 45%;
 
     /* Radius — Apple card/control curvature (softened/rounder) */
-    --radius: 1.125rem;
-    --radius-sm: 0.75rem;
-    --radius-lg: 1.5rem;
-    --radius-xl: 2rem;
+    /* ── Radius ladder ───────────────────────────────────────────────────
+       A LADDER, not four arbitrary sizes. The steps exist so that nesting works:
+
+         inner radius = outer radius − the padding between them
+
+       A 28px surface with 16px of padding holds a 12px element. Put the same
+       radius inside itself and the curves run non-concentric — the single most
+       reliable tell of a UI nobody considered. Every step below is 8pt-aligned so
+       the arithmetic always lands on another step.
+
+         xs  6px   chips, tags, tiny controls
+         sm 10px   inputs, buttons
+         md 14px   inner panels, list rows
+         lg 20px   cards
+         xl 28px   page surfaces, sheets, modals                              */
+    --radius-xs: 0.375rem;
+    --radius-sm: 0.625rem;
+    --radius: 0.875rem;
+    --radius-lg: 1.25rem;
+    --radius-xl: 1.75rem;
+
+    /* ── Elevation ───────────────────────────────────────────────────────
+       Depth comes from LAYERING and a hairline, not from a heavy drop shadow.
+       Each level pairs a near-invisible ambient shadow with a tighter contact
+       shadow — the way a real object sits on a surface. Level 0 is flat with a
+       border only, which is where most of the interface should live.          */
+    --elev-1: 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 1px 3px 0 rgb(0 0 0 / 0.04);
+    --elev-2: 0 2px 4px -2px rgb(0 0 0 / 0.08), 0 4px 12px -2px rgb(0 0 0 / 0.06);
+    --elev-3: 0 8px 16px -8px rgb(0 0 0 / 0.12), 0 16px 40px -12px rgb(0 0 0 / 0.10);
 
     /* Secondary accents — restrained, used sparingly for category/stat variety */
     --accent-violet: 245 58% 62%;     /* #5e5ce6 indigo */
@@ -319,4 +344,15 @@
     font-size: 9pt;
     color: #555;
   }
+}
+
+
+/* ─── Numerals ──────────────────────────────────────────────────────────────
+   Any number that can change must be tabular, or the digits shift width as it
+   updates and the whole row twitches. Applied by default to elements that hold
+   live values; `font-variant-numeric` is inherited, so this covers children. */
+.tabular,
+[data-numeric] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
