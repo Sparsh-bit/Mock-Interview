@@ -64,7 +64,7 @@ export function PresenceMonitor() {
         )}
         {active && (
           <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-red-500" /> Live · on device
+            <span className="h-1.5 w-1.5 rounded-full bg-accent-coral" /> Live · on device
           </div>
         )}
         <button
@@ -77,13 +77,13 @@ export function PresenceMonitor() {
       </div>
 
       {error ? (
-        <p className="p-4 text-xs text-red-600">{error}</p>
+        <p className="p-4 text-xs text-accent-coral-ink">{error}</p>
       ) : (
         <div className="grid grid-cols-2 gap-px bg-border/60">
           {/* Eye contact */}
           <div className="bg-surface-elevated p-4">
             <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              {metrics.lookingAtScreen ? <Eye className="h-3.5 w-3.5 text-emerald-600" /> : <EyeOff className="h-3.5 w-3.5 text-amber-600" />}
+              {metrics.lookingAtScreen ? <Eye className="h-3.5 w-3.5 text-accent-emerald-ink" /> : <EyeOff className="h-3.5 w-3.5 text-accent-amber-ink" />}
               Eye contact
             </div>
             <p className="text-2xl font-semibold tracking-tight">

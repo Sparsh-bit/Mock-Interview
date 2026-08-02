@@ -75,7 +75,7 @@ export default function DemoReportPage() {
           </Link>
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wider text-primary">Sample Report</p>
-            <h1 className="text-3xl font-bold">{sampleReport.session_name}</h1>
+            <h1 className="text-3xl font-semibold">{sampleReport.session_name}</h1>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
@@ -87,8 +87,8 @@ export default function DemoReportPage() {
               <span
                 className={`rounded-full px-2 py-1 text-xs font-semibold ${
                   sampleReport.status === 'completed'
-                    ? 'bg-emerald-500/10 text-emerald-600'
-                    : 'bg-amber-500/10 text-amber-600'
+                    ? 'bg-accent-emerald/10 text-accent-emerald-ink'
+                    : 'bg-accent-amber/10 text-accent-amber-ink'
                 }`}
               >
                 {sampleReport.status}
@@ -139,7 +139,7 @@ export default function DemoReportPage() {
 
         {/* Detailed Scores */}
         <div>
-          <h2 className="mb-4 text-xl font-bold">Performance Breakdown</h2>
+          <h2 className="mb-4 text-xl font-semibold">Performance Breakdown</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             {scoreBreakdown.map(({ label, value }) => (
               <div key={label} className="glass rounded-lg border border-border/50 p-4">
@@ -160,7 +160,7 @@ export default function DemoReportPage() {
 
         {/* Q&A with Scores */}
         <div>
-          <h2 className="mb-4 text-xl font-bold">Question-by-Question Review</h2>
+          <h2 className="mb-4 text-xl font-semibold">Question-by-Question Review</h2>
           <div className="space-y-4">
             {answers.map((item, idx) => (
               <div key={idx} className="glass rounded-lg border border-border/50 p-6">
@@ -195,24 +195,24 @@ export default function DemoReportPage() {
 
         {/* Strengths & Improvements */}
         <div className="grid gap-6 sm:grid-cols-2">
-          <div className="glass rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-6">
-            <h3 className="mb-4 font-semibold text-emerald-600">Strengths</h3>
+          <div className="glass rounded-lg border border-accent-emerald/20 bg-accent-emerald/5 p-6">
+            <h3 className="mb-4 font-semibold text-accent-emerald-ink">Strengths</h3>
             <ul className="space-y-2">
               {strengths.map((s, i) => (
                 <li key={i} className="flex gap-3 text-sm">
-                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-emerald" />
                   <span className="text-foreground/80">{s}</span>
                 </li>
               ))}
             </ul>
           </div>
 
-          <div className="glass rounded-lg border border-amber-500/20 bg-amber-500/5 p-6">
-            <h3 className="mb-4 font-semibold text-amber-600">To Improve</h3>
+          <div className="glass rounded-lg border border-accent-amber/20 bg-accent-amber/5 p-6">
+            <h3 className="mb-4 font-semibold text-accent-amber-ink">To Improve</h3>
             <ul className="space-y-2">
               {improvements.map((im, i) => (
                 <li key={i} className="flex gap-3 text-sm">
-                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-amber" />
                   <span className="text-foreground/80">{im}</span>
                 </li>
               ))}

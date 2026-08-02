@@ -41,8 +41,8 @@ export function DataError({
 
   return (
     <Card className="mx-auto mt-10 max-w-xl border-destructive/20 p-8 text-center">
-      <AlertTriangle className="mx-auto mb-4 h-9 w-9 text-amber-500" />
-      <h2 className="mb-2 text-lg font-bold">{title}</h2>
+      <AlertTriangle className="mx-auto mb-4 h-9 w-9 text-accent-amber-ink" />
+      <h2 className="mb-2 text-lg font-semibold">{title}</h2>
       <p className="text-sm text-muted-foreground">
         {message || 'Something went wrong fetching this data.'}
       </p>

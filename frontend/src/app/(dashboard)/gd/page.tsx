@@ -12,6 +12,7 @@ import { useSpeechRecognition } from '@/hooks/useSpeech';
 import { useGD, useGDTopics, type GDTurn, type GDEvaluation } from '@/hooks/useGD';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
@@ -46,7 +47,7 @@ const fmtClock = (s: number) =>
 const PANEL_COLORS: Record<string, string> = {
   Riya: 'bg-accent-violet/15 text-accent-violet',
   Arjun: 'bg-primary/15 text-primary',
-  Meera: 'bg-emerald-500/15 text-emerald-600',
+  Meera: 'bg-accent-emerald/15 text-accent-emerald-ink',
 };
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
@@ -266,10 +267,11 @@ export default function GDPage() {
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-2xl space-y-8">
         <motion.div variants={fadeUp}>
-          <h1 className="text-2xl font-bold tracking-tight">Group Discussion</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Practice a GD with AI participants (Riya, Arjun, Meera). They make points; you jump in with yours by voice. At the end you get scored on contribution, relevance, clarity, and engagement.
-          </p>
+          <PageHeader
+            eyebrow="Practice"
+            title="Group Discussion"
+            description="Practice a GD with AI participants (Riya, Arjun, Meera). They make points; you jump in with yours by voice. At the end you get scored on contribution, relevance, clarity, and engagement."
+          />
         </motion.div>
 
         <motion.div variants={fadeUp}>
@@ -302,7 +304,7 @@ export default function GDPage() {
 
   // ─── Results ────────────────────────────────────────────────────────────
   if (phase === 'results' && result) {
-    const tone = result.overall_score >= 7 ? 'text-emerald-600' : result.overall_score >= 4 ? 'text-amber-600' : 'text-red-600';
+    const tone = result.overall_score >= 7 ? 'text-accent-emerald-ink' : result.overall_score >= 4 ? 'text-accent-amber-ink' : 'text-accent-coral-ink';
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.06)} className="mx-auto max-w-3xl space-y-6 pb-12">
         <motion.div variants={fadeUp}>
@@ -327,17 +329,17 @@ export default function GDPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               {result.strengths.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">Strengths</p>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-emerald-ink">Strengths</p>
                   <ul className="space-y-1 text-sm text-foreground/80">
-                    {result.strengths.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-500" />{s}</li>)}
+                    {result.strengths.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-emerald" />{s}</li>)}
                   </ul>
                 </div>
               )}
               {result.improvements.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-amber-600">To improve</p>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-amber-ink">To improve</p>
                   <ul className="space-y-1 text-sm text-foreground/80">
-                    {result.improvements.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-500" />{s}</li>)}
+                    {result.improvements.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-amber" />{s}</li>)}
                   </ul>
                 </div>
               )}
@@ -354,13 +356,13 @@ export default function GDPage() {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topic</p>
-          <h2 className="text-lg font-bold leading-snug">{topic}</h2>
+          <h2 className="text-lg font-semibold leading-snug">{topic}</h2>
         </div>
         <div className="shrink-0 text-right">
           <p
             className={cn(
               'font-mono text-2xl font-bold tabular-nums',
-              timeLeft <= CLOSING_WINDOW_SEC ? 'text-amber-600' : 'text-foreground'
+              timeLeft <= CLOSING_WINDOW_SEC ? 'text-accent-amber-ink' : 'text-foreground'
             )}
           >
             {fmtClock(timeLeft)}
@@ -382,7 +384,7 @@ export default function GDPage() {
                 : `panel speaks again in ${nextTurnIn}s`}
           </span>
           {ignored > 0 && (
-            <span className="font-semibold text-red-600">
+            <span className="font-semibold text-accent-coral-ink">
               {ignored} question{ignored === 1 ? '' : 's'} unanswered
             </span>
           )}
@@ -391,7 +393,7 @@ export default function GDPage() {
           <div
             className={cn(
               'h-full rounded-full transition-[width] duration-1000 ease-linear',
-              awaiting ? 'bg-red-500' : 'bg-primary/60'
+              awaiting ? 'bg-accent-coral' : 'bg-primary/60'
             )}
             style={{ width: `${(1 - nextTurnIn / PANEL_INTERVAL_SEC) * 100}%` }}
           />
@@ -403,9 +405,9 @@ export default function GDPage() {
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3"
+          className="rounded-xl border border-accent-coral/30 bg-accent-coral/10 px-4 py-3"
         >
-          <p className="text-xs font-bold uppercase tracking-wider text-red-600">
+          <p className="text-xs font-bold uppercase tracking-wider text-accent-coral-ink">
             They&apos;re asking you directly
           </p>
           {lastPanelLine && (
@@ -413,7 +415,7 @@ export default function GDPage() {
               <span className="font-semibold">{lastPanelLine.speaker}:</span> {lastPanelLine.text}
             </p>
           )}
-          <p className="mt-1.5 text-[11px] text-red-600/80">
+          <p className="mt-1.5 text-[11px] text-accent-coral-ink/80">
             Answer before the panel moves on — silence costs you marks.
           </p>
         </motion.div>

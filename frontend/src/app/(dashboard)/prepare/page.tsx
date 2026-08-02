@@ -28,6 +28,7 @@ import {
   type RoadmapTopic,
 } from '@/hooks/useData';
 import { cn } from '@/lib/utils';
+import { brandFill, brandInk } from '@/lib/brand-accent';
 
 export const runtime = 'edge';
 
@@ -46,7 +47,8 @@ export const runtime = 'edge';
  *   * no nested cards — one surface, sections divided by rules
  *   * nothing collapsed — every link is reachable without a click
  *   * the controls are sticky, so changing weeks never means scrolling back up
- *   * one accent (the company's own colour), carrying state only — progress and
+ *   * one accent (the company's hue, re-rendered at the palette's own
+ *     saturation and lightness — lib/brand-accent.ts), carrying state only — progress and
  *     completion. Never decoration.
  *
  * Radii follow the nesting rule: the page surface is rounded-2xl (16px) with 16px
@@ -62,9 +64,25 @@ const TIERS = [
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
+/**
+ * Both views of this page — pick a company, then read the plan — open with a
+ * title in this treatment. Larger than the standard PageHeader on purpose: this
+ * is the entry screen of a flow, not a section of the app. Weight and tracking
+ * still match it, so it reads as the same family at a bigger size.
+ *
+ * It is a constant because the two h1s previously carried identical hand-typed
+ * classes, which is exactly the setup where a change lands on one and misses
+ * the other.
+ */
+const FLOW_TITLE =
+  'mt-2 text-[clamp(1.9rem,3.4vw,2.5rem)] font-medium leading-[1.1] tracking-[-0.03em]';
+
 // ─── Company picker ───────────────────────────────────────────────────────────
 
 function CompanyCard({ r, onPick }: { r: Recruiter; onPick: () => void }) {
+  // The company's hue at the palette's saturation and lightness — never the
+  // raw brand hex. See lib/brand-accent.ts for why.
+  const accent = brandFill(r.accent);
   return (
     <button
       type="button"
@@ -73,12 +91,12 @@ function CompanyCard({ r, onPick }: { r: Recruiter; onPick: () => void }) {
     >
       {/* A single hairline of the company's colour. The whole card is not tinted —
           twelve tinted cards in a grid is a colour-chart, not a page. */}
-      <span aria-hidden className="absolute inset-x-0 top-0 h-px" style={{ backgroundColor: r.accent }} />
+      <span aria-hidden className="absolute inset-x-0 top-0 h-px" style={{ backgroundColor: accent }} />
 
       <div className="flex items-start justify-between gap-3">
         <div
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white"
-          style={{ backgroundColor: r.accent }}
+          style={{ backgroundColor: accent }}
         >
           {r.name.slice(0, 2).toUpperCase()}
         </div>
@@ -223,7 +241,7 @@ export default function PreparePage() {
 
   // ── The plan ───────────────────────────────────────────────────────────────
   if (selected) {
-    const accent = selected.accent;
+    const accent = brandFill(selected.accent);
 
     return (
       <div className="mx-auto max-w-4xl pb-24">
@@ -325,7 +343,7 @@ export default function PreparePage() {
           <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             Study plan
           </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.025em] sm:text-4xl">
+          <h1 className={FLOW_TITLE}>
             {selected.name}
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
@@ -425,7 +443,7 @@ export default function PreparePage() {
                   <button
                     onClick={() => router.push(`/quiz?topic=${encodeURIComponent(topic.name)}&autostart=1`)}
                     className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium transition-opacity hover:opacity-70"
-                    style={{ color: accent }}
+                    style={{ color: brandInk(selected.accent) }}
                   >
                     <Target className="h-3.5 w-3.5" />
                     Quiz yourself on {topic.name}
@@ -479,7 +497,7 @@ export default function PreparePage() {
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           Step one
         </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.025em] sm:text-4xl">
+        <h1 className={FLOW_TITLE}>
           Who are you targeting?
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">

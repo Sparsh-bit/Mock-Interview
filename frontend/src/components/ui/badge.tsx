@@ -9,10 +9,12 @@ const badgeVariants = cva(
       variant: {
         neutral: 'border-border text-muted-foreground bg-secondary',
         primary: 'border-primary/20 text-primary bg-primary/10',
-        success: 'border-emerald-200 text-emerald-700 bg-emerald-50',
-        warning: 'border-amber-200 text-amber-700 bg-amber-50',
-        danger: 'border-red-200 text-red-700 bg-red-50',
-        violet: 'border-accent-violet/20 text-accent-violet bg-accent-violet/10',
+        success: 'border-accent-emerald/25 text-accent-emerald-ink bg-accent-emerald-soft',
+        warning: 'border-accent-amber/30 text-accent-amber-ink bg-accent-amber-soft',
+        danger: 'border-accent-coral/25 text-accent-coral-ink bg-accent-coral-soft',
+        // Behavioural / HR. Named `violet` for its callers; plum is the colour.
+        violet: 'border-accent-plum/25 text-accent-plum-ink bg-accent-plum-soft',
+        info: 'border-accent-teal/25 text-accent-teal-ink bg-accent-teal-soft',
       },
     },
     defaultVariants: { variant: 'neutral' },

@@ -44,9 +44,53 @@ const config: Config = {
           DEFAULT: 'hsl(var(--muted))',
           foreground: 'hsl(var(--muted-foreground))',
         },
+        // ── The six working colours ──────────────────────────────────────
+        // Namespaced under `accent` deliberately. `indigo`, `amber`, `emerald`
+        // and `teal` are built-in Tailwind palette names — declaring them at the
+        // top level of `extend.colors` replaces the whole default scale, which
+        // would silently break `text-emerald-600`, `bg-amber-50` and the badge
+        // classes in globals.css. Nesting also keeps `bg-accent` and the older
+        // `text-accent-violet` usages working unchanged.
+        //
+        // Each colour is bound to one meaning (see globals.css). Three tones:
+        //   -ink   text — the only tone safe under ~18px, all ≥4.5:1 on paper
+        //   (bare) fills, strokes, graphics
+        //   -soft  tinted backgrounds
+        // `text-accent-amber` on body copy is a bug, not a style choice: it
+        // measures 2.9:1. That is what the ink tone is for.
         accent: {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
+
+          indigo: 'hsl(var(--accent-indigo))',
+          'indigo-ink': 'hsl(var(--accent-indigo-ink))',
+          'indigo-soft': 'hsl(var(--accent-indigo-soft))',
+
+          amber: 'hsl(var(--accent-amber))',
+          'amber-ink': 'hsl(var(--accent-amber-ink))',
+          'amber-soft': 'hsl(var(--accent-amber-soft))',
+          'amber-hot': 'hsl(var(--accent-amber-hot))',
+
+          emerald: 'hsl(var(--accent-emerald))',
+          'emerald-ink': 'hsl(var(--accent-emerald-ink))',
+          'emerald-soft': 'hsl(var(--accent-emerald-soft))',
+
+          coral: 'hsl(var(--accent-coral))',
+          'coral-ink': 'hsl(var(--accent-coral-ink))',
+          'coral-soft': 'hsl(var(--accent-coral-soft))',
+
+          teal: 'hsl(var(--accent-teal))',
+          'teal-ink': 'hsl(var(--accent-teal-ink))',
+          'teal-soft': 'hsl(var(--accent-teal-soft))',
+
+          plum: 'hsl(var(--accent-plum))',
+          'plum-ink': 'hsl(var(--accent-plum-ink))',
+          'plum-soft': 'hsl(var(--accent-plum-soft))',
+
+          // Older names, resolved to the palette above so screens not yet
+          // migrated pick up the new colour instead of keeping two systems.
+          violet: 'hsl(var(--accent-plum))',
+          cyan: 'hsl(var(--accent-teal))',
         },
         card: {
           DEFAULT: 'hsl(var(--card))',
@@ -79,11 +123,6 @@ const config: Config = {
           DEFAULT: 'hsl(var(--warning))',
           foreground: 'hsl(var(--warning-foreground))',
         },
-        // Secondary accent glows — sparing use for depth/variety, never as
-        // the primary interactive color (that stays `primary`)
-        'accent-violet': 'hsl(var(--accent-violet))',
-        'accent-cyan': 'hsl(var(--accent-cyan))',
-        'accent-emerald': 'hsl(var(--accent-emerald))',
       },
       // Mapped onto the ladder in globals.css so the Tailwind name and the
       // design step mean the same thing. See the comment there for the nesting

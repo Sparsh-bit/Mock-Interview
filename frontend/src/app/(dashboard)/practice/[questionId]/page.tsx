@@ -76,7 +76,7 @@ function Practice() {
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
         <Card className="border-destructive/20 p-8 text-center">
           <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-bold">Question Unavailable</h2>
+          <h2 className="mb-2 text-xl font-semibold">Question Unavailable</h2>
           <p className="text-sm text-muted-foreground">
             {(error as { message?: string } | null)?.message || 'This question could not be loaded.'}
           </p>
@@ -116,7 +116,7 @@ function Practice() {
               {question.difficulty}
             </Badge>
           </div>
-          <h1 className="flex items-start gap-2 text-lg font-bold leading-relaxed">
+          <h1 className="flex items-start gap-2 text-lg font-semibold leading-relaxed">
             <Code2 className="mt-1 h-5 w-5 shrink-0 text-primary" />
             {question.content}
           </h1>

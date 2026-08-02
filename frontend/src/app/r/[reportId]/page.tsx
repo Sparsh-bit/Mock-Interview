@@ -37,10 +37,10 @@ function label(key: string): string {
 }
 
 function tone(score: number): string {
-  if (score >= 75) return 'bg-emerald-500';
-  if (score >= 50) return 'bg-blue-500';
-  if (score >= 30) return 'bg-amber-500';
-  return 'bg-red-500';
+  if (score >= 75) return 'bg-accent-emerald';
+  if (score >= 50) return 'bg-accent-indigo';
+  if (score >= 30) return 'bg-accent-amber';
+  return 'bg-accent-coral';
 }
 
 function Bars({ scores }: { scores: Record<string, number> }) {
@@ -93,7 +93,7 @@ export default function PublicReportPage() {
       <div className="flex min-h-screen items-center justify-center p-6">
         <div className="max-w-md rounded-2xl border border-border bg-surface p-8 text-center">
           <Lock className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-          <h1 className="mb-2 text-lg font-bold">This report isn&apos;t shared</h1>
+          <h1 className="mb-2 text-lg font-semibold">This report isn&apos;t shared</h1>
           <p className="text-sm text-muted-foreground">
             The link may have been turned off by its owner, or it may be incorrect.
           </p>
@@ -132,7 +132,7 @@ export default function PublicReportPage() {
                 {data.company_name ? `${data.company_name} · ` : ''}
                 {data.track_name}
               </p>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight">{data.candidate_name}</h1>
+              <h1 className="mt-2 text-2xl font-semibold tracking-tight">{data.candidate_name}</h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 Mock interview assessment · {new Date(data.created_at).toLocaleDateString()}
               </p>
@@ -159,7 +159,7 @@ export default function PublicReportPage() {
 
           {Object.keys(data.dimension_scores).length > 0 && (
             <div className="mt-8">
-              <h2 className="mb-4 text-sm font-bold">Competency Assessment</h2>
+              <h2 className="mb-4 text-sm font-semibold">Competency Assessment</h2>
               <Bars scores={data.dimension_scores} />
             </div>
           )}
@@ -168,7 +168,7 @@ export default function PublicReportPage() {
             <div className="mt-8 grid gap-6 sm:grid-cols-2">
               {data.strengths.length > 0 && (
                 <div>
-                  <h2 className="mb-3 text-sm font-bold text-emerald-600">Key Strengths</h2>
+                  <h2 className="mb-3 text-sm font-semibold text-accent-emerald-ink">Key Strengths</h2>
                   <ul className="space-y-2">
                     {data.strengths.map((s, i) => (
                       <li key={i} className="text-xs leading-relaxed text-foreground/85">
@@ -180,7 +180,7 @@ export default function PublicReportPage() {
               )}
               {data.weaknesses.length > 0 && (
                 <div>
-                  <h2 className="mb-3 text-sm font-bold text-amber-600">Areas for Growth</h2>
+                  <h2 className="mb-3 text-sm font-semibold text-accent-amber-ink">Areas for Growth</h2>
                   <ul className="space-y-2">
                     {data.weaknesses.map((w, i) => (
                       <li key={i} className="text-xs leading-relaxed text-foreground/85">
@@ -195,7 +195,7 @@ export default function PublicReportPage() {
 
           {Object.keys(data.topic_scores).length > 0 && (
             <div className="mt-8">
-              <h2 className="mb-4 text-sm font-bold">Topic Performance</h2>
+              <h2 className="mb-4 text-sm font-semibold">Topic Performance</h2>
               <Bars scores={data.topic_scores} />
             </div>
           )}

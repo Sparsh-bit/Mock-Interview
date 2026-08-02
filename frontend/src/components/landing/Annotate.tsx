@@ -150,18 +150,29 @@ export function WipeUp({
   children,
   delay = 0,
   className,
+  stretch = false,
 }: {
   children: React.ReactNode;
   delay?: number;
   className?: string;
+  /**
+   * Fill the grid/flex track's height and pass that height down to the child.
+   *
+   * Needed because WipeUp inserts TWO wrappers between the grid and the content.
+   * An `h-full` on the content alone resolves against the motion.div, which is
+   * auto-height, so side-by-side panels come out ragged — measured at 174px and
+   * 248px before this existed. Both wrappers have to stretch or neither does.
+   */
+  stretch?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { once: true, margin: '-12%' as const });
   const reduced = useReducedMotion();
 
   return (
-    <div ref={ref} className={cn('overflow-hidden', className)}>
+    <div ref={ref} className={cn('overflow-hidden', stretch && 'h-full', className)}>
       <motion.div
+        className={cn(stretch && 'h-full')}
         initial={reduced ? false : { y: '100%', opacity: 0 }}
         animate={inView || reduced ? { y: '0%', opacity: 1 } : undefined}
         transition={{ duration: 0.75, delay, ease: EASE }}

@@ -101,13 +101,13 @@ export function ShareMenu({
       icon: MessageCircle,
       // wa.me works on mobile app and WhatsApp Web alike.
       href: `https://wa.me/?text=${encodeURIComponent(`${text}\n${url}`)}`,
-      tone: 'text-emerald-600',
+      tone: 'text-accent-emerald-ink',
     },
     {
       name: 'LinkedIn',
       icon: Globe,
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`,
-      tone: 'text-blue-600',
+      tone: 'text-accent-indigo-ink',
     },
     {
       name: 'X',
@@ -160,9 +160,9 @@ export function ShareMenu({
               most confusing possible outcome, so it cannot be silent. */}
           <div className="mb-3 flex items-start gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3">
             {isShared ? (
-              <Globe className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              <Globe className="mt-0.5 h-4 w-4 shrink-0 text-accent-emerald-ink" />
             ) : (
-              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-accent-amber-ink" />
             )}
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold">

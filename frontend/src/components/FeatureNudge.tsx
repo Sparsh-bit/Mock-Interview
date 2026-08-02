@@ -73,7 +73,11 @@ export function FeatureNudge() {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, height: 0 }}
-        className="relative overflow-hidden rounded-2xl border border-primary/25 bg-gradient-to-r from-primary/10 to-accent-violet/10 p-5"
+        // A flat indigo tint, not a two-hue gradient. The gradient ran from the
+        // primary to a second accent and was the only place in the app where two
+        // colours blended into each other — which read as decoration, and put a
+        // purple wash across the top of the dashboard that matched nothing else.
+        className="relative overflow-hidden rounded-2xl border border-accent-indigo/20 bg-accent-indigo-soft p-5"
       >
         <button
           onClick={dismiss}
@@ -83,15 +87,15 @@ export function FeatureNudge() {
           <X className="h-4 w-4" />
         </button>
         <div className="flex items-start gap-4 pr-6">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-indigo text-white">
             <Icon className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">New for you</p>
+              <Sparkles className="h-3.5 w-3.5 text-accent-indigo-ink" />
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-accent-indigo-ink">New for you</p>
             </div>
-            <h3 className="mt-1 text-base font-bold">{nudge.title}</h3>
+            <h3 className="mt-1 text-base font-semibold">{nudge.title}</h3>
             <p className="mt-1 text-sm text-muted-foreground">{nudge.body}</p>
             <Link
               href={nudge.href}

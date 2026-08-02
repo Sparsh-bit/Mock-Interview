@@ -23,31 +23,10 @@ import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { DataError } from '@/components/ui/data-error';
+import { StatCard } from '@/components/ui/stat-card';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
-
-interface StatCardProps {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  sub?: string;
-  color?: IconTileProps['color'];
-}
-
-function StatCard({ label, value, icon, sub, color = 'blue' }: StatCardProps) {
-  return (
-    <motion.div variants={fadeUp}>
-      <Card hoverable className="p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
-          <IconTile color={color} size="sm">{icon}</IconTile>
-        </div>
-        <p className="text-2xl font-medium tabular-nums tracking-[-0.03em]">{value}</p>
-        {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
-      </Card>
-    </motion.div>
-  );
-}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -83,23 +62,21 @@ export default function DashboardPage() {
           an emoji was the most template-looking element in the app; a macOS window
           opens with a title and a rule. */}
       <motion.div variants={fadeUp} className="border-b border-border pb-6">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Overview
-          </p>
-          <h1 className="mt-2 text-2xl font-medium tracking-[-0.025em]">
-            Welcome back, {displayName}
-          </h1>
-          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-            {!stats || stats.total_sessions === 0
+        <PageHeader
+          eyebrow="Overview"
+          title={`Welcome back, ${displayName}`}
+          description={
+            !stats || stats.total_sessions === 0
               ? 'Start your first mock interview and see exactly where you stand.'
-              : `You have completed ${stats.completed_sessions} of ${stats.total_sessions} total sessions. Keep going!`}
-          </p>
-          <Link href="/interview" className={cn(buttonVariants({ size: 'md' }), 'mt-5 w-fit')}>
-            <Play className="h-4 w-4" />
-            Start interview
-          </Link>
-        </div>
+              : `You have completed ${stats.completed_sessions} of ${stats.total_sessions} total sessions. Keep going!`
+          }
+          actions={
+            <Link href="/interview" className={cn(buttonVariants({ size: 'md' }))}>
+              <Play className="h-4 w-4" />
+              Start interview
+            </Link>
+          }
+        />
       </motion.div>
 
       {/* Nudge to try a round they haven't done yet (communication / GD) */}
@@ -227,7 +204,7 @@ export default function DashboardPage() {
                         <p className="truncate text-xs font-semibold">{track.company.name}</p>
                         <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{track.name}</p>
                       </div>
-                      <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
+                      <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-accent-emerald-ink" />
                     </div>
                     <p className="mt-1.5 text-[10px] text-muted-foreground">{track.interview_question_count} questions per interview</p>
                   </Link>

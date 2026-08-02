@@ -28,12 +28,25 @@ export function getScoreLabel(score: number): string {
   return 'Poor';
 }
 
+/**
+ * Five score bands, five distinguishable colours.
+ *
+ * The bands used to be emerald / blue / amber / orange / red. Amber and orange
+ * are 20° apart and both collapsed onto the same semantic amber, which silently
+ * merged "Average" and "Needs Improvement" — the two bands a candidate most
+ * needs to tell apart.
+ *
+ * The step between them is `amber-hot`, a burnt orange that is a fourth TONE of
+ * amber rather than a seventh colour in the system. The obvious alternative,
+ * plain `accent-coral`, measures 4.19:1 on the paper ground and fails AA at
+ * this size; amber-hot is 5.0:1.
+ */
 export function getScoreColor(score: number): string {
-  if (score >= 85) return 'text-emerald-400';
-  if (score >= 70) return 'text-blue-400';
-  if (score >= 55) return 'text-yellow-400';
-  if (score >= 40) return 'text-orange-400';
-  return 'text-red-400';
+  if (score >= 85) return 'text-accent-emerald-ink';
+  if (score >= 70) return 'text-accent-indigo-ink';
+  if (score >= 55) return 'text-accent-amber-ink';
+  if (score >= 40) return 'text-accent-amber-hot';
+  return 'text-accent-coral-ink';
 }
 
 export function getReadinessLabel(level: string): string {
@@ -47,8 +60,8 @@ export function getReadinessLabel(level: string): string {
 }
 
 export function getReadinessColor(level: string): string {
-  if (level === 'interview_ready') return 'text-emerald-400';
-  if (level === 'close_to_ready') return 'text-yellow-400';
-  if (level === 'significant_gaps') return 'text-red-400';
-  return 'text-orange-400';
+  if (level === 'interview_ready') return 'text-accent-emerald-ink';
+  if (level === 'close_to_ready') return 'text-accent-amber-ink';
+  if (level === 'significant_gaps') return 'text-accent-coral-ink';
+  return 'text-accent-amber-ink';
 }

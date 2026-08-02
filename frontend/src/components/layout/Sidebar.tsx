@@ -64,7 +64,10 @@ export function AppSidebar({ user }: SidebarProps) {
     <motion.aside
       animate={{ width: collapsed ? 72 : 240 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="relative flex flex-shrink-0 flex-col border-r border-border/60 bg-surface/70 backdrop-blur-xl"
+      // `bg-surface` is the warm recessed fill, so the rail reads as part of the
+      // same sheet of paper as the page. At 70% over a white body it came out
+      // cooler than the content beside it.
+      className="relative flex flex-shrink-0 flex-col border-r border-border/70 bg-surface backdrop-blur-xl"
     >
       {/* Logo */}
       <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center')}>

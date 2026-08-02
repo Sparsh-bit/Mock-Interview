@@ -74,12 +74,20 @@ function orderedDimensions(scores: Record<string, number>): Array<[string, numbe
   });
 }
 
-/** Bar colour by band, so the breakdown is readable at a glance. */
+/**
+ * Bar colour by band, so the breakdown is readable at a glance.
+ *
+ * Flat fills, not gradients. These were two-stop gradients between adjacent
+ * steps of the same Tailwind hue (emerald-500 → emerald-400), a difference of
+ * about 8% lightness across a 6px bar — invisible, and it cost a paint layer
+ * per bar. The bands are what carry the meaning; a gradient inside one band
+ * says nothing.
+ */
 function scoreTone(score: number): string {
-  if (score >= 75) return 'from-emerald-500 to-emerald-400';
-  if (score >= 50) return 'from-primary to-accent-violet';
-  if (score >= 30) return 'from-amber-500 to-amber-400';
-  return 'from-red-500 to-red-400';
+  if (score >= 75) return 'bg-accent-emerald';
+  if (score >= 50) return 'bg-accent-indigo';
+  if (score >= 30) return 'bg-accent-amber';
+  return 'bg-accent-coral';
 }
 
 const READINESS_META: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
@@ -165,7 +173,7 @@ export default function ReportDetailPage() {
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
         <Card className="border-destructive/20 p-8 text-center">
           <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-bold">Report Unavailable</h2>
+          <h2 className="mb-2 text-xl font-semibold">Report Unavailable</h2>
           <p className="text-sm text-muted-foreground">{reason || generic}</p>
           <p className="mt-3 text-xs text-muted-foreground">
             A report needs a finished session with at least one answered question. If you left the
@@ -231,7 +239,7 @@ export default function ReportDetailPage() {
                   Evaluated on {new Date(report.created_at).toLocaleDateString()}
                 </span>
               </div>
-              <h1 className="text-3xl font-bold tracking-[-0.02em]">Technical Evaluation Report</h1>
+              <h1 className="text-3xl font-semibold tracking-[-0.02em]">Technical Evaluation Report</h1>
               <p className="mt-2 max-w-xl text-sm text-muted-foreground">{report.executive_summary}</p>
               {report.readiness_reasoning && (
                 <p className="mt-2 max-w-xl text-xs italic text-muted-foreground/80">{report.readiness_reasoning}</p>
@@ -265,8 +273,8 @@ export default function ReportDetailPage() {
                         <span
                           className={cn(
                             'text-2xl font-bold',
-                            direction === 'up' && 'text-emerald-600',
-                            direction === 'down' && 'text-red-600',
+                            direction === 'up' && 'text-accent-emerald-ink',
+                            direction === 'down' && 'text-accent-coral-ink',
                             direction === 'flat' && 'text-muted-foreground'
                           )}
                         >
@@ -302,7 +310,7 @@ export default function ReportDetailPage() {
                       className={cn(
                         'rounded-full border px-2.5 py-1',
                         (report.delivery.pause_count ?? 0) > 4
-                          ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                          ? 'border-accent-coral/40 bg-accent-coral/10 text-accent-coral-ink'
                           : 'border-border text-muted-foreground'
                       )}
                     >
@@ -315,7 +323,7 @@ export default function ReportDetailPage() {
                       className={cn(
                         'rounded-full border px-2.5 py-1',
                         (report.delivery.filler_count ?? 0) > 5
-                          ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                          ? 'border-accent-coral/40 bg-accent-coral/10 text-accent-coral-ink'
                           : 'border-border text-muted-foreground'
                       )}
                     >
@@ -337,15 +345,15 @@ export default function ReportDetailPage() {
       {/* Grid: Strengths & Weaknesses */}
       <div className="grid gap-6 md:grid-cols-2">
         <motion.div variants={fadeUp}>
-          <Card className="h-full border-emerald-500/20 p-6">
+          <Card className="h-full border-accent-emerald/20 p-6">
             <div className="mb-4 flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-              <h3 className="text-base font-bold">Key Strengths</h3>
+              <CheckCircle2 className="h-5 w-5 text-accent-emerald-ink" />
+              <h3 className="text-base font-semibold">Key Strengths</h3>
             </div>
             <ul className="space-y-2.5">
               {report.strengths.map((str, idx) => (
                 <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
-                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-emerald" />
                   <span>{str}</span>
                 </li>
               ))}
@@ -354,15 +362,15 @@ export default function ReportDetailPage() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="h-full border-yellow-500/20 p-6">
+          <Card className="h-full border-accent-amber/20 p-6">
             <div className="mb-4 flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-amber-600" />
-              <h3 className="text-base font-bold">Areas for Growth</h3>
+              <TrendingUp className="h-5 w-5 text-accent-amber-ink" />
+              <h3 className="text-base font-semibold">Areas for Growth</h3>
             </div>
             <ul className="space-y-2.5">
               {report.weaknesses.map((w, idx) => (
                 <li key={idx} className="flex items-start gap-2.5 text-sm text-foreground/90">
-                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-yellow-400" />
+                  <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent-amber" />
                   <span>{w}</span>
                 </li>
               ))}
@@ -379,7 +387,7 @@ export default function ReportDetailPage() {
         <motion.div variants={fadeUp}>
           <Card className="p-6">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-              <h3 className="flex items-center gap-2 text-base font-bold">
+              <h3 className="flex items-center gap-2 text-base font-semibold">
                 <ShieldCheck className="h-5 w-5 text-primary" /> Competency Assessment
               </h3>
               {!!report.performance_percentile && (
@@ -403,7 +411,7 @@ export default function ReportDetailPage() {
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                     <motion.div
-                      className={cn('h-full rounded-full bg-gradient-to-r', scoreTone(score))}
+                      className={cn('h-full rounded-full', scoreTone(score))}
                       initial={{ width: 0 }}
                       animate={{ width: `${Math.min(Math.max(score, 0), 100)}%` }}
                       transition={{ duration: 0.8, ease: easeOutExpo }}
@@ -420,7 +428,7 @@ export default function ReportDetailPage() {
       {Object.keys(report.topic_scores || {}).length > 0 && (
         <motion.div variants={fadeUp}>
           <Card className="p-6">
-            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-semibold">
               <Award className="h-5 w-5 text-primary" /> Topic Performance Breakdown
             </h3>
             <div className="space-y-4">
@@ -449,7 +457,7 @@ export default function ReportDetailPage() {
       {report.question_analysis && report.question_analysis.length > 0 && (
         <motion.div variants={fadeUp}>
           <Card className="p-6">
-            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-semibold">
               <ShieldCheck className="h-5 w-5 text-primary" /> Question-by-Question Analysis
             </h3>
             <div className="space-y-4">
@@ -464,7 +472,7 @@ export default function ReportDetailPage() {
                   </span>
                   {qa.missing_concepts.length > 0 && (
                     <p className="text-xs text-foreground/80">
-                      <span className="font-semibold text-amber-600">Missing: </span>
+                      <span className="font-semibold text-accent-amber-ink">Missing: </span>
                       {qa.missing_concepts.join(', ')}
                     </p>
                   )}
@@ -485,7 +493,7 @@ export default function ReportDetailPage() {
       {report.improvement_roadmap && report.improvement_roadmap.length > 0 && (
         <motion.div variants={fadeUp}>
           <Card className="p-6">
-            <h3 className="mb-6 flex items-center gap-2 text-base font-bold">
+            <h3 className="mb-6 flex items-center gap-2 text-base font-semibold">
               <Sparkles className="h-5 w-5 text-accent-violet" /> Recommended Action Plan
             </h3>
             <div className="space-y-4">
@@ -495,15 +503,15 @@ export default function ReportDetailPage() {
                     <span className="text-xs font-bold uppercase text-primary">Priority #{item.priority}</span>
                     <span className="text-xs text-muted-foreground">Est. {item.study_hours_estimate} hrs study</span>
                   </div>
-                  <h4 className="text-sm font-bold">{item.topic}</h4>
+                  <h4 className="text-sm font-semibold">{item.topic}</h4>
                   <div className="flex items-center gap-4 text-xs">
                     <span>
-                      Current: <strong className="text-amber-600">{item.current_score}</strong>
+                      Current: <strong className="text-accent-amber-ink">{item.current_score}</strong>
                       <span className="text-muted-foreground">/10</span>
                     </span>
                     <span>→</span>
                     <span>
-                      Target: <strong className="text-emerald-600">{item.target_score}</strong>
+                      Target: <strong className="text-accent-emerald-ink">{item.target_score}</strong>
                       <span className="text-muted-foreground">/10</span>
                     </span>
                   </div>

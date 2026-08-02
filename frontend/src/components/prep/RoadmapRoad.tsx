@@ -4,6 +4,7 @@ import React, { useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { CheckCircle2, Circle, Lock, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { brandFill } from '@/lib/brand-accent';
 
 /**
  * The roadmap as a road receding into the distance.
@@ -35,13 +36,17 @@ export type RoadMilestone = {
 
 export function RoadmapRoad({
   milestones,
-  accent,
+  accent: rawAccent,
   onSelect,
 }: {
   milestones: RoadMilestone[];
+  /** The company's brand hex. Harmonised to the palette on the way in. */
   accent: string;
   onSelect?: (id: string) => void;
 }) {
+  // Idempotent, so it does not matter whether the caller already did it. Every
+  // `${accent}NN` alpha suffix below depends on this staying a hex string.
+  const accent = brandFill(rawAccent);
   const reduced = useReducedMotion();
 
   const { doneCount, pct, current } = useMemo(() => {

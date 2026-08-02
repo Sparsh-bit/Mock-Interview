@@ -19,6 +19,7 @@ import {
 import { summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 
@@ -195,7 +196,7 @@ export default function CommunicationPage() {
   // ─── Result view ──────────────────────────────────────────────────────────
   if (result) {
     const tone =
-      result.overall_score >= 7 ? 'text-emerald-600' : result.overall_score >= 4 ? 'text-amber-600' : 'text-red-600';
+      result.overall_score >= 7 ? 'text-accent-emerald-ink' : result.overall_score >= 4 ? 'text-accent-amber-ink' : 'text-accent-coral-ink';
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.06)} className="mx-auto max-w-3xl space-y-6 pb-12">
         <motion.div variants={fadeUp}>
@@ -213,7 +214,7 @@ export default function CommunicationPage() {
                 className={cn(
                   'rounded-full border px-3 py-1',
                   result.pause_count > 3
-                    ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                    ? 'border-accent-coral/40 bg-accent-coral/10 text-accent-coral-ink'
                     : 'border-border'
                 )}
               >
@@ -234,7 +235,7 @@ export default function CommunicationPage() {
         <motion.div variants={fadeUp}>
           <Card className="space-y-2 p-6">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Your delivery (filler words in <span className="text-red-600">red</span>, pauses marked)
+              Your delivery (filler words in <span className="text-accent-coral-ink">red</span>, pauses marked)
             </p>
             <div className="rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm">
               <DeliveryTranscript text={answer} pauses={stt.pauses} />
@@ -259,17 +260,17 @@ export default function CommunicationPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               {result.strengths.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">Strengths</p>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-emerald-ink">Strengths</p>
                   <ul className="space-y-1 text-sm text-foreground/80">
-                    {result.strengths.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-500" />{s}</li>)}
+                    {result.strengths.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-emerald" />{s}</li>)}
                   </ul>
                 </div>
               )}
               {result.improvements.length > 0 && (
                 <div>
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-amber-600">To improve</p>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-amber-ink">To improve</p>
                   <ul className="space-y-1 text-sm text-foreground/80">
-                    {result.improvements.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-500" />{s}</li>)}
+                    {result.improvements.map((s, i) => <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-amber" />{s}</li>)}
                   </ul>
                 </div>
               )}
@@ -284,11 +285,12 @@ export default function CommunicationPage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-3xl space-y-6">
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-tight">Communication Round</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Speak aloud and we measure your pace, filler words and pauses — with delivery feedback like a real HR round.
-        </p>
-      </motion.div>
+          <PageHeader
+            eyebrow="Practice"
+            title="Communication Round"
+            description="Speak aloud and we measure your pace, filler words and pauses — with delivery feedback like a real HR round."
+          />
+        </motion.div>
 
       {/* Mode tabs */}
       <motion.div variants={fadeUp} className="flex gap-2">
@@ -319,7 +321,7 @@ export default function CommunicationPage() {
               <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <MessageSquare className="h-3.5 w-3.5" /> Prompt
               </div>
-              <h2 className="text-xl font-bold leading-relaxed tracking-[-0.01em]">{promptText}</h2>
+              <h2 className="text-xl font-semibold leading-relaxed tracking-[-0.01em]">{promptText}</h2>
               {crossQuestion && (
                 <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-3">
                   <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-primary">
@@ -339,7 +341,7 @@ export default function CommunicationPage() {
                   className={cn(
                     'flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold',
                     secondsLeft > 0 && secondsLeft <= 10
-                      ? 'border-red-500/40 bg-red-500/10 text-red-600'
+                      ? 'border-accent-coral/40 bg-accent-coral/10 text-accent-coral-ink'
                       : 'border-border text-muted-foreground'
                   )}
                 >
@@ -354,7 +356,7 @@ export default function CommunicationPage() {
           )}
 
           {!stt.supported ? (
-            <p className="mt-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
+            <p className="mt-6 rounded-lg border border-accent-amber/30 bg-accent-amber/10 p-3 text-sm text-accent-amber-ink">
               Your browser doesn&apos;t support speech recognition. Please use Chrome or Edge for the spoken round.
             </p>
           ) : (
@@ -390,10 +392,10 @@ export default function CommunicationPage() {
                 <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
                   <span className="rounded-full border border-border px-2.5 py-0.5">{summary.words} words</span>
                   <span className="rounded-full border border-border px-2.5 py-0.5">{summary.wpm} wpm</span>
-                  <span className={cn('rounded-full border px-2.5 py-0.5', summary.fillerCount > 3 && 'border-red-500/40 text-red-600')}>
+                  <span className={cn('rounded-full border px-2.5 py-0.5', summary.fillerCount > 3 && 'border-accent-coral/40 text-accent-coral-ink')}>
                     {summary.fillerCount} fillers
                   </span>
-                  <span className={cn('rounded-full border px-2.5 py-0.5', summary.pauseCount > 3 && 'border-red-500/40 text-red-600')}>
+                  <span className={cn('rounded-full border px-2.5 py-0.5', summary.pauseCount > 3 && 'border-accent-coral/40 text-accent-coral-ink')}>
                     {summary.pauseCount} pauses
                   </span>
                 </div>

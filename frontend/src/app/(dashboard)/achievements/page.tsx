@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { DataError } from '@/components/ui/data-error';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 export default function AchievementsPage() {
@@ -58,10 +59,11 @@ export default function AchievementsPage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-tight">Achievements & Milestones</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Unlock badges and track your milestone achievements as you practice.
-        </p>
+        <PageHeader
+          eyebrow="Progress"
+          title="Achievements & Milestones"
+          description="Unlock badges and track your milestone achievements as you practice."
+        />
       </motion.div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -72,25 +74,25 @@ export default function AchievementsPage() {
               <Card
                 hoverable={ach.unlocked}
                 className={`flex items-start gap-4 p-6 ${
-                  ach.unlocked ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border/40 opacity-50'
+                  ach.unlocked ? 'border-accent-emerald/30 bg-accent-emerald/5' : 'border-border/40 opacity-50'
                 }`}
               >
                 <div
                   className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl ${
-                    ach.unlocked ? 'bg-emerald-500/20 text-emerald-600' : 'bg-secondary text-muted-foreground'
+                    ach.unlocked ? 'bg-accent-emerald/20 text-accent-emerald-ink' : 'bg-secondary text-muted-foreground'
                   }`}
                 >
                   {ach.unlocked ? <Icon className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold">{ach.title}</h3>
-                    {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                    <h3 className="text-base font-semibold">{ach.title}</h3>
+                    {ach.unlocked && <CheckCircle2 className="h-4 w-4 text-accent-emerald-ink" />}
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">{ach.description}</p>
                   <p className="mt-2 text-[10px] font-semibold uppercase tracking-wider">
                     {ach.unlocked ? (
-                      <span className="text-emerald-600">Unlocked</span>
+                      <span className="text-accent-emerald-ink">Unlocked</span>
                     ) : (
                       <span className="text-muted-foreground">Locked</span>
                     )}

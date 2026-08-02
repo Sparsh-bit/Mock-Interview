@@ -21,10 +21,10 @@ const CORRECTNESS_META: Record<
   CodingEvaluation['correctness_level'],
   { label: string; tone: string }
 > = {
-  correct: { label: 'Correct', tone: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30' },
-  nearly_correct: { label: 'Nearly correct', tone: 'bg-lime-500/10 text-lime-700 border-lime-500/30' },
-  partially_correct: { label: 'Partially correct', tone: 'bg-amber-500/10 text-amber-700 border-amber-500/30' },
-  incorrect: { label: 'Incorrect', tone: 'bg-red-500/10 text-red-700 border-red-500/30' },
+  correct: { label: 'Correct', tone: 'bg-accent-emerald/10 text-accent-emerald-ink border-accent-emerald/30' },
+  nearly_correct: { label: 'Nearly correct', tone: 'bg-accent-emerald/10 text-accent-emerald-ink border-accent-emerald/30' },
+  partially_correct: { label: 'Partially correct', tone: 'bg-accent-amber/10 text-accent-amber-ink border-accent-amber/30' },
+  incorrect: { label: 'Incorrect', tone: 'bg-accent-coral/10 text-accent-coral-ink border-accent-coral/30' },
 };
 
 const APPROACH_LABEL: Record<CodingEvaluation['approach'], string> = {
@@ -203,7 +203,7 @@ export function CodingWorkspace({
           </div>
           {runCode.isPending && <p className="text-sm text-muted-foreground">Running…</p>}
           {runCode.isError && (
-            <p className="text-sm text-red-600">Could not run code. Please try again.</p>
+            <p className="text-sm text-accent-coral-ink">Could not run code. Please try again.</p>
           )}
           {result && (
             <div className="space-y-2">
@@ -211,7 +211,7 @@ export function CodingWorkspace({
                 <pre className="overflow-x-auto rounded-lg bg-surface-elevated p-3 font-mono text-xs text-foreground">{result.stdout}</pre>
               )}
               {result.stderr && (
-                <pre className="overflow-x-auto rounded-lg bg-red-50 p-3 font-mono text-xs text-red-700">{result.stderr}</pre>
+                <pre className="overflow-x-auto rounded-lg bg-accent-coral-soft p-3 font-mono text-xs text-accent-coral-ink">{result.stderr}</pre>
               )}
               {!result.stdout && !result.stderr && (
                 <p className="text-sm text-muted-foreground">Program produced no output.</p>
@@ -242,7 +242,7 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
         </span>
         {/* A working brute force is a legitimate interview pass — say so. */}
         {e.approach === 'brute_force' && e.is_brute_force_sound && (
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700">
+          <span className="rounded-full border border-accent-emerald/30 bg-accent-emerald/10 px-3 py-1 text-xs font-medium text-accent-emerald-ink">
             Brute force is sound
           </span>
         )}
@@ -256,10 +256,10 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
 
       {/* Possible AI authorship — a soft, fallible signal, not an accusation. */}
       {e.ai_authorship_suspected && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4">
+        <div className="rounded-xl border border-accent-amber/40 bg-accent-amber/10 p-4">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-            <p className="text-xs font-bold uppercase tracking-wider text-amber-700">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-accent-amber-ink" />
+            <p className="text-xs font-bold uppercase tracking-wider text-accent-amber-ink">
               This may not be your own code ({e.ai_authorship_confidence} confidence)
             </p>
           </div>
@@ -270,13 +270,13 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
             <ul className="mt-2 space-y-1">
               {e.ai_authorship_signals.map((s, i) => (
                 <li key={i} className="flex gap-2 text-xs text-foreground/75">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent-amber" />
                   {s}
                 </li>
               ))}
             </ul>
           )}
-          <p className="mt-2 text-[11px] italic text-amber-700/80">
+          <p className="mt-2 text-[11px] italic text-accent-amber-ink/80">
             This is a heuristic and can be wrong — if the code is yours, ignore it.
           </p>
         </div>
@@ -303,12 +303,12 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
       {/* Bugs */}
       {e.bugs.length > 0 && (
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-red-600">Bugs found</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-accent-coral-ink">Bugs found</p>
           <ul className="space-y-2">
             {e.bugs.map((b, i) => (
-              <li key={i} className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm">
+              <li key={i} className="rounded-lg border border-accent-coral/20 bg-accent-coral/5 p-3 text-sm">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase text-red-700">{b.severity}</span>
+                  <span className="text-[10px] font-bold uppercase text-accent-coral-ink">{b.severity}</span>
                   {b.line != null && (
                     <span className="font-mono text-[11px] text-muted-foreground">line {b.line}</span>
                   )}
@@ -335,11 +335,11 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
       <div className="grid gap-4 sm:grid-cols-2">
         {e.strengths.length > 0 && (
           <div>
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">Strengths</p>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-emerald-ink">Strengths</p>
             <ul className="space-y-1 text-sm text-foreground/80">
               {e.strengths.map((s, i) => (
                 <li key={i} className="flex gap-2">
-                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-500" />{s}
+                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-emerald" />{s}
                 </li>
               ))}
             </ul>
@@ -347,11 +347,11 @@ function CodeReview({ evaluation: e }: { evaluation: CodingEvaluation }) {
         )}
         {e.improvements.length > 0 && (
           <div>
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-amber-600">To improve</p>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-amber-ink">To improve</p>
             <ul className="space-y-1 text-sm text-foreground/80">
               {e.improvements.map((s, i) => (
                 <li key={i} className="flex gap-2">
-                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-500" />{s}
+                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-amber" />{s}
                 </li>
               ))}
             </ul>

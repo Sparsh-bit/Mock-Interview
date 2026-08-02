@@ -92,7 +92,7 @@ function InterviewSetup() {
               <ListChecks className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">Your interview plan is ready</h1>
+              <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Your interview plan is ready</h1>
               <p className="text-sm text-muted-foreground">
                 {plan.question_count} questions{company ? ` · tailored for ${company}` : ''}
                 {program ? ` · ${program}` : ''}. Review the topics, then begin.
@@ -152,7 +152,7 @@ function InterviewSetup() {
     <div className="mx-auto mt-10 max-w-3xl space-y-6">
       <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold">Start a New Mock Interview</h1>
+          <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Start a New Mock Interview</h1>
           <p className="mt-2 text-muted-foreground">
             Tell us who you&apos;re preparing for. The AI builds a realistic, ordered interview —
             warm-up first, then technical, then scenario and HR — and can pull from your resume.
@@ -288,8 +288,8 @@ function InterviewSetup() {
           </label>
 
           {storedResume?.has_text && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
-              <FileCheck2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent-emerald/20 bg-accent-emerald/5 px-3 py-2 text-xs">
+              <FileCheck2 className="h-3.5 w-3.5 shrink-0 text-accent-emerald-ink" />
               <span className="text-muted-foreground">
                 Using <span className="font-semibold text-foreground">{storedResume.filename}</span> — leave this
                 blank to keep using it.

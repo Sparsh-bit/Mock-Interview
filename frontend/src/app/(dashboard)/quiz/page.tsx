@@ -13,6 +13,7 @@ import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { useQuiz, useBankTopics, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 type Phase = 'setup' | 'exam' | 'results';
@@ -165,10 +166,11 @@ function Quiz() {
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-2xl space-y-8">
         <motion.div variants={fadeUp}>
-          <h1 className="text-2xl font-bold tracking-tight">Practice Quiz</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Multiple-choice practice for common fresher-interview topics — instant from a curated bank, or freshly AI-generated for a specific company/topic.
-          </p>
+          <PageHeader
+            eyebrow="Practice"
+            title="Practice Quiz"
+            description="Multiple-choice practice for common fresher-interview topics — instant from a curated bank, or freshly AI-generated for a specific company/topic."
+          />
         </motion.div>
 
         <motion.div variants={fadeUp}>
@@ -405,7 +407,7 @@ function Quiz() {
   // ─── Results ──────────────────────────────────────────────────────────────
   if (phase === 'results' && results) {
     const pct = results.percentage;
-    const tone = pct >= 70 ? 'text-emerald-600' : pct >= 40 ? 'text-amber-600' : 'text-red-600';
+    const tone = pct >= 70 ? 'text-accent-emerald-ink' : pct >= 40 ? 'text-accent-amber-ink' : 'text-accent-coral-ink';
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.06)} className="mx-auto max-w-3xl space-y-6 pb-12">
         <motion.div variants={fadeUp}>
@@ -423,16 +425,16 @@ function Quiz() {
 
         {results.results.map((r, idx) => (
           <motion.div key={r.question_id} variants={fadeUp}>
-            <Card className={cn('space-y-3 p-6', r.is_correct ? 'border-emerald-500/30' : 'border-red-500/30')}>
+            <Card className={cn('space-y-3 p-6', r.is_correct ? 'border-accent-emerald/30' : 'border-accent-coral/30')}>
               <div className="flex items-start justify-between gap-3">
                 <h3 className="text-sm font-semibold leading-relaxed">
                   <span className="mr-2 text-muted-foreground">Q{idx + 1}.</span>
                   {r.question}
                 </h3>
                 {r.is_correct ? (
-                  <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-emerald-600" />
+                  <CheckCircle2 className="h-5 w-5 flex-shrink-0 text-accent-emerald-ink" />
                 ) : (
-                  <XCircle className="h-5 w-5 flex-shrink-0 text-red-600" />
+                  <XCircle className="h-5 w-5 flex-shrink-0 text-accent-coral-ink" />
                 )}
               </div>
               <div className="space-y-1.5">
@@ -444,21 +446,21 @@ function Quiz() {
                       key={oi}
                       className={cn(
                         'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm',
-                        isCorrect && 'border-emerald-500/40 bg-emerald-500/10',
-                        isSelected && !isCorrect && 'border-red-500/40 bg-red-500/10',
+                        isCorrect && 'border-accent-emerald/40 bg-accent-emerald/10',
+                        isSelected && !isCorrect && 'border-accent-coral/40 bg-accent-coral/10',
                         !isCorrect && !isSelected && 'border-border/50'
                       )}
                     >
                       <span className="font-mono text-[11px] text-muted-foreground">{String.fromCharCode(65 + oi)}</span>
                       <span className="flex-1">{opt}</span>
-                      {isCorrect && <span className="text-[11px] font-semibold text-emerald-600">Correct</span>}
-                      {isSelected && !isCorrect && <span className="text-[11px] font-semibold text-red-600">Your answer</span>}
+                      {isCorrect && <span className="text-[11px] font-semibold text-accent-emerald-ink">Correct</span>}
+                      {isSelected && !isCorrect && <span className="text-[11px] font-semibold text-accent-coral-ink">Your answer</span>}
                     </div>
                   );
                 })}
               </div>
               {r.selected_index === null && (
-                <p className="flex items-center gap-1.5 text-xs text-amber-600">
+                <p className="flex items-center gap-1.5 text-xs text-accent-amber-ink">
                   <AlertTriangle className="h-3.5 w-3.5" /> Not answered
                 </p>
               )}

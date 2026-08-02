@@ -156,8 +156,8 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
                 </p>
               )}
 
-              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
-                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+              <div className="rounded-xl border border-accent-emerald/20 bg-accent-emerald/[0.06] p-4">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-accent-emerald-ink">
                   <Lightbulb className="h-3 w-3" /> How to answer this in the real interview
                 </p>
                 {/* whitespace-pre-line: the model writes spoken prose, and any
@@ -168,13 +168,13 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
               <div className="grid gap-4 sm:grid-cols-2">
                 {coaching.what_was_missing.length > 0 && (
                   <div>
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-amber-600">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-accent-amber-ink">
                       What yours was missing
                     </p>
                     <ul className="space-y-1.5">
                       {coaching.what_was_missing.map((gap, i) => (
                         <li key={i} className="flex gap-2 text-xs text-foreground/85">
-                          <span className="mt-0.5 text-amber-600">•</span>
+                          <span className="mt-0.5 text-accent-amber-ink">•</span>
                           {gap}
                         </li>
                       ))}
@@ -234,7 +234,7 @@ export default function DetailedAnalysisPage() {
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
         <Card className="border-destructive/20 p-8 text-center">
           <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-bold">Analysis Unavailable</h2>
+          <h2 className="mb-2 text-xl font-semibold">Analysis Unavailable</h2>
           <p className="text-sm text-muted-foreground">
             {(error as { message?: string } | null)?.message || 'Could not load this session.'}
           </p>
@@ -263,7 +263,7 @@ export default function DetailedAnalysisPage() {
       </motion.div>
 
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-[-0.02em]">Answer-by-Answer Analysis</h1>
+        <h1 className="text-2xl font-semibold tracking-[-0.02em]">Answer-by-Answer Analysis</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           {data.company_name ? `${data.company_name} · ` : ''}
           {data.track_name} · {data.answers.length} question

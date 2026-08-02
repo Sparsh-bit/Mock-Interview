@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 export default function TracksPage() {
@@ -18,10 +19,11 @@ export default function TracksPage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-tight">Interview Tracks</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Explore corporate-tailored interview tracks designed for real hiring assessments.
-        </p>
+        <PageHeader
+          eyebrow="Practice"
+          title="Interview Tracks"
+          description="Explore corporate-tailored interview tracks designed for real hiring assessments."
+        />
       </motion.div>
 
       {error || (!isLoading && !tracks?.length) ? (
@@ -47,7 +49,7 @@ export default function TracksPage() {
                         <Code2 className="h-5 w-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="text-base font-bold">{track.company.name}</h3>
+                        <h3 className="text-base font-semibold">{track.company.name}</h3>
                         <p className="text-xs text-muted-foreground">{track.name}</p>
                       </div>
                     </div>

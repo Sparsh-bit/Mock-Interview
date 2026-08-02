@@ -3,59 +3,91 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Design System Tokens — Light, Apple-inspired ───────────────────────────
-   Clean light surfaces, near-black text, a single restrained blue accent,
-   soft diffuse shadows (never glows), generous whitespace. Values chosen to
-   echo apple.com / macOS System Settings. ------------------------------------ */
+/* ─── Design System Tokens ───────────────────────────────────────────────────
+
+   WARM PAPER, INK, AND SIX WORKING COLOURS.
+
+   The previous palette was cool near-white (240° hue) with Apple blue on top.
+   Two problems with that. It read as monochrome — the page had a greyscale
+   ground and one accent it barely used, so it looked unfinished rather than
+   restrained. And 240°-neutral + #0071e3 is the default palette of every
+   generated SaaS template on the internet; it is a tell, not a choice.
+
+   This palette is sampled from the product's own photography — the oak desk,
+   the golden window light, the plants, the navy shirt, the coral ring drawn
+   around a score. Deriving the interface colour from the imagery is why the
+   two now sit together instead of fighting: the photos stop looking pasted on.
+
+   THE GROUND IS WARM, THE CARDS ARE WHITE. A warm paper page (38°) with pure
+   white cards floating on it is what produces the sense of a physical surface,
+   and it costs one token. Pure white page + grey cards is the inverse and reads
+   flat. Text is ink (228° 24% 13%), never #000 — true black on paper is a thing
+   screens do and print does not.
+
+   EVERY ACCENT HAS A JOB. Six colours, each bound to one meaning, so colour
+   carries information instead of decorating:
+
+     indigo   the product itself, primary actions, links
+     amber    preparation, in-progress, time and effort
+     emerald  verified, correct, passed, complete
+     coral    flagged, bluffing detected, wrong, needs work
+     teal     data, analytics, measurement
+     plum     HR and behavioural rounds
+
+   Each ships three values. `-ink` is the only one safe for small text (all are
+   ≥4.5:1 on paper); the base is for fills, strokes and graphics; `-soft` is the
+   tinted background. Amber's base measures about 2.9:1 and must never carry
+   body copy — that is exactly why the split exists. ------------------------- */
 
 @layer base {
   :root {
-    /* Background hierarchy — grouped light-grey page, white cards */
-    --background: 240 20% 99%;
-    /* near-white page */
-    --surface: 240 24% 96%;
-    /* #f4f4f7 grouped fills */
+    /* Ground — warm paper, white cards lifted off it */
+    --background: 38 38% 98%;
+    /* #fbf9f6 warm paper */
+    --surface: 36 26% 95%;
+    /* recessed / grouped fills */
     --surface-elevated: 0 0% 100%;
     /* white cards */
     --surface-overlay: 0 0% 100%;
 
-    /* Foreground hierarchy */
-    --foreground: 240 6% 10%;
-    /* #1a1a1c near-black */
-    --muted: 240 10% 90%;
-    --muted-foreground: 240 4% 46%;
-    /* #6e6e73 Apple secondary grey */
+    /* Foreground hierarchy — ink, not black */
+    --foreground: 228 24% 13%;
+    /* #1a1d2b */
+    --muted: 36 20% 91%;
+    --muted-foreground: 228 9% 44%;
+    /* #676b7a — 5.9:1 on paper */
 
     /* Component tokens */
     --card: 0 0% 100%;
-    --card-foreground: 240 6% 10%;
+    --card-foreground: 228 24% 13%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 6% 10%;
+    --popover-foreground: 228 24% 13%;
 
-    /* Brand accent — Apple blue #0071e3 */
-    --primary: 211 100% 45%;
+    /* Brand accent — ink indigo. Deeper and warmer than the stock SaaS blue,
+       and it is the navy in the photographs. 7.4:1 on paper. */
+    --primary: 231 48% 45%;
     --primary-foreground: 0 0% 100%;
 
-    /* Secondary — light grey fill (secondary buttons/chips) */
-    --secondary: 240 20% 94%;
-    --secondary-foreground: 240 6% 10%;
+    /* Secondary — warm fill (secondary buttons/chips) */
+    --secondary: 36 24% 93%;
+    --secondary-foreground: 228 24% 13%;
 
     /* Accent (hover fills) */
-    --accent: 240 24% 95%;
-    --accent-foreground: 240 6% 10%;
+    --accent: 36 26% 94%;
+    --accent-foreground: 228 24% 13%;
 
-    /* Semantic — tuned for legibility on light backgrounds */
-    --destructive: 0 72% 51%;
+    /* Semantic — bound to the accents below so one meaning has one colour */
+    --destructive: 6 72% 44%;
     --destructive-foreground: 0 0% 100%;
-    --success: 145 63% 42%;
+    --success: 158 64% 26%;
     --success-foreground: 0 0% 100%;
-    --warning: 32 90% 48%;
+    --warning: 32 92% 32%;
     --warning-foreground: 0 0% 100%;
 
-    /* Borders — hairline #d2d2d7 */
-    --border: 240 9% 85%;
-    --input: 240 9% 85%;
-    --ring: 211 100% 45%;
+    /* Borders — warm hairline, so edges read as paper not as grey plastic */
+    --border: 34 18% 87%;
+    --input: 34 18% 84%;
+    --ring: 231 48% 45%;
 
     /* Radius — Apple card/control curvature (softened/rounder) */
     /* ── Radius ladder ───────────────────────────────────────────────────
@@ -88,13 +120,58 @@
     --elev-2: 0 2px 4px -2px rgb(0 0 0 / 0.08), 0 4px 12px -2px rgb(0 0 0 / 0.06);
     --elev-3: 0 8px 16px -8px rgb(0 0 0 / 0.12), 0 16px 40px -12px rgb(0 0 0 / 0.10);
 
-    /* Secondary accents — restrained, used sparingly for category/stat variety */
-    --accent-violet: 245 58% 62%;
-    /* #5e5ce6 indigo */
-    --accent-cyan: 199 89% 64%;
-    /* #5ac8fa */
-    --accent-emerald: 145 63% 45%;
-    /* #34c759 */
+    /* ── The six working colours ─────────────────────────────────────────
+       Sampled from the photography; each bound to one meaning. Use `-ink` for
+       any text under ~18px, the base for fills and strokes, `-soft` for tinted
+       backgrounds. Contrast figures are against the paper ground.            */
+
+    /* the product, primary actions, links — the navy shirt */
+    --accent-indigo: 231 48% 45%;
+    --accent-indigo-ink: 231 52% 38%;
+    /* 9.2:1 */
+    --accent-indigo-soft: 231 54% 96%;
+
+    /* preparation, in progress, hours and effort — the oak desk and window light */
+    --accent-amber: 32 88% 46%;
+    /* graphics only: 2.9:1 */
+    --accent-amber-ink: 30 84% 30%;
+    /* 6.4:1 */
+    --accent-amber-soft: 38 82% 94%;
+    /* The hot end of the warning ramp — burnt orange, 5.0:1. A fourth TONE of
+       amber, not a seventh colour. It exists because the score scale has five
+       bands and the palette has four usable text colours for them; without it
+       "Average" and "Needs Improvement" render identically, which are the two
+       bands a candidate most needs to tell apart. */
+    --accent-amber-hot: 20 82% 40%;
+
+    /* verified, correct, passed — the plants */
+    --accent-emerald: 158 58% 34%;
+    --accent-emerald-ink: 158 64% 26%;
+    /* 6.3:1 */
+    --accent-emerald-soft: 152 44% 94%;
+
+    /* flagged, bluffing, wrong — the ring drawn round the score */
+    --accent-coral: 6 74% 52%;
+    --accent-coral-ink: 6 68% 42%;
+    /* 5.5:1 */
+    --accent-coral-soft: 8 76% 96%;
+
+    /* data, analytics, measurement — the chart teal */
+    --accent-teal: 187 62% 32%;
+    --accent-teal-ink: 189 68% 26%;
+    /* 6.6:1 */
+    --accent-teal-soft: 184 44% 94%;
+
+    /* HR and behavioural rounds */
+    --accent-plum: 282 34% 46%;
+    --accent-plum-ink: 282 38% 38%;
+    /* 6.9:1 */
+    --accent-plum-soft: 282 40% 96%;
+
+    /* `accent-violet` and `accent-cyan` remain valid class names — the Tailwind
+       config maps them onto plum and teal — so the screens still using them
+       inherit the new palette instead of keeping a second system alive. They
+       need no variables of their own. */
 
     /* Motion — subtle, physical, Apple-leaning */
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -123,7 +200,7 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground paper-grain;
     /* Prefer the platform's SF Pro on Apple devices, Inter elsewhere. */
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
       var(--font-inter), system-ui, sans-serif;
@@ -147,14 +224,14 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: hsl(240 6% 80%);
+    background: hsl(34 14% 78%);
     border-radius: 999px;
     border: 3px solid transparent;
     background-clip: content-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(240 5% 68%);
+    background: hsl(34 12% 64%);
     background-clip: content-box;
   }
 
@@ -225,18 +302,20 @@
   .glass {
     background: hsl(var(--surface-elevated));
     border: 1px solid hsl(var(--border) / 0.7);
-    box-shadow: 0 1px 2px hsl(240 6% 10% / 0.04), 0 8px 24px hsl(240 6% 10% / 0.05);
+    box-shadow: 0 1px 2px hsl(28 20% 12% / 0.05), 0 8px 24px hsl(28 20% 12% / 0.06);
   }
 
   /* Frosted translucent bar — for sticky headers / navbars only. */
   .frosted {
-    background: hsl(0 0% 100% / 0.72);
+    background: hsl(38 38% 98% / 0.78);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border-bottom: 1px solid hsl(var(--border) / 0.6);
   }
 
-  /* Hero wash — extremely subtle light tint for hero sections (not an aurora). */
+  /* Hero wash — a low warm light from the top, the colour of the window in the
+     photographs. Amber into indigo, both at a few percent: enough that the
+     header is not the same flat field as the body, far short of an aurora. */
   .hero-wash {
     position: relative;
     isolation: isolate;
@@ -248,7 +327,8 @@
     inset: 0;
     z-index: -1;
     background:
-      radial-gradient(60% 50% at 50% 0%, hsl(var(--primary) / 0.06), transparent 70%);
+      radial-gradient(70% 46% at 18% 0%, hsl(var(--accent-amber) / 0.10), transparent 68%),
+      radial-gradient(60% 44% at 88% 6%, hsl(var(--accent-indigo) / 0.07), transparent 70%);
     pointer-events: none;
   }
 
@@ -257,25 +337,64 @@
   }
 
   .glass-hover:hover {
-    box-shadow: 0 2px 4px hsl(240 6% 10% / 0.05), 0 16px 40px hsl(240 6% 10% / 0.08);
+    box-shadow: 0 2px 4px hsl(28 20% 12% / 0.06), 0 16px 40px hsl(28 20% 12% / 0.10);
   }
 
-  /* Gradient text — restrained blue→indigo, for hero accent words only. */
+  /* ── Paper grain ────────────────────────────────────────────────────────
+     A fractal-noise tooth over the page ground, at 3.5% opacity.
+
+     This is the cheapest and most effective thing on the page. A perfectly
+     even colour field is the single most machine-looking surface there is —
+     nothing physical is that uniform. Breaking it up with a little noise is
+     what separates "a warm beige div" from "paper". It is one inlined SVG, no
+     network request, no layout cost, and it sits behind everything at z-0
+     with pointer-events off so it can never intercept a click.
+
+     baseFrequency 0.82 keeps the grain fine enough to read as tooth rather
+     than as visible static at 1x, and it does not moiré against text.        */
+  .paper-grain::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ── Photographic grade ─────────────────────────────────────────────────
+     Every photograph on the site passes through the same grade, so six images
+     that were shot (or generated) separately read as one set. Without this
+     they look like a stock-photo grab bag, which is its own kind of tell.
+
+     A warm multiply at the shadows, a touch of contrast, and a hair of
+     desaturation to stop the greens shouting past the interface palette.     */
+  .photo-grade {
+    filter: saturate(0.92) contrast(1.04);
+  }
+
+  .photo-grade::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, hsl(32 60% 60% / 0.10), transparent 42%),
+      linear-gradient(0deg, hsl(228 40% 18% / 0.20), transparent 55%);
+  }
+
+  /* Accent text — indigo into plum, for a single hero word. Not a headline
+     treatment: one phrase per page at most, or it reads as a template. */
   .gradient-text {
     @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(120deg, hsl(211 100% 48%), hsl(245 58% 58%));
-  }
-
-  .gradient-text-blue {
-    @apply bg-clip-text text-transparent;
-    background-image: linear-gradient(120deg, hsl(211 100% 48%), hsl(199 89% 52%));
+    background-image: linear-gradient(112deg, hsl(var(--accent-indigo)), hsl(var(--accent-plum)));
   }
 
   /* Shimmer loading (light) */
   .shimmer {
     background: linear-gradient(90deg,
         hsl(var(--surface)) 0%,
-        hsl(240 20% 92%) 50%,
+        hsl(36 22% 91%) 50%,
         hsl(var(--surface)) 100%);
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
@@ -283,19 +402,19 @@
 
   /* Score color helpers (darker for light bg) */
   .score-excellent {
-    @apply text-emerald-600;
+    @apply text-accent-emerald-ink;
   }
 
   .score-good {
-    @apply text-blue-600;
+    @apply text-accent-indigo-ink;
   }
 
   .score-average {
-    @apply text-amber-600;
+    @apply text-accent-amber-ink;
   }
 
   .score-poor {
-    @apply text-red-600;
+    @apply text-accent-coral-ink;
   }
 }
 
@@ -310,17 +429,17 @@
   /* Difficulty badges — soft tinted fills with darker legible text. */
   .badge-easy {
     @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
-    @apply bg-emerald-50 text-emerald-700 border border-emerald-200;
+    @apply bg-accent-emerald-soft text-accent-emerald-ink border border-accent-emerald/25;
   }
 
   .badge-medium {
     @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
-    @apply bg-amber-50 text-amber-700 border border-amber-200;
+    @apply bg-accent-amber-soft text-accent-amber-ink border border-accent-amber/30;
   }
 
   .badge-hard {
     @apply inline-flex items-center px-2.5 py-1 text-xs font-semibold rounded-full;
-    @apply bg-red-50 text-red-700 border border-red-200;
+    @apply bg-accent-coral-soft text-accent-coral-ink border border-accent-coral/25;
   }
 
   .section-label {

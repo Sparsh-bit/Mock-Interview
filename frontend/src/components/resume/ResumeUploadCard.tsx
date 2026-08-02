@@ -45,7 +45,7 @@ function statusMeta(resume: StoredResume): {
 } {
   if (resume.parsing_status === 'completed') {
     return {
-      tone: 'text-emerald-600',
+      tone: 'text-accent-emerald-ink',
       icon: CheckCircle2,
       label: 'Read and analysed',
       detail: 'Your interviews will ask about these projects and skills by name.',
@@ -53,7 +53,7 @@ function statusMeta(resume: StoredResume): {
   }
   if (resume.has_text) {
     return {
-      tone: 'text-amber-600',
+      tone: 'text-accent-amber-ink',
       icon: AlertTriangle,
       label: 'Read, not fully analysed',
       detail:
@@ -62,7 +62,7 @@ function statusMeta(resume: StoredResume): {
     };
   }
   return {
-    tone: 'text-red-600',
+    tone: 'text-accent-coral-ink',
     icon: AlertTriangle,
     label: 'Not readable',
     detail: resume.parsing_error ?? 'No text could be read from this file. Try uploading the original PDF export.',
@@ -126,7 +126,7 @@ export function ResumeUploadCard() {
     <Card className="p-6">
       <div className="mb-1 flex items-center gap-2">
         <FileText className="h-5 w-5 text-primary" />
-        <h3 className="text-base font-bold">Your resume</h3>
+        <h3 className="text-base font-semibold">Your resume</h3>
       </div>
       <p className="mb-5 text-sm text-muted-foreground">
         Upload it once. Every interview after that asks about your actual projects and skills —

@@ -191,7 +191,7 @@ export default function LiveSessionPage() {
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <WifiOff className="h-7 w-7 text-destructive" />
           </div>
-          <h2 className="mb-3 text-xl font-bold">Connection hiccup</h2>
+          <h2 className="mb-3 text-xl font-semibold">Connection hiccup</h2>
           <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
             We couldn&apos;t load the next question. Your progress is saved — just try again.
           </p>
@@ -216,7 +216,7 @@ export default function LiveSessionPage() {
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
             <Sparkles className="h-7 w-7 text-primary" />
           </div>
-          <h2 className="mb-3 text-2xl font-bold">Interview Complete</h2>
+          <h2 className="mb-3 text-2xl font-semibold">Interview Complete</h2>
           <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
             Nicely done{answered ? ` — you answered ${answered} question${answered === 1 ? '' : 's'}` : ''}.
             We&apos;ll now score every answer and build your full report.
@@ -241,8 +241,8 @@ export default function LiveSessionPage() {
       <header className="flex h-16 items-center justify-between border-b border-border/50 bg-surface/60 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-coral opacity-60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent-coral" />
           </span>
           <span className="text-sm font-semibold tracking-tight">Live Interview Session</span>
           {answered > 0 && (
@@ -286,7 +286,7 @@ export default function LiveSessionPage() {
                       <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
                     )}
                   </div>
-                  <h1 className="text-2xl font-bold leading-relaxed tracking-[-0.01em]">
+                  <h1 className="text-2xl font-semibold leading-relaxed tracking-[-0.01em]">
                     {question?.content}
                   </h1>
                 </motion.div>
@@ -336,7 +336,7 @@ export default function LiveSessionPage() {
                 Interviewer voice: {tts.activeVoice.name}
                 {!tts.activeVoice.lang.toLowerCase().startsWith('en-in') && (
                   <span
-                    className="text-amber-600"
+                    className="text-accent-amber-ink"
                     title="No Indian English voice is installed on this device, so the closest available one is used."
                   >
                     · not en-IN

@@ -70,9 +70,9 @@ export default function RegisterPage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-6">
         <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm text-center">
-          <Card className="border-emerald-500/20 p-10">
-            <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-600" />
-            <h2 className="mb-2 text-xl font-bold">Check your email</h2>
+          <Card className="border-accent-emerald/20 p-10">
+            <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-accent-emerald-ink" />
+            <h2 className="mb-2 text-xl font-semibold">Check your email</h2>
             <p className="text-sm text-muted-foreground">
               We sent a confirmation link to your email. Click it to activate your account.
             </p>
@@ -111,7 +111,7 @@ export default function RegisterPage() {
           <ul className="space-y-3">
             {PERKS.map((perk) => (
               <li key={perk} className="flex items-center gap-3 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-accent-emerald-ink" />
                 {perk}
               </li>
             ))}

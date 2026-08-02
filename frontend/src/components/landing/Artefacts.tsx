@@ -91,9 +91,9 @@ export function InterviewArtefact() {
           whileInView={{ opacity: 1, x: 0 }}
           viewport={inView}
           transition={{ duration: 0.55, delay: 0.5, ease: EASE }}
-          className="rounded-md border-l-2 border-foreground/40 bg-secondary/60 py-2.5 pl-3 pr-3"
+          className="rounded-md border-l-2 border-accent-amber bg-accent-amber-soft py-2.5 pl-3 pr-3"
         >
-          <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-accent-amber-ink">
             Follow-up
           </p>
           <p className="text-sm leading-relaxed">
@@ -107,7 +107,7 @@ export function InterviewArtefact() {
           {[0, 1, 2, 3, 4, 5, 6].map((i) => (
             <motion.span
               key={i}
-              className="w-[3px] rounded-full bg-foreground/40"
+              className="w-[3px] rounded-full bg-accent-emerald"
               initial={{ height: 4 }}
               whileInView={{ height: [4, 6 + Math.abs(Math.sin(i * 1.1)) * 14, 4] }}
               viewport={{ once: false }}
@@ -152,7 +152,7 @@ export function ReportArtefact() {
               fill="none"
               strokeWidth="5"
               strokeLinecap="round"
-              className="stroke-foreground"
+              className="stroke-accent-emerald"
               strokeDasharray={CIRC}
               initial={{ strokeDashoffset: CIRC }}
               whileInView={{ strokeDashoffset: CIRC - (SCORE / 100) * CIRC }}
@@ -173,9 +173,9 @@ export function ReportArtefact() {
                 <span className="truncate text-[11px]">{label}</span>
                 <span className="font-mono text-[11px] tabular-nums text-muted-foreground">{v}</span>
               </div>
-              <div className="h-px w-full bg-border">
+              <div className="h-[3px] w-full rounded-full bg-border">
                 <motion.div
-                  className="h-px bg-foreground/70"
+                  className="h-[3px] rounded-full bg-accent-indigo"
                   initial={{ scaleX: 0 }}
                   whileInView={{ scaleX: 1 }}
                   viewport={inView}
@@ -256,9 +256,9 @@ export function CodeArtefact() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={inView}
         transition={{ duration: 0.5, delay: 0.75, ease: EASE }}
-        className="mt-3 rounded-md border border-dashed border-foreground/25 px-3 py-2"
+        className="mt-3 rounded-md border border-dashed border-accent-coral/50 bg-accent-coral-soft px-3 py-2"
       >
-        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-accent-coral-ink">
           Flagged
         </p>
         <p className="mt-1 text-[11px] leading-relaxed">
@@ -289,9 +289,9 @@ export function PlanArtefact() {
           45% of the paper
         </span>
       </div>
-      <div className="mb-4 h-px w-full bg-border">
+      <div className="mb-4 h-[3px] w-full rounded-full bg-border">
         <motion.div
-          className="h-px bg-foreground"
+          className="h-[3px] rounded-full bg-accent-amber"
           initial={{ scaleX: 0 }}
           whileInView={{ scaleX: 1 }}
           viewport={inView}
@@ -312,10 +312,10 @@ export function PlanArtefact() {
           <span
             className={cn(
               'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border',
-              done ? 'border-foreground bg-foreground' : 'border-border',
+              done ? 'border-accent-emerald bg-accent-emerald' : 'border-border',
             )}
           >
-            {done && <Check className="h-2.5 w-2.5 text-background" strokeWidth={3.5} />}
+            {done && <Check className="h-2.5 w-2.5 text-white" strokeWidth={3.5} />}
           </span>
           <span className={cn('flex-1 text-[11px]', done && 'text-muted-foreground line-through')}>
             {name}

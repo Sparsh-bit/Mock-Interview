@@ -13,8 +13,14 @@ const nextConfig: NextConfig = {
   // Enable React strict mode for better development warnings
   reactStrictMode: true,
 
-  // Image optimization — allow Supabase Storage domains
   images: {
+    // Cloudflare Pages via @cloudflare/next-on-pages has no Next image
+    // optimizer behind it, so the /_next/image endpoint cannot resize or
+    // re-encode anything — it serves the original bytes, or 500s. Saying so
+    // explicitly means <Image> emits a plain <img> with the right width/height
+    // and lazy-loading instead of routing through an endpoint that isn't there.
+    // The landing photography is therefore pre-encoded; see Photo.tsx.
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',

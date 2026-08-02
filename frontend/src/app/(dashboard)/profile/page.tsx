@@ -11,6 +11,7 @@ import { ResumeUploadCard } from '@/components/resume/ResumeUploadCard';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
+import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 export default function ProfilePage() {
@@ -65,10 +66,11 @@ export default function ProfilePage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-6xl space-y-8">
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-tight">Your Profile</h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          Manage your personal details and target company settings for personalized AI interviews.
-        </p>
+        <PageHeader
+          eyebrow="Account"
+          title="Your Profile"
+          description="Manage your personal details and target company settings for personalized AI interviews."
+        />
       </motion.div>
 
       <motion.div variants={fadeUp}>
@@ -203,7 +205,7 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                <h3 className="mt-6 w-full truncate text-xl font-bold">
+                <h3 className="mt-6 w-full truncate text-xl font-semibold">
                   {formData.full_name || user?.email?.split('@')[0]}
                 </h3>
                 <p className="w-full truncate text-xs text-muted-foreground">{user?.email}</p>

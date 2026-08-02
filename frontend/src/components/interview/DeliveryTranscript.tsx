@@ -66,7 +66,7 @@ export function DeliveryTranscript({
           <Fragment key={i}>
             {marker}
             {tok.isFiller ? (
-              <span className="rounded bg-red-500/15 px-0.5 font-medium text-red-600">
+              <span className="rounded bg-accent-coral/15 px-0.5 font-medium text-accent-coral-ink">
                 {tok.text}
               </span>
             ) : (
@@ -88,7 +88,7 @@ function PauseMarker({ seconds }: { seconds: number }) {
   return (
     <span
       title={`Pause of ${seconds}s`}
-      className="mx-1 inline-flex items-center gap-0.5 rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-red-600"
+      className="mx-1 inline-flex items-center gap-0.5 rounded-full border border-accent-coral/30 bg-accent-coral/10 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-accent-coral-ink"
     >
       ⏸ {seconds}s
     </span>

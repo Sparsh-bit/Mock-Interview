@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useUserSessions } from '@/hooks/useData';
 import { useActivity, type ActivityType, type ActivityItem } from '@/hooks/useActivity';
 import { DataError } from '@/components/ui/data-error';
+import { PageHeader } from '@/components/ui/page-header';
 import {
   FileText,
   Loader2,
@@ -24,9 +25,9 @@ const ACTIVITY_META: Record<
   { label: string; icon: typeof FileText; tint: string }
 > = {
   interview: { label: 'Interview', icon: GraduationCap, tint: 'text-primary bg-primary/10' },
-  group_discussion: { label: 'Group Discussion', icon: MessageSquare, tint: 'text-violet-600 bg-violet-500/10' },
-  communication: { label: 'Communication', icon: Mic, tint: 'text-emerald-600 bg-emerald-500/10' },
-  quiz: { label: 'Quiz', icon: ListChecks, tint: 'text-amber-600 bg-amber-500/10' },
+  group_discussion: { label: 'Group Discussion', icon: MessageSquare, tint: 'text-accent-plum-ink bg-accent-plum/10' },
+  communication: { label: 'Communication', icon: Mic, tint: 'text-accent-emerald-ink bg-accent-emerald/10' },
+  quiz: { label: 'Quiz', icon: ListChecks, tint: 'text-accent-amber-ink bg-accent-amber/10' },
 };
 
 const SCORE_LABELS: Record<string, string> = {
@@ -144,20 +145,20 @@ function ActivityRow({ a }: { a: ActivityItem }) {
           <div className="grid gap-4 sm:grid-cols-2">
             {strengths.length > 0 && (
               <div>
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-600">Strengths</p>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-emerald-ink">Strengths</p>
                 <ul className="space-y-1 text-sm text-foreground/80">
                   {strengths.map((s, i) => (
-                    <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-emerald-500" />{s}</li>
+                    <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-emerald" />{s}</li>
                   ))}
                 </ul>
               </div>
             )}
             {improvements.length > 0 && (
               <div>
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-amber-600">To improve</p>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-accent-amber-ink">To improve</p>
                 <ul className="space-y-1 text-sm text-foreground/80">
                   {improvements.map((s, i) => (
-                    <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-amber-500" />{s}</li>
+                    <li key={i} className="flex gap-2"><span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent-amber" />{s}</li>
                   ))}
                 </ul>
               </div>
@@ -175,12 +176,11 @@ export default function ReportsListPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold">Interview Performance Reports</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Review detailed AI evaluations, score breakdowns, and recommendations for all your completed sessions.
-        </p>
-      </div>
+      <PageHeader
+          eyebrow="History"
+          title="Interview Performance Reports"
+          description="Review detailed AI evaluations, score breakdowns, and recommendations for all your completed sessions."
+        />
 
       {error ? (
         <DataError
@@ -196,7 +196,7 @@ export default function ReportsListPage() {
       ) : !sessions || sessions.length === 0 ? (
         <div className="mx-auto max-w-lg rounded-xl border border-border bg-surface-elevated p-10 text-center shadow-elev-1">
           <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="font-bold text-lg mb-2">No Reports Available Yet</h3>
+          <h3 className="font-semibold text-lg mb-2">No Reports Available Yet</h3>
           <p className="text-sm text-muted-foreground mb-6">
             Complete your first mock interview session to generate a detailed performance report.
           </p>
@@ -220,14 +220,14 @@ export default function ReportsListPage() {
                   <span
                     className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold border ${
                       sess.status === 'completed'
-                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
-                        : 'bg-yellow-500/10 text-amber-600 border-yellow-500/30'
+                        ? 'bg-accent-emerald/10 text-accent-emerald-ink border-accent-emerald/30'
+                        : 'bg-accent-amber/10 text-accent-amber-ink border-accent-amber/30'
                     }`}
                   >
                     {sess.status}
                   </span>
                 </div>
-                <h3 className="font-bold text-base">{sess.track_name}</h3>
+                <h3 className="font-semibold text-base">{sess.track_name}</h3>
                 <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3.5 w-3.5" />
@@ -287,7 +287,7 @@ export default function ReportsListPage() {
 
       {/* Unified activity feed — everything the candidate has done */}
       <div className="pt-4">
-        <h2 className="text-xl font-bold">All Activity</h2>
+        <h2 className="text-xl font-semibold">All Activity</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Every session across the platform — interviews, group discussions, communication rounds and quizzes.
         </p>
