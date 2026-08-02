@@ -104,6 +104,26 @@ class Question(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     subtopic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("subtopics.id", ondelete="SET NULL"), nullable=True, index=True,
     )
+    #: Which session generated this question, or NULL for the shared bank.
+    #:
+    #:   NULL      a question bank row — seeded, generic, reusable by anyone.
+    #:   non-NULL  generated for exactly this session. Never served to another.
+    #:
+    #: This is a tenancy boundary, not a bookkeeping field. Three of the four
+    #: places that create questions produce text specific to one person: a
+    #: cross-question quotes the candidate's own words, a planned question can
+    #: be tailored to their resume, and an adaptive question targets the gaps
+    #: they just revealed. Before this column existed all of them were written
+    #: into the shared pool under a topic, and the pool queries selected the
+    #: whole track — so one candidate's spoken answer could be, and was, served
+    #: verbatim to a different candidate as a fresh question.
+    #:
+    #: EVERY POOL QUERY MUST FILTER `session_id IS NULL`. A session reaches its
+    #: own generated questions by explicit id from session_metadata, never by
+    #: search, so the filter costs those paths nothing.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=True,
+    )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # "easy" | "medium" | "hard"
     difficulty: Mapped[str] = mapped_column(String(20), default="medium", nullable=False, index=True)

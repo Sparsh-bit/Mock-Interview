@@ -240,3 +240,148 @@ class TestBusinessContext:
 
         # Must not raise, and must not claim knowledge it does not have.
         assert _business_context("Some Startup Nobody Has Heard Of").startswith("(no specific")
+
+
+# ─── Study-resource integrity ─────────────────────────────────────────────────
+
+
+class TestStudyResourcesAreReachableAndHonest:
+    """
+    The failure these exist for was found by a user, not by a test: the topic
+    "Percentages" linked to a Java DSA playlist. Six verified playlists had been
+    spread across ten topics, and verifying that a URL *resolves* is not the same
+    as verifying it is about the right subject.
+
+    Two guards, because that bug had two halves — a link used where it did not
+    belong, and a link relabelled to look like it did.
+    """
+
+    #: URLs that legitimately cover more than one topic. A full Java course does
+    #: teach fundamentals, OOP and hashing, so this is real rather than an
+    #: oversight — but it is written down, so adding a second cross-topic link is
+    #: a deliberate act and not a silent one. That silence is how a DSA playlist
+    #: ended up filed under Percentages.
+    BROAD_COURSES = {
+        "https://www.youtube.com/playlist?list=PL9gnSGHSqcnr_DxHsP7AW9ftq0AtAyYqJ",
+    }
+
+    #: Subtopic keys with no company topic pointing at them. Content that exists
+    #: and never renders. Listed rather than asserted away so it stays visible.
+    #:
+    #: system_design: three reading-only subtopics. No company in the catalogue
+    #: currently weights system design, which is correct for mass campus hiring —
+    #: freshers are not asked to design Twitter. Whether the product companies
+    #: should carry a low-level-design topic is a content decision, not a code
+    #: one, so the rows stay and this records why they are dark.
+    KNOWN_UNREACHABLE = {"system_design"}
+
+    def _links(self):
+        """(topic_key, subtopic_id, kind, link) for every resource in the library."""
+        from app.services.prep.catalogue import load_subtopics
+
+        for tkey, items in load_subtopics().subtopics.items():
+            for s in items:
+                for kind in ("video", "doc", "practice"):
+                    link = getattr(s, kind)
+                    if link:
+                        yield tkey, s.id, kind, link
+
+    def test_every_subtopic_key_is_reachable_from_some_company(self):
+        """
+        A subtopic library entry that no company topic maps to is content the
+        product paid to research and no candidate will ever see.
+        """
+        from app.services.prep.catalogue import (
+            _alias_index,
+            _normalise,
+            load_catalogue,
+            load_subtopics,
+        )
+
+        idx = _alias_index()
+        reachable = {
+            idx.get(_normalise(t.name))
+            for c in load_catalogue().companies
+            for t in c.topics
+        }
+        orphans = set(load_subtopics().subtopics) - reachable - self.KNOWN_UNREACHABLE
+        assert not orphans, (
+            f"subtopic keys no company topic maps to: {sorted(orphans)}. Either a "
+            "company needs this topic or the rows should go — dark content is worse "
+            "than no content, because it looks maintained."
+        )
+
+    def test_no_company_topic_falls_through_to_nothing(self):
+        """
+        The mirror image: a company topic whose name matches no subtopic key
+        renders as a weighted, prominent, completely empty roadmap section.
+        """
+        from app.services.prep.catalogue import load_catalogue, subtopics_for
+
+        missing = [
+            f"{c.slug}: {t.name!r} ({t.weight}%)"
+            for c in load_catalogue().companies
+            for t in c.topics
+            if not subtopics_for(t.name)
+        ]
+        assert not missing, "company topics with no subtopics behind them: " + "; ".join(missing)
+
+    def test_a_link_is_not_reused_across_unrelated_topics(self):
+        """
+        THE "Percentages → DSA playlist" GUARD. One URL appearing under two
+        different topic keys means either it is a broad course — declare it — or
+        it is filed somewhere it does not belong.
+        """
+        from collections import defaultdict
+
+        by_url: dict[str, set[str]] = defaultdict(set)
+        for tkey, _sid, _kind, link in self._links():
+            by_url[link.url].add(tkey)
+
+        offenders = {
+            url: sorted(keys)
+            for url, keys in by_url.items()
+            if len(keys) > 1 and url not in self.BROAD_COURSES
+        }
+        assert not offenders, (
+            "these links are used under more than one topic without being declared "
+            f"broad courses: {offenders}"
+        )
+
+    def test_the_same_url_always_carries_the_same_title(self):
+        """
+        The other half of that bug: the URL was fine, the label was not. One URL
+        presented under two titles means at least one of them is a lie about what
+        the candidate is about to open.
+        """
+        from collections import defaultdict
+
+        titles: dict[str, set[str]] = defaultdict(set)
+        for _tkey, _sid, _kind, link in self._links():
+            titles[link.url].add(link.title)
+
+        inconsistent = {u: sorted(t) for u, t in titles.items() if len(t) > 1}
+        assert not inconsistent, (
+            f"the same URL is presented under different titles: {inconsistent}"
+        )
+
+    @pytest.mark.parametrize("kind", ["video", "doc", "practice"])
+    def test_links_are_absolute_https(self, kind: str):
+        bad = [
+            f"{tkey}/{sid} {link.url}"
+            for tkey, sid, k, link in self._links()
+            if k == kind and not link.url.startswith("https://")
+        ]
+        assert not bad, f"non-https or relative {kind} links: {bad}"
+
+    def test_no_subtopic_is_a_dead_row(self):
+        """A subtopic with nothing to read, watch or practise is a checkbox."""
+        from app.services.prep.catalogue import load_subtopics
+
+        dead = [
+            f"{tkey}/{s.id}"
+            for tkey, items in load_subtopics().subtopics.items()
+            for s in items
+            if not (s.doc or s.video or s.practice)
+        ]
+        assert not dead, f"subtopics with no resources at all: {dead}"

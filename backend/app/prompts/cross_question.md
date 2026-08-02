@@ -11,14 +11,47 @@ $last_question
 
 ## The candidate's answer
 
+This is a raw speech-to-text transcript, not typed text. Read it as speech: it
+may be missing words, may have misheard technical terms, and may not be a real
+answer at all.
+
 $last_answer
 
 ## Your task
 
-Produce ONE short follow-up/cross-question that digs into their specific answer:
-challenge a claim, ask "why" or "how", request a concrete example, or probe a
-gap you noticed. It must directly reference what THEY said — not a generic new
-question. Keep it conversational and to one sentence.
+Produce ONE short follow-up/cross-question. Keep it conversational and to one
+sentence.
+
+**First decide whether they actually said something.**
+
+Their answer above is a live speech-to-text transcript. It may be a real answer,
+or it may be a non-answer ("I don't know", "next question"), or it may be
+mangled — the recogniser drops words, mishears technical terms, and sometimes
+returns a fragment that means nothing.
+
+**If they gave a real answer:** dig into it. Challenge a claim, ask "why" or
+"how", request a concrete example, or probe a gap you noticed. Reference what
+THEY actually said, not a generic new question.
+
+**If the answer is a non-answer, or too garbled to be sure what they meant:**
+ask a plain, self-contained question on the same topic instead. Do not guess at
+what they were trying to say, and do not quote the transcript back at them.
+
+## The rule you must not break
+
+**Never attribute a word to the candidate that is not in their answer above, and
+never tell them what they said "instead of" something else.**
+
+If the transcript reads "annual function", they did not say "annual function" —
+the recogniser did. Writing *"You mentioned 'annual function' instead of method
+overriding"* is the model inventing an exchange that never happened, and to the
+candidate it reads as being questioned about an answer they never gave. It is
+the single worst thing this prompt can produce, because it destroys their trust
+in every other question in the interview.
+
+When in doubt, ask the plain question. A slightly generic follow-up costs
+nothing; a fabricated quotation costs the candidate's confidence in the whole
+session.
 
 ## Output Format
 

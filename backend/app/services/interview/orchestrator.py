@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import json
 import random
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -70,6 +71,35 @@ logger = structlog.get_logger(__name__)
 # the track card advertised its 20-question bank.
 _PLANNED_QUESTION_COUNT = settings.INTERVIEW_QUESTION_COUNT
 _MAX_CROSS_QUESTIONS = settings.INTERVIEW_MAX_CROSS_QUESTIONS
+#: Below this many words an answer cannot support a "dig into what you said"
+#: follow-up. Set at 12 because that is roughly a single clause — "it is a
+#: virtual machine that runs java code" is 8 — and anything shorter is a
+#: non-answer, a mis-fired mic, or a speech-to-text fragment. Feeding one of
+#: those to the cross-question prompt does not produce a weak question, it
+#: produces a confidently wrong one that puts words in the candidate's mouth.
+_MIN_WORDS_FOR_CROSS_QUESTION = 12
+
+#: First-person markers. A focus that uses one is the candidate talking about
+#: themselves rather than naming topics, so the plan it produces is theirs and
+#: must not go in the shared cache. "Spring Boot, SQL, DBMS" has none of these;
+#: "I struggle with multithreading" and "my internship at <employer>" both do.
+#:
+#: Deliberately a plain word list, not a classifier. The cost of a false positive
+#: is one uncached plan generation; the cost of a false negative is one
+#: candidate's details reaching another. Those are not close, so this errs
+#: heavily towards not caching.
+_PERSONAL_FOCUS_MARKERS = frozenset(
+    {"i", "im", "i'm", "ive", "i've", "id", "i'd", "my", "mine", "me", "myself",
+     "we", "our", "ours", "us"}
+)
+
+
+def _is_personal_focus(focus: str) -> bool:
+    """True when the free-text focus reads as the candidate describing themselves."""
+    words = re.findall(r"[a-z']+", focus.lower())
+    return any(w in _PERSONAL_FOCUS_MARKERS for w in words)
+
+
 # Plan reuse cache: we accumulate up to N distinct AI-generated plan variants
 # per (company, program, focus) signature in Redis. Once N exist, a matching
 # request instantly reuses a random variant instead of paying for another
@@ -165,9 +195,22 @@ class InterviewOrchestrator:
         # Prefer resume text the candidate pasted in setup (always available);
         # otherwise fall back to a parsed resume on file, if any.
         resume_summary = resume_text.strip() or await self._resume_summary(user_id)
-        # Resume-personalised plans are per-candidate, so they must NOT be shared
-        # via the cache. Only generic (company/program/focus) plans are cacheable.
-        personalized = bool(resume_text.strip()) or not resume_summary.startswith("(No resume")
+        # Personalised plans are per-candidate and must NOT be shared via the
+        # cache. Only generic (company/program/focus) plans are cacheable.
+        #
+        # The resume half of this was always here. The focus half was not, and it
+        # is the same leak: "Anything specific?" is a free-text box whose
+        # placeholder invites first person ("I struggle with multithreading"), the
+        # text goes into the plan prompt, and the resulting plan is stored under a
+        # signature derived from that same text. Two candidates who write
+        # something close enough share a bucket — so if one of them typed "I
+        # interned at <employer> on their payments API", the other can be served
+        # questions shaped by it.
+        personalized = (
+            bool(resume_text.strip())
+            or not resume_summary.startswith("(No resume")
+            or _is_personal_focus(focus)
+        )
 
         plan: InterviewPlan | None = None
 
@@ -235,9 +278,9 @@ class InterviewOrchestrator:
                 await self._save_plan_variant(store_key, variants, plan)
 
         if plan is not None and len(plan.questions) >= 4:
-            planned_ids, topics = await self._persist_plan(track_id, plan)
+            planned_ids, topics = await self._persist_plan(track_id, plan, session.id)
         else:
-            planned_ids, topics = await self._fallback_plan(track_id)
+            planned_ids, topics = await self._fallback_plan(track_id, session.id)
 
         session.session_metadata = {
             "company": company,
@@ -277,9 +320,16 @@ class InterviewOrchestrator:
             logger.warning("plan_cache_save_failed", key=cache_key, error=str(exc))
 
     async def _persist_plan(
-        self, track_id: uuid.UUID, plan: InterviewPlan
+        self, track_id: uuid.UUID, plan: InterviewPlan, session_id: uuid.UUID
     ) -> tuple[list[str], list[str]]:
-        """Persist a plan's questions as Question rows; return (ordered_ids, topics)."""
+        """
+        Persist a plan's questions as Question rows; return (ordered_ids, topics).
+
+        Owned by `session_id`, never added to the shared bank. A planned question
+        can be tailored to the candidate's resume — "you mentioned building a
+        payments service at <employer>" — and that is their CV, not reference
+        content for the next person who picks this track.
+        """
         planned_ids: list[str] = []
         for gq in plan.questions:
             if not gq.content.strip():
@@ -288,6 +338,7 @@ class InterviewOrchestrator:
             q = Question(
                 id=uuid.uuid4(),
                 topic_id=topic.id,
+                session_id=session_id,
                 content=gq.content.strip(),
                 difficulty=gq.difficulty,
                 question_type=gq.question_type,
@@ -299,7 +350,9 @@ class InterviewOrchestrator:
             planned_ids.append(str(q.id))
         return planned_ids, (plan.topics or [])
 
-    async def _fallback_plan(self, track_id: uuid.UUID) -> tuple[list[str], list[str]]:
+    async def _fallback_plan(
+        self, track_id: uuid.UUID, session_id: uuid.UUID
+    ) -> tuple[list[str], list[str]]:
         """
         Build a solid interview plan WITHOUT the AI — a warm-up intro question
         followed by a spread of the track's existing questions (seeded if the
@@ -313,6 +366,10 @@ class InterviewOrchestrator:
         intro = Question(
             id=uuid.uuid4(),
             topic_id=intro_topic.id,
+            # Owned by the session. Generic text, but a fresh row is created per
+            # fallback plan, so leaving it in the bank would fill the pool with
+            # thousands of identical opener rows and skew every later query.
+            session_id=session_id,
             content=(
                 "To start, tell me a little about yourself — your background, and the "
                 "project or skill you're most proud of."
@@ -332,12 +389,20 @@ class InterviewOrchestrator:
         #    step so it flows across areas instead of drilling one. Within a
         #    difficulty tier we shuffle for variety across retakes.
         async def _track_questions() -> list[Question]:
+            # Bank rows only. Without the session_id filter this pulled every
+            # question ever generated under the track — including live
+            # cross-questions that quote another candidate's answer verbatim,
+            # which is how "you mentioned 'annual function' in your answer"
+            # reached someone who had never said it.
             return list(
                 await self.db.scalars(
                     select(Question)
                     .join(Topic, Question.topic_id == Topic.id)
                     .join(QuestionCategory, Topic.category_id == QuestionCategory.id)
-                    .where(QuestionCategory.track_id == track_id)
+                    .where(
+                        QuestionCategory.track_id == track_id,
+                        Question.session_id.is_(None),
+                    )
                 )
             )
 
@@ -482,15 +547,20 @@ class InterviewOrchestrator:
             select(Question)
             .join(Topic, Question.topic_id == Topic.id)
             .join(QuestionCategory, Topic.category_id == QuestionCategory.id)
-            .where(QuestionCategory.track_id == session.track_id)
+            .where(
+                QuestionCategory.track_id == session.track_id,
+                Question.session_id.is_(None),
+            )
         )
         if answered_ids:
             query = query.where(Question.id.notin_(answered_ids))
         candidates = list(await self.db.scalars(query))
 
-        # Fallback to any unanswered question if the track pool is empty.
+        # Last resort: any unanswered BANK question, from any track. This was
+        # `select(Question)` with no filter whatsoever — every question in the
+        # database, every session's, every company's.
         if not candidates:
-            fallback = select(Question)
+            fallback = select(Question).where(Question.session_id.is_(None))
             if answered_ids:
                 fallback = fallback.where(Question.id.notin_(answered_ids))
             candidates = list(await self.db.scalars(fallback))
@@ -508,6 +578,18 @@ class InterviewOrchestrator:
         serving, occasionally inject a live cross-question that probes the
         candidate's most recent answer — kept to _MAX_CROSS_QUESTIONS and never
         two in a row, so the interview stays fluent.
+
+        IDEMPOTENT. `GET /next` is a read to every caller, but the cross-question
+        branch spends an AI call, writes a row and increments a counter. The
+        client retries once on failure and refetches after every submit, and
+        cross-question generation is the slowest thing in the flow — so a request
+        that timed out client-side while still running server-side used to come
+        back and generate a *second* cross-question from the same answer. That
+        burned the per-session budget on questions nobody saw, and swapped the
+        question out from under a candidate who was already reading it.
+
+        A generated-but-unanswered cross-question is therefore parked on the
+        session and returned as-is until it is answered.
         """
         meta = dict(session.session_metadata or {})
         if not meta.get("approved"):
@@ -518,12 +600,34 @@ class InterviewOrchestrator:
         answered_str = {str(a) for a in answered_ids}
         remaining = [qid for qid in planned if qid not in answered_str]
 
+        # Already produced a cross-question the candidate has not answered yet?
+        # Hand back the same one. This is what makes repeat calls free.
+        pending = meta.get("pending_cross_id")
+        if pending and pending not in answered_str:
+            parked = await self.db.get(Question, uuid.UUID(pending))
+            if parked is not None:
+                return parked
+            # The row is gone (session deleted and recreated, manual cleanup).
+            # Drop the stale pointer rather than looping on a dead id.
+            meta.pop("pending_cross_id", None)
+            session.session_metadata = meta
+            await self.db.commit()
+
         # Occasional cross-question: after every 3rd answer, if we still have
         # planned questions left, haven't hit the cross-question cap, and the
         # last answered question wasn't itself a cross-question.
         answered_count = len(answered_ids)
         last_answer = await self.db.scalar(
-            select(Answer).where(Answer.session_id == session.id).order_by(Answer.created_at.desc()).limit(1)
+            select(Answer)
+            .where(Answer.session_id == session.id)
+            # created_at alone is not a total order: it defaults to now(), which
+            # in Postgres is the TRANSACTION timestamp, so two answers written in
+            # one transaction tie and the winner is whatever the planner returns.
+            # Breaking the tie on id keeps "the last answer" deterministic, and
+            # feeding the wrong answer to the cross-question prompt is precisely
+            # how a candidate gets asked about something they never discussed.
+            .order_by(Answer.created_at.desc(), Answer.id.desc())
+            .limit(1)
         )
         last_was_cross = bool(last_answer and str(last_answer.question_id) in cross_ids)
         if (
@@ -535,10 +639,11 @@ class InterviewOrchestrator:
             and not last_was_cross
         ):
             last_q = await self.db.get(Question, last_answer.question_id)
-            cross = await self._generate_cross_question(last_q, last_answer.content)
+            cross = await self._generate_cross_question(last_q, last_answer.content, session.id)
             if cross is not None:
                 meta["cross_asked"] = meta.get("cross_asked", 0) + 1
                 meta["cross_question_ids"] = [*meta.get("cross_question_ids", []), str(cross.id)]
+                meta["pending_cross_id"] = str(cross.id)
                 session.session_metadata = meta
                 await self.db.commit()
                 return cross
@@ -548,10 +653,22 @@ class InterviewOrchestrator:
         return await self.db.get(Question, uuid.UUID(remaining[0]))
 
     async def _generate_cross_question(
-        self, last_question: Question | None, last_answer: str
+        self, last_question: Question | None, last_answer: str, session_id: uuid.UUID
     ) -> Question | None:
-        """Generate one follow-up probing the candidate's last answer. Best-effort."""
+        """
+        Generate one follow-up probing the candidate's last answer. Best-effort.
+
+        Two guards, both learned from a real failure. The question is owned by
+        `session_id` because it quotes the candidate verbatim. And an answer too
+        short to have said anything gets no cross-question at all: the prompt's
+        whole job is to dig into what they said, so handing it two words leaves
+        the model nothing to dig into and it fills the gap by attributing the
+        expected answer to them — which is how a candidate got asked to explain
+        terms the question itself claimed they had used.
+        """
         if last_question is None:
+            return None
+        if len(last_answer.split()) < _MIN_WORDS_FOR_CROSS_QUESTION:
             return None
         topic = await self.db.get(Topic, last_question.topic_id)
         topic_name = topic.name if topic else "General"
@@ -579,6 +696,9 @@ class InterviewOrchestrator:
         q = Question(
             id=uuid.uuid4(),
             topic_id=last_question.topic_id,
+            # THE tenancy boundary. This question quotes the candidate's own
+            # words; it must never be reachable from another session's pool.
+            session_id=session_id,
             content=parsed.content.strip(),
             difficulty=parsed.difficulty,
             question_type=parsed.question_type,
@@ -660,6 +780,9 @@ class InterviewOrchestrator:
         question = Question(
             id=uuid.uuid4(),
             topic_id=topic.id,
+            # Aimed at the gaps THIS candidate just revealed, so it belongs to
+            # this session and not to the bank.
+            session_id=session.id,
             content=parsed.content.strip(),
             difficulty=parsed.difficulty,
             question_type=parsed.question_type,
@@ -829,7 +952,12 @@ class InterviewOrchestrator:
 
         created_questions = []
         for sq in sample_questions:
-            existing = await self.db.scalar(select(Question).where(Question.content == sq["content"]))
+            existing = await self.db.scalar(
+                select(Question).where(
+                    Question.content == sq["content"],
+                    Question.session_id.is_(None),
+                )
+            )
             if not existing:
                 q = Question(
                     id=uuid.uuid4(),
@@ -883,6 +1011,23 @@ class InterviewOrchestrator:
         if not session:
             raise ValueError(f"Session {session_id} not found.")
 
+        # The question must be one this session could actually have been asked:
+        # a bank question, or one generated for this session. Nothing checked
+        # this before — the endpoint verified the SESSION belonged to the caller
+        # and then filed the answer against whatever question_id arrived.
+        #
+        # It matters beyond hygiene. The cross-question generator reads the most
+        # recent answer and its question and asks the model to probe "what they
+        # said about this", so a mismatched pair produces a follow-up about a
+        # topic the candidate never discussed — the same symptom as the pool
+        # leak, reached a different way. A stale client render replaying an old
+        # question id is enough to trigger it.
+        question = await self.db.get(Question, question_id)
+        if question is None:
+            raise ValueError(f"Question {question_id} not found.")
+        if question.session_id is not None and question.session_id != session_id:
+            raise ValueError("That question belongs to a different interview session.")
+
         ans = Answer(
             id=uuid.uuid4(),
             session_id=session_id,
@@ -896,6 +1041,13 @@ class InterviewOrchestrator:
         )
         self.db.add(ans)
         session.questions_asked = (session.questions_asked or 0) + 1
+
+        # Clear the parked cross-question once it has been answered, so the next
+        # /next call is free to move on instead of serving it again.
+        meta_pending = dict(session.session_metadata or {})
+        if meta_pending.get("pending_cross_id") == str(question_id):
+            meta_pending.pop("pending_cross_id", None)
+            session.session_metadata = meta_pending
 
         if delivery:
             meta = dict(session.session_metadata or {})
