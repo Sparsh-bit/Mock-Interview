@@ -1,0 +1,12 @@
+#!/bin/bash
+BRAIN="/Users/sparsh/.gemini/antigravity-ide/brain/b7ac7d4d-b128-4620-bda3-1d0ef3da3e58"
+DEST="/Volumes/Volume D/Mock Interview/frontend/public/img/landing"
+mkdir -p "$DEST"
+cp "$BRAIN/hero_interview_v2_1785661554071.png" "$DEST/hero-interview.png"
+cp "$BRAIN/rewrite_speech_v2_1785661566862.png" "$DEST/rewrite-speech.png"
+cp "$BRAIN/rounds_cards_v2_1785661578366.png" "$DEST/rounds-cards.png"
+cp "$BRAIN/target_blueprint_v2_1785661605847.png" "$DEST/target-blueprint.png"
+cp "$BRAIN/finale_numbers_v2_1785661616690.png" "$DEST/finale-numbers.png"
+cp "$BRAIN/close_doorway_v2_1785661628163.png" "$DEST/close-doorway.png"
+echo "All 6 images copied!"
+ls -la "$DEST"

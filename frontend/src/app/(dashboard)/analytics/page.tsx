@@ -35,7 +35,7 @@ export default function AnalyticsPage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8">
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold tracking-tight">Performance Analytics</h1>
+        <h1 className="text-2xl font-medium tracking-[-0.025em]">Performance Analytics</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           Detailed metrics tracking your technical mastery and readiness across all sessions.
         </p>
@@ -48,7 +48,7 @@ export default function AnalyticsPage() {
               <span className="text-xs font-semibold uppercase text-muted-foreground">Total Practice Time</span>
               <Clock className="h-4 w-4 text-accent-violet" />
             </div>
-            <p className="text-3xl font-bold tracking-tight">{stats?.hours_practiced ?? 0} hrs</p>
+            <p className="text-3xl font-medium tracking-[-0.025em]">{stats?.hours_practiced ?? 0} hrs</p>
           </Card>
         </motion.div>
 
@@ -58,7 +58,7 @@ export default function AnalyticsPage() {
               <span className="text-xs font-semibold uppercase text-muted-foreground">Questions Answered</span>
               <Target className="h-4 w-4 text-accent-emerald" />
             </div>
-            <p className="text-3xl font-bold tracking-tight">{stats?.total_questions_answered ?? 0}</p>
+            <p className="text-3xl font-medium tracking-[-0.025em]">{stats?.total_questions_answered ?? 0}</p>
           </Card>
         </motion.div>
 
@@ -68,7 +68,7 @@ export default function AnalyticsPage() {
               <span className="text-xs font-semibold uppercase text-muted-foreground">Highest Score</span>
               <Trophy className="h-4 w-4 text-amber-600" />
             </div>
-            <p className="text-3xl font-bold tracking-tight">{stats?.best_score ? `${stats.best_score}/100` : '—'}</p>
+            <p className="text-3xl font-medium tracking-[-0.025em]">{stats?.best_score ? `${stats.best_score}/100` : '—'}</p>
           </Card>
         </motion.div>
 
@@ -78,13 +78,13 @@ export default function AnalyticsPage() {
               <span className="text-xs font-semibold uppercase text-muted-foreground">Avg. Accuracy</span>
               <BarChart2 className="h-4 w-4 text-primary" />
             </div>
-            <p className="text-3xl font-bold tracking-tight">{stats?.average_score ? `${stats.average_score}%` : '—'}</p>
+            <p className="text-3xl font-medium tracking-[-0.025em]">{stats?.average_score ? `${stats.average_score}%` : '—'}</p>
           </Card>
         </motion.div>
       </div>
 
       <motion.div variants={fadeUp}>
-        <Card className="hero-wash space-y-3 p-8 text-center">
+        <Card className="space-y-3 p-6 text-center">
           <TrendingUp className="mx-auto mb-2 h-10 w-10 text-primary" />
           <h3 className="text-lg font-bold">Analytics Engine Active</h3>
           <p className="mx-auto max-w-md text-sm text-muted-foreground">

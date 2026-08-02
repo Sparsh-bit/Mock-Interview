@@ -31,7 +31,7 @@ const DRAW = [0.65, 0, 0.35, 1] as const;
 /** Runs a child animation once, when it scrolls into view. */
 function useReveal(margin: `${number}%` = '-15%') {
   const ref = useRef<HTMLSpanElement>(null);
-  const inView = useInView(ref, { once: true, margin });
+  const inView = useInView(ref, { once: false, margin });
   const reduced = useReducedMotion();
   return { ref, play: reduced ? true : inView, reduced: Boolean(reduced) };
 }
@@ -156,7 +156,7 @@ export function WipeUp({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: '-12%' as const });
+  const inView = useInView(ref, { once: false, margin: '-12%' as const });
   const reduced = useReducedMotion();
 
   return (

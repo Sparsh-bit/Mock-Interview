@@ -122,7 +122,7 @@ function OverallScoreRing({ score, label }: { score: number; label: string }) {
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-3xl font-bold tracking-tight text-primary">{score}</span>
+        <span className="text-3xl font-medium tracking-[-0.025em] text-primary">{score}</span>
         <span className="text-[10px] text-muted-foreground">/ 100 · {label}</span>
       </div>
     </div>
@@ -222,7 +222,7 @@ export default function ReportDetailPage() {
 
       {/* Header Banner */}
       <motion.div variants={fadeUp}>
-        <Card className="hero-wash relative overflow-hidden border-primary/20 p-8">
+        <Card className="relative overflow-hidden p-6">
           <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
             <div>
               <div className="mb-3 flex items-center gap-3">

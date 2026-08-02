@@ -108,7 +108,7 @@ function Practice() {
           report needs to know immediately that this is NOT the interview resuming
           — nothing they do here is scored or recorded against that session. */}
       <motion.div variants={fadeUp}>
-        <Card className="hero-wash border-primary/20 p-6">
+        <Card className="p-5">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <Badge variant="violet">Practice mode</Badge>
             <Badge variant="neutral">{question.topic}</Badge>

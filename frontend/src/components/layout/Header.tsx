@@ -33,7 +33,7 @@ export function AppHeader({ user }: HeaderProps) {
   const title = getPageTitle(pathname);
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border/70 bg-surface/60 px-6 backdrop-blur-md">
+    <header className="flex h-14 items-center justify-between border-b border-border/60 bg-background/70 backdrop-blur-xl/60 px-6 backdrop-blur-md">
       {/* Page title */}
       <div>
         <h2 className="text-sm font-semibold tracking-tight">{title}</h2>

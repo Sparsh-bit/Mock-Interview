@@ -37,12 +37,12 @@ interface StatCardProps {
 function StatCard({ label, value, icon, sub, color = 'blue' }: StatCardProps) {
   return (
     <motion.div variants={fadeUp}>
-      <Card hoverable className="p-6">
+      <Card hoverable className="p-4">
         <div className="mb-4 flex items-center justify-between">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
           <IconTile color={color} size="sm">{icon}</IconTile>
         </div>
-        <p className="text-3xl font-semibold tracking-tight">{value}</p>
+        <p className="text-2xl font-medium tabular-nums tracking-[-0.03em]">{value}</p>
         {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
       </Card>
     </motion.div>
@@ -79,17 +79,25 @@ export default function DashboardPage() {
       className="mx-auto max-w-6xl space-y-8"
     >
       {/* Welcome banner */}
-      <motion.div variants={fadeUp} className="hero-wash glass relative overflow-hidden rounded-2xl border-primary/20 p-8">
-        <div className="relative">
-          <h1 className="text-2xl font-bold tracking-tight">Welcome back, {displayName} 👋</h1>
-          <p className="mt-1.5 max-w-lg text-sm text-muted-foreground">
+      {/* A title block, not a hero banner. A glass panel on a gradient wash with
+          an emoji was the most template-looking element in the app; a macOS window
+          opens with a title and a rule. */}
+      <motion.div variants={fadeUp} className="border-b border-border pb-6">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Overview
+          </p>
+          <h1 className="mt-2 text-2xl font-medium tracking-[-0.025em]">
+            Welcome back, {displayName}
+          </h1>
+          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
             {!stats || stats.total_sessions === 0
               ? 'Start your first mock interview and see exactly where you stand.'
               : `You have completed ${stats.completed_sessions} of ${stats.total_sessions} total sessions. Keep going!`}
           </p>
           <Link href="/interview" className={cn(buttonVariants({ size: 'md' }), 'mt-5 w-fit')}>
             <Play className="h-4 w-4" />
-            Start Interview
+            Start interview
           </Link>
         </div>
       </motion.div>
@@ -100,7 +108,7 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Total Sessions"
           value={statsLoading ? '…' : (stats?.total_sessions ? String(stats.total_sessions) : '0')}
@@ -132,10 +140,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Main content grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         {/* Recent sessions — left 2/3 */}
         <motion.div variants={fadeUp} className="lg:col-span-2">
-          <Card className="p-6">
+          <Card className="p-5">
             <div className="mb-6 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Recent Sessions</h2>
               {sessions && sessions.length > 0 && (
@@ -200,7 +208,7 @@ export default function DashboardPage() {
 
         {/* Tracks — right 1/3 */}
         <motion.div variants={fadeUp}>
-          <Card className="p-6">
+          <Card className="p-5">
             <h2 className="mb-4 text-sm font-semibold">Available Tracks</h2>
             {tracksLoading ? (
               <div className="flex items-center justify-center py-8">

@@ -86,7 +86,7 @@ function InterviewSetup() {
   if (plan) {
     return (
       <div className="mx-auto mt-10 max-w-3xl space-y-6">
-        <div className="glass rounded-2xl border border-border/50 p-8">
+        <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
           <div className="mb-6 flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
               <ListChecks className="h-5 w-5 text-primary" />
@@ -150,7 +150,7 @@ function InterviewSetup() {
   // ─── Step 1: Setup ────────────────────────────────────────────────────────
   return (
     <div className="mx-auto mt-10 max-w-3xl space-y-6">
-      <div className="glass rounded-2xl border border-border/50 p-8">
+      <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
         <div className="mb-8">
           <h1 className="text-2xl font-bold">Start a New Mock Interview</h1>
           <p className="mt-2 text-muted-foreground">

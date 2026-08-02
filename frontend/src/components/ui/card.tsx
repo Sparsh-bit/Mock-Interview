@@ -5,11 +5,11 @@ import { motion, type HTMLMotionProps } from 'framer-motion';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
-const cardVariants = cva('rounded-2xl', {
+const cardVariants = cva('rounded-xl', {
   variants: {
     variant: {
       glass: 'glass',
-      elevated: 'bg-surface-elevated shadow-card',
+      elevated: 'bg-surface-elevated shadow-elev-1',
       flat: 'bg-surface border border-border/60',
       outline: 'bg-surface-elevated border border-border',
     },
@@ -37,7 +37,7 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
         ref={ref}
         className={cn(
           cardVariants({ variant, padding }),
-          hoverable && 'ease-out-expo transition-shadow duration-300 hover:shadow-card-hover',
+          hoverable && 'ease-out-expo transition-shadow duration-300 hover:shadow-elev-2',
           className
         )}
         whileHover={hoverable ? { y: -3 } : undefined}

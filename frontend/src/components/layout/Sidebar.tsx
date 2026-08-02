@@ -8,7 +8,6 @@ import {
   BarChart3,
   BookOpen,
   ChevronLeft,
-  Code2,
   FileText,
   LayoutDashboard,
   ListChecks,
@@ -65,26 +64,26 @@ export function AppSidebar({ user }: SidebarProps) {
     <motion.aside
       animate={{ width: collapsed ? 72 : 240 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="relative flex flex-shrink-0 flex-col border-r border-border/70 bg-surface"
+      className="relative flex flex-shrink-0 flex-col border-r border-border/60 bg-surface/70 backdrop-blur-xl"
     >
       {/* Logo */}
-      <div className={cn('flex h-16 items-center border-b border-border/70 px-4', collapsed && 'justify-center')}>
+      <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center')}>
         <Link href="/dashboard" className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">
-            <Code2 className="h-4 w-4 text-primary-foreground" />
-          </div>
+          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold text-background">
+            IO
+          </span>
           {!collapsed && (
-            <span className="truncate text-sm font-bold tracking-tight">InterviewOS</span>
+            <span className="truncate font-mono text-[13px] font-semibold tracking-tight">InterviewOS</span>
           )}
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 overflow-y-auto px-3 py-3">
         {NAV_ITEMS.map(({ group, items }) => (
-          <div key={group} className="mb-6">
+          <div key={group} className="mb-5">
             {!collapsed && (
-              <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/70">
+              <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
                 {group}
               </p>
             )}
@@ -97,18 +96,22 @@ export function AppSidebar({ user }: SidebarProps) {
                       href={href}
                       title={collapsed ? label : undefined}
                       className={cn(
-                        'relative z-10 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                        // 30px rows on an 8pt rhythm, rounded-md (10px) because
+                        // they sit inside a 12px-padded rail — the nesting rule.
+                        'relative z-10 flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] transition-colors',
                         collapsed && 'justify-center px-2',
-                        isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+                        isActive
+                          ? 'font-medium text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
-                      <Icon className="h-4 w-4 flex-shrink-0" />
+                      <Icon className="h-[15px] w-[15px] flex-shrink-0" strokeWidth={1.9} />
                       {!collapsed && <span className="truncate">{label}</span>}
                     </Link>
                     {isActive && (
                       <motion.div
                         layoutId="sidebar-active-pill"
-                        className="absolute inset-0 rounded-lg bg-primary/10 ring-1 ring-primary/25"
+                        className="absolute inset-0 rounded-md bg-foreground/[0.07]"
                         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                       />
                     )}

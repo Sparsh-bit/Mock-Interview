@@ -76,7 +76,7 @@ function ActivityRow({ a }: { a: ActivityItem }) {
     (scoreChips.length > 0 || feedback || strengths.length || improvements.length || metricChips.length || quizTopics.length);
 
   return (
-    <div className="glass rounded-xl border border-border/50">
+    <div className="rounded-xl border border-border bg-surface-elevated shadow-elev-1">
       <button
         onClick={() => hasDetail && setOpen((o) => !o)}
         className="flex w-full items-center gap-4 p-4 text-left"
@@ -194,7 +194,7 @@ export default function ReportsListPage() {
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : !sessions || sessions.length === 0 ? (
-        <div className="glass rounded-2xl p-12 border border-border/50 text-center max-w-lg mx-auto">
+        <div className="mx-auto max-w-lg rounded-xl border border-border bg-surface-elevated p-10 text-center shadow-elev-1">
           <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
           <h3 className="font-bold text-lg mb-2">No Reports Available Yet</h3>
           <p className="text-sm text-muted-foreground mb-6">
@@ -212,7 +212,7 @@ export default function ReportsListPage() {
           {sessions.map((sess) => (
             <div
               key={sess.id}
-              className="glass rounded-xl border border-border/50 p-6 flex flex-col justify-between hover:border-primary/40 transition-colors"
+              className="flex flex-col justify-between rounded-xl border border-border bg-surface-elevated p-5 shadow-elev-1 transition-shadow hover:shadow-elev-2"
             >
               <div>
                 <div className="flex items-center justify-between mb-3">
