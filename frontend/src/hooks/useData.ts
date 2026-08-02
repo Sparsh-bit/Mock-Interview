@@ -418,6 +418,8 @@ export interface Recruiter {
   hires_per_year: string;
   drive_window: string;
   eligibility: string;
+  /** What this firm actually builds and sells — used to frame the plan page. */
+  business_context: string;
   accent: string;
   programs: RecruiterProgram[];
   rounds: string[];
