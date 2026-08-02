@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Code2, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { getBrowserApiClient } from '@/lib/api';
 import { toast } from 'sonner';
@@ -68,7 +68,7 @@ export default function RegisterPage() {
 
   if (done) {
     return (
-      <div className="hero-wash flex min-h-screen items-center justify-center px-4">
+      <div className="flex min-h-screen items-center justify-center bg-background px-6">
         <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm text-center">
           <Card className="border-emerald-500/20 p-10">
             <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-600" />
@@ -86,7 +86,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="hero-wash flex min-h-screen items-center justify-center px-4 py-12">
+    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
       <motion.div
         initial="hidden"
         animate="visible"
@@ -96,13 +96,10 @@ export default function RegisterPage() {
         {/* Left — perks */}
         <motion.div variants={fadeUp} className="hidden space-y-6 md:block">
           <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">
-              <Code2 className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <span className="text-lg font-bold tracking-tight">InterviewOS</span>
+            <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
           </Link>
           <div>
-            <h2 className="mb-3 text-3xl font-bold tracking-tight">
+            <h2 className="mb-3 text-3xl font-medium tracking-[-0.03em]">
               Your first free interview
               <br />
               <span className="gradient-text">starts right now.</span>
@@ -124,15 +121,12 @@ export default function RegisterPage() {
         {/* Right — form */}
         <motion.div variants={fadeUp}>
           <Link href="/" className="mb-6 flex items-center gap-2 md:hidden">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">
-              <Code2 className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <span className="text-lg font-bold tracking-tight">InterviewOS</span>
+            <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
           </Link>
 
-          <Card className="p-8">
+          <div>
             <div className="mb-6">
-              <h1 className="text-2xl font-bold tracking-tight">Create your account</h1>
+              <h1 className="text-3xl font-medium tracking-[-0.03em]">Create your account</h1>
               <p className="mt-1 text-sm text-muted-foreground">Set up your interview profile in under a minute.</p>
             </div>
 
@@ -188,7 +182,7 @@ export default function RegisterPage() {
               Already have an account?{' '}
               <Link href="/login" className="font-medium text-primary transition-colors hover:text-primary/80">Sign in</Link>
             </p>
-          </Card>
+          </div>
         </motion.div>
       </motion.div>
     </div>

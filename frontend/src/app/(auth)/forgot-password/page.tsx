@@ -6,10 +6,9 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Code2, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
@@ -41,16 +40,16 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="hero-wash flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-screen items-center justify-center bg-background px-6">
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm">
-        <Link href="/" className="mb-8 flex items-center justify-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent-violet shadow-glow">
-            <Code2 className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <span className="text-lg font-bold tracking-tight">InterviewOS</span>
+        <Link
+          href="/"
+          className="mb-10 block font-mono text-sm font-semibold tracking-tight transition-opacity hover:opacity-70"
+        >
+          InterviewOS
         </Link>
 
-        <Card className="p-8">
+        <div>
           {sent ? (
             <div className="text-center">
               <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-emerald-600" />
@@ -61,9 +60,9 @@ export default function ForgotPasswordPage() {
             </div>
           ) : (
             <>
-              <div className="mb-6">
-                <h1 className="text-2xl font-bold tracking-tight">Forgot password?</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
+              <div className="mb-8 border-b border-border pb-6">
+                <h1 className="text-3xl font-medium tracking-[-0.03em]">Forgot password?</h1>
+                <p className="mt-2 text-sm text-muted-foreground">
                   Enter your email and we&apos;ll send you a reset link
                 </p>
               </div>
@@ -84,13 +83,13 @@ export default function ForgotPasswordPage() {
             </>
           )}
 
-          <p className="mt-6 text-center text-sm text-muted-foreground">
+          <p className="mt-8 border-t border-border pt-6 text-sm text-muted-foreground">
             Remembered your password?{' '}
             <Link href="/login" className="font-medium text-primary transition-colors hover:text-primary/80">
               Back to sign in
             </Link>
           </p>
-        </Card>
+        </div>
       </motion.div>
     </div>
   );

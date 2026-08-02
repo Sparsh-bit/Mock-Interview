@@ -4,6 +4,12 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { ArrowRight, Check } from 'lucide-react';
 import { Filler, Pause, Rule, SectionMark, Strike, WipeUp } from '@/components/landing/Annotate';
+import {
+  CodeArtefact,
+  InterviewArtefact,
+  PlanArtefact,
+  ReportArtefact,
+} from '@/components/landing/Artefacts';
 
 /**
  * InterviewOS — landing page.
@@ -173,6 +179,22 @@ export default function LandingPage() {
               Written against what you actually said — for every question you answered.
             </p>
           </WipeUp>
+
+          {/* The interview itself, running. Placed after the rewrite because the
+              rewrite is the argument and this is the evidence for it. */}
+          <div className="mt-14 grid gap-6 lg:grid-cols-[1fr_1.15fr] lg:items-center lg:gap-14">
+            <WipeUp>
+              <h3 className="text-[clamp(1.4rem,2.8vw,2rem)] font-medium leading-[1.15] tracking-[-0.03em]">
+                Answer vaguely and it pushes back —
+                <span className="text-muted-foreground"> the way a real interviewer does.</span>
+              </h3>
+              <p className="mt-4 max-w-md text-sm leading-relaxed text-muted-foreground">
+                It reads what you actually said, not a script. A thin answer gets a follow-up,
+                and the follow-up is about the specific thing you skipped.
+              </p>
+            </WipeUp>
+            <InterviewArtefact />
+          </div>
         </div>
       </section>
 
@@ -183,7 +205,8 @@ export default function LandingPage() {
       <section className="mx-auto max-w-6xl px-6 py-24 sm:px-10 sm:py-32">
         <SectionMark n="03" label="Six rounds, not one" />
 
-        <div className="mt-10">
+        <div className="mt-10 grid gap-12 lg:grid-cols-[1.25fr_1fr] lg:items-start lg:gap-16">
+          <div>
           {ROUNDS.map(([name, desc], i) => (
             <WipeUp key={name} delay={i * 0.05}>
               <div className="grid grid-cols-[2.5rem_1fr] gap-x-4 border-b border-border py-5 sm:grid-cols-[3rem_14rem_1fr] sm:gap-x-8">
@@ -197,6 +220,13 @@ export default function LandingPage() {
               </div>
             </WipeUp>
           ))}
+          </div>
+
+          {/* The coding round, shown. The AI-authorship flag is the beat that
+              makes people stop — it says the tool is on the interviewer's side. */}
+          <div className="lg:sticky lg:top-12">
+            <CodeArtefact />
+          </div>
         </div>
       </section>
 
@@ -244,12 +274,16 @@ export default function LandingPage() {
             ))}
           </div>
 
-          <WipeUp delay={0.3}>
-            <p className="mt-10 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              Pick your target and get a dated plan: 48 subtopics, each with something to read,
-              somewhere to practise, and a quiz to check you actually know it.
-            </p>
-          </WipeUp>
+          <div className="mt-14 grid gap-8 lg:grid-cols-[1fr_1.1fr] lg:items-center lg:gap-14">
+            <WipeUp>
+              <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+                Pick your target and get a dated plan: 48 subtopics, each with something to read,
+                somewhere to practise, and a quiz to check you actually know it. Tick one off and
+                the plan remembers.
+              </p>
+            </WipeUp>
+            <PlanArtefact />
+          </div>
         </div>
       </section>
 
@@ -291,6 +325,21 @@ export default function LandingPage() {
               </span>
             </div>
           ))}
+        </div>
+
+        {/* The report — the artefact a candidate actually keeps. */}
+        <div className="mt-16 grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-14">
+          <ReportArtefact />
+          <WipeUp>
+            <h3 className="text-[clamp(1.4rem,2.8vw,2rem)] font-medium leading-[1.15] tracking-[-0.03em]">
+              One score. Four competencies.
+              <span className="text-muted-foreground"> Every topic ranked.</span>
+            </h3>
+            <p className="mt-4 max-w-md text-sm leading-relaxed text-muted-foreground">
+              No score pop-ups mid-interview to break your flow. At the end: where you stand, what
+              to fix first, and how many hours it will take.
+            </p>
+          </WipeUp>
         </div>
 
         <Rule className="mt-16" />
