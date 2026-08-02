@@ -35,3 +35,6 @@ frontend/tsconfig.tsbuildinfo
 # 3.7MB of it got committed once; never again. Nothing in the app reads it, and
 # it records absolute paths from whichever machine ran the tool.
 /graphify-out/
+
+# Redis snapshot, written by a locally-run redis-server
+dump.rdb
