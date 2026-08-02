@@ -157,7 +157,7 @@ function AnswerCard({ item, index, sessionId }: { item: AnalysedAnswer; index: n
               )}
 
               <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
-                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
                   <Lightbulb className="h-3 w-3" /> How to answer this in the real interview
                 </p>
                 {/* whitespace-pre-line: the model writes spoken prose, and any

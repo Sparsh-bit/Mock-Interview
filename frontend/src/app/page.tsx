@@ -207,19 +207,19 @@ export default function LandingPage() {
 
         <div className="mt-10 grid gap-12 lg:grid-cols-[1.25fr_1fr] lg:items-start lg:gap-16">
           <div>
-          {ROUNDS.map(([name, desc], i) => (
-            <WipeUp key={name} delay={i * 0.05}>
-              <div className="grid grid-cols-[2.5rem_1fr] gap-x-4 border-b border-border py-5 sm:grid-cols-[3rem_14rem_1fr] sm:gap-x-8">
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <h3 className="text-base font-medium tracking-[-0.01em]">{name}</h3>
-                <p className="col-start-2 mt-1 text-sm leading-relaxed text-muted-foreground sm:col-start-3 sm:mt-0">
-                  {desc}
-                </p>
-              </div>
-            </WipeUp>
-          ))}
+            {ROUNDS.map(([name, desc], i) => (
+              <WipeUp key={name} delay={i * 0.05}>
+                <div className="grid grid-cols-[2.5rem_1fr] gap-x-4 border-b border-border py-5 sm:grid-cols-[3rem_14rem_1fr] sm:gap-x-8">
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <h3 className="text-base font-medium tracking-[-0.01em]">{name}</h3>
+                  <p className="col-start-2 mt-1 text-sm leading-relaxed text-muted-foreground sm:col-start-3 sm:mt-0">
+                    {desc}
+                  </p>
+                </div>
+              </WipeUp>
+            ))}
           </div>
 
           {/* The coding round, shown. The AI-authorship flag is the beat that

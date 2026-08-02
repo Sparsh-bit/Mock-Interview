@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -12,15 +11,20 @@
 @layer base {
   :root {
     /* Background hierarchy — grouped light-grey page, white cards */
-    --background: 240 20% 99%;        /* near-white page */
-    --surface: 240 24% 96%;           /* #f4f4f7 grouped fills */
-    --surface-elevated: 0 0% 100%;    /* white cards */
+    --background: 240 20% 99%;
+    /* near-white page */
+    --surface: 240 24% 96%;
+    /* #f4f4f7 grouped fills */
+    --surface-elevated: 0 0% 100%;
+    /* white cards */
     --surface-overlay: 0 0% 100%;
 
     /* Foreground hierarchy */
-    --foreground: 240 6% 10%;         /* #1a1a1c near-black */
+    --foreground: 240 6% 10%;
+    /* #1a1a1c near-black */
     --muted: 240 10% 90%;
-    --muted-foreground: 240 4% 46%;   /* #6e6e73 Apple secondary grey */
+    --muted-foreground: 240 4% 46%;
+    /* #6e6e73 Apple secondary grey */
 
     /* Component tokens */
     --card: 0 0% 100%;
@@ -85,9 +89,12 @@
     --elev-3: 0 8px 16px -8px rgb(0 0 0 / 0.12), 0 16px 40px -12px rgb(0 0 0 / 0.10);
 
     /* Secondary accents — restrained, used sparingly for category/stat variety */
-    --accent-violet: 245 58% 62%;     /* #5e5ce6 indigo */
-    --accent-cyan: 199 89% 64%;       /* #5ac8fa */
-    --accent-emerald: 145 63% 45%;    /* #34c759 */
+    --accent-violet: 245 58% 62%;
+    /* #5e5ce6 indigo */
+    --accent-cyan: 199 89% 64%;
+    /* #5ac8fa */
+    --accent-emerald: 145 63% 45%;
+    /* #34c759 */
 
     /* Motion — subtle, physical, Apple-leaning */
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -160,13 +167,33 @@
 /* ─── Typography — large, tight display headings; comfortable body ────────── */
 
 @layer base {
-  h1 { @apply text-4xl font-semibold tracking-[-0.022em] leading-[1.08]; }
-  h2 { @apply text-3xl font-semibold tracking-[-0.021em] leading-[1.1]; }
-  h3 { @apply text-2xl font-semibold tracking-[-0.019em] leading-[1.15]; }
-  h4 { @apply text-xl font-semibold tracking-[-0.014em]; }
-  h5 { @apply text-lg font-medium tracking-[-0.01em]; }
-  h6 { @apply text-base font-medium; }
-  p  { @apply leading-7; }
+  h1 {
+    @apply text-4xl font-semibold tracking-[-0.022em] leading-[1.08];
+  }
+
+  h2 {
+    @apply text-3xl font-semibold tracking-[-0.021em] leading-[1.1];
+  }
+
+  h3 {
+    @apply text-2xl font-semibold tracking-[-0.019em] leading-[1.15];
+  }
+
+  h4 {
+    @apply text-xl font-semibold tracking-[-0.014em];
+  }
+
+  h5 {
+    @apply text-lg font-medium tracking-[-0.01em];
+  }
+
+  h6 {
+    @apply text-base font-medium;
+  }
+
+  p {
+    @apply leading-7;
+  }
 
   code {
     font-family: var(--font-jetbrains-mono);
@@ -177,14 +204,23 @@
 /* ─── Motion utilities ───────────────────────────────────────────────────── */
 
 @layer utilities {
-  .ease-out-expo { transition-timing-function: var(--ease-out-expo); }
-  .ease-spring { transition-timing-function: var(--ease-spring); }
-  .ease-smooth { transition-timing-function: var(--ease-in-out-smooth); }
+  .ease-out-expo {
+    transition-timing-function: var(--ease-out-expo);
+  }
+
+  .ease-spring {
+    transition-timing-function: var(--ease-spring);
+  }
+
+  .ease-smooth {
+    transition-timing-function: var(--ease-in-out-smooth);
+  }
 }
 
 /* ─── Utility Classes ────────────────────────────────────────────────────── */
 
 @layer utilities {
+
   /* Card surface — white, hairline border, soft diffuse shadow (Apple card). */
   .glass {
     background: hsl(var(--surface-elevated));
@@ -237,21 +273,30 @@
 
   /* Shimmer loading (light) */
   .shimmer {
-    background: linear-gradient(
-      90deg,
-      hsl(var(--surface)) 0%,
-      hsl(240 20% 92%) 50%,
-      hsl(var(--surface)) 100%
-    );
+    background: linear-gradient(90deg,
+        hsl(var(--surface)) 0%,
+        hsl(240 20% 92%) 50%,
+        hsl(var(--surface)) 100%);
     background-size: 200% 100%;
     animation: shimmer 2s linear infinite;
   }
 
   /* Score color helpers (darker for light bg) */
-  .score-excellent { @apply text-emerald-600; }
-  .score-good { @apply text-blue-600; }
-  .score-average { @apply text-amber-600; }
-  .score-poor { @apply text-red-600; }
+  .score-excellent {
+    @apply text-emerald-600;
+  }
+
+  .score-good {
+    @apply text-blue-600;
+  }
+
+  .score-average {
+    @apply text-amber-600;
+  }
+
+  .score-poor {
+    @apply text-red-600;
+  }
 }
 
 /* ─── Component Overrides ────────────────────────────────────────────────── */

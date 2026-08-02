@@ -78,7 +78,7 @@ export function FeatureNudge() {
         <button
           onClick={dismiss}
           aria-label="Dismiss"
-          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
