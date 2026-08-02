@@ -1,668 +1,386 @@
 'use client';
 
-import { motion, type Variants } from 'framer-motion';
 import Link from 'next/link';
-import {
-  ArrowRight,
-  Brain,
-  ChevronRight,
-  Code2,
-  FileText,
-  Mic,
-  Target,
-  TrendingUp,
-  MessageSquare,
-  ListChecks,
-  Camera,
-  Sparkles,
-  ShieldCheck,
-  Cpu,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-
-const FEATURES = [
-  {
-    icon: Brain,
-    title: 'Company & Program Tailored',
-    description:
-      'Tell us the company and program — Cognizant GenC, GenC Next, TCS, Infosys — and the AI builds a realistic, ordered interview: warm-up first, then technical, scenario and HR.',
-    color: 'from-blue-500/20 to-blue-600/5',
-    iconColor: 'text-blue-600',
-  },
-  {
-    icon: FileText,
-    title: 'Resume-Aware Questions',
-    description:
-      'Add your resume and the interviewer asks about YOUR actual projects, skills and experience — exactly like a real panel that read it beforehand.',
-    color: 'from-purple-500/20 to-purple-600/5',
-    iconColor: 'text-accent-violet',
-  },
-  {
-    icon: Mic,
-    title: 'Voice-First Interview',
-    description:
-      'Speak your answers aloud with a natural interviewer voice reading each question. Typing is always there as a fallback, so you are never stuck.',
-    color: 'from-green-500/20 to-green-600/5',
-    iconColor: 'text-emerald-600',
-  },
-  {
-    icon: Sparkles,
-    title: 'Live Cross-Questions',
-    description:
-      'The AI listens to what you actually said and occasionally follows up — probing a claim or asking for a concrete example — just like a real interviewer.',
-    color: 'from-amber-500/20 to-amber-600/5',
-    iconColor: 'text-amber-600',
-  },
-  {
-    icon: TrendingUp,
-    title: 'Full Report at the End',
-    description:
-      'No score pop-ups mid-interview to break your flow. At the end you get an interview-readiness assessment, topic-by-topic scores and an improvement roadmap.',
-    color: 'from-red-500/20 to-red-600/5',
-    iconColor: 'text-red-600',
-  },
-  {
-    icon: Target,
-    title: 'Bluffing Detection',
-    description:
-      'The report flags answers that sounded confident but were factually thin — so you fix the gaps you did not know you had. No easy passes.',
-    color: 'from-orange-500/20 to-orange-600/5',
-    iconColor: 'text-orange-600',
-  },
-];
-
-const MODES = [
-  { icon: MessageSquare, title: 'Group Discussion', text: 'An AI panel debates a topic; you contribute and get scored on clarity, relevance and engagement.' },
-  { icon: Mic, title: 'Communication Round', text: 'AI-proctored spoken answers scored on pace, structure, filler words and confidence.' },
-  { icon: ListChecks, title: 'Practice Quizzes', text: 'Timed MCQs — curated fresher banks or fresh AI-generated sets, different every time.' },
-  { icon: Code2, title: 'Coding Round', text: 'A real in-browser editor wired to a compiler for hands-on coding questions.' },
-  { icon: Camera, title: 'Presence Analysis', text: 'Optional on-device camera & mic check for eye-contact and delivery — never stored, never uploaded.' },
-  { icon: FileText, title: 'Unified Activity Report', text: 'Every interview, GD, communication round and quiz in one history, newest first.' },
-];
+import { motion } from 'framer-motion';
+import { ArrowRight, Check } from 'lucide-react';
+import { Filler, Pause, Rule, SectionMark, Strike, WipeUp } from '@/components/landing/Annotate';
 
 /**
- * Counted from the code, not rounded up for effect.
+ * InterviewOS — landing page.
  *
- * This replaced "50+ company tracks" and a "2,000+ question bank", neither of
- * which was true — the catalogue holds 12 companies and 24 tracks, and the seeded
- * bank is a fraction of two thousand. A specific real number is also a better
- * sell than a vague large one: "87 previous-year questions, researched" is
- * checkable, and checkable is what makes the rest of the page believable.
+ * ONE IDEA: the page marks up its own words in the product's own annotation
+ * language. The product boxes your filler, stamps where you paused, strikes what
+ * was wrong and writes the better line beside it — so the page does that to its
+ * own copy, escalating as you scroll, and finishes by striking through the two
+ * claims this very site used to make falsely and replacing them with counted
+ * numbers.
+ *
+ * That move cannot be ported to another product. It only works for something that
+ * annotates speech, and the finale only works for a company that actually made
+ * those claims.
+ *
+ * RULES THIS PAGE OBEYS (see frontend/DESIGN-RULES.md):
+ *  * No cards, no icon grids, no gradient orbs, no glassmorphism. Structure comes
+ *    from typography and hairline rules.
+ *  * One verb — annotation. Two gestures — a rule drawing, content wiping up from
+ *    beneath a rule. Every entrance on the page is one of those two.
+ *  * Colour carries meaning only. Near-monochrome, one accent, used perhaps six
+ *    times on the whole page.
+ *  * Every number is counted from the code. See the STATS finale.
  */
-const STATS = [
-  { value: '12', label: 'Companies that hire on campus' },
-  { value: '24', label: 'Interview tracks' },
-  { value: '48', label: 'Study subtopics, with videos' },
-  { value: '87', label: 'Real previous-year questions' },
+
+const EASE = [0.16, 1, 0.3, 1] as const;
+
+/** Counted from the code, not rounded up. The finale strikes the old false ones. */
+const NUMBERS = [
+  { was: '50+ company tracks', now: '24', label: 'interview tracks, across 12 companies' },
+  { was: '2,000+ question bank', now: '87', label: 'real previous-year questions, researched' },
 ];
 
-const COMPANIES = ['Cognizant', 'TCS', 'Infosys', 'Wipro', 'Capgemini', 'Accenture'];
-
-const PERSONAS = [
-  { name: 'Riya', role: 'Friendly HR', from: '#6366f1', to: '#8b5cf6' },
-  { name: 'Arjun', role: 'Tech Lead', from: '#0ea5e9', to: '#2563eb' },
-  { name: 'Meera', role: 'Senior Panelist', from: '#10b981', to: '#059669' },
+const ROUNDS = [
+  ['Interview', 'Adaptive questions, and a follow-up when an answer is thin.'],
+  ['Group discussion', 'Three AI candidates who talk over you and move on if you stay silent.'],
+  ['Coding', 'Runs your code, then judges the approach — and flags work that looks AI-written.'],
+  ['Communication', 'Spoken answers scored on pace, structure and filler.'],
+  ['Quiz', 'Timed MCQs, generated fresh or drawn from the bank.'],
+  ['Report', 'One score, four competencies, every topic ranked, and what to fix first.'],
 ];
-
-const containerVariants: Variants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { staggerChildren: 0.08 } },
-};
-
-const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
-};
-
-/** A filler word, marked the way the product marks it. */
-function Filler({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded-md bg-red-500/15 px-2 py-0.5 font-semibold text-red-400">
-      {children}
-    </span>
-  );
-}
-
-/** A pause, shown where it actually happened rather than as a total. */
-function Pause({ s }: { s: number }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-white/15 px-2.5 py-1 text-xs font-semibold text-white/40">
-      ⏸ {s}s
-    </span>
-  );
-}
-
-function PersonaAvatar({ name, from, to }: { name: string; from: string; to: string }) {
-  const initial = name.charAt(0);
-  return (
-    <svg viewBox="0 0 64 64" className="h-12 w-12 shrink-0" aria-hidden>
-      <defs>
-        <linearGradient id={`g-${name}`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor={from} />
-          <stop offset="100%" stopColor={to} />
-        </linearGradient>
-      </defs>
-      <circle cx="32" cy="32" r="32" fill={`url(#g-${name})`} />
-      <text x="32" y="41" textAnchor="middle" fontSize="26" fontWeight="700" fill="white">
-        {initial}
-      </text>
-    </svg>
-  );
-}
 
 export default function LandingPage() {
   return (
-    <div className="hero-wash relative min-h-screen overflow-hidden bg-background">
-      {/* Background grid + gradient orbs for depth */}
-      <div className="pointer-events-none absolute inset-0 grid-bg opacity-100" />
-      <div className="pointer-events-none absolute -left-40 top-20 h-96 w-96 rounded-full bg-primary/20 blur-[120px]" />
-      <div className="pointer-events-none absolute -right-40 top-96 h-96 w-96 rounded-full bg-accent-violet/20 blur-[120px]" />
-
-      {/* ── Navbar ─────────────────────────────────────────────────────────── */}
-      {/* Sits over the dark hero, so it is inverted rather than inheriting the
-          page's light palette. */}
-      <nav className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-8 py-6">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <Code2 className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <span className="text-lg font-bold tracking-tight text-white">InterviewOS</span>
-        </div>
-
-        <div className="hidden items-center gap-8 text-sm text-white/55 md:flex">
-          <Link href="#features" className="transition-colors hover:text-white">Features</Link>
-          <Link href="#rounds" className="transition-colors hover:text-white">Rounds</Link>
-          <Link href="#companies" className="transition-colors hover:text-white">Companies</Link>
-          <Link href="#tech" className="transition-colors hover:text-white">Technology</Link>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Link href="/login" className="text-sm text-white/55 transition-colors hover:text-white">
+    <div className="min-h-screen bg-background">
+      {/* ── Nav ──────────────────────────────────────────────────────────── */}
+      <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 sm:px-10">
+        <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
+        <div className="flex items-center gap-6 text-sm">
+          <Link href="/login" className="text-muted-foreground transition-colors hover:text-foreground">
             Sign in
           </Link>
           <Link
             href="/register"
-            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#07070b] transition-colors hover:bg-white/90"
+            className="rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-85"
           >
-            Get Started
-            <ArrowRight className="h-3.5 w-3.5" />
+            Get started
           </Link>
         </div>
       </nav>
 
-      {/* ── Hero ─────────────────────────────────────────────────────────────
-          A dark, full-viewport stage with the robot centred and the copy set
-          around it as editorial metadata — corner labels, wide letter-spacing,
-          low-contrast greys. The object is the subject; the text frames it.
+      {/* ── 01 · Hero ────────────────────────────────────────────────────────
+          The thesis, annotated. The sentence is the hero — no illustration, no
+          object, no card. The marks ARE the art direction. */}
+      <section className="mx-auto max-w-6xl px-6 pb-24 pt-16 sm:px-10 sm:pb-32 sm:pt-24">
+        <SectionMark n="01" label="The thing nobody tells you" />
 
-          Deliberately inverted against the rest of the page, which is light. The
-          hard boundary at the bottom edge is the section separator: one cinematic
-          statement, then the product explains itself in daylight. */}
-      <section className="relative isolate -mt-24 flex min-h-[100svh] items-center overflow-hidden bg-[#07070b] pt-24">
-        {/* Depth: a pool of light under the robot, and a vignette to hold the eye. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(58% 48% at 50% 42%, rgba(0,138,230,0.18) 0%, transparent 70%), radial-gradient(40% 30% at 50% 88%, rgba(94,92,230,0.14) 0%, transparent 70%)',
-          }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{ background: 'radial-gradient(120% 90% at 50% 50%, transparent 45%, #07070b 100%)' }}
-        />
+        <h1 className="mt-8 max-w-4xl text-[clamp(2.1rem,5.6vw,4.2rem)] font-medium leading-[1.06] tracking-[-0.035em]">
+          <WipeUp>
+            <span>You won&apos;t fail because you didn&apos;t</span>
+          </WipeUp>
+          <WipeUp delay={0.08}>
+            <span>know the answer. You&apos;ll fail</span>
+          </WipeUp>
+          <WipeUp delay={0.16}>
+            <span className="text-muted-foreground">because of how you said it.</span>
+          </WipeUp>
+        </h1>
 
-        {/* Corner frame — thin rules that turn the viewport into a plate. */}
-        <div aria-hidden className="pointer-events-none absolute inset-6 sm:inset-10">
-          {[
-            'left-0 top-0 border-l border-t',
-            'right-0 top-0 border-r border-t',
-            'left-0 bottom-0 border-l border-b',
-            'right-0 bottom-0 border-r border-b',
-          ].map((pos) => (
-            <span key={pos} className={cn('absolute h-10 w-10 border-white/15', pos)} />
-          ))}
-        </div>
-
-        {/* ── Copy, arranged around the object ───────────────────────────── */}
-        <div className="relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col justify-between px-8 py-14 sm:px-14 sm:py-20">
-          {/* Top row */}
-          <div className="flex items-start justify-between gap-8">
-            <motion.div
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-              className="max-w-xl"
-            >
-              <h1 className="text-[clamp(2.4rem,6vw,4.6rem)] font-light uppercase leading-[0.95] tracking-[-0.02em] text-white">
-                Interview
-                <br />
-                <span className="font-semibold">OS</span>
-                <span className="ml-3 inline-block h-2.5 w-2.5 translate-y-[-0.4rem] rounded-full bg-primary align-middle" />
-              </h1>
-              <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.32em] text-white/40 sm:text-xs">
-                AI Interviewer · Build 2026.1
-              </p>
-            </motion.div>
-
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.9, delay: 0.25 }}
-              className="hidden max-w-[15rem] text-right text-[11px] font-medium uppercase leading-relaxed tracking-[0.18em] text-white/35 sm:block"
-            >
-              It asks, it listens,
-              <br />
-              it decides what
-              <br />
-              to ask you next
-            </motion.p>
-          </div>
-
-          {/* Middle — the actual pitch and the CTAs. Kept low and centred so the
-              robot reads above it rather than behind the text. */}
-          <motion.div
-            initial={{ opacity: 0, y: 22 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
-            className="mx-auto mt-auto max-w-2xl text-center"
-          >
-            <p className="text-balance text-lg leading-relaxed text-white/70 sm:text-xl">
-              A mock interview that pushes back — cross-questions your answers, reads your
+        <div className="mt-14 grid gap-10 lg:grid-cols-[1.1fr_1fr] lg:items-end">
+          <WipeUp delay={0.28}>
+            <p className="max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
+              A mock interview that pushes back. It cross-questions a thin answer, reads your
               resume, measures how you actually speak, and scores you out of a hundred.
             </p>
-
-            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/register"
-                className="group inline-flex items-center gap-2 rounded-full bg-white px-8 py-3.5 text-sm font-semibold text-[#07070b] transition-all hover:bg-white/90"
+                className="group inline-flex items-center gap-2 rounded-full bg-foreground px-6 py-3 text-sm font-medium text-background transition-opacity hover:opacity-85"
               >
-                Start your mock interview
-                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                Start a mock interview
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
               <Link
                 href="/demo"
-                className="inline-flex items-center gap-2 rounded-full border border-white/20 px-8 py-3.5 text-sm font-medium text-white/75 transition-all hover:border-white/50 hover:text-white"
+                className="rounded-full border border-border px-6 py-3 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
               >
-                View a sample report
-                <ChevronRight className="h-4 w-4" />
+                See a sample report
               </Link>
             </div>
-          </motion.div>
+          </WipeUp>
 
-          {/* Bottom row */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.9, delay: 0.5 }}
-            className="mt-14 flex flex-wrap items-end justify-between gap-4 border-t border-white/10 pt-6"
-          >
-            <span className="text-[10px] font-medium uppercase tracking-[0.3em] text-white/35 sm:text-[11px]">
-              Cognizant · TCS · Infosys · Wipro · Accenture
-            </span>
-            <span className="text-[10px] font-medium uppercase tracking-[0.3em] text-white/35 sm:text-[11px]">
-              12 companies · 24 tracks
-            </span>
-          </motion.div>
-        </div>
-      </section>
-
-
-      {/* ── The proof section ────────────────────────────────────────────────
-          The single strongest thing this product does, given a whole viewport and
-          shown as the real artefact rather than described in a feature card.
-
-          Everyone else's landing page claims "AI feedback". Nobody shows a
-          candidate their own sentence with the hesitations marked in it. That
-          image does the persuading — the copy just points at it. */}
-      <section className="relative z-10 overflow-hidden bg-[#07070b] py-28">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{ background: 'radial-gradient(60% 50% at 50% 0%, rgba(0,138,230,0.12) 0%, transparent 70%)' }}
-        />
-        <div className="relative mx-auto max-w-4xl px-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-80px' }}
-            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-            className="text-center"
-          >
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/35">
-              01 — What nobody tells you
-            </p>
-            <h2 className="mt-5 text-balance text-[clamp(1.9rem,4.4vw,3.2rem)] font-semibold leading-[1.05] tracking-[-0.02em] text-white">
-              You won&apos;t fail because you didn&apos;t know the answer.
-              <br className="hidden sm:block" />
-              <span className="text-white/45"> You&apos;ll fail because of how you said it.</span>
-            </h2>
-          </motion.div>
-
-          {/* The artefact. */}
-          <motion.div
-            initial={{ opacity: 0, y: 26 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.7, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-12 rounded-2xl border border-white/10 bg-white/[0.03] p-6 backdrop-blur-sm sm:p-8"
-          >
-            <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/30">
-              Your exact words
-            </p>
-
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-3 text-lg leading-relaxed text-white/80 sm:text-xl">
-              <span>I think</span>
-              <Filler>um</Filler>
-              <span>the main thing is</span>
-              <Pause s={3} />
-              <Filler>like</Filler>
-              <Filler>you know</Filler>
-              <span>it just works</span>
-              <Pause s={4} />
-            </p>
-
-            <div className="mt-8 grid grid-cols-2 gap-6 border-t border-white/10 pt-6 sm:grid-cols-4">
-              {[
-                { v: '12', l: 'pauses' },
-                { v: '29s', l: 'of silence' },
-                { v: '10', l: 'filler words' },
-                { v: '125', l: 'words / min' },
-              ].map((m) => (
-                <div key={m.l}>
-                  <p className="text-2xl font-semibold tabular-nums text-white sm:text-3xl">{m.v}</p>
-                  <p className="mt-1 text-[11px] uppercase tracking-wider text-white/35">{m.l}</p>
-                </div>
-              ))}
+          {/* The first annotation. Your own sentence, marked up. */}
+          <WipeUp delay={0.4}>
+            <div>
+              <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                What the panel heard
+              </p>
+              <p className="text-lg leading-loose text-foreground/80 sm:text-xl">
+                I think <Filler>um</Filler> the main thing is
+                <Pause seconds={3} /> <Filler>like</Filler> <Filler>you know</Filler> it just works
+                <Pause seconds={4} />
+              </p>
+              <Rule className="mt-6" />
+              <dl className="mt-4 grid grid-cols-4 gap-4">
+                {[
+                  ['12', 'pauses'],
+                  ['29s', 'silent'],
+                  ['10', 'fillers'],
+                  ['125', 'wpm'],
+                ].map(([v, l]) => (
+                  <div key={l}>
+                    <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {l}
+                    </dt>
+                    <dd className="mt-0.5 text-xl font-medium tabular-nums tracking-[-0.02em]">{v}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
-          </motion.div>
-
-          <motion.p
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="mt-8 text-center text-sm text-white/45"
-          >
-            Measured from your own answer, then replayed back to you — with the answer you
-            should have given, written next to it.
-          </motion.p>
+          </WipeUp>
         </div>
       </section>
 
-      {/* ── Stats ──────────────────────────────────────────────────────────── */}
-      <section className="relative z-10 border-y border-border/50 bg-surface/30 py-12">
-        <div className="mx-auto max-w-5xl px-8">
-          <motion.div
-            className="grid grid-cols-2 gap-8 sm:grid-cols-4"
-            variants={containerVariants}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true }}
-          >
-            {STATS.map(({ label, value }) => (
-              <motion.div key={label} variants={itemVariants} className="text-center">
-                <p className="gradient-text-blue text-3xl font-bold">{value}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{label}</p>
-              </motion.div>
-            ))}
-          </motion.div>
-        </div>
-      </section>
+      {/* ── 02 · The rewrite ─────────────────────────────────────────────────
+          The annotation escalates: now it strikes and rewrites, which is exactly
+          what the detailed analysis does to a real answer. */}
+      <section className="border-y border-border bg-secondary/30">
+        <div className="mx-auto max-w-6xl px-6 py-24 sm:px-10 sm:py-32">
+          <SectionMark n="02" label="And the answer you should have given" />
 
-      {/* ── Features ───────────────────────────────────────────────────────── */}
-      <section id="features" className="relative z-10 mx-auto max-w-7xl px-8 py-24">
-        <motion.div
-          className="mb-16 text-center"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-        >
-          <p className="section-label mb-3">Platform Features</p>
-          <h2 className="text-4xl font-bold">
-            Built Different.{' '}
-            <span className="gradient-text">Interviews, Not Quizzes.</span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
-            Most interview tools are just Q&amp;A databases. InterviewOS is a simulation engine that
-            reproduces the full experience of a real technical interview round.
-          </p>
-        </motion.div>
+          <div className="mt-10 grid gap-12 lg:grid-cols-2 lg:gap-16">
+            <WipeUp>
+              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                You said
+              </p>
+              <p className="mt-4 text-lg leading-loose text-muted-foreground">
+                I think the JVM is <Filler>um</Filler> like a virtual machine that runs java code
+                <Pause seconds={4} /> that&apos;s it.
+              </p>
+            </WipeUp>
 
-        <motion.div
-          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true }}
-        >
-          {FEATURES.map(({ icon: Icon, title, description, color, iconColor }) => (
-            <motion.div
-              key={title}
-              variants={itemVariants}
-              className="glass-hover group relative cursor-default overflow-hidden rounded-xl p-6"
-            >
-              <div className={`absolute inset-0 bg-gradient-to-br ${color} opacity-0 transition-opacity duration-300 group-hover:opacity-100`} />
-              <div className="relative">
-                <div className={`mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-muted ${iconColor}`}>
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="mb-2 text-base font-semibold">{title}</h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
-              </div>
-            </motion.div>
-          ))}
-        </motion.div>
-      </section>
-
-      {/* ── Rounds / Modes ─────────────────────────────────────────────────── */}
-      <section id="rounds" className="relative z-10 mx-auto max-w-7xl px-8 py-12">
-        <motion.div
-          className="mb-12 text-center"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-        >
-          <p className="section-label mb-3">Every Round in One Place</p>
-          <h2 className="text-4xl font-bold">Practice the whole placement process</h2>
-          <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
-            From the technical panel to the group discussion, the aptitude quiz and the HR round —
-            all in one platform, all scored.
-          </p>
-        </motion.div>
-
-        <motion.div
-          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true }}
-        >
-          {MODES.map(({ icon: Icon, title, text }) => (
-            <motion.div key={title} variants={itemVariants} className="glass rounded-xl border border-border/50 p-6">
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Icon className="h-5 w-5" />
-              </div>
-              <h3 className="mb-2 text-base font-semibold">{title}</h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">{text}</p>
-            </motion.div>
-          ))}
-        </motion.div>
-      </section>
-
-      {/* ── Interviewer personas ───────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-5xl px-8 py-16">
-        <div className="glass rounded-2xl border border-border/50 p-10">
-          <div className="mb-8 text-center">
-            <p className="section-label mb-3">Meet Your Panel</p>
-            <h2 className="text-3xl font-bold">Interviewers with real personalities</h2>
-            <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
-              Choose the panel style you want to rehearse against — from a warm HR chat to a
-              no-nonsense senior technical grill.
-            </p>
+            <WipeUp delay={0.15}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                How to answer it
+              </p>
+              <p className="mt-4 text-lg leading-relaxed">
+                The JVM is what actually runs my Java code. javac compiles to bytecode, and the JVM
+                executes that bytecode on whatever OS I&apos;m on — that&apos;s what makes Java
+                platform independent. It also handles memory for me through garbage collection.
+              </p>
+            </WipeUp>
           </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {PERSONAS.map((p) => (
-              <div key={p.name} className="flex items-center gap-4 rounded-xl border border-border/50 bg-surface p-5">
-                <PersonaAvatar name={p.name} from={p.from} to={p.to} />
-                <div>
-                  <p className="font-semibold">{p.name}</p>
-                  <p className="text-sm text-muted-foreground">{p.role}</p>
-                </div>
+
+          <WipeUp delay={0.3}>
+            <p className="mt-12 text-sm text-muted-foreground">
+              Written against what you actually said — for every question you answered.
+            </p>
+          </WipeUp>
+        </div>
+      </section>
+
+      {/* ── 03 · Rounds ──────────────────────────────────────────────────────
+          A list, set like a contents page. Deliberately NOT a three-across icon
+          grid: six items in an even grid is the single most template-looking
+          shape on the internet. */}
+      <section className="mx-auto max-w-6xl px-6 py-24 sm:px-10 sm:py-32">
+        <SectionMark n="03" label="Six rounds, not one" />
+
+        <div className="mt-10">
+          {ROUNDS.map(([name, desc], i) => (
+            <WipeUp key={name} delay={i * 0.05}>
+              <div className="grid grid-cols-[2.5rem_1fr] gap-x-4 border-b border-border py-5 sm:grid-cols-[3rem_14rem_1fr] sm:gap-x-8">
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                  {String(i + 1).padStart(2, '0')}
+                </span>
+                <h3 className="text-base font-medium tracking-[-0.01em]">{name}</h3>
+                <p className="col-start-2 mt-1 text-sm leading-relaxed text-muted-foreground sm:col-start-3 sm:mt-0">
+                  {desc}
+                </p>
               </div>
+            </WipeUp>
+          ))}
+        </div>
+      </section>
+
+      {/* ── 04 · Target company ──────────────────────────────────────────── */}
+      <section className="border-y border-border bg-secondary/30">
+        <div className="mx-auto max-w-6xl px-6 py-24 sm:px-10 sm:py-32">
+          <SectionMark n="04" label="Weighted by what they actually test" />
+
+          <WipeUp>
+            <h2 className="mt-8 max-w-3xl text-[clamp(1.6rem,3.4vw,2.6rem)] font-medium leading-[1.12] tracking-[-0.03em]">
+              Amazon gives algorithms 45% of the paper. TCS gives aptitude 25%.
+              <span className="text-muted-foreground"> Your plan should know the difference.</span>
+            </h2>
+          </WipeUp>
+
+          {/* The weight bars ARE rules. No chart component, no card. */}
+          <div className="mt-12 grid gap-x-16 gap-y-8 sm:grid-cols-2">
+            {[
+              { c: 'Amazon', rows: [['Data Structures & Algorithms', 45], ['Problem solving', 20], ['Leadership Principles', 15]] },
+              { c: 'TCS', rows: [['Aptitude & Reasoning', 25], ['C / Java / Python', 20], ['Data Structures', 15]] },
+            ].map((col, ci) => (
+              <WipeUp key={col.c} delay={ci * 0.12}>
+                <p className="mb-4 font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                  {col.c}
+                </p>
+                {col.rows.map(([topic, w]) => (
+                  <div key={topic as string} className="mb-4">
+                    <div className="mb-1.5 flex items-baseline justify-between gap-4">
+                      <span className="text-sm">{topic}</span>
+                      <span className="font-mono text-xs tabular-nums text-muted-foreground">{w}%</span>
+                    </div>
+                    <div className="h-px w-full bg-border">
+                      <motion.div
+                        className="h-px bg-foreground"
+                        initial={{ scaleX: 0 }}
+                        whileInView={{ scaleX: 1 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.8, ease: EASE }}
+                        style={{ width: `${(w as number) * 2}%`, transformOrigin: 'left center' }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </WipeUp>
             ))}
           </div>
-        </div>
-      </section>
 
-      {/* ── Companies ──────────────────────────────────────────────────────── */}
-      <section id="companies" className="relative z-10 mx-auto max-w-5xl px-8 py-16 text-center">
-        <p className="section-label mb-8">Interview Tracks Available</p>
-        <div className="flex flex-wrap items-center justify-center gap-4">
-          {COMPANIES.map((company) => (
-            <div
-              key={company}
-              className="rounded-lg border border-border bg-surface px-6 py-3 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            >
-              {company}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── Technology / Models ────────────────────────────────────────────── */}
-      <section id="tech" className="relative z-10 mx-auto max-w-5xl px-8 py-16">
-        <div className="mb-10 text-center">
-          <p className="section-label mb-3">Under the Hood</p>
-          <h2 className="text-3xl font-bold">Powered by frontier AI models</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
-            A resilient multi-model pipeline keeps interviews flowing even under load, with
-            automatic fallback between providers.
-          </p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          {[
-            { icon: Cpu, title: 'Claude Sonnet 5', text: 'Primary reasoning model driving question generation, cross-questions and scoring.' },
-            { icon: Cpu, title: 'GLM-4.5 fallback', text: 'Automatic fallback provider so sessions stay reliable when the primary is busy.' },
-            { icon: ShieldCheck, title: 'Private by design', text: 'Camera & mic analysis runs on-device only. Nothing is recorded, uploaded or stored.' },
-          ].map(({ icon: Icon, title, text }) => (
-            <div key={title} className="glass rounded-xl border border-border/50 p-6">
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-accent-violet/10 text-accent-violet">
-                <Icon className="h-5 w-5" />
-              </div>
-              <h3 className="mb-2 text-base font-semibold">{title}</h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">{text}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── CTA ────────────────────────────────────────────────────────────── */}
-      <section className="relative z-10 mx-auto max-w-4xl px-8 py-24 text-center">
-        <div className="glass glow relative overflow-hidden rounded-2xl border border-primary/20 p-12">
-          <div className="pointer-events-none absolute inset-0 bg-gradient-radial from-primary/10 via-transparent to-transparent" />
-          <div className="relative">
-            <h2 className="text-4xl font-bold">
-              Your Interview. Your Terms.
-              <br />
-              <span className="gradient-text">Start Today.</span>
-            </h2>
-            <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-              Pick your company and program, add your resume, and see exactly where you stand
-              before the real interview does.
+          <WipeUp delay={0.3}>
+            <p className="mt-10 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              Pick your target and get a dated plan: 48 subtopics, each with something to read,
+              somewhere to practise, and a quiz to check you actually know it.
             </p>
-            <Link
-              href="/register"
-              className="group mt-8 inline-flex items-center gap-2 rounded-xl bg-primary px-10 py-4 text-base font-semibold text-primary-foreground shadow-glow transition-all hover:bg-primary/90 hover:shadow-glow-lg"
-            >
-              Start Your Mock Interview
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </Link>
-          </div>
+          </WipeUp>
         </div>
       </section>
 
-      {/* ── Developer ──────────────────────────────────────────────────────── */}
-      <section id="developer" className="relative z-10 border-t border-border/50 py-24">
-        <div className="mx-auto max-w-5xl px-8">
-          <div className="mb-12 text-center">
-            <p className="section-label mb-3">The Developer</p>
-            <h2 className="text-3xl font-bold">Built by one engineer</h2>
-          </div>
+      {/* ── 05 · The finale ──────────────────────────────────────────────────
+          The page marks up its OWN false claims. This is the beat the whole
+          annotation idea has been building to, and it is the one section that
+          could not exist on any other company's site. */}
+      <section className="mx-auto max-w-6xl px-6 py-24 sm:px-10 sm:py-32">
+        <SectionMark n="05" label="Numbers we can actually prove" />
 
-          <div className="glass relative overflow-hidden rounded-2xl border border-border/50 p-8 md:p-12">
-            <div className="pointer-events-none absolute inset-0 bg-gradient-radial from-primary/[0.07] via-transparent to-transparent" />
+        <WipeUp>
+          <p className="mt-8 max-w-2xl text-base leading-relaxed text-muted-foreground">
+            This page used to say something else. Both of these were rounded up until somebody
+            counted. If we will not round up our own numbers, you can trust the ones on your
+            report.
+          </p>
+        </WipeUp>
 
-            <div className="relative grid items-center gap-10 md:grid-cols-[auto,1fr]">
-              {/* Portrait. object-top keeps the face framed as the container
-                  narrows on mobile — object-cover alone would crop upward. */}
-              <div className="mx-auto w-full max-w-[15rem] md:mx-0">
-                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl border border-border bg-secondary/40 shadow-xl">
-                  {/* Local asset in /public. Plain <img> for the same reason as
-                      the profile page: one image code path, and next/image's
-                      loader needs configuration to work on Cloudflare Pages. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/img/developer.jpg"
-                    alt="Sparsh Sharma, developer of InterviewOS"
-                    width={900}
-                    height={1349}
-                    loading="lazy"
-                    decoding="async"
-                    className="h-full w-full object-cover object-top"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-2xl font-bold tracking-[-0.01em]">Sparsh Sharma</h3>
-                <p className="mt-1 text-sm font-semibold text-primary">
-                  Creator &amp; Full-Stack Developer — InterviewOS
-                </p>
-
-                <p className="mt-5 text-sm leading-relaxed text-muted-foreground">
-                  InterviewOS was designed and built end to end by one developer — the adaptive
-                  interview engine, the answer-scoring pipeline, the group-discussion simulation,
-                  the coding evaluator and every screen you have just scrolled through.
-                </p>
-                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  It exists because preparing for a Cognizant or TCS interview usually means
-                  reading someone else&apos;s question list and hoping it comes up. This does the
-                  opposite: it puts you in the room, pushes back when an answer is thin, and tells
-                  you plainly where you stand.
-                </p>
-
-                <div className="mt-7 flex flex-wrap gap-2">
-                  {[
-                    'Next.js 15 · React 19',
-                    'FastAPI · PostgreSQL',
-                    'Claude Sonnet 5',
-                    'Redis · Docker',
-                  ].map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-full border border-border/70 bg-secondary/50 px-3 py-1 text-xs font-medium text-muted-foreground"
-                    >
-                      {tag}
+        <div className="mt-14 space-y-12">
+          {NUMBERS.map((n, i) => (
+            <div key={n.was} className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end sm:gap-8">
+              <div className="text-[clamp(1.5rem,4vw,2.6rem)] font-medium leading-tight tracking-[-0.03em]">
+                <Strike
+                  delay={i * 0.1}
+                  replacement={
+                    <span className="tabular-nums">
+                      {n.now}
+                      <span className="ml-3 text-base font-normal tracking-normal text-muted-foreground sm:text-lg">
+                        {n.label}
+                      </span>
                     </span>
-                  ))}
-                </div>
+                  }
+                >
+                  {n.was}
+                </Strike>
               </div>
+              <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                <Check className="h-3 w-3" /> counted
+              </span>
             </div>
+          ))}
+        </div>
+
+        <Rule className="mt-16" />
+
+        <WipeUp delay={0.2}>
+          <div className="mt-8 grid gap-8 sm:grid-cols-3">
+            {[
+              ['48', 'study subtopics, each with a reference'],
+              ['13', 'AI surfaces — interviewer, panel, evaluator, coach'],
+              ['12', 'companies that hire on campus'],
+            ].map(([v, l]) => (
+              <div key={l}>
+                <p className="text-3xl font-medium tabular-nums tracking-[-0.03em]">{v}</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{l}</p>
+              </div>
+            ))}
+          </div>
+        </WipeUp>
+      </section>
+
+      {/* ── 06 · Companies ───────────────────────────────────────────────────
+          A contents page, not a logo wall — we have no rights to their marks. */}
+      <section className="border-y border-border">
+        <div className="mx-auto max-w-6xl px-6 py-20 sm:px-10">
+          <SectionMark n="06" label="Who you can prepare for" />
+          <WipeUp delay={0.1}>
+            <div className="mt-8 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+              {['TCS', 'Cognizant', 'Infosys', 'Wipro', 'Accenture', 'Capgemini', 'HCLTech', 'Tech Mahindra', 'LTIMindtree', 'IBM', 'Deloitte', 'Amazon'].map(
+                (c, i) => (
+                  <div key={c} className="flex items-baseline gap-3 border-b border-border/60 pb-2">
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="text-sm">{c}</span>
+                  </div>
+                ),
+              )}
+            </div>
+          </WipeUp>
+        </div>
+      </section>
+
+      {/* ── 07 · Close ───────────────────────────────────────────────────── */}
+      <section className="mx-auto max-w-6xl px-6 py-28 sm:px-10 sm:py-40">
+        <WipeUp>
+          <h2 className="max-w-3xl text-[clamp(2rem,5vw,3.6rem)] font-medium leading-[1.08] tracking-[-0.035em]">
+            Practise the real thing
+            <span className="text-muted-foreground"> before the real thing.</span>
+          </h2>
+        </WipeUp>
+        <WipeUp delay={0.12}>
+          <Link
+            href="/register"
+            className="group mt-10 inline-flex items-center gap-2 rounded-full bg-foreground px-7 py-3.5 text-sm font-medium text-background transition-opacity hover:opacity-85"
+          >
+            Start a mock interview
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        </WipeUp>
+      </section>
+
+      {/* ── Developer ────────────────────────────────────────────────────── */}
+      <section className="border-t border-border">
+        <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-16 sm:flex-row sm:items-center sm:px-10">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/img/developer.jpg"
+            alt="Sparsh Sharma, developer of InterviewOS"
+            width={900}
+            height={1349}
+            loading="lazy"
+            className="h-28 w-28 shrink-0 rounded-full object-cover object-top grayscale"
+          />
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Built by
+            </p>
+            <p className="mt-2 text-lg font-medium tracking-[-0.01em]">Sparsh Sharma</p>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              The interview engine, the scoring pipeline, the group-discussion simulation, the
+              coding evaluator and every screen — designed and built end to end by one developer.
+            </p>
           </div>
         </div>
       </section>
 
-      {/* ── Footer ─────────────────────────────────────────────────────────── */}
-      <footer className="relative z-10 border-t border-border/50 py-8">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-8 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Code2 className="h-4 w-4 text-primary" />
-            <span className="font-medium">InterviewOS</span>
-          </div>
-          <p>© 2026 InterviewOS. Built for real offers.</p>
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:px-10">
+          <span>InterviewOS</span>
+          <span>© 2026</span>
         </div>
       </footer>
     </div>
