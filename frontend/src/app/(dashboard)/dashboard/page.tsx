@@ -1,19 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import {
-  ArrowRight,
-  BarChart2,
-  BookOpen,
-  CheckCircle2,
-  Clock,
-  Play,
-  TrendingUp,
-  Loader2,
-  FileText,
-} from 'lucide-react';
+import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Loader2, Play, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { useUserStats, useUserSessions, useTracks } from '@/hooks/useData';
+import { useProgress, useTracks, useUserSessions, useUserStats } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
 import { useCandidateName } from '@/hooks/useCandidateName';
 import { Card } from '@/components/ui/card';
@@ -80,12 +70,21 @@ export default function DashboardPage() {
         />
       </motion.div>
 
+      {/* The rating, above everything else.
+          A credential nobody sees is a credential nobody chases — and the whole
+          point of the number is that it is the reason to come back. */}
+      <motion.div variants={fadeUp}>
+        <StandingBanner />
+      </motion.div>
+
       {/* Nudge to try a round they haven't done yet (communication / GD) */}
       <motion.div variants={fadeUp}>
         <FeatureNudge />
       </motion.div>
 
-      {/* Stats grid */}
+      {/* Stats grid — participation, deliberately BELOW the rating. Hours practised
+          and sessions completed measure effort; the rating measures whether the
+          effort worked, and the ordering should say which one matters. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           label="Total Sessions"
@@ -228,5 +227,73 @@ export default function DashboardPage() {
         </motion.div>
       </div>
     </motion.div>
+  );
+}
+
+/**
+ * The rating, at the top of the dashboard.
+ *
+ * Deliberately compact and deliberately specific: the number, what it claims, and
+ * the exact points to the next rung. "Keep practising" is not a goal; "38 points to
+ * Offer Ready" is, and it is the difference between a stat and something someone
+ * comes back for.
+ *
+ * Renders nothing at all until there is a rating. An empty ladder on day one is a
+ * reminder that you have done nothing, which is the opposite of the intended effect —
+ * the FeatureNudge below already handles a first-time user.
+ */
+function StandingBanner() {
+  const { data } = useProgress();
+  if (!data || data.rated_rounds === 0) return null;
+
+  const last = data.recent[0];
+  return (
+    <Link
+      href="/achievements"
+      className="ease-out-expo group block rounded-2xl border border-border/60 bg-card p-5 transition-colors hover:border-primary/40"
+    >
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
+        <div className="flex items-end gap-2.5">
+          <p className="font-mono text-4xl font-bold leading-none tracking-tight tabular-nums">
+            {data.rating}
+          </p>
+          {/* The delta from the most recent round, so the dashboard shows movement
+              rather than a static figure. Movement is what makes a number habit-forming. */}
+          {!!last && last.delta !== 0 && (
+            <span
+              className={cn(
+                'pb-1 font-mono text-xs font-bold tabular-nums',
+                last.delta > 0 ? 'text-accent-emerald-ink' : 'text-accent-coral-ink'
+              )}
+            >
+              {last.delta > 0 ? '+' : ''}
+              {last.delta}
+            </span>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold uppercase tracking-wider text-primary">
+            {data.rank.name}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+            {data.next_rank
+              ? `${data.points_to_next} points to ${data.next_rank.name}`
+              : 'Top of the ladder — hold it.'}
+            {data.percentile != null && ` · ${data.percentile}th percentile`}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-5">
+          <div className="text-right">
+            <p className="font-mono text-lg font-bold tabular-nums">{data.total_cleared}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              cleared
+            </p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+        </div>
+      </div>
+    </Link>
   );
 }

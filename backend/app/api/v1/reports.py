@@ -25,6 +25,8 @@ from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
 from app.events import ReportGeneratedEvent, ReportGeneratedPayload, get_event_emitter
 from app.events.emitter import EventEmitter
+from app.services.progress.rating import tier_for
+from app.services.progress.recorder import record_round
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -684,6 +686,33 @@ async def generate_report(
         report = existing_report
     else:
         db.add(report)
+    # Rate the round BEFORE committing, so the ledger row and the report land in one
+    # transaction — a report the candidate can see with no rating attached is the one
+    # state that would make the number look broken.
+    #
+    # Only a scored report counts. The heuristic fallback writes overall_score 0.0
+    # with generated_by=unscored, and rating a round the model failed to score would
+    # punish a candidate for our outage.
+    if (report.raw_report or {}).get("generated_by") == "ai":
+        topics_covered = sorted({topic_name for _, _, topic_name in transcript_rows})
+        await record_round(
+            db,
+            user_id=current_user.user_id,
+            session_id=session_id,
+            kind="interview",
+            tier=tier_for(
+                question_count=len(transcript_rows),
+                # On the TRACK, not the company — a recruiter runs tracks of
+                # different difficulty, and it is the track that was sat.
+                company_difficulty=track.difficulty_level if track else None,
+                had_cross_questions=bool(
+                    (session.session_metadata or {}).get("cross_question_ids")
+                ),
+            ),
+            score_out_of_100=float(report.overall_score),
+            topics=topics_covered,
+        )
+
     await db.commit()
     await db.refresh(report)
     overall_score = report.overall_score

@@ -10,6 +10,7 @@ from .ai_usage import AIUsage  # TEMPORARY — token counter
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .company import Company, InterviewTrack, QuestionCategory
 from .prep import PrepProgress
+from .progress import RatingEvent
 from .question import FollowUpQuestion, Question, Subtopic, Topic
 from .report import Report, ResumeFile
 from .research import CompanyResearch
@@ -51,4 +52,6 @@ __all__ = [
     "SystemPrompt",
     # Activity
     "ActivityLog",
+    # Progress
+    "RatingEvent",
 ]

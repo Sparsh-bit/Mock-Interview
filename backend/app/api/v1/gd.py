@@ -24,6 +24,8 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.services.activity import log_activity
+from app.services.progress.rating import Tier
+from app.services.progress.recorder import record_round
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -565,4 +567,40 @@ async def gd_evaluate(
         score=round(evaluation.overall_score * 10, 1),
         details=evaluation.model_dump(),
     )
+
+    # A GD feeds the SAME rating as a technical round, deliberately. A candidate who
+    # can hold a technical interview but goes silent in a group discussion is not
+    # placement-ready, and two separate numbers would let them ignore the half they
+    # are worse at — which is the half a real campus drive eliminates them on.
+    #
+    # session_id is None: a GD round has no InterviewSession row, so the per-session
+    # idempotency guard does not apply here. That is correct rather than a gap — a GD
+    # is only ever evaluated once, at the end, by the client that ran it.
+    #
+    # Rated CORE. A GD is not the hardest thing we run, but it is not a warm-up
+    # either: eight minutes of holding a floor against three people who argue back is
+    # squarely a standard campus round.
+    #
+    # Only a round the candidate actually took part in. Two reasons, and the product
+    # one is the stronger: a discussion you sat out is not evidence of anything, so
+    # rating it would put a number on the wrong thing. It also closes the one replay
+    # gap here — an interview is guarded by UNIQUE(session_id), and a GD has no
+    # session row, so a client could post the same transcript twice. The dampers make
+    # that nearly worthless already (same topic gives repeat scale 0.25, and a second
+    # round the same day compounds it), but requiring two real contributions means
+    # there is nothing to replay unless the candidate genuinely spoke.
+    own_points = sum(1 for t in request.history if t.speaker == _YOU and t.text.strip())
+    if own_points >= 2:
+        await record_round(
+            db,
+            user_id=current_user.user_id,
+            session_id=None,
+            kind="gd",
+            tier=Tier.CORE,
+            # The GD evaluator scores out of 10; the rating engine works out of 100.
+            score_out_of_100=float(evaluation.overall_score) * 10,
+            topics=[request.topic],
+        )
+    await db.commit()
+
     return GDEvaluateResponse(**evaluation.model_dump())

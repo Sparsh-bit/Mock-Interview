@@ -44,7 +44,7 @@ const NAV_ITEMS = [
     items: [
       { href: '/tracks', icon: BookOpen, label: 'Interview Tracks' },
       { href: '/analytics', icon: BarChart3, label: 'Analytics' },
-      { href: '/achievements', icon: Trophy, label: 'Achievements' },
+      { href: '/achievements', icon: Trophy, label: 'Standing' },
     ],
   },
   {

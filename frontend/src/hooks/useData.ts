@@ -571,3 +571,64 @@ export function useToggleProgress() {
     onSuccess: (data) => queryClient.setQueryData(['prep-progress'], data),
   });
 }
+
+/* ─── Standing: the rating and cleared-round credential ────────────────────── */
+
+export interface RankInfo {
+  name: string;
+  meaning: string;
+  floor: number;
+}
+
+export interface TierProgress {
+  tier: string;
+  label: string;
+  clear_bar: number;
+  cleared: number;
+  attempted: number;
+}
+
+export interface RoundSummary {
+  kind: string;
+  tier: string;
+  score: number;
+  cleared: boolean;
+  delta: number;
+  rating_after: number;
+  at: string;
+  /** Why the delta was what it was, in one line. */
+  note: string;
+}
+
+export interface Progress {
+  rating: number;
+  peak_rating: number;
+  rank: RankInfo;
+  next_rank: RankInfo | null;
+  points_to_next: number;
+  percentile: number | null;
+  rated_rounds: number;
+  total_cleared: number;
+  tiers: TierProgress[];
+  recent: RoundSummary[];
+  ladder: RankInfo[];
+}
+
+/**
+ * The candidate's standing.
+ *
+ * Short staleTime rather than the usual long one: this is the number a candidate
+ * comes back to check straight after a round, and showing them yesterday's rating
+ * on the screen whose whole job is to show movement is the one cache miss that
+ * actually matters.
+ */
+export function useProgress() {
+  return useQuery({
+    queryKey: ['progress'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/progress');
+      return res.data as Progress;
+    },
+    staleTime: 30 * 1000,
+  });
+}

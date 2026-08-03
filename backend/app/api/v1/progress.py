@@ -1,0 +1,256 @@
+"""
+Standing — api/v1/progress.py
+
+What the candidate is chasing, in one response: their rating, where that sits on the
+ladder, how far the next rung is, the cleared-round ledger by tier, and where they
+stand against everyone else.
+
+The shape is deliberate. A progression screen that shows only a number is a score;
+one that shows the number, what it claims about you, and the exact distance to the
+next thing is a ladder. The second one is what brings people back.
+
+Everything here is derived from the append-only ledger (models/progress.py). There
+is no stored current-rating to go stale.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import Integer, case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import CurrentUser
+from app.db.session import get_db
+from app.models.progress import RatingEvent
+from app.services.progress.rating import (
+    BASE_RATING,
+    RANKS,
+    TIERS,
+    Tier,
+    next_rank,
+    rank_for,
+)
+from app.services.progress.recorder import current_rating
+
+router = APIRouter(prefix="/progress", tags=["progress"])
+
+
+class TierProgress(BaseModel):
+    tier: str
+    label: str
+    #: The score out of 100 this tier counts as cleared at.
+    clear_bar: int
+    #: Rounds cleared at this tier. Monotonic — this is the showable credential.
+    cleared: int
+    #: Rounds attempted at this tier, so "3 of 11" reads honestly rather than
+    #: implying every round cleared.
+    attempted: int
+
+
+class RankInfo(BaseModel):
+    name: str
+    meaning: str
+    floor: int
+
+
+class RoundSummary(BaseModel):
+    kind: str
+    tier: str
+    score: float
+    cleared: bool
+    delta: int
+    rating_after: int
+    at: datetime
+    #: Why the delta was what it was, in one line the candidate can act on.
+    note: str
+
+
+class ProgressResponse(BaseModel):
+    rating: int
+    peak_rating: int
+    rank: RankInfo
+    next_rank: RankInfo | None
+    #: Points to the next rung, or 0 at the top. Given explicitly rather than left
+    #: as arithmetic on the client, because this is the number people fixate on.
+    points_to_next: int
+    #: 0-100. How many rated candidates this one is at or above.
+    percentile: int | None
+    rated_rounds: int
+    total_cleared: int
+    tiers: list[TierProgress]
+    recent: list[RoundSummary]
+    #: The whole ladder, so the UI can show what is still ahead rather than only the
+    #: next step. Seeing "Placement Elite" from Shortlisted is the point.
+    ladder: list[RankInfo]
+
+
+def _note(ev: RatingEvent) -> str:
+    """
+    One line explaining this round's delta.
+
+    Without it, a two-point gain on a round the candidate thought went well reads as
+    the app being broken. It is not broken — they were expected to do that well — and
+    saying so is what turns the rating from an opaque score into something they can
+    aim at.
+    """
+    detail = ev.detail or {}
+    expected = float(detail.get("expected") or 0)
+    scale = float(detail.get("applied_scale") or 1)
+    overlap = float(detail.get("topic_overlap") or 0)
+    today = int(detail.get("rounds_today") or 0)
+
+    if ev.delta <= 0:
+        if expected > 0.7:
+            return "You were expected to clear this comfortably, so falling short cost you."
+        return "Below the bar for this tier. The rating moves on how you do against expectation."
+    if scale < 0.6 and overlap >= 0.5:
+        return "Mostly topics you have already been rated on — revision counts for less."
+    if scale < 0.6 and today > 2:
+        return "Several rounds today already. Gains taper so the number cannot be crammed."
+    if expected > 0.85:
+        return "You have already proved this tier. A harder round is the only way up now."
+    if ev.delta >= 20:
+        return "You beat expectation by a wide margin on a hard round."
+    return "Solid round against a fair expectation."
+
+
+@router.get("", summary="The candidate's rating, rank and cleared-round ledger")
+async def get_progress(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> ProgressResponse:
+    user_id: uuid.UUID = current_user.user_id
+
+    rating = await current_rating(db, user_id)
+
+    # Peak is read from the ledger rather than tracked, so it cannot drift. It is
+    # shown because a rating that has dipped is discouraging without the reminder
+    # that the candidate has already been higher — and the peak is honest, unlike
+    # simply hiding the dip.
+    peak = int(
+        await db.scalar(
+            select(func.max(RatingEvent.rating_after)).where(RatingEvent.user_id == user_id)
+        )
+        or rating
+    )
+
+    # Per-tier attempted/cleared in one pass rather than a query per tier.
+    tier_rows = (
+        await db.execute(
+            select(
+                RatingEvent.tier,
+                func.count().label("attempted"),
+                func.sum(case((RatingEvent.cleared.is_(True), 1), else_=0)).label("cleared"),
+            )
+            .where(RatingEvent.user_id == user_id)
+            .group_by(RatingEvent.tier)
+        )
+    ).all()
+    by_tier = {r.tier: (int(r.attempted or 0), int(r.cleared or 0)) for r in tier_rows}
+
+    tiers = [
+        TierProgress(
+            tier=t.value,
+            label=TIERS[t].label,
+            clear_bar=TIERS[t].clear_bar,
+            attempted=by_tier.get(t.value, (0, 0))[0],
+            cleared=by_tier.get(t.value, (0, 0))[1],
+        )
+        # Explicit order, hardest last, so the ladder reads the same way everywhere.
+        for t in (Tier.FOUNDATION, Tier.CORE, Tier.PANEL)
+    ]
+
+    rated_rounds = sum(t.attempted for t in tiers)
+    total_cleared = sum(t.cleared for t in tiers)
+
+    # Percentile against every other rated candidate's CURRENT rating. A window
+    # function picks each user's newest event, then we count how many sit at or below
+    # this candidate. Restricted to the last 180 days so the comparison is against
+    # people actually using the product, not a graveyard of abandoned accounts that
+    # would inflate everyone's standing.
+    percentile: int | None = None
+    if rated_rounds > 0:
+        since = datetime.now(UTC) - timedelta(days=180)
+        ranked = (
+            select(
+                RatingEvent.user_id,
+                RatingEvent.rating_after,
+                func.row_number()
+                .over(
+                    partition_by=RatingEvent.user_id,
+                    order_by=(RatingEvent.created_at.desc(), RatingEvent.id.desc()),
+                )
+                .label("rn"),
+            )
+            .where(RatingEvent.created_at >= since)
+            .subquery()
+        )
+        latest = select(ranked.c.user_id, ranked.c.rating_after).where(ranked.c.rn == 1).subquery()
+        row = (
+            await db.execute(
+                select(
+                    func.count().label("total"),
+                    func.sum(
+                        case((latest.c.rating_after <= rating, 1), else_=0).cast(Integer)
+                    ).label("at_or_below"),
+                ).select_from(latest)
+            )
+        ).one()
+        total = int(row.total or 0)
+        # Below this there is no cohort to be a percentile of, and "top 50%" out of
+        # three users is a lie that undermines every other number on the screen.
+        if total >= 20:
+            percentile = int(round((int(row.at_or_below or 0) / total) * 100))
+
+    recent_rows = (
+        await db.execute(
+            select(RatingEvent)
+            .where(RatingEvent.user_id == user_id)
+            .order_by(RatingEvent.created_at.desc(), RatingEvent.id.desc())
+            .limit(10)
+        )
+    ).scalars()
+
+    nxt = next_rank(rating)
+    return ProgressResponse(
+        rating=rating,
+        peak_rating=max(peak, rating),
+        rank=RankInfo(**rank_for(rating).__dict__),
+        next_rank=RankInfo(**nxt.__dict__) if nxt else None,
+        points_to_next=max(0, nxt.floor - rating) if nxt else 0,
+        percentile=percentile,
+        rated_rounds=rated_rounds,
+        total_cleared=total_cleared,
+        tiers=tiers,
+        recent=[
+            RoundSummary(
+                kind=ev.kind,
+                tier=ev.tier,
+                score=round(float(ev.score), 1),
+                cleared=bool(ev.cleared),
+                delta=int(ev.delta),
+                rating_after=int(ev.rating_after),
+                at=ev.created_at,
+                note=_note(ev),
+            )
+            for ev in recent_rows
+        ],
+        ladder=[RankInfo(**r.__dict__) for r in RANKS],
+    )
+
+
+@router.get("/base", summary="Where a new candidate starts, for onboarding copy")
+async def get_base() -> dict:
+    """Static, so the UI can explain the ladder before a candidate has any history."""
+    return {
+        "base_rating": BASE_RATING,
+        "ladder": [r.__dict__ for r in RANKS],
+        "tiers": [
+            {"tier": t.value, "label": TIERS[t].label, "clear_bar": TIERS[t].clear_bar}
+            for t in (Tier.FOUNDATION, Tier.CORE, Tier.PANEL)
+        ],
+    }
