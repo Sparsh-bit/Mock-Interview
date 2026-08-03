@@ -21,6 +21,7 @@ otherwise fails closed with a 401.
 
 from __future__ import annotations
 
+import contextlib
 import time
 import uuid
 from typing import Annotated, Any
@@ -211,6 +212,20 @@ async def get_current_user(
             user = res.scalar_one_or_none()
             if not user:
                 raise CREDENTIALS_EXCEPTION
+
+    # TEMPORARY (token counter) — tag any AI spend during this request with the
+    # user who caused it. Removed with the rest of the ledger; see
+    # TEMPORARY-token-counter.md.
+    #
+    # Set without a matching reset on purpose. Starlette runs each request in its
+    # own asyncio task and contextvars are copied per task, so this value is
+    # visible to everything downstream in THIS request and to nothing else. A
+    # local import keeps core/ from depending on services/ at module load, so
+    # deleting the ledger is a one-line change here.
+    with contextlib.suppress(Exception):
+        from app.services.ai.usage import current_user_id  # noqa: PLC0415
+
+        current_user_id.set(user.id)
 
     return AuthenticatedUser(
         user_id=user.id,

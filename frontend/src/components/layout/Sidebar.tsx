@@ -17,8 +17,11 @@ import {
   Settings,
   Trophy,
   User,
+  Coins,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { getBrowserApiClient } from '@/lib/api';
 import { useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -52,12 +55,44 @@ const NAV_ITEMS = [
   },
 ];
 
+// TEMPORARY — admin-only AI cost view. Removed with the ledger; see
+// TEMPORARY-token-counter.md.
+const COST_NAV_ITEM = { href: '/ai-usage', icon: Coins, label: 'AI cost' };
+
 interface SidebarProps {
   user: SupabaseUser;
 }
 
+/**
+ * TEMPORARY — is this account allowed to see the AI cost view?
+ *
+ * Answered by probing the cost endpoint itself rather than by adding an
+ * `is_admin` field to a user response. The probe IS the authorisation check, so
+ * there is no second source of truth to keep in sync, and no API surface that
+ * has to be removed along with the ledger — deleting this hook and the nav entry
+ * below is the whole frontend cleanup.
+ *
+ * `days=1` keeps the aggregation trivial, `retry: false` means a 403 costs one
+ * request, and the result is cached for the session so it does not re-probe on
+ * every navigation. A non-admin simply never sees the link.
+ */
+function useCanSeeCosts(): boolean {
+  const { data } = useQuery({
+    queryKey: ['ai-usage-visible'],
+    queryFn: async () => {
+      await getBrowserApiClient().get('/api/v1/ai-usage?days=1');
+      return true;
+    },
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  return data === true;
+}
+
 export function AppSidebar({ user }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const canSeeCosts = useCanSeeCosts();
   const pathname = usePathname();
 
   return (
@@ -90,7 +125,7 @@ export function AppSidebar({ user }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-3">
-        {NAV_ITEMS.map(({ group, items }) => (
+        {NAV_ITEMS.map(({ group, items: baseItems }) => (
           <div key={group} className="mb-5">
             {!collapsed && (
               <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
@@ -98,7 +133,12 @@ export function AppSidebar({ user }: SidebarProps) {
               </p>
             )}
             <ul className="space-y-0.5">
-              {items.map(({ href, icon: Icon, label }) => {
+              {/* TEMPORARY: the AI cost view hangs off Account, and only for
+                  accounts the endpoint actually answers for. */}
+              {(group === 'Account' && canSeeCosts
+                ? [...baseItems, COST_NAV_ITEM]
+                : baseItems
+              ).map(({ href, icon: Icon, label }) => {
                 const isActive = pathname === href || pathname.startsWith(href + '/');
                 return (
                   <li key={href} className="relative">

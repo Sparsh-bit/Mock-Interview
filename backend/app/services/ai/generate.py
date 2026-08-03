@@ -30,6 +30,7 @@ from .base_provider import CostTier, ProviderError, ProviderMessage, ProviderReq
 from .json_validator import AIValidationError, JSONValidator
 from .provider_factory import get_ai_providers
 from .response_parser import ResponseParser
+from .usage import record_call
 
 logger = structlog.get_logger(__name__)
 
@@ -98,6 +99,17 @@ async def generate_structured(
                     provider=provider.provider_name,
                     attempt=attempt,
                 )
+                # TEMPORARY (token counter). This call was billed in full and its
+                # output is unusable. Recording it is the whole point: a feature
+                # whose discarded spend is a third of its total has a prompt
+                # problem, and success-only accounting cannot show that.
+                await record_call(
+                    feature=context,
+                    provider=provider.provider_name,
+                    response=resp,
+                    cost_tier=cost_tier.value,
+                    outcome="discarded",
+                )
                 continue
 
             if is_valid is not None and not is_valid(parsed):
@@ -106,6 +118,14 @@ async def generate_structured(
                     context=context,
                     provider=provider.provider_name,
                     attempt=attempt,
+                )
+                # TEMPORARY (token counter) — billed, parsed, and still rejected.
+                await record_call(
+                    feature=context,
+                    provider=provider.provider_name,
+                    response=resp,
+                    cost_tier=cost_tier.value,
+                    outcome="discarded",
                 )
                 continue
 
@@ -118,6 +138,14 @@ async def generate_structured(
                     billed_calls=attempt + 1,
                     estimated_cost_usd=round(spend_usd, 6),
                 )
+            # TEMPORARY (token counter) — see services/ai/usage.py.
+            await record_call(
+                feature=context,
+                provider=provider.provider_name,
+                response=resp,
+                cost_tier=cost_tier.value,
+                outcome="ok",
+            )
             return parsed, last_raw
 
         if len(providers) > 1:

@@ -1,0 +1,243 @@
+"""
+TEMPORARY — AI cost breakdown. api/v1/ai_usage.py
+
+Scheduled for deletion once credits and subscriptions land; see
+`TEMPORARY-token-counter.md` at the repo root.
+
+Answers the questions you need answered before pricing a credit:
+
+  * which feature is spending the money, per call and in total
+  * how much of that spend is being thrown away on discarded responses
+  * what one user costs — mean, median and p95 — which is the number a credit
+    price has to cover
+  * how much prompt caching is actually saving
+
+ADMIN ONLY, AND FAIL CLOSED. This is cost data about the business, so an
+ordinary account must not see it. Two independent gates:
+
+  * `AdminUser` — the app's existing admin dependency, checked against
+    users.is_admin. Returns 403, consistent with every other admin route. A 404
+    would hide the endpoint's existence better, but inventing a different
+    behaviour for one route is worse than the small disclosure.
+  * `AI_USAGE_LEDGER_ENABLED` — returns 404 when off, so switching the ledger
+    off by config makes the view vanish rather than serve an empty report that
+    looks like "no spend".
+
+The order matters: the admin check runs first, as a dependency, so a non-admin
+cannot use the 404-vs-403 difference to learn whether the flag is on.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import Integer, cast, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.security import AdminUser
+from app.db.session import get_db
+from app.models.ai_usage import AIUsage
+
+router = APIRouter(prefix="/ai-usage", tags=["ai-usage (temporary)"])
+
+_NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+#: What each feature is, in the product, in one line. Keyed by the `context`
+#: label passed at the generate_structured call site — the same string stored in
+#: the ledger — so a feature that appears in the data always resolves here, and
+#: one that does not is a call site somebody forgot to label.
+FEATURE_LABELS: dict[str, str] = {
+    "interview_plan": "Interview plan (pre-generates the whole question set)",
+    "question_generation": "Adaptive question during an interview",
+    "cross_question": "Live follow-up probing the last answer",
+    "report_generation": "Final report — scores, topics, roadmap",
+    "model_answer": "Detailed analysis: the answer they should have given",
+    "resume_analysis": "Resume parsing and structuring",
+    "quiz_generation": "Practice quiz questions",
+    "code_analysis": "Coding round evaluation",
+    "communication_evaluation": "Communication round scoring",
+    "communication_cross_question": "Communication round follow-up",
+    "gd_panel_turn": "Group discussion — one AI panellist's turn",
+    "gd_evaluation": "Group discussion scoring",
+}
+
+
+def _money(v: Decimal | float | int | None) -> float:
+    """Decimal → float at the API boundary. Sums happen in NUMERIC, in the DB."""
+    return round(float(v or 0), 6)
+
+
+@router.get("", summary="Per-feature AI token use and cost (temporary, admin only)")
+async def get_ai_usage(
+    current_user: AdminUser,
+    days: int = Query(30, ge=1, le=365, description="Window size in days."),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    if not settings.AI_USAGE_LEDGER_ENABLED:
+        raise _NOT_FOUND
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    window = AIUsage.created_at >= since
+
+    # Reused across every rollup below. Summing cost in the database keeps it in
+    # NUMERIC the whole way; pulling rows into Python and adding floats is how a
+    # cost report ends up disagreeing with the provider's invoice.
+    money = func.coalesce(func.sum(AIUsage.cost_usd), 0)
+    calls = func.count()
+    tok_in = func.coalesce(func.sum(AIUsage.input_tokens), 0)
+    tok_cached = func.coalesce(func.sum(AIUsage.cached_input_tokens), 0)
+    tok_write = func.coalesce(func.sum(AIUsage.cache_write_tokens), 0)
+    tok_out = func.coalesce(func.sum(AIUsage.output_tokens), 0)
+    discarded_cost = func.coalesce(
+        func.sum(
+            AIUsage.cost_usd
+            * cast(AIUsage.outcome == "discarded", Integer)
+        ),
+        0,
+    )
+    discarded_calls = func.coalesce(
+        func.sum(cast(AIUsage.outcome == "discarded", Integer)), 0
+    )
+
+    # ── Totals ───────────────────────────────────────────────────────────────
+    t = (
+        await db.execute(
+            select(calls, tok_in, tok_cached, tok_write, tok_out, money,
+                   discarded_cost, discarded_calls).where(window)
+        )
+    ).one()
+    total_cost = _money(t[5])
+
+    totals = {
+        "calls": t[0] or 0,
+        "input_tokens": t[1] or 0,
+        "cached_input_tokens": t[2] or 0,
+        "cache_write_tokens": t[3] or 0,
+        "output_tokens": t[4] or 0,
+        "cost_usd": total_cost,
+        "discarded_cost_usd": _money(t[6]),
+        "discarded_calls": t[7] or 0,
+    }
+
+    # ── By feature — the main view ───────────────────────────────────────────
+    rows = (
+        await db.execute(
+            select(
+                AIUsage.feature, calls, tok_in, tok_cached, tok_write, tok_out,
+                money, discarded_cost, discarded_calls,
+            )
+            .where(window)
+            .group_by(AIUsage.feature)
+            .order_by(money.desc())
+        )
+    ).all()
+
+    by_feature = [
+        {
+            "feature": r[0],
+            "label": FEATURE_LABELS.get(r[0], r[0].replace("_", " ").capitalize()),
+            "calls": r[1],
+            "input_tokens": r[2] or 0,
+            "cached_input_tokens": r[3] or 0,
+            "cache_write_tokens": r[4] or 0,
+            "output_tokens": r[5] or 0,
+            "cost_usd": _money(r[6]),
+            # The figure that actually decides what to optimise: a feature can be
+            # cheap per call and still dominate the bill by being called often,
+            # or cost 40x per call and barely register.
+            "avg_cost_per_call_usd": _money(Decimal(str(r[6])) / r[1]) if r[1] else 0.0,
+            "discarded_cost_usd": _money(r[7]),
+            "discarded_calls": r[8] or 0,
+            "share_pct": round(_money(r[6]) / total_cost * 100, 1) if total_cost else 0.0,
+        }
+        for r in rows
+    ]
+
+    # ── By model ────────────────────────────────────────────────────────────
+    model_rows = (
+        await db.execute(
+            select(AIUsage.provider, AIUsage.model, calls, money)
+            .where(window)
+            .group_by(AIUsage.provider, AIUsage.model)
+            .order_by(money.desc())
+        )
+    ).all()
+    by_model = [
+        {"provider": r[0], "model": r[1], "calls": r[2], "cost_usd": _money(r[3])}
+        for r in model_rows
+    ]
+
+    # ── By day, so a spike has a date on it ─────────────────────────────────
+    day = func.date_trunc("day", AIUsage.created_at)
+    day_rows = (
+        await db.execute(
+            select(day, calls, money).where(window).group_by(day).order_by(day)
+        )
+    ).all()
+    by_day = [
+        {"day": r[0].date().isoformat(), "calls": r[1], "cost_usd": _money(r[2])}
+        for r in day_rows
+    ]
+
+    # ── Cost per user — what a credit has to cover ───────────────────────────
+    #
+    # Mean alone is misleading: interview usage is long-tailed, a handful of
+    # users run many sessions, and pricing to the mean underprices exactly those
+    # accounts. The median says what a typical user costs; p95 says what the
+    # expensive tail costs, which is the number a flat monthly price must
+    # survive. percentile_cont interpolates, which is what you want on money.
+    per_user_totals = (
+        select(AIUsage.user_id, func.sum(AIUsage.cost_usd).label("c"))
+        .where(window, AIUsage.user_id.isnot(None))
+        .group_by(AIUsage.user_id)
+        .subquery()
+    )
+    pu = (
+        await db.execute(
+            select(
+                func.count(),
+                func.coalesce(func.avg(per_user_totals.c.c), 0),
+                func.coalesce(
+                    func.percentile_cont(0.5).within_group(per_user_totals.c.c), 0
+                ),
+                func.coalesce(
+                    func.percentile_cont(0.95).within_group(per_user_totals.c.c), 0
+                ),
+                func.coalesce(func.max(per_user_totals.c.c), 0),
+            ).select_from(per_user_totals)
+        )
+    ).one()
+
+    unattributed = (
+        await db.execute(
+            select(money).where(window, AIUsage.user_id.is_(None))
+        )
+    ).scalar()
+
+    return {
+        "temporary": True,
+        "note": (
+            "Estimated from provider-reported token counts and the price sheet in "
+            "anthropic_provider._PRICE_PER_MTOK. Treat as a close upper bound, not "
+            "an invoice. This view is removed when credits ship."
+        ),
+        "window_days": days,
+        "since": since.isoformat(),
+        "totals": totals,
+        "by_feature": by_feature,
+        "by_model": by_model,
+        "by_day": by_day,
+        "per_user": {
+            "users_with_spend": pu[0] or 0,
+            "mean_cost_usd": _money(pu[1]),
+            "median_cost_usd": _money(pu[2]),
+            "p95_cost_usd": _money(pu[3]),
+            "max_cost_usd": _money(pu[4]),
+            # Background jobs and anything run outside a request have no user.
+            "unattributed_cost_usd": _money(unattributed),
+        },
+        "daily_budget_usd": settings.AI_DAILY_BUDGET_USD,
+    }

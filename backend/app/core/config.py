@@ -171,6 +171,18 @@ class Settings(BaseSettings):
             "balance. 0 disables the cap (not recommended)."
         ),
     )
+    # ── TEMPORARY: token counter ─────────────────────────────────────────
+    # Removed with the rest of the ledger once credits and subscriptions land.
+    # See TEMPORARY-token-counter.md at the repo root.
+    AI_USAGE_LEDGER_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "TEMPORARY. Record one row per billed AI provider call so per-feature "
+            "token use and cost can be measured before pricing a credit system. "
+            "Writes are best-effort and can never fail a request. Set false to "
+            "switch the ledger off without a deploy; the admin view then 404s."
+        ),
+    )
     ANTHROPIC_MAX_OUTPUT_TOKENS: int = Field(
         default=8192,
         description=(
