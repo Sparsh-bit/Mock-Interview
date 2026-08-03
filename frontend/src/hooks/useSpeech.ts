@@ -1,14 +1,74 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PauseEvent } from '@/lib/speech/delivery';
 import { correctTechnicalTerms } from '@/lib/speech/vocabulary';
 import { allocatePanelVoices, type PanelVoice } from '@/lib/speech/panel-voices';
-import { scoreVoice } from '@/lib/speech/voice-ranking';
+import { personaFor } from '@/lib/speech/persona';
+import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
+// qualityTier is also re-exported at the bottom of this file, but `export … from`
+// creates no local binding, so it has to be imported here to be callable.
+import { qualityTier, scoreVoice } from '@/lib/speech/voice-ranking';
 
 // Silence longer than this (between recognized speech) counts as a pause worth
 // surfacing — shorter gaps are natural speech rhythm.
 const PAUSE_THRESHOLD_MS = 1800;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * Speak one utterance and resolve when it is done.
+ *
+ * THE WATCHDOG IS NOT OPTIONAL. Both speech paths now AWAIT each utterance so they
+ * can hold silence between them, and an utterance the engine drops without firing
+ * `end` OR `error` parks the loop forever. That happens for real: on iOS Safari
+ * before the page's first gesture-initiated speak(), and on Android Chrome when
+ * the tab backgrounds mid-queue. In the interviewer path a parked loop is
+ * survivable. In usePanelVoices it parks the shared chain and the panel goes
+ * silent for the rest of the round, which is the worst failure this layer has.
+ *
+ * The budget is generous on purpose — it must never cut off real speech. ~11
+ * characters a second is roughly half the slowest rate we ever set, plus 3s of
+ * headroom for a cloud voice's fetch.
+ */
+function speakOnce(utter: SpeechSynthesisUtterance): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, 3000 + utter.text.length * 90);
+    utter.onend = finish;
+    utter.onerror = finish;
+    window.speechSynthesis.speak(utter);
+  });
+}
+
+/**
+ * Sentinel for "the candidate holds the floor", so the next panelist pays a
+ * handover beat rather than continuing as if the candidate never spoke.
+ */
+const CANDIDATE_FLOOR = '__candidate__';
+
+/**
+ * Extra silence when a question was left hanging. A panel that fires its next
+ * contribution 0ms after asking you something never actually asked you.
+ */
+const QUESTION_HANDOVER_MS = 450;
+
+/** Is this voice cloud-backed? Decides chunking and whether to slow it down. */
+function isNetworkVoice(voice: SpeechSynthesisVoice | null): boolean {
+  // qualityTier does not lowercase internally — its other caller, scoreVoice,
+  // lowercases before calling. Passing a raw name scores every voice as plain
+  // local synthesis.
+  return voice ? qualityTier(voice.name.toLowerCase()) >= 800 : false;
+}
 
 /* ─── Types for the (non-standardised) Web Speech API ──────────────────────── */
 interface SpeechRecognitionResultLike {
@@ -300,49 +360,78 @@ export function useSpeechSynthesis() {
     return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
   }, []);
 
+  /**
+   * Which generation of playback is current. Bumped by `speak` and `cancel`.
+   *
+   * Bumping in `speak` is correct HERE, unlike in usePanelVoices: there is one
+   * interviewer, and a new question supersedes the previous one outright. Without
+   * it, two overlapping calls — `speak` is called from an effect on question
+   * change — interleave, because cancel() resolves the first loop's pending
+   * utterance and it then carries on reading the previous question.
+   */
+  const genRef = useRef(0);
+
   const speak = useCallback(
     (text: string) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
+      const gen = ++genRef.current;
+      const stale = () => genRef.current !== gen;
 
       const chosen =
         window.speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) ?? null;
-      const isNeural = /natural|online|google/i.test(chosen?.name ?? '');
+      // Replaces an inline /natural|online|google/ test, so the interviewer and the
+      // GD panel now agree on what counts as a neural voice.
+      const network = isNetworkVoice(chosen);
+      // Neural voices are already well paced; slowing them is what makes them
+      // sound artificial. Local synthesis needs the extra room to stay legible.
+      const baseRate = network ? 1.0 : 0.92;
+      // finalPauseMs 250: unlike the panel there is no next speaker whose lead-in
+      // owns the gap after the last sentence, so a statement would otherwise end
+      // abruptly the moment the audio stops.
+      const chunks = toProsodyChunks(text, { networkVoice: network, finalPauseMs: 250 });
 
-      // Speak sentence by sentence. The engine puts a natural breath between
-      // utterances, so this alone makes long questions read like speech instead
-      // of one flat run — and it keeps very long text from being truncated.
-      const chunks = toSpeechChunks(text);
-
-      chunks.forEach((chunk, i) => {
-        const utter = new SpeechSynthesisUtterance(chunk);
-        if (chosen) {
-          utter.voice = chosen;
-          utter.lang = chosen.lang;
-        } else {
-          // Ask for Indian English even without a matching voice object — some
-          // engines still pick an en-IN variant from the lang hint alone.
-          utter.lang = 'en-IN';
+      void (async () => {
+        for (let i = 0; i < chunks.length; i++) {
+          if (stale()) return;
+          const c = chunks[i];
+          const utter = new SpeechSynthesisUtterance(c.text);
+          if (chosen) {
+            utter.voice = chosen;
+            utter.lang = chosen.lang;
+          } else {
+            // Ask for Indian English even without a matching voice object — some
+            // engines still pick an en-IN variant from the lang hint alone.
+            utter.lang = 'en-IN';
+          }
+          // The interviewer slows on the question itself and on the clause they
+          // end on. That is the "your turn" cue; without it a candidate is
+          // guessing when to start talking. Pitch stays flat — a question lift is
+          // both inaudible at any safe size and ignored outright by cloud voices.
+          utter.rate = Math.min(1.35, Math.max(0.7, Math.round(baseRate * shapingFor(c) * 100) / 100));
+          utter.pitch = 1.0;
+          // `speaking` is driven by onstart, as it already was. What IS fixed here:
+          // the old code attached `onerror = () => setSpeaking(false)` to EVERY
+          // chunk, so one failed utterance mid-queue reported the interviewer as
+          // finished while the rest of the question was still audible. speakOnce
+          // resolves on error instead, and only the loop's exit clears the flag.
+          if (i === 0) {
+            utter.onstart = () => {
+              if (!stale()) setSpeaking(true);
+            };
+          }
+          await speakOnce(utter);
+          if (c.pauseAfterMs > 0 && !stale()) await sleep(c.pauseAfterMs);
         }
-        // Neural voices are already well paced; slowing them down is what makes
-        // them sound artificial. Local synthesis needs the extra room.
-        utter.rate = isNeural ? 1.0 : 0.92;
-        utter.pitch = 1.0;
-
-        // Track speaking across the whole queue, not per chunk, so the UI
-        // indicator doesn't flicker between sentences.
-        if (i === 0) utter.onstart = () => setSpeaking(true);
-        if (i === chunks.length - 1) utter.onend = () => setSpeaking(false);
-        utter.onerror = () => setSpeaking(false);
-
-        window.speechSynthesis.speak(utter);
-      });
+        if (!stale()) setSpeaking(false);
+      })();
     },
     [voiceURI]
   );
 
   const cancel = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    genRef.current += 1;
     window.speechSynthesis.cancel();
     setSpeaking(false);
   }, []);
@@ -377,17 +466,51 @@ export function useSpeechSynthesis() {
  * `speakingNow` is the name of whoever currently holds the floor, which the UI
  * uses to show who is talking — and, by being null, who is listening.
  */
-export function usePanelVoices(panel: Array<{ name: string; gender: string }>) {
+export function usePanelVoices(
+  panel: Array<{ name: string; gender: string; stance?: string }>,
+) {
   const [voiceMap, setVoiceMap] = useState<Map<string, PanelVoice>>(new Map());
   const [speakingNow, setSpeakingNow] = useState<string | null>(null);
+  //: Has the floor but has not started yet — the handover beat. Kept separate from
+  //: speakingNow because claiming a voice is audible during 90-970ms of silence is
+  //: a worse lie than showing nothing.
+  const [takingFloor, setTakingFloor] = useState<string | null>(null);
 
   //: Serialises playback. Every speakAs chains onto this promise, so N calls in
   //: one render still play in order rather than on top of each other.
   const chainRef = useRef<Promise<void>>(Promise.resolve());
-  //: Set false by cancelAll so an in-flight queue stops instead of draining.
-  const activeRef = useRef(true);
+  /**
+   * Which generation of playback is current. Bumped ONLY by cancelAll.
+   *
+   * A boolean was wrong, and subtly. `speakAs` has to mark itself live at call
+   * time, so with a flag it wrote `active = true` synchronously — meaning
+   * cancelAll() followed by any speakAs in the same tick flipped the flag back on
+   * and the CANCELLED run woke up at its next await and finished speaking over the
+   * candidate. A counter cannot be un-cancelled: each run captures the generation
+   * it was queued in and stops the moment that is no longer current.
+   *
+   * speakAs must never bump it. Bumping on queue would make the second
+   * contribution of one panel turn cancel the first.
+   */
+  const genRef = useRef(0);
+
+  //: Who spoke last, so a lead-in beat is only spent on an actual handover.
+  const lastSpeakerRef = useRef<string | null>(null);
+  //: Did the last thing said end in a question? If so the next voice waits longer.
+  const heldQuestionRef = useRef(false);
 
   const panelKey = panel.map((p) => `${p.name}:${p.gender}`).join('|');
+
+  /**
+   * Each panelist's stance, for deriving their delivery.
+   *
+   * Must be declared after `panelKey` — reading a `const` in the same scope above
+   * its declaration is a TDZ ReferenceError on every render. `panel` alone is the
+   * dependency, since the caller memoizes it, and stance is deliberately NOT part
+   * of `panelKey`: editing a stance must never re-run voice allocation and change
+   * everyone's voice mid-discussion.
+   */
+  const stanceOf = useMemo(() => new Map(panel.map((p) => [p.name, p.stance])), [panel]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !panel.length) return;
@@ -414,11 +537,15 @@ export function usePanelVoices(panel: Array<{ name: string; gender: string }>) {
   }, [panelKey]);
 
   const cancelAll = useCallback(() => {
-    activeRef.current = false;
+    genRef.current += 1;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
     setSpeakingNow(null);
+    setTakingFloor(null);
+    // The candidate has the floor now, so whoever speaks next pays a full beat.
+    lastSpeakerRef.current = CANDIDATE_FLOOR;
+    heldQuestionRef.current = false;
     // A fresh chain, so a later speakAs is not queued behind the cancelled one.
     chainRef.current = Promise.resolve();
   }, []);
@@ -435,44 +562,92 @@ export function usePanelVoices(panel: Array<{ name: string; gender: string }>) {
       if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
         return Promise.resolve();
       }
-      activeRef.current = true;
+      const myGen = genRef.current;
+      const live = () => genRef.current === myGen;
 
       const run = async () => {
-        if (!activeRef.current) return;
+        if (!live()) return;
         const assigned = voiceMap.get(speaker);
         const all = window.speechSynthesis.getVoices();
         const chosen = assigned?.voiceURI
           ? (all.find((v) => v.voiceURI === assigned.voiceURI) ?? null)
           : null;
+        const persona = personaFor(stanceOf.get(speaker));
 
-        setSpeakingNow(speaker);
-        for (const chunk of toSpeechChunks(text)) {
-          if (!activeRef.current) break;
-          await new Promise<void>((resolve) => {
-            const utter = new SpeechSynthesisUtterance(chunk);
-            if (chosen) {
-              utter.voice = chosen;
-              utter.lang = chosen.lang;
-            } else {
-              utter.lang = 'en-IN';
-            }
-            utter.pitch = assigned?.pitch ?? 1;
-            utter.rate = assigned?.rate ?? 1;
-            // Resolve on error too — a failed utterance must not stall the queue
-            // and leave the discussion silent for the rest of the round.
-            utter.onend = () => resolve();
-            utter.onerror = () => resolve();
-            window.speechSynthesis.speak(utter);
-          });
+        /*
+         * THE BEAT BEFORE SPEAKING.
+         *
+         * There was previously zero gap anywhere: the chain started the next
+         * speaker the microsecond the previous one stopped, and both contributions
+         * of one turn were queued in the same tick. That single fact is most of why
+         * the panel read as a chatbot taking turns — a real handover is 200ms-plus
+         * of silence, and how long it is tells you who the person is. The
+         * contrarian latches on in 90ms; the synthesiser waits half a second
+         * because she actually listened.
+         *
+         * Only on a genuine handover: a panelist continuing after themselves does
+         * not pause to take a floor they already hold.
+         */
+        let leadIn =
+          lastSpeakerRef.current && lastSpeakerRef.current !== speaker ? persona.leadInMs : 0;
+        if (heldQuestionRef.current) leadIn += QUESTION_HANDOVER_MS;
+
+        if (leadIn > 0) {
+          setTakingFloor(speaker);
+          await sleep(leadIn);
+          // speechSynthesis.cancel() cannot stop an utterance that has not been
+          // queued yet, so this check is the ONLY thing standing between a
+          // cancelled panelist and talking over the candidate.
+          if (!live()) {
+            setTakingFloor(null);
+            return;
+          }
         }
-        if (activeRef.current) setSpeakingNow(null);
+        setTakingFloor(null);
+        setSpeakingNow(speaker);
+        lastSpeakerRef.current = speaker;
+
+        const network = isNetworkVoice(chosen);
+        // Local formant synthesis needs the extra room to stay intelligible;
+        // neural voices are already well paced. Persona tempo multiplies on top of
+        // whatever rate panel-voices assigned, so neither overwrites the other.
+        const baseRate = (assigned?.rate ?? 1) * (network ? 1.0 : 0.94) * persona.tempo;
+        // finalPauseMs 0: the next speaker's lead-in owns the gap after a
+        // contribution, so adding one here would double it.
+        const chunks = toProsodyChunks(text, { networkVoice: network, finalPauseMs: 0 });
+
+        for (const chunk of chunks) {
+          if (!live()) break;
+          const utter = new SpeechSynthesisUtterance(chunk.text);
+          if (chosen) {
+            utter.voice = chosen;
+            utter.lang = chosen.lang;
+          } else {
+            utter.lang = 'en-IN';
+          }
+          // Pitch belongs to panel-voices: it is the value allDistinguishable
+          // relies on to keep two panelists sharing one voice tellable apart, so
+          // nudging it per chunk would erode that margin for no audible gain.
+          utter.pitch = assigned?.pitch ?? 1;
+          utter.rate = Math.min(
+            1.35,
+            Math.max(0.7, Math.round(baseRate * shapingFor(chunk) * 100) / 100),
+          );
+          await speakOnce(utter);
+          if (chunk.pauseAfterMs > 0 && !live()) break;
+          if (chunk.pauseAfterMs > 0) await sleep(chunk.pauseAfterMs);
+        }
+        // A question left hanging makes the NEXT voice wait — this is what stops
+        // one panelist answering a question another just put to the candidate.
+        heldQuestionRef.current = chunks[chunks.length - 1]?.isQuestion ?? false;
+        if (live()) setSpeakingNow(null);
       };
 
       chainRef.current = chainRef.current.then(run, run);
       return chainRef.current;
     },
-    [voiceMap],
+    [voiceMap, stanceOf],
   );
 
-  return { voiceMap, speakingNow, speakAs, cancelAll, ready: voiceMap.size > 0 };
+  return { voiceMap, speakingNow, takingFloor, speakAs, cancelAll, ready: voiceMap.size > 0 };
 }

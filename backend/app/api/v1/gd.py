@@ -57,6 +57,12 @@ class Panelist(BaseModel):
 #: The panel. ONE definition, served to the client via GET /gd/panel, so the
 #: names, genders and personas cannot drift between the prompt that generates
 #: their turns and the UI that renders and voices them.
+#:
+#: NOTE: the client also derives each panelist's speaking tempo and how quickly
+#: they take the floor by keyword-matching this `stance` prose
+#: (frontend/src/lib/speech/persona.ts). Rewording a stance out of its keyword
+#: family silently reverts that panelist to a neutral delivery — it degrades
+#: quietly rather than breaking, so check persona.ts when editing these.
 PANELISTS: list[Panelist] = [
     Panelist(
         name="Riya",

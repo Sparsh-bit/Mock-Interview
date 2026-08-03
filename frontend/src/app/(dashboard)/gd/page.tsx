@@ -50,6 +50,8 @@ const MAX_FLOOR_HOLD_SEC = 20;
  * without a ceiling one abandoned tab could generate turns until the timer ends.
  */
 const MAX_PANEL_TURNS = 26;
+/** Longest the countdown will wait on a panelist before assuming the engine hung. */
+const MAX_FLOOR_WAIT_SEC = 45;
 
 const fmtClock = (s: number) =>
   `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, '0')}`;
@@ -108,11 +110,14 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
 function PanelStrip({
   panel,
   speakingNow,
+  takingFloor,
   candidateSpeaking,
   listeningTo,
 }: {
   panel: GDPanelist[];
   speakingNow: string | null;
+  /** Has the floor but has not started yet — the handover beat. */
+  takingFloor: string | null;
   candidateSpeaking: boolean;
   listeningTo: string | null;
 }) {
@@ -121,6 +126,9 @@ function PanelStrip({
     <div className="grid gap-2 sm:grid-cols-3">
       {panel.map((pl) => {
         const speaking = speakingNow === pl.name;
+        // Deliberately NOT folded into `speaking`: claiming a voice is audible
+        // during the handover silence is a worse lie than showing nothing.
+        const opening = !speaking && takingFloor === pl.name;
         const waitingOnYou = candidateSpeaking && listeningTo === pl.name;
         return (
           <div
@@ -129,19 +137,22 @@ function PanelStrip({
               'flex items-center gap-2.5 rounded-xl border px-3 py-2 transition-colors duration-300',
               speaking
                 ? 'border-primary/60 bg-primary/10'
-                : waitingOnYou
-                  ? 'border-accent-emerald/50 bg-accent-emerald/10'
-                  : 'border-border/60 bg-surface-elevated'
+                : opening
+                  ? 'border-primary/35 bg-primary/5'
+                  : waitingOnYou
+                    ? 'border-accent-emerald/50 bg-accent-emerald/10'
+                    : 'border-border/60 bg-surface-elevated'
             )}
           >
             <span
               className={cn(
                 'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
                 panelTone(pl.name, panel),
-                !speaking && !waitingOnYou && candidateSpeaking && 'opacity-60'
+                !speaking && !opening && !waitingOnYou && candidateSpeaking && 'opacity-60'
               )}
             >
               {pl.name[0]}
+              {/* No pulse ring during the beat — the ring means audio. */}
               {speaking && (
                 <motion.span
                   aria-hidden
@@ -156,7 +167,7 @@ function PanelStrip({
               <p
                 className={cn(
                   'truncate text-[10px] font-medium leading-tight',
-                  speaking
+                  speaking || opening
                     ? 'text-primary'
                     : waitingOnYou
                       ? 'text-accent-emerald-ink'
@@ -167,6 +178,8 @@ function PanelStrip({
                   <span className="inline-flex items-center gap-1">
                     <SoundBars /> speaking
                   </span>
+                ) : opening ? (
+                  'about to speak'
                 ) : waitingOnYou ? (
                   'listening to you'
                 ) : candidateSpeaking ? (
@@ -217,7 +230,10 @@ export default function GDPage() {
    * candidate's mic is live, it is how the UI shows the panel is listening.
    */
   const panelVoices = usePanelVoices(
-    useMemo(() => (panel ?? []).map((p) => ({ name: p.name, gender: p.gender })), [panel]),
+    useMemo(
+      () => (panel ?? []).map((p) => ({ name: p.name, gender: p.gender, stance: p.stance })),
+      [panel],
+    ),
   );
   const { panelTurn, evaluate, prepareTopic } = useGD();
   const stt = useSpeechRecognition();
@@ -251,8 +267,26 @@ export default function GDPage() {
   // down and rebuilt on every keystroke (which would reset the countdown).
   const holdRef = useRef(0);
   const firingRef = useRef(false);
+  /**
+   * Is a panelist mid-contribution? The countdown must not run while they are.
+   *
+   * A turn is one or two contributions of one to three sentences — 50-70 spoken
+   * words, which is 19-26s of audio at the rate these engines run.
+   * PANEL_INTERVAL_SEC is 18, so the countdown was expiring mid-sentence and the
+   * next turn was being queued onto a chain that had not drained: the panel became
+   * one unbroken wall of voice, and the "panel speaks again in Ns" label was
+   * counting down against speech the candidate could still hear. With handover
+   * beats and clause pauses added, that overrun only grows. Gated here instead, so
+   * the interval now means "18s of silence after the panel stops" — which is what
+   * the label always claimed.
+   */
+  const panelHasFloorRef = useRef(false);
+  //: Bounded, so an engine that never fires `onend` (Android Chrome does this when
+  //: a tab backgrounds) cannot leave speakingNow stuck and silently kill the round.
+  const floorWaitRef = useRef(0);
   const stateRef = useRef({ history, awaiting, ignored, silentFor, panelTurns, timeLeft });
   stateRef.current = { history, awaiting, ignored, silentFor, panelTurns, timeLeft };
+  panelHasFloorRef.current = !!(panelVoices.speakingNow || panelVoices.takingFloor);
 
   /**
    * Topics grouped by category, preserving each topic's index in the flat list.
@@ -401,6 +435,13 @@ export default function GDPage() {
         return;
       }
 
+      // A panelist is talking. Do not count down toward interrupting them.
+      if (panelHasFloorRef.current && floorWaitRef.current < MAX_FLOOR_WAIT_SEC) {
+        floorWaitRef.current += 1;
+        return;
+      }
+      if (!panelHasFloorRef.current) floorWaitRef.current = 0;
+
       if (s.panelTurns >= MAX_PANEL_TURNS) return;
 
       setNextTurnIn((n) => {
@@ -449,6 +490,7 @@ export default function GDPage() {
     setSilentFor(0);
     setPanelTurns(0);
     holdRef.current = 0;
+    floorWaitRef.current = 0;
     firingRef.current = false;
     endingRef.current = false;
     setPhase('discussion');
@@ -464,6 +506,12 @@ export default function GDPage() {
   const submitPoint = () => {
     if (!draft.trim()) return;
     if (stt.listening) stt.stop();
+    // The candidate has the floor — whether they spoke it or typed it. This stops
+    // anything still queued AND marks the floor as theirs, so the next panelist
+    // pays a handover beat instead of continuing their own sentence. Only the mic
+    // path called this before, so typed points — the fallback on every device
+    // without SpeechRecognition — got no beat at all.
+    panelVoices.cancelAll();
     const next = [...history, { speaker: YOU, text: draft.trim() }];
     setHistory(next);
     setDraft('');
@@ -731,6 +779,7 @@ export default function GDPage() {
       <PanelStrip
         panel={panel ?? []}
         speakingNow={panelVoices.speakingNow}
+        takingFloor={panelVoices.takingFloor}
         candidateSpeaking={stt.listening}
         listeningTo={listeningTo}
       />
