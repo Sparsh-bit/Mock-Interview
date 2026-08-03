@@ -10,7 +10,7 @@ GET    /api/v1/users/me/sessions         — Get session history (paginated)
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, Query
@@ -21,6 +21,7 @@ from app.core.security import CurrentUser
 from app.db.session import AsyncSession, get_db
 from app.models.session import InterviewSession
 from app.models.user import Profile
+from app.services.interview.orchestrator import MAX_SESSION_SECONDS
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -150,6 +151,52 @@ async def update_profile(
     )
 
 
+async def _streak_days(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """
+    Consecutive days, ending today or yesterday, with at least one completed
+    session.
+
+    This was `streak_days=0,  # Phase 9: implement streak calculation` — a
+    hardcoded zero dressed up as a metric. A streak that never moves is worse
+    than no streak at all: it is the one number on the dashboard whose entire
+    purpose is to say "you are building a habit", and it said "you are not"
+    to everybody, permanently.
+
+    Counting from today OR yesterday is deliberate. Anchoring only on today would
+    reset everyone's streak at midnight, before they have had any chance to
+    practise — so somebody with a fourteen-day run would open the app in the
+    morning and be told zero.
+
+    Days are UTC. That is wrong by up to a few hours for a candidate in IST, and
+    it is the right trade for now: the alternative needs the user's timezone
+    threaded into this query, and a streak that is occasionally a day generous is
+    better than one that is occasionally a day punitive.
+    """
+    rows = await db.scalars(
+        select(func.date(InterviewSession.completed_at))
+        .where(
+            InterviewSession.user_id == user_id,
+            InterviewSession.status == "completed",
+            InterviewSession.completed_at.isnot(None),
+        )
+        .distinct()
+    )
+    days = sorted({d for d in rows if d is not None}, reverse=True)
+    if not days:
+        return 0
+
+    today = datetime.now(UTC).date()
+    if (today - days[0]).days > 1:
+        return 0
+
+    streak = 1
+    for newer, older in zip(days, days[1:], strict=False):
+        if (newer - older).days != 1:
+            break
+        streak += 1
+    return streak
+
+
 @router.get("/me/stats", response_model=UserStatsResponse)
 async def get_stats(
     current_user: CurrentUser,
@@ -168,8 +215,24 @@ async def get_stats(
             func.count(
                 case((InterviewSession.status == "completed", InterviewSession.id))
             ).label("completed"),
+            # Prefer the stored duration, and fall back to the timestamps for
+            # sessions completed before it was being written — which is every
+            # session that existed when this was fixed. Without the fallback the
+            # dashboard would keep reporting 0 hours until a user completed a
+            # brand-new interview, and the history they already have would never
+            # be counted at all.
             func.sum(
-                case((InterviewSession.duration_seconds.isnot(None), InterviewSession.duration_seconds), else_=0)
+                func.coalesce(
+                    InterviewSession.duration_seconds,
+                    func.least(
+                        func.extract(
+                            "epoch",
+                            InterviewSession.completed_at - InterviewSession.started_at,
+                        ),
+                        MAX_SESSION_SECONDS,
+                    ),
+                    0,
+                )
             ).label("total_seconds"),
         ).where(InterviewSession.user_id == current_user.user_id)
     )
@@ -203,11 +266,14 @@ async def get_stats(
     return UserStatsResponse(
         total_sessions=session_row.total or 0,
         completed_sessions=session_row.completed or 0,
-        average_score=round(score_row.avg_score, 2) if score_row.avg_score else None,
+        # `is not None`, not truthiness: a genuine average of 0.0 is a real
+        # score — the lowest one — and rendering it as "—" tells a candidate who
+        # scored zero that they have not been scored yet.
+        average_score=round(score_row.avg_score, 2) if score_row.avg_score is not None else None,
         total_questions_answered=total_answers,
         hours_practiced=hours,
-        best_score=round(score_row.best_score, 2) if score_row.best_score else None,
-        streak_days=0,  # Phase 9: implement streak calculation
+        best_score=round(score_row.best_score, 2) if score_row.best_score is not None else None,
+        streak_days=await _streak_days(db, current_user.user_id),
     )
 
 

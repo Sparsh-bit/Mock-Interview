@@ -176,6 +176,20 @@ _PLAN_TOKENS_FIXED = 700
 _PLAN_TOKENS_PER_QUESTION = 260
 _PLAN_TOKENS_MAX = 10_000
 
+#: Upper bound on a recorded session duration. Public because api/v1/users.py
+#: needs the same bound when deriving a duration for sessions completed before it
+#: was being stored.
+#:
+#: A candidate can open an interview and walk away, and the raw gap between
+#: started_at and completed_at would then be counted as practice. Ninety minutes
+#: is roughly triple the longest plausible session — twelve to twenty questions at
+#: a minute or two each is 25-40 minutes — so it cannot clip a real one, while
+#: keeping an abandoned tab from inflating the dashboard.
+#:
+#: Set at three hours first, which was too loose: four abandoned test sessions
+#: contributed twelve fictional hours to a "14.3h practised" reading.
+MAX_SESSION_SECONDS = 90 * 60
+
 
 def plan_token_budget(question_count: int) -> int:
     """Output-token budget for a plan covering ``question_count`` questions."""
@@ -1330,4 +1344,21 @@ class InterviewOrchestrator:
         if session:
             session.status = SessionStatus.COMPLETED
             session.completed_at = datetime.now(UTC)
+
+            # Record how long it took. `duration_seconds` was declared on the
+            # model and summed by /users/me/stats, but nothing ever wrote it — so
+            # "Hours practiced" on the dashboard was structurally 0 for every user
+            # forever, not because they had not practised.
+            #
+            # Clamped at both ends. Below zero is impossible but a clock change
+            # could produce it; the upper bound stops a session left open
+            # overnight from claiming twelve hours of practice, which would be a
+            # lie in the more flattering direction.
+            if session.started_at:
+                started = session.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
+                elapsed = int((session.completed_at - started).total_seconds())
+                session.duration_seconds = max(0, min(elapsed, MAX_SESSION_SECONDS))
+
             await self.db.commit()
