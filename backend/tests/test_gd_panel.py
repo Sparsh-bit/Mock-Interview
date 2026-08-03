@@ -1,0 +1,109 @@
+"""
+Who the panel is actually talking to — tests/test_gd_panel.py
+
+`addressed_candidate` is not a cosmetic flag. It drives the red "They're asking
+you directly" banner, the floor countdown, the ignored-question counter, and
+through that the candidate's engagement score. Getting it wrong in either
+direction is a real cost: a false positive tells a candidate to answer a question
+that was asked of Riya and then penalises the silence; a false negative lets a
+direct question go by unmarked.
+
+The prompt now instructs panelists to question each other by name ("Where's that
+number from, though, Riya?"), so the old rule — any contribution ending in a
+question mark — became wrong the moment those rules shipped.
+"""
+
+from app.api.v1.gd import (
+    PANELIST_NAMES,
+    _aimed_at_candidate,
+    _candidate_name,
+    _mentions,
+    other_panelists,
+)
+
+
+def aimed(text: str, name: str = "Sparsh") -> bool:
+    return _aimed_at_candidate(text, name, other_panelists(name))
+
+
+class TestNameMatching:
+    def test_matches_a_name_as_a_word(self):
+        assert _mentions("Sparsh, what do you think?", "Sparsh")
+        assert _mentions("I agree with sparsh on that", "Sparsh")
+
+    def test_does_not_match_a_name_inside_another_word(self):
+        # This is the whole reason _mentions exists. Short first names are the norm
+        # in this user base and every one of them is a substring of a common word,
+        # so a plain `in` test would fire on nearly every line the panel says.
+        assert not _mentions("that came from the company report", "Om")
+        assert not _mentions("that is the problem with remote work", "Om")
+        assert not _mentions("she said the opposite", "Sai")
+        assert not _mentions("my manager advised against it", "Ved")
+        assert not _mentions("the criteria are different", "Ria")
+        assert not _mentions("we should hire anyway", "Ani")
+
+    def test_ignores_case_and_possessives(self):
+        assert _mentions("SPARSH made that point", "Sparsh")
+        # A possessive is still naming the person.
+        assert _mentions("Riya, your point", "Riya")
+
+
+class TestAimedAtCandidate:
+    def test_a_question_naming_the_candidate_is_theirs(self):
+        assert aimed("Sparsh, how would you handle that?")
+        assert aimed("So do you agree with Arjun or with me, Sparsh?")
+
+    def test_a_question_naming_another_panelist_is_NOT_theirs(self):
+        # The failure this fixes. Rules 9 and 11 make these common, and every one
+        # ends in a question mark.
+        assert not aimed("Where's that number from, though, Riya?")
+        assert not aimed("Arjun, that's pre-pandemic data, isn't it?")
+        assert not aimed("Meera, do you actually believe that?")
+
+    def test_an_unaddressed_second_person_question_is_theirs(self):
+        # Panelists address each other by name, so a bare "you" with nobody named
+        # is the candidate. This is what keeps the common invitation working.
+        assert aimed("So what do you think?")
+        assert aimed("You've been quiet — what's your view?")
+
+    def test_a_statement_is_never_a_question_however_pointed(self):
+        assert not aimed("Sparsh's point about cost is the real argument here.")
+        assert not aimed("That kills your argument, Arjun.")
+
+    def test_a_rhetorical_question_with_nobody_in_it_is_not_theirs(self):
+        # No name, no second person: the panel is thinking aloud at each other.
+        assert not aimed("But is that actually true of smaller teams?")
+        assert not aimed("Where does that leave the freshers?")
+
+    def test_a_candidate_with_no_usable_name_still_gets_asked_things(self):
+        # _candidate_name falls back to a phrase no panelist will ever utter, so the
+        # name branch simply never matches and the second-person branch carries it.
+        # Without this the whole fallback would be silently dead.
+        fallback = _candidate_name("")
+        assert not _aimed_at_candidate(
+            "Where's that from, Riya?", fallback, other_panelists(fallback)
+        )
+        assert _aimed_at_candidate(
+            "So what would you do?", fallback, other_panelists(fallback)
+        )
+
+    def test_a_candidate_sharing_a_panelist_name_is_not_excluded(self):
+        # A real user called Riya must still be recognised when addressed, and
+        # "Riya" must not simultaneously count as another panelist.
+        others = other_panelists("Riya")
+        assert "Riya" not in others
+        assert _aimed_at_candidate("Riya, what do you think?", "Riya", others)
+
+
+class TestPanelIntegrity:
+    def test_the_panel_has_the_names_the_prompt_and_the_client_expect(self):
+        # The roster is one definition, served to the client and interpolated into
+        # the prompt. A drift here means a panelist speaks in the wrong voice or a
+        # contribution from an unknown speaker is silently dropped.
+        assert PANELIST_NAMES == ["Riya", "Arjun", "Meera"]
+
+    def test_candidate_name_is_reduced_to_something_speakable(self):
+        assert _candidate_name("Sparsh Sharma") == "Sparsh"
+        assert _candidate_name("  priya  ") == "priya"
+        assert _candidate_name("") == "the candidate"
+        assert _candidate_name("123") == "the candidate"

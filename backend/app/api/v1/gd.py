@@ -13,6 +13,8 @@ POST /gd/evaluate  — score the candidate's participation
 
 from __future__ import annotations
 
+import re
+
 import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -221,6 +223,11 @@ def _render_transcript(history: list[Turn], window: int | None = None) -> str:
     return "\n".join(lines)
 
 
+#: What _candidate_name returns when the user has no usable name. A phrase no
+#: panelist will ever say aloud, which is what makes it safe to match against.
+_NO_NAME = "the candidate"
+
+
 def _candidate_name(raw: str) -> str:
     """
     A name the panel can actually say, or a neutral fallback.
@@ -233,7 +240,55 @@ def _candidate_name(raw: str) -> str:
     """
     first = (raw or "").strip().split()[:1]
     cleaned = "".join(c for c in (first[0] if first else "") if c.isalpha() or c in "-'")
-    return cleaned or "the candidate"
+    return cleaned or _NO_NAME
+
+
+def _mentions(text: str, name: str) -> bool:
+    """
+    Does `text` name this person as a person, rather than as a substring?
+
+    Word boundaries are not optional here. Real first names in this user base are
+    short, and a plain substring test is wrong for most of them: "Om" is inside
+    "from", "company" and "problem"; "Sai" is inside "said"; "Ved" is inside
+    "advised"; "Ria" is inside "criteria". For a candidate named Om, a substring
+    test would match nearly every line the panel says.
+    """
+    return re.search(rf"(?<![\w']){re.escape(name)}(?![\w'])", text, re.IGNORECASE) is not None
+
+
+def _aimed_at_candidate(text: str, name: str, others: list[str]) -> bool:
+    """
+    Is this contribution putting a question to the CANDIDATE?
+
+    Used only as a fallback for a genuine invitation the model forgot to flag, and
+    it has to clear two bars, because a bare trailing "?" is not evidence. The
+    panel questions each other constantly — "Where's that number from, Riya?" —
+    and every one of those ends in a question mark. Treating any "?" as addressing
+    the candidate put "They're asking you directly" on screen for a question asked
+    of somebody else, then counted their non-answer as an ignored question and fed
+    that into their engagement score.
+
+    `name` is the candidate's speakable first name, or "the candidate" when they
+    have none — a phrase no panelist will ever utter, so callers pass it through
+    and it simply never matches. `others` is the rest of the panel.
+    """
+    if not text.rstrip().endswith("?"):
+        return False
+    if name != _NO_NAME and _mentions(text, name):
+        return True
+    # A question that names another panelist belongs to them, not to us.
+    if any(_mentions(text, p) for p in others):
+        return False
+    # Nobody named, second person present. Panelists address each other by name,
+    # so a bare "you" in an unaddressed question is the candidate — which is what
+    # keeps "So what do you think?" working.
+    return bool(re.search(r"(?<!\w)(you|your|you're)(?!\w)", text, re.IGNORECASE))
+
+
+def other_panelists(name: str) -> list[str]:
+    """The panel minus the candidate, for name-collision-safe attribution."""
+    lowered = name.lower()
+    return [p for p in PANELIST_NAMES if not (name != _NO_NAME and p.lower() == lowered)]
 
 
 def _describe_situation(request: GDTurnRequest) -> str:
@@ -448,10 +503,20 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
         if c.text.strip() and c.speaker in PANELIST_NAMES
     ][:2]
 
-    # Trust the model's flag only if it actually asked something; and treat a
-    # trailing question mark as addressing the candidate even if it forgot.
+    # Trust the model's flag first. The bare "?" fallback is only for a genuine
+    # invitation it forgot to flag, and it now has to clear two bars.
+    #
+    # Panelists question EACH OTHER constantly — "Where's that number from,
+    # Riya?" — and every one of those ends in a question mark. Treating any
+    # trailing "?" as addressing the candidate put "They're asking you directly"
+    # on screen for a question asked of somebody else, then counted the
+    # candidate's non-answer as an ignored question and fed that into their
+    # engagement score.
+    name = _candidate_name(request.candidate_name)
+    others = other_panelists(name)
     addressed = bool(valid) and (
-        turn.addressed_candidate or any(c.text.rstrip().endswith("?") for c in valid)
+        turn.addressed_candidate
+        or any(_aimed_at_candidate(c.text, name, others) for c in valid)
     )
     # On the give-up turn the panel is explicitly moving on without them.
     if request.ignored_questions >= 2:
