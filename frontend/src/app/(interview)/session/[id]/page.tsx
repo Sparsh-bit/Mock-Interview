@@ -4,17 +4,7 @@ import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Loader2,
-  Send,
-  StopCircle,
-  Sparkles,
-  Mic,
-  MicOff,
-  Volume2,
-  WifiOff,
-  RefreshCw,
-} from 'lucide-react';
+import { AlertTriangle, Loader2, Mic, MicOff, RefreshCw, Send, Sparkles, StopCircle, Volume2, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +13,7 @@ import { PresenceMonitor } from '@/components/interview/PresenceMonitor';
 import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import type { CodeLanguage } from '@/hooks/useCode';
 import { useSpeechRecognition, useSpeechSynthesis } from '@/hooks/useSpeech';
-import { summarizeDelivery } from '@/lib/speech/delivery';
+import { countUnprofessional, summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
@@ -85,6 +75,49 @@ export default function LiveSessionPage() {
   const questionText = question?.content;
   const useTyping = typing || !stt.supported;
 
+  /**
+   * Words a real panel would have heard you say and could not un-hear.
+   *
+   * Derived from `stt.transcript`, NOT from `answer`. Said is said — but only what
+   * the recogniser actually heard: `answer` is an editable textarea, so deriving
+   * this from it would put a permanent conduct flag on a student who typed a word
+   * into the fallback box and deleted it before submitting. The transcript is the
+   * panel's memory, and it is not user-editable.
+   *
+   * Reset per question, so it never leaks across answers.
+   */
+  const [sworn, setSworn] = useState<string[]>([]);
+  useEffect(() => {
+    const found = countUnprofessional(stt.transcript).words;
+    if (!found.length) return;
+    setSworn((prev) =>
+      found.every((w) => prev.includes(w)) ? prev : [...new Set([...prev, ...found])],
+    );
+  }, [stt.transcript]);
+  useEffect(() => {
+    setSworn([]);
+  }, [question?.id]);
+
+  /**
+   * Twelve seconds of the mic being open with the engine reporting no audio at all.
+   *
+   * Not "no words yet" — no SOUND. A candidate composing an answer in a quiet room
+   * still trips soundstart on their own breathing long before this; a muted input
+   * or a wrong device selected never does. Keying off the transcript instead would
+   * fire on the normal path — a student thinking for seven seconds about
+   * transaction propagation is not a hardware fault — and would tell them their
+   * microphone is broken at the moment of maximum concentration.
+   */
+  const [micSilent, setMicSilent] = useState(false);
+  useEffect(() => {
+    if (!stt.listening || stt.error || stt.heardSound) {
+      setMicSilent(false);
+      return;
+    }
+    const t = setTimeout(() => setMicSilent(true), 12_000);
+    return () => clearTimeout(t);
+  }, [stt.listening, stt.error, stt.heardSound]);
+
   // Show the generating animation while the next question is being prepared
   // (initial load, refetch after submit, or a live cross-question being built).
   const preparing = isLoading || (isFetching && !question) || submitAnswer.isPending;
@@ -139,6 +172,11 @@ export default function LiveSessionPage() {
       ? undefined
       : {
           filler_count: summary.fillerCount,
+          // Everything the panel heard across this answer, including anything the
+          // candidate later edited out of the textarea. One occurrence is a real
+          // event with a real cost, unlike a filler, which is a habit.
+          unprofessional_count: sworn.length,
+          unprofessional_words: sworn,
           pause_count: summary.pauseCount,
           total_pause_seconds: summary.totalPauseSec,
           words: summary.words,
@@ -396,15 +434,52 @@ export default function LiveSessionPage() {
           ) : (
             /* Voice-first answer UI */
             <div className="flex flex-1 flex-col items-center justify-center gap-5 py-4">
+              {/* A real interviewer says "we can't hear you." The hook has always
+                  classified permission and hardware failures into candidate-ready
+                  English and nothing rendered it, so a blocked mic looked exactly
+                  like a working one that heard nothing. */}
+              {(stt.error || micSilent) && (
+                <div
+                  role="alert"
+                  className={cn(
+                    'flex w-full items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-xs leading-relaxed',
+                    stt.error
+                      ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                      : 'border-accent-amber/40 bg-accent-amber/10 text-accent-amber-ink'
+                  )}
+                >
+                  <MicOff className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="flex-1">
+                    {stt.error ??
+                      'We are not picking up any audio yet. If you have started speaking, your system input may be muted or the wrong microphone may be selected.'}{' '}
+                    <button
+                      onClick={() => {
+                        stt.stop();
+                        setTyping(true);
+                      }}
+                      className="font-semibold underline underline-offset-2"
+                    >
+                      Type this answer instead
+                    </button>
+                  </span>
+                </div>
+              )}
+
               <button
                 onClick={toggleMic}
                 disabled={preparing}
                 aria-label={stt.listening ? 'Stop recording' : 'Start recording'}
                 className={cn(
                   'relative flex h-24 w-24 items-center justify-center rounded-full transition-[color,background-color,border-color,box-shadow,transform,opacity] disabled:opacity-50',
+                  // Deliberately NOT disabled on error. `error` is only cleared by
+                  // start() or reset(), and start() is only reachable through this
+                  // button — so disabling it removes the exact recovery Chrome
+                  // expects: click the padlock, allow the mic, tap again.
                   stt.listening
                     ? 'bg-destructive text-destructive-foreground shadow-glow'
-                    : 'bg-primary text-primary-foreground shadow-glow hover:shadow-glow-lg'
+                    : stt.error
+                      ? 'bg-surface-elevated text-muted-foreground ring-1 ring-destructive/40'
+                      : 'bg-primary text-primary-foreground shadow-glow hover:shadow-glow-lg'
                 )}
               >
                 {stt.listening && (
@@ -414,12 +489,36 @@ export default function LiveSessionPage() {
               </button>
 
               <p className="text-sm font-medium text-muted-foreground">
-                {stt.listening
-                  ? 'Listening… tap to stop'
-                  : answer
-                    ? 'Tap the mic to add more, or submit'
-                    : 'Tap the mic and speak your answer'}
+                {stt.error
+                  ? 'Fix the permission, then tap to try again'
+                  : stt.listening
+                    ? 'Listening… tap to stop'
+                    : answer
+                      ? 'Tap the mic to add more, or submit'
+                      : 'Tap the mic and speak your answer'}
               </p>
+
+              {/* Said is said. Stays up for the rest of the question even after the
+                  candidate edits the word out, because a panel cannot un-hear it. */}
+              {sworn.length > 0 && (
+                <div
+                  role="status"
+                  className="flex w-full items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-left text-xs leading-relaxed text-destructive"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="flex-1">
+                    <span className="font-semibold">Flagged:</span> you said
+                    {' '}
+                    {sworn.map((w, i) => (
+                      <span key={w}>
+                        {i > 0 && ', '}
+                        <span className="font-semibold">&ldquo;{w}&rdquo;</span>
+                      </span>
+                    ))}
+                    . In a real panel that lands in the notes — it goes in your report.
+                  </span>
+                </div>
+              )}
 
               {/* Live transcript — filler words in red, pauses marked */}
               <div className="min-h-[96px] w-full flex-1 overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
@@ -431,15 +530,21 @@ export default function LiveSessionPage() {
               </div>
 
               <div className="flex w-full items-center justify-between gap-3">
-                <button
-                  onClick={() => {
-                    stt.stop();
-                    setTyping(true);
-                  }}
-                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                >
-                  Trouble with the mic? Type instead
-                </button>
+                {/* Suppressed while the banner is up: two escape hatches four
+                    inches apart read as panic, not help. */}
+                {!stt.error && !micSilent ? (
+                  <button
+                    onClick={() => {
+                      stt.stop();
+                      setTyping(true);
+                    }}
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Trouble with the mic? Type instead
+                  </button>
+                ) : (
+                  <span />
+                )}
                 <div className="flex items-center gap-2">
                   {answer && !submitAnswer.isPending && (
                     <button

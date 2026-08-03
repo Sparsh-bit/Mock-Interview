@@ -107,6 +107,9 @@ export interface ReportData {
     speaking_seconds?: number;
     wpm?: number;
     answers?: number;
+    /** Career-ending language only — casual words never reach here. */
+    unprofessional_count?: number;
+    unprofessional_words?: string[];
   } | null;
   previous: {
     overall_score: number;

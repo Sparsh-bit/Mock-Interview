@@ -165,6 +165,41 @@ describe('unprofessional language', () => {
     expect(tokens[0].isFiller).toBe(false);
   });
 
+  it('does NOT flag FK, which is how candidates say foreign key', () => {
+    // This was a real false positive: "fk" was in the list, matching is
+    // case-insensitive, and a correct answer about referential integrity earned a
+    // conduct flag on the report plus a capped communication score. A word that is
+    // a technical abbreviation in this question bank cannot carry an irreversible
+    // penalty.
+    expect(countUnprofessional('the FK on that table enforces referential integrity').total).toBe(0);
+    expect(countUnprofessional('add an FK constraint').total).toBe(0);
+  });
+
+  it('keeps casual language out of the report-grade count', () => {
+    // "Damn" muttered while tracing a nested loop is not the sentence that loses an
+    // offer. Treating it as one destroys the credibility of the flag that is.
+    expect(countUnprofessional('damn, that loop is O(n squared)').total).toBe(0);
+    expect(countUnprofessional('this is a crap design').total).toBe(0);
+  });
+
+  it('still marks casual language in the transcript, just not in the report', () => {
+    const tokens = tokenizeWithFillers('damn');
+    expect(tokens[0].isCasual).toBe(true);
+    expect(tokens[0].isUnprofessional).toBe(false);
+    expect(tokens[0].isFiller).toBe(false);
+  });
+
+  it('assigns each word exactly one severity', () => {
+    // The renderer branches in order, so a word that claimed two severities would
+    // silently show the more serious one and the counts would disagree with the
+    // colours.
+    for (const tok of tokenizeWithFillers('basically damn fuck honestly')) {
+      if (tok.wordIndex < 0) continue;
+      const flags = [tok.isUnprofessional, tok.isCasual, tok.isFiller].filter(Boolean);
+      expect(flags.length).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('leaves a clean answer alone', () => {
     expect(countUnprofessional('I would use a HashMap for O(1) lookup.').total).toBe(0);
   });

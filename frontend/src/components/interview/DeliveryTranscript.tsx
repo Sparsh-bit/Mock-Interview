@@ -65,7 +65,24 @@ export function DeliveryTranscript({
         return (
           <Fragment key={i}>
             {marker}
-            {tok.isFiller ? (
+            {/* Three severities, three treatments. Profanity was computed all
+                along and rendered nowhere, so the one thing in a transcript that
+                actually costs an offer was the only thing not marked. */}
+            {tok.isUnprofessional ? (
+              <span
+                title="Unprofessional language — this goes in your report"
+                className="rounded bg-destructive/15 px-0.5 font-semibold text-destructive decoration-destructive decoration-wavy underline underline-offset-4"
+              >
+                {tok.text}
+              </span>
+            ) : tok.isCasual ? (
+              <span
+                title="Casual — fine with friends, avoid in an interview"
+                className="rounded bg-accent-amber/15 px-0.5 font-medium text-accent-amber-ink"
+              >
+                {tok.text}
+              </span>
+            ) : tok.isFiller ? (
               <span className="rounded bg-accent-coral/15 px-0.5 font-medium text-accent-coral-ink">
                 {tok.text}
               </span>

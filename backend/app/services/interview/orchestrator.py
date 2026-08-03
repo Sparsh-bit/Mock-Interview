@@ -1325,9 +1325,23 @@ class InterviewOrchestrator:
         if delivery:
             meta = dict(session.session_metadata or {})
             agg = dict(meta.get("delivery") or {})
-            for key in ("filler_count", "pause_count", "total_pause_seconds", "words", "speaking_seconds"):
+            for key in (
+                "filler_count",
+                "pause_count",
+                "total_pause_seconds",
+                "words",
+                "speaking_seconds",
+                "unprofessional_count",
+            ):
                 agg[key] = (agg.get(key) or 0) + int(delivery.get(key) or 0)
             agg["answers"] = (agg.get("answers") or 0) + 1
+            # The distinct words, not a count, because the report quotes them back:
+            # "you said X" is actionable in a way "1 incident" is not. Deduped
+            # across the whole session and capped, since this lands in JSONB.
+            said = {str(w).strip().lower() for w in (delivery.get("unprofessional_words") or [])}
+            if said:
+                merged = sorted(set(agg.get("unprofessional_words") or []) | said)
+                agg["unprofessional_words"] = merged[:40]
             meta["delivery"] = agg
             session.session_metadata = meta
 

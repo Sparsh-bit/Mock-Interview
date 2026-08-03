@@ -473,11 +473,24 @@ async def generate_report(
     delivery_words = int(delivery.get("words") or 0)
     delivery_secs = int(delivery.get("speaking_seconds") or 0)
     delivery_wpm = round((delivery_words / delivery_secs) * 60) if delivery_secs else 0
+    # Unprofessional language is stated separately and last, so the model cannot
+    # average it into the delivery figures. A filler count is a habit to coach; this
+    # is one event a real panel writes down, and the two need different advice.
+    sworn = [str(w) for w in (delivery.get("unprofessional_words") or [])] if delivery else []
+    conduct = (
+        " The candidate used unprofessional language during the interview: "
+        + ", ".join(f'"{w}"' for w in sworn[:10])
+        + ". Address this directly and briefly in the summary — in a real panel it"
+        " would be noted and would weigh against them — and reflect it in the"
+        " communication score. Do not moralise and do not let it dominate the report."
+        if sworn
+        else ""
+    )
     delivery_summary = (
         f"Filler words: {int(delivery.get('filler_count') or 0)}; "
         f"pauses: {int(delivery.get('pause_count') or 0)} "
         f"(~{int(delivery.get('total_pause_seconds') or 0)}s total); "
-        f"speaking pace: ~{delivery_wpm} wpm."
+        f"speaking pace: ~{delivery_wpm} wpm." + conduct
         if delivery
         else "No delivery metrics were captured for this session."
     )

@@ -74,6 +74,13 @@ class DeliveryMetrics(BaseModel):
     #: Individual pauses. Bounded so a pathological client cannot post an
     #: unbounded array into a JSONB column.
     pauses: list[PauseMark] = Field(default_factory=list, max_length=200)
+    #: Language that would end a real interview, and the words themselves.
+    #: Distinct from filler_count because they are different mistakes needing
+    #: different advice: a filler is a habit, this is one event that costs the
+    #: offer. Casual language ("damn") is deliberately NOT counted here — see
+    #: CASUAL_WORDS in frontend/src/lib/speech/delivery.ts.
+    unprofessional_count: int = 0
+    unprofessional_words: list[str] = Field(default_factory=list, max_length=40)
 
 class SubmitAnswerRequest(BaseModel):
     question_id: uuid.UUID

@@ -334,6 +334,18 @@ export default function ReportDetailPage() {
                         {report.delivery.wpm} wpm
                       </span>
                     )}
+                    {/* Its own colour, not the amber the other chips share: this is
+                        not a metric to improve by a few points, it is something a
+                        real panel wrote down. Quoted back, because "you said X" is
+                        actionable in a way "1 incident" is not. */}
+                    {!!report.delivery.unprofessional_count && (
+                      <span className="rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-1 font-medium text-destructive">
+                        Unprofessional language
+                        {report.delivery.unprofessional_words?.length
+                          ? `: ${report.delivery.unprofessional_words.map((w) => `“${w}”`).join(', ')}`
+                          : ''}
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

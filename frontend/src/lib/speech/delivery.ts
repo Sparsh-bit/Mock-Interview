@@ -76,19 +76,39 @@ export const FILLER_WORDS: string[] = [
  * Kept to unambiguous terms. Words that are profanity in one sense and ordinary
  * in another are excluded: flagging "hell" in "what the hell does this do" is a
  * false positive on a candidate thinking aloud about code.
+ *
+ * "fk" was in this list and is now deliberately out. normalizeMasked lowercases,
+ * so "FK" — which is how every candidate in this question bank says FOREIGN KEY,
+ * and "F.K." normalises to it too — matched, and a correct answer about
+ * referential integrity earned a conduct flag on the report and a capped
+ * communication score. A word that is a technical abbreviation here cannot carry
+ * an irreversible penalty.
+ *
+ * Severity is split: this list is career-ending, CASUAL_WORDS is a habit.
  */
 export const UNPROFESSIONAL_WORDS: string[] = [
-  'fuck', 'fucking', 'fucked', 'fuckin', 'f***', 'f**k', 'fk',
+  'fuck', 'fucking', 'fucked', 'fuckin', 'f***', 'f**k',
   'shit', 'shitty', 's***', 'bullshit',
   'bitch', 'bastard', 'asshole', 'arsehole', 'dickhead',
-  'crap', 'damn', 'goddamn', 'bloody hell',
   'wtf', 'stfu',
 ];
+
+/**
+ * Casual, not career-ending.
+ *
+ * Worth marking in the transcript so a candidate sees the habit, but it does NOT
+ * reach the report and does NOT cap a score. "Damn" muttered while tracing a
+ * nested loop is not the sentence that loses an offer, and treating it as one
+ * destroys the credibility of the flag that is.
+ */
+export const CASUAL_WORDS: string[] = ['crap', 'damn', 'goddamn', 'bloody hell'];
 
 const SINGLE_FILLERS = new Set(FILLER_WORDS.filter((w) => !w.includes(' ')));
 const PHRASE_FILLERS = FILLER_WORDS.filter((w) => w.includes(' '));
 const SINGLE_UNPROFESSIONAL = new Set(UNPROFESSIONAL_WORDS.filter((w) => !w.includes(' ')));
 const PHRASE_UNPROFESSIONAL = UNPROFESSIONAL_WORDS.filter((w) => w.includes(' '));
+const SINGLE_CASUAL = new Set(CASUAL_WORDS.filter((w) => !w.includes(' ')));
+const PHRASE_CASUAL = CASUAL_WORDS.filter((w) => w.includes(' '));
 
 function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^a-z']/g, '');
@@ -108,8 +128,10 @@ function normalizeMasked(w: string): string {
 export interface DeliveryToken {
   text: string;
   isFiller: boolean;
-  /** Language that would end a real interview. Marked separately from fillers. */
+  /** Language that would end a real interview. Reaches the report. */
   isUnprofessional: boolean;
+  /** Casual language. Shown live, never escalated. */
+  isCasual: boolean;
   /** Word index (only meaningful for word tokens, not whitespace). */
   wordIndex: number;
 }
@@ -142,11 +164,18 @@ export function tokenizeWithFillers(text: string): DeliveryToken[] {
   };
   const phraseFillerPositions = markPhrases(PHRASE_FILLERS, words);
   const phraseUnprofessionalPositions = markPhrases(PHRASE_UNPROFESSIONAL, maskedWords);
+  const phraseCasualPositions = markPhrases(PHRASE_CASUAL, maskedWords);
 
   for (const piece of raw) {
     if (piece.trim().length === 0) {
       if (piece.length) {
-        tokens.push({ text: piece, isFiller: false, isUnprofessional: false, wordIndex: -1 });
+        tokens.push({
+          text: piece,
+          isFiller: false,
+          isUnprofessional: false,
+          isCasual: false,
+          wordIndex: -1,
+        });
       }
       continue;
     }
@@ -154,11 +183,16 @@ export function tokenizeWithFillers(text: string): DeliveryToken[] {
     const masked = normalizeMasked(piece);
     const isUnprofessional =
       SINGLE_UNPROFESSIONAL.has(masked) || phraseUnprofessionalPositions.has(wordIndex);
-    // Profanity wins. A word cannot be both, and reporting "fuck" as a filler
-    // would bury the one thing in the transcript that actually costs an offer.
+    const isCasual =
+      !isUnprofessional && (SINGLE_CASUAL.has(masked) || phraseCasualPositions.has(wordIndex));
+    // Severity wins in order. A word is exactly one of these three, and reporting
+    // "fuck" as a filler would bury the one thing in the transcript that actually
+    // costs an offer.
     const isFiller =
-      !isUnprofessional && (SINGLE_FILLERS.has(norm) || phraseFillerPositions.has(wordIndex));
-    tokens.push({ text: piece, isFiller, isUnprofessional, wordIndex });
+      !isUnprofessional &&
+      !isCasual &&
+      (SINGLE_FILLERS.has(norm) || phraseFillerPositions.has(wordIndex));
+    tokens.push({ text: piece, isFiller, isUnprofessional, isCasual, wordIndex });
     wordIndex += 1;
   }
   return tokens;

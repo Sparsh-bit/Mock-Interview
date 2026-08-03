@@ -86,6 +86,11 @@ interface SpeechRecognitionLike {
   maxAlternatives?: number;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
+  //: Audio-flow events. Chrome fires both; Safari fires speechstart. Optional
+  //: because they are not in every engine — a missing one costs nothing, since
+  //: onresult sets the same flag.
+  onsoundstart?: (() => void) | null;
+  onspeechstart?: (() => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
@@ -121,6 +126,16 @@ export function useSpeechRecognition() {
   //: surfacing it lets the UI tell the candidate to repeat rather than letting a
   //: garbled answer be scored as if it were what they said.
   const [confidence, setConfidence] = useState<number | null>(null);
+  /**
+   * Has ANY audio above the engine's noise floor arrived since the mic opened?
+   *
+   * This is the only way to tell "thinking in silence" apart from "system input
+   * muted or the wrong device selected". Neither raises an error event, and
+   * watching the transcript cannot separate them — a timer on transcript growth
+   * accuses a candidate composing an answer of having a broken microphone, at the
+   * moment of maximum concentration. Sound is the signal; words are not.
+   */
+  const [heardSound, setHeardSound] = useState(false);
   // Pauses (silences) detected while recording, tied to word positions in the
   // finalized transcript so the UI can mark exactly where they happened.
   const [pauses, setPauses] = useState<PauseEvent[]>([]);
@@ -151,7 +166,15 @@ export function useSpeechRecognition() {
     // alternative would be guessing — but the confidence is what lets the UI warn
     // that an answer may have been misheard.
     rec.maxAlternatives = 3;
+    // Proof that audio is reaching the engine, from whichever of these the
+    // platform implements.
+    rec.onsoundstart = () => setHeardSound(true);
+    rec.onspeechstart = () => setHeardSound(true);
+
     rec.onresult = (e) => {
+      // Also here, so an engine that fires neither event above still clears the
+      // "we cannot hear you" warning as soon as anything is recognised.
+      setHeardSound(true);
       const now = Date.now();
       // Gap since the last recognized speech → a pause. Attributed to the
       // current word position so we can render a marker right there.
@@ -259,6 +282,8 @@ export function useSpeechRecognition() {
       rec.onresult = null;
       rec.onerror = null;
       rec.onend = null;
+      rec.onsoundstart = null;
+      rec.onspeechstart = null;
       try { rec.stop(); } catch { /* already stopped */ }
     };
   }, []);
@@ -268,6 +293,7 @@ export function useSpeechRecognition() {
     wantListeningRef.current = true;
     setError(null);
     setInterim('');
+    setHeardSound(false);
     // Reset the pause clock so the first utterance isn't counted as a pause.
     lastActivityRef.current = Date.now();
     try {
@@ -291,6 +317,7 @@ export function useSpeechRecognition() {
     setPauses([]);
     setError(null);
     setConfidence(null);
+    setHeardSound(false);
     lastActivityRef.current = 0;
     wordCountRef.current = 0;
     confidenceSumRef.current = 0;
@@ -298,7 +325,7 @@ export function useSpeechRecognition() {
   }, []);
 
   return {
-    supported, listening, transcript, interim, pauses, error, confidence,
+    supported, listening, transcript, interim, pauses, error, confidence, heardSound,
     start, stop, reset,
   };
 }
