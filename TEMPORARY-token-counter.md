@@ -60,7 +60,7 @@ TEMPORARY-token-counter.md          <- this file
 
 | File | What to remove |
 | --- | --- |
-| `backend/app/services/ai/generate.py` | the `from .usage import record_call` import and all **four** `await record_call(...)` blocks — one on success, one after `AIValidationError`, one after the `is_valid` rejection |
+| `backend/app/services/ai/generate.py` | the `from .usage import record_call` import and all **three** `await record_call(...)` blocks — one on success, one after `AIValidationError`, one after the `is_valid` rejection |
 | `backend/app/core/config.py` | the `AI_USAGE_LEDGER_ENABLED` field and its comment block |
 | `backend/app/core/security.py` | the `TEMPORARY (token counter)` block near the end of `get_current_user`. **Also remove `import contextlib`** — that import exists only for this block and nothing else in the file uses it |
 | `backend/app/models/__init__.py` | the `AIUsage` import and its `__all__` entry |
@@ -103,9 +103,11 @@ answered, so the row must survive the surrounding request rolling back. Sharing
 the caller's transaction would silently discard exactly the calls most worth
 recording.
 
-**Money is NUMERIC, not float.** One call costs a fraction of a cent and the
-interesting figure is a `SUM` over tens of thousands of rows, which is precisely
-where binary floating point drifts.
+**Money is NUMERIC, not float** — for exactness and determinism, not because
+floats "lose money". At this scale the float error is around 1e-15 and invisible;
+summing 10,000 costs of $0.0004 in float gives exactly 4.0. What NUMERIC buys is
+that a `SUM` equals the stored rows exactly, and that the answer does not change
+between runs when Postgres picks a parallel aggregate plan.
 
 **Attribution is a ContextVar** set in the auth dependency, so no user id is
 threaded through five layers that have no business knowing about users. Calls
