@@ -34,15 +34,47 @@ def _orjson_dumps(value: object) -> str:
 
 # ─── Engine ───────────────────────────────────────────────────────────────────
 
+#: Is this connection going through a transaction-mode connection pooler?
+#:
+#: Supabase's pooler listens on 6543 (the direct Postgres port is 5432). Detected
+#: from the URL rather than configured separately, because two settings that must
+#: agree are two settings that will eventually disagree — and the failure when they
+#: do is a prepared-statement error under load, which is the worst time to find out.
+_VIA_POOLER = ":6543" in settings.DATABASE_URL or "pgbouncer=true" in settings.DATABASE_URL
+
+#: asyncpg prepares every statement server-side and caches the handle on the
+#: connection. In a transaction-mode pooler a "connection" is a different backend
+#: from one transaction to the next, so a cached handle points at a prepared
+#: statement that does not exist there — asyncpg raises
+#: InvalidSQLStatementNameError, and it only happens once there is enough
+#: concurrency for connections to actually be multiplexed. That is precisely the
+#: load at which nobody wants to be debugging it.
+_asyncpg_args: dict[str, object] = (
+    {"statement_cache_size": 0, "prepared_statement_cache_size": 0} if _VIA_POOLER else {}
+)
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DB_ECHO,
+    # WHY THE POOL SIZE MATTERS MORE THAN IT LOOKS. Every replica opens its own
+    # pool, so the ceiling is pool_size + max_overflow TIMES the replica count, and
+    # Postgres refuses connections past its own limit — which surfaces as
+    # "too many connections" on random requests rather than as a clean degradation.
+    # Behind a pooler the app should hold FEW server connections and let the pooler
+    # do the multiplexing; direct to Postgres it needs enough to serve its own
+    # concurrency. Both come from settings so a Railway replica count change is a
+    # config change, not a deploy.
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
+    # Recycle before any pooler or network idle timeout can close a connection under
+    # us. Without it the first request after a quiet period fails with a closed
+    # connection — rare in testing, constant in production at low traffic.
+    pool_recycle=settings.DB_POOL_RECYCLE,
     pool_pre_ping=True,
     json_serializer=_orjson_dumps,
     json_deserializer=orjson.loads,
+    connect_args=_asyncpg_args,
 )
 
 # Session factory — use this everywhere via the get_db() dependency

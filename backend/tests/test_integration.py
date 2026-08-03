@@ -321,8 +321,21 @@ class TestReportEndpoints:
         report_resp = await async_client.post(
             f"/api/v1/reports/{session_id}/generate", headers=auth_headers
         )
-        assert report_resp.status_code == 201, report_resp.text
+        # 200, not 201: report generation is idempotent and returns an existing
+        # report as often as it creates one, so the endpoint has one success code.
+        # This assertion said 201 and had therefore been failing since that change —
+        # it could never have passed, even with a perfect AI report.
+        assert report_resp.status_code == 200, report_resp.text
         data = report_resp.json()
+
+        # A real AI report, not the unscored placeholder. The placeholder is a
+        # legitimate runtime outcome — the endpoint degrades to it rather than 503ing
+        # a candidate — but this test exists to prove the AI path works end to end, so
+        # accepting it would make the test pass while the thing it covers is broken.
+        assert data["overall_score_label"] != "Pending", (
+            "got the unscored placeholder, which means the AI report path did not "
+            f"complete: {data['executive_summary']}"
+        )
 
         for key in (
             "overall_score", "overall_score_label", "executive_summary",

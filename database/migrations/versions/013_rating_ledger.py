@@ -52,8 +52,8 @@ DESIGN NOTES THAT MATTER IF YOU TOUCH THIS.
     the ledger would be world-readable and, worse, world-writable — anyone could
     insert themselves a rating.
 
-Revision ID: 013_rating_ledger
-Revises: 012_rls_on_late_tables
+Revision ID: 013
+Revises: 012
 """
 
 from __future__ import annotations
@@ -62,8 +62,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "013_rating_ledger"
-down_revision = "012_rls_on_late_tables"
+revision = "013"
+down_revision = "012"
 branch_labels = None
 depends_on = None
 

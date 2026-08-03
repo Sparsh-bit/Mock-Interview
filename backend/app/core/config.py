@@ -64,9 +64,24 @@ class Settings(BaseSettings):
             return v.replace("postgres://", "postgresql+asyncpg://", 1)
         return v
 
+    #: Server connections this process keeps open. The real ceiling is
+    #: (DB_POOL_SIZE + DB_MAX_OVERFLOW) x replica count, measured against Postgres's
+    #: own max_connections — so raising this to serve more users is exactly backwards
+    #: past a point: it exhausts the database instead of the pool. Behind Supabase's
+    #: transaction pooler (port 6543) keep these SMALL and let the pooler multiplex;
+    #: 5 + 10 across four replicas is 60 server connections, which a paid Supabase
+    #: instance serves comfortably.
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
+    #: Seconds a request waits for a free connection before failing. Deliberately
+    #: NOT large: a request queued 30s behind a saturated pool has already lost the
+    #: user, and holding it there consumes a worker that could serve someone else.
     DB_POOL_TIMEOUT: int = 30
+    #: Recycle connections after this long. Must sit BELOW any pooler or load
+    #: balancer idle timeout, or the first request after a quiet spell hits a socket
+    #: the other end already closed. Supabase's pooler cuts idle connections well
+    #: before 30 minutes, so 25 minutes is the safe side of it.
+    DB_POOL_RECYCLE: int = 1500
     DB_ECHO: bool = False  # Set True to log all SQL queries
 
     # ── Redis ─────────────────────────────────────────────────────────────
@@ -222,6 +237,13 @@ class Settings(BaseSettings):
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
+    #: Report generations per hour, per user. The most expensive call in the app by a
+    #: wide margin — roughly 4.5 cents and tens of seconds of a worker — and it had NO
+    #: limit at all, which is both a cost hole and the easiest way for one user to
+    #: saturate every worker on the instance. Six an hour is generous: a candidate
+    #: cannot finish six interviews in an hour, and the endpoint already returns an
+    #: existing report without regenerating, so repeat views do not count against it.
+    RATE_LIMIT_REPORT_PER_HOUR: int = 6
 
     # ── Code execution (self-hosted Piston) ───────────────────────────────
     PISTON_BASE_URL: str = Field(

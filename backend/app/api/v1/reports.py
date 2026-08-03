@@ -21,7 +21,10 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import AsyncSession, get_db
 from app.events import ReportGeneratedEvent, ReportGeneratedPayload, get_event_emitter
 from app.events.emitter import EventEmitter
@@ -30,6 +33,18 @@ from app.services.progress.recorder import record_round
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+#: Report generation had no rate limit at all, which was the largest hole in the API:
+#: the most expensive call in the app, unmetered, on an endpoint that occupies a
+#: worker for tens of seconds. One script could exhaust both the AI budget and every
+#: worker on the instance. Its own namespace rather than the shared AI budget — see
+#: CacheKeys.rate_limit_report.
+_report_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_REPORT_PER_HOUR,
+    window_seconds=3600,
+    key_builder=lambda user_id: CacheKeys.rate_limit_report(user_id),
+    action="generating a report",
+)
 
 #: Wall-clock ceiling on AI report generation, chosen from how long the process
 #: has been running.
@@ -341,6 +356,7 @@ async def get_report(
     # 200, not 201: this is idempotent and returns an existing report unchanged
     # as often as it creates a new one.
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_report_rate_limit)],
 )
 async def generate_report(
     session_id: uuid.UUID,
@@ -563,6 +579,13 @@ async def generate_report(
                 # One attempt per provider: a second full retry cannot fit in the
                 # budget below, and the heuristic fallback is a better use of the
                 # remaining time than a retry that gets cut off.
+                #
+                # The fallback provider is deliberately KEPT in the chain. It is worth
+                # the least when the primary is merely slow and the most when the
+                # primary refuses outright — which is exactly what the daily spend cap
+                # does, instantly and for the rest of the UTC day. Removing it to give
+                # the primary two attempts would mean that once the cap is hit, nobody
+                # gets a report at all until midnight.
                 attempts_per_provider=1,
                 # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
                 # as output and roughly doubled the cost of the single most

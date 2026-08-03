@@ -164,6 +164,19 @@ class CacheKeys:
         return f"report:{report_id}"
 
     @staticmethod
+    def rate_limit_report(user_id: str) -> str:
+        """
+        Report generation. Its own namespace, not the shared AI budget.
+
+        This is the single most expensive call in the app — the largest response, and
+        it holds a worker for tens of seconds. It has to be limited independently of
+        the per-minute AI budget, because a user who has spent that budget on cheap
+        calls must still be able to get their report, and a user hammering report
+        generation must not be able to do it by leaving the cheap calls alone.
+        """
+        return f"rate_limit:report:{user_id}"
+
+    @staticmethod
     def rate_limit_admin(user_id: str) -> str:
         """Admin mutations. Own namespace so it cannot borrow another budget."""
         return f"rate_limit:admin:{user_id}"
