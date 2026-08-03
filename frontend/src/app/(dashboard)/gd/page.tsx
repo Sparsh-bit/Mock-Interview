@@ -172,7 +172,7 @@ function PanelStrip({
                 ) : candidateSpeaking ? (
                   'following along'
                 ) : (
-                  pl.stance
+                  pl.role
                 )}
               </p>
             </div>
@@ -522,7 +522,8 @@ export default function GDPage() {
                       </span>
                       <span className="text-sm font-semibold">{pl.name}</span>
                     </div>
-                    <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{pl.stance}</p>
+                    <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">{pl.role}</p>
+                    <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{pl.stance}</p>
                   </div>
                 ))}
               </div>

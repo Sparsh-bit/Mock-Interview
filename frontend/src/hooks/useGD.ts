@@ -19,7 +19,10 @@ export interface GDTopic {
 export interface GDPanelist {
   name: string;
   gender: string;
+  /** Prose persona, for reference — too long to render. */
   stance: string;
+  /** Three or four words, for the chip beside their name. */
+  role: string;
 }
 
 /** A custom topic, turned into a discussable motion with both sides argued. */

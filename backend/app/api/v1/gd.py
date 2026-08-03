@@ -40,11 +40,18 @@ class Panelist(BaseModel):
     into one agreeable voice with three names. A real GD has someone pushing,
     someone hedging, and someone trying to synthesise — that is the dynamic a
     candidate has to learn to cut into.
+
+    `role` is the same disposition in three or four words. The UI shows it as a
+    chip beside the name so the candidate knows who they are up against before
+    anyone speaks; `stance` is prose for the model and is far too long to render.
+    Two fields rather than one truncated field, because a chip reading
+    "Assertive and data-driven. Opens stro…" tells nobody anything.
     """
 
     name: str
     gender: str  # "female" | "male" — drives voice selection on the client
     stance: str
+    role: str
 
 
 #: The panel. ONE definition, served to the client via GET /gd/panel, so the
@@ -58,6 +65,7 @@ PANELISTS: list[Panelist] = [
             "Assertive and data-driven. Opens strong, quotes numbers and examples, "
             "and challenges vague claims directly. Dominates if nobody pushes back."
         ),
+        role="Quotes numbers, dominates",
     ),
     Panelist(
         name="Arjun",
@@ -66,6 +74,7 @@ PANELISTS: list[Panelist] = [
             "Takes the opposing side on principle and argues it well. Interrupts to "
             "disagree, concedes only to a concrete point, and enjoys the debate."
         ),
+        role="Argues the other side",
     ),
     Panelist(
         name="Meera",
@@ -74,6 +83,7 @@ PANELISTS: list[Panelist] = [
             "The synthesiser. Listens, finds the middle ground, and brings quiet "
             "people in — she is usually the one who asks the candidate directly."
         ),
+        role="Finds middle ground, pulls you in",
     ),
 ]
 
