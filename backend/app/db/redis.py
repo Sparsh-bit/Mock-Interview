@@ -163,6 +163,11 @@ class CacheKeys:
     def report(report_id: str) -> str:
         return f"report:{report_id}"
 
+    @staticmethod
+    def rate_limit_admin(user_id: str) -> str:
+        """Admin mutations. Own namespace so it cannot borrow another budget."""
+        return f"rate_limit:admin:{user_id}"
+
 
 # ─── Health check ─────────────────────────────────────────────────────────────
 

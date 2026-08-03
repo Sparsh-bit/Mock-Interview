@@ -213,6 +213,25 @@ async def get_current_user(
             if not user:
                 raise CREDENTIALS_EXCEPTION
 
+    # Deactivated accounts are refused here, at the one choke point every
+    # authenticated request passes through.
+    #
+    # `users.is_active` existed as a column that nothing wrote and nothing read —
+    # so before this check, an admin "deactivating" someone would have flipped a
+    # boolean and changed nothing at all about what they could do. Enforcing it
+    # anywhere other than here would mean auditing every endpoint forever.
+    #
+    # 403 with a specific message, not 401: the token is perfectly valid, so a
+    # 401 would send the client into a refresh-and-retry loop against an account
+    # that is never coming back. The client can tell the difference and show
+    # something true.
+    if not user.is_active:
+        logger.info("auth_rejected_deactivated_account", user_id=str(user.id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been deactivated. Contact support if you think this is a mistake.",
+        )
+
     # TEMPORARY (token counter) — tag any AI spend during this request with the
     # user who caused it. Removed with the rest of the ledger; see
     # TEMPORARY-token-counter.md.
@@ -248,6 +267,15 @@ async def get_current_admin_user(
     is_admin = result.scalar_one_or_none()
 
     if not is_admin:
+        # Logged at WARNING, with the account named. A non-admin reaching an
+        # admin route is either a bug in the client or somebody probing, and
+        # neither used to leave any trace at all — the refusal was silent, so a
+        # sustained attempt to find an unguarded admin endpoint was invisible.
+        logger.warning(
+            "admin_access_denied",
+            user_id=str(current_user.user_id),
+            email=current_user.email,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required.",

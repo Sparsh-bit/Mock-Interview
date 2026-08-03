@@ -18,6 +18,7 @@ import {
   Trophy,
   User,
   Coins,
+  ShieldCheck,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -55,32 +56,34 @@ const NAV_ITEMS = [
   },
 ];
 
-// TEMPORARY — admin-only AI cost view. Removed with the ledger; see
-// TEMPORARY-token-counter.md.
-const COST_NAV_ITEM = { href: '/ai-usage', icon: Coins, label: 'AI cost' };
+// Admin-only. `Users` is permanent; `AI cost` goes when the temporary ledger
+// does — see TEMPORARY-token-counter.md.
+const ADMIN_NAV_ITEMS = [
+  { href: '/admin', icon: ShieldCheck, label: 'Users' },
+  { href: '/ai-usage', icon: Coins, label: 'AI cost' },
+];
 
 interface SidebarProps {
   user: SupabaseUser;
 }
 
 /**
- * TEMPORARY — is this account allowed to see the AI cost view?
+ * Is this an admin account?
  *
- * Answered by probing the cost endpoint itself rather than by adding an
- * `is_admin` field to a user response. The probe IS the authorisation check, so
- * there is no second source of truth to keep in sync, and no API surface that
- * has to be removed along with the ledger — deleting this hook and the nav entry
- * below is the whole frontend cleanup.
+ * Answered by probing an admin-gated endpoint rather than by adding an `is_admin`
+ * field to a user response. The probe IS the authorisation check, so there is no
+ * second source of truth that could disagree with the server — and no extra API
+ * surface to remove when the temporary cost view goes.
  *
- * `days=1` keeps the aggregation trivial, `retry: false` means a 403 costs one
- * request, and the result is cached for the session so it does not re-probe on
- * every navigation. A non-admin simply never sees the link.
+ * `/admin/overview` is the cheapest admin read. `retry: false` means a 403 costs
+ * exactly one request, and the answer is cached for the session so it does not
+ * re-probe on every navigation. A non-admin simply never sees the links.
  */
-function useCanSeeCosts(): boolean {
+function useIsAdmin(): boolean {
   const { data } = useQuery({
-    queryKey: ['ai-usage-visible'],
+    queryKey: ['is-admin'],
     queryFn: async () => {
-      await getBrowserApiClient().get('/api/v1/ai-usage?days=1');
+      await getBrowserApiClient().get('/api/v1/admin/overview');
       return true;
     },
     retry: false,
@@ -92,7 +95,7 @@ function useCanSeeCosts(): boolean {
 
 export function AppSidebar({ user }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const canSeeCosts = useCanSeeCosts();
+  const isAdmin = useIsAdmin();
   const pathname = usePathname();
 
   return (
@@ -133,10 +136,10 @@ export function AppSidebar({ user }: SidebarProps) {
               </p>
             )}
             <ul className="space-y-0.5">
-              {/* TEMPORARY: the AI cost view hangs off Account, and only for
-                  accounts the endpoint actually answers for. */}
-              {(group === 'Account' && canSeeCosts
-                ? [...baseItems, COST_NAV_ITEM]
+              {/* Admin entries hang off Account, and only for accounts the
+                  server actually answers admin reads for. */}
+              {(group === 'Account' && isAdmin
+                ? [...baseItems, ...ADMIN_NAV_ITEMS]
                 : baseItems
               ).map(({ href, icon: Icon, label }) => {
                 const isActive = pathname === href || pathname.startsWith(href + '/');

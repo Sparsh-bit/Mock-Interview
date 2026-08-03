@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
 export async function createClient() {
@@ -14,7 +14,10 @@ export async function createClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet: any[]) {
+        // Typed from the library rather than `any[]`. @supabase/ssr exports the
+        // exact callback signature, so a misspelled destructure below is a
+        // compile error instead of a cookie that silently never gets set.
+        setAll(cookiesToSet: Parameters<SetAllCookies>[0]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)

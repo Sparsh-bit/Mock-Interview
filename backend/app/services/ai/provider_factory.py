@@ -255,8 +255,6 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 max_output_tokens=settings.ANTHROPIC_MAX_OUTPUT_TOKENS,
                 daily_budget_usd=settings.AI_DAILY_BUDGET_USD,
             )
-        # case "openai":
-        #     return cls(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL)
         case _:
             raise ValueError(
                 f"Provider '{name}' is registered but has no build configuration. "

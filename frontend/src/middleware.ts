@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 
 const PROTECTED_ROUTES = ['/dashboard', '/interview', '/report', '/profile', '/settings', '/prepare', '/practice'];
 const AUTH_ROUTES = ['/login', '/register', '/forgot-password'];
@@ -24,7 +24,8 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll();
         },
-        setAll(cookiesToSet: any[]) {
+        // Typed from the library — see the note in lib/supabase/server.ts.
+        setAll(cookiesToSet: Parameters<SetAllCookies>[0]) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>

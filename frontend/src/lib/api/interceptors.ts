@@ -22,13 +22,14 @@ import type { RequestInterceptor, TokenProvider, PreparedRequest } from './types
  */
 export function createAuthInterceptor(tokenProvider: TokenProvider): RequestInterceptor {
   return async (request) => {
-    const skip = (request as any).init?.extraOptions?.skipAuth;
-    if (skip) {
-      const { extraOptions, ...rest } = request.init;
-      return {
-        ...request,
-        init: rest as any,
-      };
+    // No casts needed: PreparedRequest.init already declares `extraOptions`.
+    // Two `as any` used to sit here, casting away a type that was already
+    // correct — which also meant a typo in `extraOptions` would have compiled.
+    if (request.init.extraOptions?.skipAuth) {
+      // Strip the marker before it reaches fetch(), which would otherwise
+      // receive an option it does not understand.
+      const { extraOptions: _drop, ...rest } = request.init;
+      return { ...request, init: rest };
     }
 
     const token = await tokenProvider();

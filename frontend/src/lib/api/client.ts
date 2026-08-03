@@ -118,7 +118,7 @@ export class ApiClient {
       delete mergedHeaders['Content-Type'];
     }
 
-    const init: RequestInit & { headers: Record<string, string>; extraOptions?: Record<string, unknown> } = {
+    const init: PreparedRequest['init'] = {
       method,
       headers: mergedHeaders,
       ...(body !== undefined && {

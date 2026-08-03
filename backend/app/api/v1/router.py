@@ -8,6 +8,7 @@ This is the only file that needs to change when adding a new endpoint group.
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    admin,
     ai_usage,  # TEMPORARY — token counter
     analysis,
     auth,
@@ -42,6 +43,10 @@ v1_router.include_router(code.router, prefix="/code", tags=["Code Execution"])
 v1_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 v1_router.include_router(analysis.router, prefix="/analysis", tags=["Detailed Analysis"])
 v1_router.include_router(resume.router, prefix="/resume", tags=["Resume"])
+
+# Admin only — user management, per-user usage, activation. Every route is
+# gated by the AdminUser dependency (users.is_admin).
+v1_router.include_router(admin.router, tags=["Admin"])
 
 # TEMPORARY — per-feature AI cost breakdown, admin only. Removed with the rest
 # of the ledger once credits ship; see TEMPORARY-token-counter.md.

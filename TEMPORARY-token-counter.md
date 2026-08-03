@@ -65,7 +65,9 @@ TEMPORARY-token-counter.md          <- this file
 | `backend/app/core/security.py` | the `TEMPORARY (token counter)` block near the end of `get_current_user`. **Also remove `import contextlib`** — that import exists only for this block and nothing else in the file uses it |
 | `backend/app/models/__init__.py` | the `AIUsage` import and its `__all__` entry |
 | `backend/app/api/v1/router.py` | `ai_usage` from the import list and its `include_router` call |
-| `frontend/src/components/layout/Sidebar.tsx` | `useCanSeeCosts`, `COST_NAV_ITEM`, the `Coins` icon import, the `useQuery` and `getBrowserApiClient` imports, the `canSeeCosts` line in the component, and the conditional in the nav `.map` — restore it to `baseItems.map(...)` and rename the destructured `items: baseItems` back to `items` |
+| `frontend/src/components/layout/Sidebar.tsx` | the `/ai-usage` entry from `ADMIN_NAV_ITEMS` and the `Coins` icon import. **Keep** `useIsAdmin` and the rest of `ADMIN_NAV_ITEMS` — the admin Users page is permanent and needs both |
+| `backend/app/api/v1/admin.py` | nothing to delete, but `_cost_by_user`, the `ai_cost_usd`/`ai_calls` fields and `cost_data_available` become dead once the ledger is gone. They already degrade to zero rather than failing, so the page keeps working — repoint them at whatever billing records, or strip the column |
+| `frontend/src/app/(dashboard)/admin/page.tsx` | the AI-cost column is already conditional on `cost_data_available`, so it disappears on its own. Remove the column and `usd()` only if you are not replacing it with credit data |
 
 ### 4. Verify
 

@@ -107,10 +107,21 @@ export interface RequestConfig {
   /**
    * The canonical request shape that flows through the interceptor pipeline.
    * Interceptors receive and must return this exact structure.
+   *
+   * `Omit<RequestInit, 'headers'>` rather than a plain intersection. Intersecting
+   * RequestInit with a stricter `headers` does not override the property, it
+   * produces `(HeadersInit | undefined) & Record<string, string>` — a type that
+   * is satisfiable but impossible to reconstruct by spreading, which is what
+   * pushed two `as any` casts into the auth interceptor. Omitting first replaces
+   * the property outright, so `{...init}` round-trips cleanly.
    */
   export interface PreparedRequest {
     url: string;
-    init: RequestInit & { headers: Record<string, string>; extraOptions?: Record<string, unknown> };
+    init: Omit<RequestInit, 'headers'> & {
+      headers: Record<string, string>;
+      /** Internal, stripped before fetch(). Carries flags like `skipAuth`. */
+      extraOptions?: Record<string, unknown>;
+    };
   }
 
 /** Normalized response wrapper returned by all ApiClient methods */
