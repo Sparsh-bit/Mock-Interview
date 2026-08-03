@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PauseEvent } from '@/lib/speech/delivery';
+import { correctTechnicalTerms } from '@/lib/speech/vocabulary';
 
 // Silence longer than this (between recognized speech) counts as a pause worth
 // surfacing — shorter gaps are natural speech rhythm.
@@ -9,7 +10,7 @@ const PAUSE_THRESHOLD_MS = 1800;
 
 /* ─── Types for the (non-standardised) Web Speech API ──────────────────────── */
 interface SpeechRecognitionResultLike {
-  0: { transcript: string };
+  0: { transcript: string; confidence?: number };
   isFinal: boolean;
 }
 interface SpeechRecognitionEventLike {
@@ -20,6 +21,7 @@ interface SpeechRecognitionLike {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives?: number;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onerror: ((e: { error: string }) => void) | null;
   onend: (() => void) | null;
@@ -47,10 +49,27 @@ export function useSpeechRecognition() {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interim, setInterim] = useState('');
+  //: A message the UI can show when recognition genuinely cannot continue —
+  //: microphone permission denied, no device. Previously an error just set
+  //: listening=false and said nothing, so a candidate whose mic was blocked saw
+  //: an idle button and no explanation.
+  const [error, setError] = useState<string | null>(null);
+  //: Mean confidence of the finalised results, 0-1, or null when the engine does
+  //: not report it. Low confidence is why a transcript can read as nonsense —
+  //: surfacing it lets the UI tell the candidate to repeat rather than letting a
+  //: garbled answer be scored as if it were what they said.
+  const [confidence, setConfidence] = useState<number | null>(null);
   // Pauses (silences) detected while recording, tied to word positions in the
   // finalized transcript so the UI can mark exactly where they happened.
   const [pauses, setPauses] = useState<PauseEvent[]>([]);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  //: Does the CANDIDATE still want to be recording? Distinct from whether the
+  //: engine happens to be running, which is the whole point — see the restart
+  //: logic in `onend`.
+  const wantListeningRef = useRef(false);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confidenceSumRef = useRef(0);
+  const confidenceCountRef = useRef(0);
   // Timing state for pause detection (refs so handlers see live values).
   const lastActivityRef = useRef<number>(0);
   const wordCountRef = useRef<number>(0);
@@ -65,6 +84,11 @@ export function useSpeechRecognition() {
     rec.lang = 'en-IN';
     rec.continuous = true;
     rec.interimResults = true;
+    // Ask for alternatives so the engine reports a confidence figure it is willing
+    // to stand behind. We still take the top result — picking a lower-ranked
+    // alternative would be guessing — but the confidence is what lets the UI warn
+    // that an answer may have been misheard.
+    rec.maxAlternatives = 3;
     rec.onresult = (e) => {
       const now = Date.now();
       // Gap since the last recognized speech → a pause. Attributed to the
@@ -83,20 +107,93 @@ export function useSpeechRecognition() {
       let interimChunk = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalChunk += r[0].transcript;
-        else interimChunk += r[0].transcript;
+        if (r.isFinal) {
+          finalChunk += r[0].transcript;
+          const c = r[0].confidence;
+          // Chrome reports 0 for some results rather than omitting the field;
+          // averaging those in would drag the figure to meaningless.
+          if (typeof c === 'number' && c > 0) {
+            confidenceSumRef.current += c;
+            confidenceCountRef.current += 1;
+          }
+        } else {
+          interimChunk += r[0].transcript;
+        }
       }
       if (finalChunk) {
-        const clean = finalChunk.trim();
+        // Correct the technical terms before the text is ever stored or shown.
+        // The recogniser has no domain vocabulary, so "HashMap" arrives as
+        // "hash map" and "JVM" as "jvm" — see lib/speech/vocabulary.ts.
+        const clean = correctTechnicalTerms(finalChunk.trim());
         wordCountRef.current += clean.split(/\s+/).filter(Boolean).length;
         setTranscript((prev) => (prev ? prev + ' ' : '') + clean);
+        if (confidenceCountRef.current > 0) {
+          setConfidence(confidenceSumRef.current / confidenceCountRef.current);
+        }
       }
       setInterim(interimChunk);
     };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => setListening(false);
+    /**
+     * Errors, split by whether they are recoverable.
+     *
+     * `no-speech` and `aborted` are routine — Chrome raises no-speech whenever a
+     * candidate thinks for a moment, and aborted whenever we call stop(). Treating
+     * them as fatal is what made the mic die mid-answer. The genuinely fatal ones
+     * are permission and hardware, and those are the ones worth telling the
+     * candidate about.
+     */
+    rec.onerror = (e) => {
+      const kind = e.error;
+      if (kind === 'not-allowed' || kind === 'service-not-allowed') {
+        wantListeningRef.current = false;
+        setError('Microphone access is blocked. Allow it in your browser settings, or type your answer instead.');
+        setListening(false);
+        return;
+      }
+      if (kind === 'audio-capture') {
+        wantListeningRef.current = false;
+        setError('No microphone found. Plug one in, or type your answer instead.');
+        setListening(false);
+        return;
+      }
+      // no-speech, aborted, network — transient. onend handles the restart.
+    };
+
+    /**
+     * THE FIX FOR "IT GETS CONFUSED WHAT I AM SAYING".
+     *
+     * Chrome ends a recognition session on its own after a few seconds of silence,
+     * `continuous = true` notwithstanding. This handler used to just set
+     * listening=false — so the moment a candidate paused to think, the engine
+     * stopped, the mic button went idle, and every word after that pause was
+     * never transcribed. The answer that got submitted was whatever they said
+     * before their first pause, which reads as the software mishearing them when
+     * it had actually stopped listening.
+     *
+     * So: if the candidate has not pressed stop, start it again. The small delay
+     * matters — calling start() synchronously inside onend throws
+     * InvalidStateError because the engine has not finished tearing down.
+     */
+    rec.onend = () => {
+      if (!wantListeningRef.current) {
+        setListening(false);
+        return;
+      }
+      restartTimerRef.current = setTimeout(() => {
+        if (!wantListeningRef.current) return;
+        try {
+          rec.start();
+        } catch {
+          // Already running, or torn down mid-restart. Either way the next
+          // onend will try again while the candidate still wants to record.
+        }
+      }, 250);
+    };
+
     recognitionRef.current = rec;
     return () => {
+      wantListeningRef.current = false;
+      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       rec.onresult = null;
       rec.onerror = null;
       rec.onend = null;
@@ -106,6 +203,8 @@ export function useSpeechRecognition() {
 
   const start = useCallback(() => {
     if (!recognitionRef.current || listening) return;
+    wantListeningRef.current = true;
+    setError(null);
     setInterim('');
     // Reset the pause clock so the first utterance isn't counted as a pause.
     lastActivityRef.current = Date.now();
@@ -116,6 +215,10 @@ export function useSpeechRecognition() {
   }, [listening]);
 
   const stop = useCallback(() => {
+    // Clear intent FIRST, or the onend handler restarts the engine we just asked
+    // to stop.
+    wantListeningRef.current = false;
+    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
     recognitionRef.current?.stop();
     setListening(false);
   }, []);
@@ -124,11 +227,18 @@ export function useSpeechRecognition() {
     setTranscript('');
     setInterim('');
     setPauses([]);
+    setError(null);
+    setConfidence(null);
     lastActivityRef.current = 0;
     wordCountRef.current = 0;
+    confidenceSumRef.current = 0;
+    confidenceCountRef.current = 0;
   }, []);
 
-  return { supported, listening, transcript, interim, pauses, start, stop, reset };
+  return {
+    supported, listening, transcript, interim, pauses, error, confidence,
+    start, stop, reset,
+  };
 }
 
 /**

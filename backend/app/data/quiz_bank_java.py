@@ -488,4 +488,76 @@ JAVA_QUIZ_BANK: dict[str, list[dict]] = {
             "difficulty": "hard",
         },
     ],
+    # ── Design principles and patterns ────────────────────────────────────────
+    "SOLID & Design Patterns": [
+        {
+            "question": "What does the S in SOLID stand for?",
+            "options": [
+                "Static responsibility",
+                "Single responsibility",
+                "Separation of interfaces",
+                "Stateless resources",
+            ],
+            "correct_index": 1,
+            "explanation": "Single Responsibility: a class should have one reason to change. The practical test is whether you can describe what it does in one sentence without saying \"and\".",
+            "difficulty": "easy",
+        },
+        {
+            "question": "\"Open for extension, closed for modification\" describes which principle?",
+            "options": ["Liskov substitution", "Open-closed", "Interface segregation", "Dependency inversion"],
+            "correct_index": 1,
+            "explanation": "Open-closed: you add behaviour by adding a class, not by editing one that already works. The strategy pattern is this principle in practice.",
+            "difficulty": "easy",
+        },
+        {
+            "question": "A subclass that throws on a method its parent implements fine violates which principle?",
+            "options": [
+                "Single responsibility",
+                "Liskov substitution",
+                "Interface segregation",
+                "Open-closed",
+            ],
+            "correct_index": 1,
+            "explanation": "Liskov substitution: a subclass must work anywhere its parent does. The classic violation is Square extending Rectangle, where setWidth breaks the caller's assumption about height.",
+            "difficulty": "hard",
+        },
+        {
+            "question": "Spring's dependency injection is a direct application of which SOLID principle?",
+            "options": ["Single responsibility", "Open-closed", "Dependency inversion", "Liskov substitution"],
+            "correct_index": 2,
+            "explanation": "Dependency inversion: depend on an abstraction, not a concrete class. Taking a UserRepository interface in the constructor rather than doing `new MySqlUserRepository()` is exactly this.",
+            "difficulty": "medium",
+        },
+        {
+            "question": "Which is the safest and simplest way to write a singleton in Java?",
+            "options": [
+                "A static field initialised lazily without locking",
+                "A single-element enum",
+                "double-checked locking without volatile",
+                "A synchronized getInstance() called on every access",
+            ],
+            "correct_index": 1,
+            "explanation": "An enum's single instance is guaranteed by the JVM and is serialisation-safe for free. Lazy init without locking is not thread-safe; double-checked locking needs volatile to be correct; a synchronized getter works but locks on every read.",
+            "difficulty": "hard",
+        },
+        {
+            "question": "What is the difference between the factory and builder patterns?",
+            "options": [
+                "Factory is thread-safe, builder is not",
+                "Factory decides WHICH class to create; builder decides HOW to construct one",
+                "They are the same pattern under two names",
+                "Builder only works for immutable objects",
+            ],
+            "correct_index": 1,
+            "explanation": "Factory hides the concrete type from the caller. Builder hides the assembly of one type that has many optional fields — StringBuilder and Stream.collect are both builders.",
+            "difficulty": "medium",
+        },
+        {
+            "question": "Swapping a sorting or pricing algorithm at runtime behind one interface is which pattern?",
+            "options": ["Observer", "Strategy", "Adapter", "Decorator"],
+            "correct_index": 1,
+            "explanation": "Strategy: each algorithm is a class implementing a shared interface, chosen at runtime. It is also how you satisfy open-closed — a new rule is a new class, not an edit.",
+            "difficulty": "medium",
+        },
+    ],
 }

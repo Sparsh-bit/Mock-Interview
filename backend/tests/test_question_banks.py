@@ -64,6 +64,9 @@ REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
     ("REST API", ("rest api", "http method", "idempotent", "status code")),
     ("JPA", ("jpa", "entitymanager")),
     ("Jackson", ("jackson", "json")),
+    # Added on request after the first pass.
+    ("SOLID principles", ("solid", "single responsibility", "liskov", "open-closed")),
+    ("Design patterns", ("singleton", "factory", "builder", "strategy pattern")),
 ]
 
 
@@ -409,3 +412,106 @@ class TestRetakesGetDifferentQuestions:
         """
         src = __import__("inspect").getsource(orch.InterviewOrchestrator._top_up_plan)
         assert "interview_plan_reused_seen_questions" in src
+
+
+class TestReportCompleteness:
+    """
+    Every report in production had dimension_scores={} and question_analysis=[] —
+    the four competencies panel and the per-question breakdown, both blank. They
+    were optional in the schema (default_factory) and appeared in the prompt only
+    as an example, so when the model economised on a long response it dropped them
+    and nothing objected.
+    """
+
+    def test_generation_rejects_a_report_with_no_dimension_scores(self):
+        from app.api.v1.reports import _report_is_complete
+
+        class R:
+            dimension_scores: dict = {}
+            question_analysis: list = []
+
+        assert _report_is_complete(R(), answered=5) is False
+
+    def test_generation_rejects_a_partial_dimension_set(self):
+        from app.api.v1.reports import _report_is_complete
+
+        class R:
+            dimension_scores = {"technical_accuracy": 50.0}
+            question_analysis = [object()] * 5
+
+        assert _report_is_complete(R(), answered=5) is False
+
+    def test_generation_rejects_a_summarised_question_analysis(self):
+        """One entry for a sixteen-question interview is a summary, not analysis."""
+        from app.api.v1.reports import _report_is_complete
+
+        class R:
+            dimension_scores = dict.fromkeys(
+                ("technical_accuracy", "answer_completeness", "communication_clarity", "confidence"),
+                50.0,
+            )
+            question_analysis = [object()]
+
+        assert _report_is_complete(R(), answered=16) is False
+
+    def test_a_complete_report_passes(self):
+        from app.api.v1.reports import _report_is_complete
+
+        class R:
+            dimension_scores = dict.fromkeys(
+                ("technical_accuracy", "answer_completeness", "communication_clarity", "confidence"),
+                50.0,
+            )
+            question_analysis = [object()] * 16
+
+        assert _report_is_complete(R(), answered=16) is True
+
+    def test_near_complete_analysis_is_accepted(self):
+        """
+        15 of 16 analysed is far better for the candidate than the unscored
+        fallback, so the bar is most-of-the-interview rather than all of it.
+        """
+        from app.api.v1.reports import _report_is_complete
+
+        class R:
+            dimension_scores = dict.fromkeys(
+                ("technical_accuracy", "answer_completeness", "communication_clarity", "confidence"),
+                50.0,
+            )
+            question_analysis = [object()] * 15
+
+        assert _report_is_complete(R(), answered=16) is True
+
+    def test_the_prompt_states_both_are_required(self):
+        import pathlib as _p
+
+        prompt = (
+            _p.Path(__import__("app").__file__).parent / "prompts/report_generator.md"
+        ).read_text()
+        assert "Required fields" in prompt
+        assert "ONE ENTRY PER QUESTION" in prompt
+
+    def test_the_time_budget_covers_a_measured_full_report(self):
+        """
+        A complete 20-answer report was MEASURED at 47.9 seconds. The old flat 50s
+        cleared that by two seconds, so any longer interview or slower moment fell
+        into the unscored fallback — and every retry hit the same wall, so a long
+        interview could never finish.
+        """
+        from app.api.v1.reports import (
+            _REPORT_AI_BUDGET_COLD_SECONDS,
+            _REPORT_AI_BUDGET_WARM_SECONDS,
+        )
+
+        assert _REPORT_AI_BUDGET_WARM_SECONDS >= 70, "no headroom over the measured 47.9s"
+        # Cold must stay inside the gateway: ~37s cold start + budget < ~100s.
+        assert 37 + _REPORT_AI_BUDGET_COLD_SECONDS <= 95
+
+    def test_the_budget_is_chosen_from_process_uptime(self):
+        from app.api.v1 import reports as r
+
+        assert callable(r.report_ai_budget_seconds)
+        assert r.report_ai_budget_seconds() in (
+            r._REPORT_AI_BUDGET_COLD_SECONDS,
+            r._REPORT_AI_BUDGET_WARM_SECONDS,
+        )

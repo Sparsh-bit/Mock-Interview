@@ -64,6 +64,27 @@ For EACH question-answer pair:
 - Specific resources for each area (official docs, well-known books, practice sites)
 - Estimated study time to reach interview-ready level
 
+## Required fields — a report missing any of these is rejected
+
+Every field in the schema below must be present and populated. Two are dropped
+most often and are the two that matter most to a candidate, so they are called out
+explicitly:
+
+**`dimension_scores` — all four keys, always.** `technical_accuracy`,
+`answer_completeness`, `communication_clarity`, `confidence`, each 0-100. These
+are the four bars the candidate sees at the top of their report. An empty object
+renders as a blank panel and is the single most-noticed thing missing from a
+report.
+
+**`question_analysis` — ONE ENTRY PER QUESTION ANSWERED, no exceptions.** If the
+transcript has 16 answers, return 16 entries, in the same order. This is the part
+a candidate actually reads: what they got wrong, what they missed, and what a good
+answer sounds like. Summarising several questions into one entry, or returning a
+representative sample, makes the report useless for the questions you skipped.
+
+Do not shorten the response by dropping either of them. If you need to save room,
+write shorter `ideal_answer_summary` values — but keep one entry per question.
+
 ## Output Format
 
 Return ONLY a valid JSON object:

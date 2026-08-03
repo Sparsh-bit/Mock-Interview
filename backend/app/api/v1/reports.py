@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from datetime import datetime
 from time import perf_counter
@@ -28,21 +29,52 @@ from app.events.emitter import EventEmitter
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-#: Wall-clock ceiling on AI report generation.
+#: Wall-clock ceiling on AI report generation, chosen from how long the process
+#: has been running.
 #:
-#: Sized to fit the host's gateway timeout (~100s on Render) in BOTH states,
-#: rather than assuming the instance is warm:
+#: A flat 50s was too tight and it was the reason reports came back "Pending". A
+#: complete 20-answer report — four dimension scores and twenty question analyses —
+#: was MEASURED at 47.9 seconds. So the flat budget was clearing the real cost by
+#: two seconds, and any interview slightly longer, or any slower moment on the
+#: provider, fell off the edge into the unscored fallback. Every retry then hit the
+#: same wall, so a long interview could never produce a finished report at all.
 #:
-#:   warm (keep-warm ping active, measured ~1.5s):  1.5 + 50 =  52s
-#:   cold (ping failed / instance restarted, ~37s): 37  + 50 =  87s
+#: The constraint is the host's gateway timeout (~100s on Render), which applies to
+#: the WHOLE request including a cold start. That is why the budget was flat: a
+#: cold start costs ~37s, so 37 + 50 = 87s was the only safe assumption.
 #:
-#: Both are inside the limit, so a missed ping degrades latency but cannot
-#: produce a gateway 502 — which matters because that 502 carries no CORS headers
-#: and surfaces in the browser as an opaque CORS error rather than a timeout.
+#: But cold is the exception, not the rule. Process uptime tells us which case we
+#: are in — a request arriving two minutes after boot is not paying a cold start —
+#: so we can spend the headroom when it is genuinely there:
 #:
-#: Exceeding the budget is not a failure: the handler falls back to the honest
-#: unscored report, which the candidate can regenerate.
-_REPORT_AI_BUDGET_SECONDS = 50.0
+#:   cold (uptime < 120s):  37 + 50 = 87s   — unchanged, proven safe
+#:   warm (uptime > 120s):  1.5 + 85 = 87s  — same ceiling, 35 more seconds of work
+#:
+#: Both land in the same place against the gateway. Exceeding the budget is still
+#: not a failure: the handler falls back to the honest unscored report, which the
+#: candidate can regenerate.
+_REPORT_AI_BUDGET_COLD_SECONDS = 50.0
+_REPORT_AI_BUDGET_WARM_SECONDS = 85.0
+
+#: Above this uptime the instance cannot be paying a cold start.
+_WARM_AFTER_SECONDS = 120.0
+
+#: Monotonic clock at import, i.e. process start.
+_PROCESS_STARTED_AT = time.monotonic()
+
+
+def report_ai_budget_seconds() -> float:
+    """
+    How long AI report generation may run, given how long this process has been up.
+
+    Monotonic, so a system clock change cannot make a cold instance look warm.
+    """
+    uptime = time.monotonic() - _PROCESS_STARTED_AT
+    return (
+        _REPORT_AI_BUDGET_WARM_SECONDS
+        if uptime >= _WARM_AFTER_SECONDS
+        else _REPORT_AI_BUDGET_COLD_SECONDS
+    )
 
 #: Marker for the placeholder report written when AI scoring is unavailable. It
 #: is never a final result: generation retries and replaces it.
@@ -72,11 +104,60 @@ _MAX_UNSCORED_ATTEMPTS = 3
 #: tokens): 1500 + 16 * 260 = 5660, ~11% headroom. Do not tune these by
 #: intuition -- measure, because being 1 token short costs the whole report.
 _REPORT_TOKENS_FIXED = 1500
-_REPORT_TOKENS_PER_QUESTION = 260
+# Raised from 260. question_analysis is now required at one entry per question,
+# and each entry carries the question, a quality verdict, a score, the missing
+# concepts and a model answer summary — measured at 90-140 output tokens. At 260
+# per question the whole response competed for room with the summary sections and
+# the JSON truncated, which is what `ai_json_extraction_failed` in the logs was.
+_REPORT_TOKENS_PER_QUESTION = 340
 
 #: Ceiling on the computed budget, so a pathological session (hundreds of rows)
 #: cannot request an unbounded response.
-_REPORT_TOKENS_MAX = 8000
+_REPORT_TOKENS_MAX = 12_000
+
+
+#: The four competencies the report's headline panel renders. A report missing any
+#: of them draws a blank panel.
+_REQUIRED_DIMENSIONS = (
+    "technical_accuracy",
+    "answer_completeness",
+    "communication_clarity",
+    "confidence",
+)
+
+
+def _report_is_complete(report, answered: int) -> bool:
+    """
+    Is this report actually usable, or just schema-valid?
+
+    Pydantic accepts a report with no dimension_scores and no question_analysis
+    because both default to empty. Schema-valid and useless are different things,
+    and only this check can tell them apart.
+
+    question_analysis is required to cover most of the interview rather than all
+    of it: demanding an exact match would reject a report that analysed 15 of 16
+    answers, and 15 is far better for the candidate than the unscored fallback.
+    Two thirds is the line — below that the model has summarised rather than
+    analysed.
+    """
+    dims = report.dimension_scores or {}
+    if not all(k in dims for k in _REQUIRED_DIMENSIONS):
+        logger.warning(
+            "ai_report_missing_dimensions",
+            got=sorted(dims),
+            required=list(_REQUIRED_DIMENSIONS),
+        )
+        return False
+
+    qa = report.question_analysis or []
+    if answered and len(qa) < max(1, (answered * 2) // 3):
+        logger.warning(
+            "ai_report_incomplete_question_analysis",
+            got=len(qa),
+            answered=answered,
+        )
+        return False
+    return True
 
 
 def report_token_budget(question_count: int) -> int:
@@ -474,9 +555,21 @@ async def generate_report(
                 # explicit in the prompt, so it does not need to reason its way
                 # to the criteria.
                 cost_tier=CostTier.BALANCED,
+                # Reject a report that omits the two sections a candidate
+                # actually reads. Both are optional in the schema
+                # (default_factory), and the prompt only showed them in an
+                # example — so when the model economised on a long response it
+                # dropped them and the report saved with a blank competencies
+                # panel and no per-question breakdown. Every report in production
+                # had dimension_scores={} and question_analysis=[].
+                #
+                # Rejecting means falling back to the honest unscored report,
+                # which the candidate can regenerate. That is strictly better than
+                # storing a report that looks finished and is not.
+                is_valid=lambda r: _report_is_complete(r, len(transcript_rows)),
                 context="report_generation",
             ),
-            timeout=_REPORT_AI_BUDGET_SECONDS,
+            timeout=report_ai_budget_seconds(),
         )
     except (AIProviderUnavailableError, TimeoutError) as exc:
         logger.warning(

@@ -184,7 +184,14 @@ class Settings(BaseSettings):
         ),
     )
     ANTHROPIC_MAX_OUTPUT_TOKENS: int = Field(
-        default=8192,
+        # Must stay >= the largest call-site budget, which is the report's
+        # _REPORT_TOKENS_MAX. This ceiling is applied AFTER each call site's own
+        # max_tokens, so a ceiling below the report budget silently clamps the
+        # response and the JSON truncates — which is the exact failure that made
+        # reports come back unscored. tests/test_report_cost_policy.py asserts the
+        # relationship, and it caught this when the report budget was raised to
+        # 12,000 and this was left at 8,192.
+        default=12_288,
         description=(
             "Hard per-request ceiling on output tokens, applied after each call "
             "site's own max_tokens. Output is 5x the price of input, so this is "

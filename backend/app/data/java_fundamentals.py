@@ -640,6 +640,106 @@ _SPRING: list[BankQuestion] = [
     },
 ]
 
+# ─── Core Java: design principles and patterns ────────────────────────────────
+
+_DESIGN: list[BankQuestion] = [
+    {
+        "topic": "SOLID principles",
+        "content": "What does SOLID stand for, and can you explain any two of the principles?",
+        "difficulty": "medium",
+        "type": "conceptual",
+        "keywords": ["single responsibility", "open closed", "Liskov", "interface segregation", "dependency inversion"],
+        "ideal": (
+            "SOLID is five design principles. S is single responsibility — a class "
+            "should have one reason to change. O is open-closed — open for "
+            "extension, closed for modification, so you add behaviour by adding a "
+            "class rather than editing an existing one. L is Liskov substitution — "
+            "a subclass must work anywhere its parent does without surprising the "
+            "caller. I is interface segregation — many small interfaces beat one "
+            "large one, so nobody implements methods they do not need. D is "
+            "dependency inversion — depend on an abstraction, not a concrete "
+            "class, which is exactly what Spring's dependency injection gives you."
+        ),
+        "tier": "core",
+    },
+    {
+        "topic": "SOLID principles",
+        "content": "What is the single responsibility principle, and what goes wrong without it?",
+        "difficulty": "easy",
+        "type": "conceptual",
+        "keywords": ["one reason to change", "cohesion", "coupling", "testability", "god class"],
+        "ideal": (
+            "A class should have one responsibility, so only one kind of change "
+            "makes you edit it. Without it you get a god class that does "
+            "validation, database access and formatting all at once — every "
+            "feature touches it, so every change risks breaking something "
+            "unrelated, it is hard to test because you cannot exercise one part in "
+            "isolation, and two developers editing it conflict constantly. The "
+            "practical test I use is whether I can describe what the class does in "
+            "one sentence without saying \"and\"."
+        ),
+        "tier": "core",
+    },
+    {
+        "topic": "Design patterns",
+        "content": "What is the singleton pattern, and how would you implement one safely in Java?",
+        "difficulty": "medium",
+        "type": "conceptual",
+        "keywords": ["single instance", "private constructor", "static", "thread safety", "enum", "double-checked locking"],
+        "ideal": (
+            "A singleton guarantees exactly one instance of a class and gives you a "
+            "global way to reach it — a configuration holder or a connection pool, "
+            "for example. You make the constructor private and expose a static "
+            "accessor. The catch is thread safety: two threads can both see a null "
+            "instance and both create one, so you need either eager static "
+            "initialisation, or double-checked locking with a volatile field. The "
+            "cleanest way in Java is actually a single-element enum, because the "
+            "JVM guarantees the instance and it is serialisation-safe. Worth saying "
+            "that singletons make testing harder, so in Spring I would just use a "
+            "singleton-scoped bean and let the container manage it."
+        ),
+        "tier": "core",
+    },
+    {
+        "topic": "Design patterns",
+        "content": "Which design patterns have you actually used, and what problem did each solve?",
+        "difficulty": "medium",
+        "type": "conceptual",
+        "keywords": ["factory", "builder", "singleton", "observer", "strategy", "adapter", "MVC"],
+        "ideal": (
+            "The ones I have genuinely used are factory, builder and strategy. "
+            "Factory when the caller should not know which concrete class it gets — "
+            "a payment handler chosen by payment type. Builder for objects with "
+            "many optional fields, so I get readable construction instead of a "
+            "six-argument constructor; StringBuilder and Stream.collect are both "
+            "this. Strategy to swap an algorithm at runtime — different sorting or "
+            "pricing rules behind one interface, which is also the open-closed "
+            "principle in practice. I have used observer indirectly through event "
+            "listeners, and MVC is the shape of every Spring web app: controller, "
+            "service, view."
+        ),
+        "tier": "core",
+    },
+    {
+        "topic": "Design patterns",
+        "content": "What is the difference between the factory pattern and the builder pattern?",
+        "difficulty": "medium",
+        "type": "conceptual",
+        "keywords": ["which class", "how to construct", "optional fields", "immutable", "readability"],
+        "ideal": (
+            "Factory decides WHICH class to create — the caller asks for a shape "
+            "and gets a Circle or a Square without knowing the concrete type. "
+            "Builder decides HOW to construct ONE class when it has many optional "
+            "fields; you chain setters and call build(). So factory hides the type, "
+            "builder hides the assembly. You reach for builder when a constructor "
+            "would take five arguments and nobody can remember the order, and it "
+            "also lets you produce an immutable object because everything is set "
+            "before build() returns."
+        ),
+        "tier": "core",
+    },
+]
+
 #: The whole bank, in the order a real interview would move through it: platform,
 #: language, then frameworks.
 JAVA_QUESTION_BANK: list[BankQuestion] = [
@@ -648,6 +748,7 @@ JAVA_QUESTION_BANK: list[BankQuestion] = [
     *_OOP,
     *_COLLECTIONS,
     *_EXCEPTIONS,
+    *_DESIGN,
     *_MODERN,
     *_DATA_ACCESS,
     *_SPRING,
