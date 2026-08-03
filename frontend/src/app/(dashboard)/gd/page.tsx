@@ -1,15 +1,25 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2, Mic, MicOff, Send, Users, Play, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCandidateName } from '@/hooks/useCandidateName';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
-import { useSpeechRecognition } from '@/hooks/useSpeech';
-import { useGD, useGDTopics, type GDTurn, type GDEvaluation } from '@/hooks/useGD';
+import { useSpeechRecognition, usePanelVoices } from '@/hooks/useSpeech';
+import {
+  useGD,
+  useGDPanel,
+  useGDTopics,
+  type GDEvaluation,
+  type GDPanelist,
+  type GDPreparedTopic,
+  type GDTopic as GDTopicRow,
+  type GDTurn,
+} from '@/hooks/useGD';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
@@ -44,11 +54,25 @@ const MAX_PANEL_TURNS = 26;
 const fmtClock = (s: number) =>
   `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, '0')}`;
 // Deterministic accent per panelist name (avatar tint).
-const PANEL_COLORS: Record<string, string> = {
-  Riya: 'bg-accent-violet/15 text-accent-violet',
-  Arjun: 'bg-primary/15 text-primary',
-  Meera: 'bg-accent-emerald/15 text-accent-emerald-ink',
-};
+/**
+ * One tone per panelist, assigned by their position in the panel the SERVER sent.
+ *
+ * Position rather than name: the roster lives in api/v1/gd.py, and a name map here
+ * would quietly grey out every panelist the day someone is renamed or a fourth is
+ * added. Order is stable within a discussion, which is all consistency requires.
+ */
+const PANEL_TONES = [
+  'bg-accent-violet/15 text-accent-violet',
+  'bg-primary/15 text-primary',
+  'bg-accent-emerald/15 text-accent-emerald-ink',
+  'bg-accent-amber/15 text-accent-amber-ink',
+  'bg-accent-teal/15 text-accent-teal-ink',
+];
+
+function panelTone(speaker: string, panel: GDPanelist[]): string {
+  const i = panel.findIndex((p) => p.name === speaker);
+  return i >= 0 ? PANEL_TONES[i % PANEL_TONES.length] : 'bg-secondary text-muted-foreground';
+}
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
@@ -69,14 +93,143 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   );
 }
 
+/**
+ * Who is talking and who is listening — the strip above the transcript.
+ *
+ * A real GD is largely read off faces: you know who has the floor, and when you
+ * speak you can see who is actually paying attention to you and who is waiting to
+ * cut in. None of that survives into a chat log, so it is stated explicitly here.
+ *
+ * `listeningTo` is not decoration. When the candidate takes the floor, one
+ * panelist is waiting on them specifically — the one who asked the question — and
+ * knowing that changes who you answer. The user asked for exactly this: "it must
+ * tell that which person is listning to the user when the user speaks".
+ */
+function PanelStrip({
+  panel,
+  speakingNow,
+  candidateSpeaking,
+  listeningTo,
+}: {
+  panel: GDPanelist[];
+  speakingNow: string | null;
+  candidateSpeaking: boolean;
+  listeningTo: string | null;
+}) {
+  if (!panel.length) return null;
+  return (
+    <div className="grid gap-2 sm:grid-cols-3">
+      {panel.map((pl) => {
+        const speaking = speakingNow === pl.name;
+        const waitingOnYou = candidateSpeaking && listeningTo === pl.name;
+        return (
+          <div
+            key={pl.name}
+            className={cn(
+              'flex items-center gap-2.5 rounded-xl border px-3 py-2 transition-colors duration-300',
+              speaking
+                ? 'border-primary/60 bg-primary/10'
+                : waitingOnYou
+                  ? 'border-accent-emerald/50 bg-accent-emerald/10'
+                  : 'border-border/60 bg-surface-elevated'
+            )}
+          >
+            <span
+              className={cn(
+                'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
+                panelTone(pl.name, panel),
+                !speaking && !waitingOnYou && candidateSpeaking && 'opacity-60'
+              )}
+            >
+              {pl.name[0]}
+              {speaking && (
+                <motion.span
+                  aria-hidden
+                  className="absolute inset-0 rounded-full ring-2 ring-primary"
+                  animate={{ opacity: [0.35, 1, 0.35], scale: [1, 1.12, 1] }}
+                  transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-xs font-semibold leading-tight">{pl.name}</p>
+              <p
+                className={cn(
+                  'truncate text-[10px] font-medium leading-tight',
+                  speaking
+                    ? 'text-primary'
+                    : waitingOnYou
+                      ? 'text-accent-emerald-ink'
+                      : 'text-muted-foreground'
+                )}
+              >
+                {speaking ? (
+                  <span className="inline-flex items-center gap-1">
+                    <SoundBars /> speaking
+                  </span>
+                ) : waitingOnYou ? (
+                  'listening to you'
+                ) : candidateSpeaking ? (
+                  'following along'
+                ) : (
+                  pl.stance
+                )}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Three bars that move while someone holds the floor. Purely an indicator. */
+function SoundBars() {
+  return (
+    <span aria-hidden className="flex h-2.5 items-end gap-[2px]">
+      {[0, 0.15, 0.3].map((delay) => (
+        <motion.span
+          key={delay}
+          className="w-[2px] rounded-full bg-primary"
+          animate={{ height: ['30%', '100%', '30%'] }}
+          transition={{ duration: 0.7, repeat: Infinity, delay, ease: 'easeInOut' }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export default function GDPage() {
   const { data: topics } = useGDTopics();
-  const { panelTurn, evaluate } = useGD();
+  const { data: panel } = useGDPanel();
+
+  /**
+   * The candidate's own first name, so the panel can say it.
+   *
+   * Resolved automatically per user — profile name, then signup metadata, then the
+   * email local part — by the one hook that owns that precedence.
+   */
+  const { first: candidateName } = useCandidateName();
+
+  /**
+   * One voice per panelist, gender-matched, played one at a time.
+   * `speakingNow` is who currently holds the floor — and, by being null while the
+   * candidate's mic is live, it is how the UI shows the panel is listening.
+   */
+  const panelVoices = usePanelVoices(
+    useMemo(() => (panel ?? []).map((p) => ({ name: p.name, gender: p.gender })), [panel]),
+  );
+  const { panelTurn, evaluate, prepareTopic } = useGD();
   const stt = useSpeechRecognition();
 
   const [phase, setPhase] = useState<Phase>('setup');
   const [topicIdx, setTopicIdx] = useState(0);
   const [customTopic, setCustomTopic] = useState('');
+  //: The AI-prepared version of a custom topic — a discussable motion plus the
+  //: arguments for each side, which the candidate reads before the round starts.
+  const [prepared, setPrepared] = useState<GDPreparedTopic | null>(null);
+  //: 'bank' = a predefined topic, 'own' = the candidate typed one.
+  const [topicMode, setTopicMode] = useState<'bank' | 'own'>('bank');
   const [history, setHistory] = useState<GDTurn[]>([]);
   const [draft, setDraft] = useState('');
   const [result, setResult] = useState<GDEvaluation | null>(null);
@@ -101,7 +254,49 @@ export default function GDPage() {
   const stateRef = useRef({ history, awaiting, ignored, silentFor, panelTurns, timeLeft });
   stateRef.current = { history, awaiting, ignored, silentFor, panelTurns, timeLeft };
 
-  const topic = customTopic.trim() || topics?.[topicIdx]?.text || 'Is remote work better than working from the office?';
+  /**
+   * Topics grouped by category, preserving each topic's index in the flat list.
+   *
+   * The index is what `topicIdx` refers to, so it has to travel with the topic —
+   * grouping and then using the position within a group would select the wrong
+   * topic for every category after the first.
+   */
+  const topicsByCategory = useMemo(() => {
+    const groups = new Map<string, Array<{ topic: GDTopicRow; index: number }>>();
+    (topics ?? []).forEach((t, index) => {
+      const key = t.category || 'General';
+      const list = groups.get(key) ?? [];
+      list.push({ topic: t, index });
+      groups.set(key, list);
+    });
+    return [...groups.entries()];
+  }, [topics]);
+
+  const prepare = useCallback(async () => {
+    const raw = customTopic.trim();
+    if (raw.length < 3) return;
+    try {
+      const res = await prepareTopic.mutateAsync(raw);
+      if (!res.usable) {
+        // The server judged it undiscussable — a factual question, or something
+        // with only one defensible side. Say why instead of running a round the
+        // panel cannot argue.
+        toast.error(res.reason || 'That topic will not work for a group discussion.');
+        setPrepared(null);
+        return;
+      }
+      setPrepared(res);
+    } catch {
+      toast.error('Could not prepare that topic. Try rephrasing it.');
+    }
+  }, [customTopic, prepareTopic]);
+
+  // A prepared motion beats the raw phrase: "AI in education" has no sides, so a
+  // panel given it lists facts instead of arguing. See POST /gd/prepare.
+  const topic =
+    (topicMode === 'own' ? prepared?.statement || customTopic.trim() : '') ||
+    topics?.[topicIdx]?.text ||
+    'Is remote work better than working from the office?';
 
   const gdPhase: 'opening' | 'discussion' | 'closing' =
     history.length === 0 ? 'opening' : timeLeft <= CLOSING_WINDOW_SEC ? 'closing' : 'discussion';
@@ -109,6 +304,22 @@ export default function GDPage() {
   useEffect(() => {
     if (stt.transcript) setDraft(stt.transcript);
   }, [stt.transcript]);
+
+  /**
+   * When the candidate takes the floor, the panel stops talking.
+   *
+   * Without this the panel's queued turns keep playing over the candidate's own
+   * voice, which is both unusable (their mic picks up the synthesised speech and
+   * transcribes it into their answer) and the opposite of what taking the floor
+   * means. A real panel stops when someone cuts in.
+   */
+  useEffect(() => {
+    if (stt.listening) panelVoices.cancelAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stt.listening]);
+
+  // Leaving the round must not leave a voice talking to an empty screen.
+  useEffect(() => () => panelVoices.cancelAll(), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -142,12 +353,19 @@ export default function GDPage() {
           ignored_questions: nextIgnored,
           candidate_silent_seconds: overrides?.resetPressure ? 0 : s.silentFor,
           phase: hist.length === 0 ? 'opening' : s.timeLeft <= CLOSING_WINDOW_SEC ? 'closing' : 'discussion',
+          candidate_name: candidateName,
         },
         {
           onSuccess: (data) => {
             if (data.contributions.length) {
               setHistory((h) => [...h, ...data.contributions]);
               setPanelTurns((n) => n + 1);
+              // Speak them, in order, one at a time. speakAs queues, so two
+              // contributions in one turn do not talk over each other — which is
+              // what speechSynthesis does if you hand it both at once.
+              for (const c of data.contributions) {
+                void panelVoices.speakAs(c.speaker, c.text);
+              }
             }
             // Being addressed puts you on the spot; otherwise the panel is
             // talking amongst itself and the slate is clean again.
@@ -159,7 +377,7 @@ export default function GDPage() {
         }
       );
     },
-    [panelTurn, topic]
+    [panelTurn, topic, panelVoices, candidateName]
   );
 
   // ─── The clock: this is what makes the GD feel real ───────────────────────
@@ -262,6 +480,20 @@ export default function GDPage() {
   /** The most recent thing said to you — echoed in the "answer now" banner. */
   const lastPanelLine = [...history].reverse().find((t) => t.speaker !== YOU);
 
+  /**
+   * Which panelist is waiting on the candidate.
+   *
+   * Whoever spoke last is holding the thread, so they are the one your answer is
+   * aimed at — and if the panel put a direct question to you, that is the same
+   * person. Null before anyone has spoken.
+   */
+  const listeningTo = lastPanelLine?.speaker ?? null;
+
+  //: The newest line by whoever currently holds the floor — the one being read.
+  const lastSpokenIdx = panelVoices.speakingNow
+    ? history.reduce((acc, t, i) => (t.speaker === panelVoices.speakingNow ? i : acc), -1)
+    : -1;
+
   // ─── Setup ──────────────────────────────────────────────────────────────
   if (phase === 'setup') {
     return (
@@ -270,32 +502,154 @@ export default function GDPage() {
           <PageHeader
             eyebrow="Practice"
             title="Group Discussion"
-            description="Practice a GD with AI participants (Riya, Arjun, Meera). They make points; you jump in with yours by voice. At the end you get scored on contribution, relevance, clarity, and engagement."
+            description="Eight minutes, three AI panelists with their own opinions and their own voices. They argue with each other and with you, and they will put you on the spot by name. Score covers contribution, relevance, clarity and engagement."
           />
         </motion.div>
 
-        <motion.div variants={fadeUp}>
-          <Card className="space-y-5 p-8">
-            <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pick a topic</label>
-              <div className="space-y-2">
-                {(topics ?? []).map((t, i) => (
-                  <button
-                    key={t.id}
-                    onClick={() => { setTopicIdx(i); setCustomTopic(''); }}
-                    className={cn(
-                      'w-full rounded-xl border px-4 py-3 text-left text-sm transition-colors',
-                      !customTopic && topicIdx === i ? 'border-primary bg-primary/10 text-foreground' : 'border-border hover:border-primary/40'
-                    )}
-                  >
-                    {t.text}
-                  </button>
+        {/* Who you are up against. Shown before the round so the voices are not
+            three anonymous strangers when they start talking. */}
+        {!!panel?.length && (
+          <motion.div variants={fadeUp}>
+            <Card className="p-5">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Your panel</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {panel.map((pl) => (
+                  <div key={pl.name} className="rounded-xl border border-border/60 bg-surface-elevated p-3">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold',
+                        panelTone(pl.name, panel))}>
+                        {pl.name[0]}
+                      </span>
+                      <span className="text-sm font-semibold">{pl.name}</span>
+                    </div>
+                    <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{pl.stance}</p>
+                  </div>
                 ))}
               </div>
+            </Card>
+          </motion.div>
+        )}
+
+        <motion.div variants={fadeUp}>
+          <Card className="space-y-5 p-8">
+            {/* Two ways in: a topic off the shelf, or one of your own that the AI
+                turns into something actually arguable. */}
+            <div className="flex gap-1 rounded-xl bg-secondary p-1">
+              {(['bank', 'own'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setTopicMode(m)}
+                  className={cn(
+                    'flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors',
+                    topicMode === m ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {m === 'bank' ? 'Pick a topic' : 'Use my own topic'}
+                </button>
+              ))}
             </div>
-            <Button className="w-full" onClick={start} loading={panelTurn.isPending}>
+
+            {topicMode === 'bank' ? (
+              <div className="max-h-[22rem] space-y-4 overflow-y-auto pr-1">
+                {topicsByCategory.map(([category, items]) => (
+                  <div key={category}>
+                    <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{category}</p>
+                    <div className="space-y-1.5">
+                      {items.map(({ topic: t, index }) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setTopicIdx(index)}
+                          className={cn(
+                            'w-full rounded-xl border px-4 py-2.5 text-left text-sm transition-colors',
+                            topicIdx === index
+                              ? 'border-primary bg-primary/10 text-foreground'
+                              : 'border-border hover:border-primary/40'
+                          )}
+                        >
+                          {t.text}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="gd-own-topic" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    What do you want to discuss?
+                  </label>
+                  <textarea
+                    id="gd-own-topic"
+                    value={customTopic}
+                    onChange={(e) => { setCustomTopic(e.target.value); setPrepared(null); }}
+                    rows={2}
+                    placeholder="e.g. AI in education, or work from home for freshers"
+                    className="w-full resize-none rounded-xl border border-border bg-surface-elevated px-4 py-3 text-sm outline-none transition-colors focus:border-primary/60"
+                  />
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    A phrase is enough. It gets turned into a proper motion with both sides prepared.
+                  </p>
+                </div>
+
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  onClick={prepare}
+                  loading={prepareTopic.isPending}
+                  disabled={customTopic.trim().length < 3}
+                >
+                  Prepare this topic
+                </Button>
+
+                {/* The briefing. A real GD gives you a minute with the slip before
+                    it starts — this is that minute. */}
+                {prepared && (
+                  <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 rounded-xl border border-border/60 bg-surface-elevated p-4">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">The motion</p>
+                      <p className="mt-0.5 text-sm font-semibold leading-snug">{prepared.statement}</p>
+                    </div>
+                    <p className="text-xs leading-relaxed text-foreground/75">{prepared.framing}</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-accent-emerald-ink">For</p>
+                        <ul className="space-y-1 text-xs leading-snug text-foreground/80">
+                          {prepared.points_for.map((pt, i) => (
+                            <li key={i} className="flex gap-1.5"><span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent-emerald" />{pt}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-accent-coral-ink">Against</p>
+                        <ul className="space-y-1 text-xs leading-snug text-foreground/80">
+                          {prepared.points_against.map((pt, i) => (
+                            <li key={i} className="flex gap-1.5"><span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent-coral" />{pt}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      You do not have to take a side yet — the panel will push you into one.
+                    </p>
+                  </motion.div>
+                )}
+              </div>
+            )}
+
+            <Button
+              className="w-full"
+              onClick={start}
+              loading={panelTurn.isPending}
+              disabled={topicMode === 'own' && !prepared}
+            >
               <Play className="h-4 w-4" /> Start Discussion
             </Button>
+            {topicMode === 'own' && !prepared && (
+              <p className="-mt-3 text-center text-[11px] text-muted-foreground">
+                Prepare your topic first so the panel has something to argue about.
+              </p>
+            )}
           </Card>
         </motion.div>
       </motion.div>
@@ -373,6 +727,13 @@ export default function GDPage() {
         </div>
       </div>
 
+      <PanelStrip
+        panel={panel ?? []}
+        speakingNow={panelVoices.speakingNow}
+        candidateSpeaking={stt.listening}
+        listeningTo={listeningTo}
+      />
+
       {/* The panel advances on this bar whether or not you speak. */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
@@ -428,11 +789,14 @@ export default function GDPage() {
             return (
               <div key={i} className={cn('flex gap-3', mine && 'flex-row-reverse')}>
                 <div className={cn('flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
-                  mine ? 'bg-primary text-primary-foreground' : PANEL_COLORS[t.speaker] ?? 'bg-secondary text-muted-foreground')}>
+                  mine ? 'bg-primary text-primary-foreground' : panelTone(t.speaker, panel ?? []))}>
                   {t.speaker[0]}
                 </div>
-                <div className={cn('max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed',
-                  mine ? 'bg-primary/10 text-foreground' : 'bg-surface-elevated')}>
+                <div className={cn('max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-shadow',
+                  mine ? 'bg-primary/10 text-foreground' : 'bg-surface-elevated',
+                  // Ring the line currently being read aloud, so the text and the
+                  // voice are visibly the same contribution.
+                  !mine && panelVoices.speakingNow === t.speaker && i === lastSpokenIdx && 'ring-1 ring-primary/40')}>
                   <p className="mb-0.5 text-[11px] font-semibold text-muted-foreground">{t.speaker}</p>
                   {t.text}
                 </div>

@@ -26,8 +26,58 @@ from app.services.activity import log_activity
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-# Named AI panelists for the simulated discussion.
-PANELISTS = ["Riya", "Arjun", "Meera"]
+class Panelist(BaseModel):
+    """
+    One AI participant in the discussion.
+
+    `gender` exists so the client can pick a voice that matches the name. It is
+    not cosmetic: a panel where "Riya" speaks in a male voice and "Arjun" in a
+    female one is actively confusing to practise against, because the candidate
+    tracks who is arguing what by voice, not by reading name labels while trying
+    to think of a rebuttal.
+
+    `stance` gives each panelist a fixed disposition, so the three do not collapse
+    into one agreeable voice with three names. A real GD has someone pushing,
+    someone hedging, and someone trying to synthesise — that is the dynamic a
+    candidate has to learn to cut into.
+    """
+
+    name: str
+    gender: str  # "female" | "male" — drives voice selection on the client
+    stance: str
+
+
+#: The panel. ONE definition, served to the client via GET /gd/panel, so the
+#: names, genders and personas cannot drift between the prompt that generates
+#: their turns and the UI that renders and voices them.
+PANELISTS: list[Panelist] = [
+    Panelist(
+        name="Riya",
+        gender="female",
+        stance=(
+            "Assertive and data-driven. Opens strong, quotes numbers and examples, "
+            "and challenges vague claims directly. Dominates if nobody pushes back."
+        ),
+    ),
+    Panelist(
+        name="Arjun",
+        gender="male",
+        stance=(
+            "Takes the opposing side on principle and argues it well. Interrupts to "
+            "disagree, concedes only to a concrete point, and enjoys the debate."
+        ),
+    ),
+    Panelist(
+        name="Meera",
+        gender="female",
+        stance=(
+            "The synthesiser. Listens, finds the middle ground, and brings quiet "
+            "people in — she is usually the one who asks the candidate directly."
+        ),
+    ),
+]
+
+PANELIST_NAMES: list[str] = [p.name for p in PANELISTS]
 
 #: Speaker label the client uses for the real candidate's own turns. Must match
 #: the `YOU` constant in the GD page.
@@ -40,21 +90,45 @@ _gd_rate_limit = rate_limiter(
     action="continuing a group discussion",
 )
 
-_TOPICS = [
-    "Is remote work better than working from the office?",
-    "Should AI tools be allowed in coding interviews?",
-    "Does social media do more harm than good?",
-    "Is a college degree still necessary to succeed in tech?",
-    "Should companies prioritise skills over degrees when hiring freshers?",
-    "Is work-life balance a myth in the tech industry?",
-    "Are online certifications as valuable as formal education?",
-    "Should India focus on product companies over service companies?",
+#: Predefined topics, grouped the way campus GD rounds actually are. Categories
+#: matter because panels rotate between them — a candidate who has only practised
+#: tech abstractions is caught out by a social or business motion.
+_TOPIC_BANK: list[tuple[str, str]] = [
+    # Technology & the industry
+    ("Technology", "Should AI tools be allowed in coding interviews?"),
+    ("Technology", "Is a college degree still necessary to succeed in tech?"),
+    ("Technology", "Will AI create more jobs than it destroys?"),
+    ("Technology", "Should social media platforms be liable for what users post?"),
+    ("Technology", "Is open source a sustainable way to build critical software?"),
+    ("Technology", "Should self-driving cars be allowed on Indian roads?"),
+    # Work & careers
+    ("Work", "Is remote work better than working from the office?"),
+    ("Work", "Is work-life balance a myth in the tech industry?"),
+    ("Work", "Should companies prioritise skills over degrees when hiring freshers?"),
+    ("Work", "Are online certifications as valuable as formal education?"),
+    ("Work", "Should a fresher take a lower salary at a product company over a higher one at a service company?"),
+    ("Work", "Is a four-day working week practical for Indian IT services?"),
+    # Business & economy
+    ("Business", "Should India focus on product companies over service companies?"),
+    ("Business", "Do startups create more value for India than established corporates?"),
+    ("Business", "Should the government fund electric vehicle subsidies?"),
+    ("Business", "Is cash still relevant in a UPI-first India?"),
+    # Society
+    ("Society", "Does social media do more harm than good?"),
+    ("Society", "Should English remain the medium of instruction in higher education?"),
+    ("Society", "Is reservation in education still the right tool for equity?"),
+    ("Society", "Should smartphones be banned in schools?"),
+    # Ethics & judgement — the ones panels use to see how you handle disagreement
+    ("Ethics", "Is it ever acceptable to break a rule to do the right thing?"),
+    ("Ethics", "Should employers be allowed to monitor employees' work devices?"),
+    ("Ethics", "Do we have a right to be forgotten by the internet?"),
 ]
 
 
 class GDTopic(BaseModel):
     id: int
     text: str
+    category: str
 
 
 class Turn(BaseModel):
@@ -77,6 +151,11 @@ class GDTurnRequest(BaseModel):
     #: "opening" | "discussion" | "closing" — in closing the panel converges
     #: and competes for the final summary.
     phase: str = Field(default="discussion", max_length=20)
+    #: The candidate's first name. The panel prompt has always been told to "pull
+    #: them in by name" — with no name supplied, so the model either invented one
+    #: or fell back to "you", which is exactly what makes a simulated panel feel
+    #: like a chatbot rather than three people in a room.
+    candidate_name: str = Field(default="", max_length=60)
 
 
 class GDContributionOut(BaseModel):
@@ -126,6 +205,21 @@ def _render_transcript(history: list[Turn], window: int | None = None) -> str:
     return "\n".join(lines)
 
 
+def _candidate_name(raw: str) -> str:
+    """
+    A name the panel can actually say, or a neutral fallback.
+
+    Strips to the first word: the panel says "Sparsh, what do you think" and not
+    "Sparsh Sharma, what do you think", which nobody says out loud. Falls back to
+    "the candidate" rather than an empty string, because an empty substitution
+    leaves the prompt reading "pull in  by name" and the model fills the gap with
+    an invented name.
+    """
+    first = (raw or "").strip().split()[:1]
+    cleaned = "".join(c for c in (first[0] if first else "") if c.isalpha() or c in "-'")
+    return cleaned or "the candidate"
+
+
 def _describe_situation(request: GDTurnRequest) -> str:
     """
     Turn the client's state flags into the plain-English situation block the
@@ -168,7 +262,7 @@ def _describe_situation(request: GDTurnRequest) -> str:
         return (
             f"The candidate has not spoken at all yet ({request.candidate_silent_seconds}s "
             "in). Carry the argument forward between panelists, then pull them "
-            "in by name and ask for their take."
+            "in BY NAME and ask for their take."
         )
 
     if request.candidate_silent_seconds >= 25:
@@ -183,10 +277,109 @@ def _describe_situation(request: GDTurnRequest) -> str:
     )
 
 
+def _render_panel() -> str:
+    """The panel and their dispositions, for the prompt."""
+    return "\n".join(f"- {p.name} ({p.gender}): {p.stance}" for p in PANELISTS)
+
+
+@router.get("/panel", response_model=list[Panelist], summary="Who the AI panel is")
+async def gd_panel(current_user: CurrentUser):
+    """
+    The panel definition, so the client can render and VOICE each participant
+    correctly.
+
+    Served rather than duplicated in the frontend: the names appear in the prompt,
+    in the transcript, in the voice allocation and in the evaluation, and a copy
+    that drifts means "Riya" speaks in Arjun's voice, or a contribution from a
+    panelist the UI has never heard of is silently dropped.
+    """
+    return PANELISTS
+
 @router.get("/topics", response_model=list[GDTopic])
 async def gd_topics(current_user: CurrentUser):
-    """Return the set of group-discussion topics."""
-    return [GDTopic(id=i, text=t) for i, t in enumerate(_TOPICS)]
+    """Predefined group-discussion topics, with their category."""
+    return [
+        GDTopic(id=i, text=text, category=cat)
+        for i, (cat, text) in enumerate(_TOPIC_BANK)
+    ]
+
+
+class GDPrepareRequest(BaseModel):
+    topic: str = Field(min_length=3, max_length=300)
+
+
+class GDPrepareResponse(BaseModel):
+    statement: str
+    framing: str
+    points_for: list[str]
+    points_against: list[str]
+    usable: bool
+    reason: str
+
+
+@router.post(
+    "/prepare",
+    response_model=GDPrepareResponse,
+    dependencies=[Depends(_gd_rate_limit)],
+    summary="Turn a candidate's own topic into a discussable motion",
+)
+async def gd_prepare(request: GDPrepareRequest, current_user: CurrentUser):
+    """
+    Prepare a custom topic for discussion.
+
+    A phrase is not a motion: "AI in education" has no sides, so a panel given it
+    produces eight people listing facts rather than a discussion. This restates it
+    as a proposition with two defensible sides and returns the arguments for each,
+    which the candidate reads before the round starts.
+
+    Falls back to using their text verbatim if the AI is unavailable — a candidate
+    who typed a topic should get their round, and an unshaped topic still beats an
+    error page.
+    """
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
+    from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
+    from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
+    from app.services.ai.schemas import GDPreparedTopic  # noqa: PLC0415
+
+    builder = PromptBuilder(get_prompt_loader())
+    messages = builder.chat(
+        system_template="gd_topic_prep",
+        user_content="Prepare this topic now, as JSON.",
+        raw_topic=request.topic.strip(),
+    )
+
+    try:
+        prepared, _ = await generate_structured(
+            GDPreparedTopic,
+            messages,
+            max_tokens=900,
+            attempts_per_provider=1,
+            # A statement is the one field the round cannot run without.
+            is_valid=lambda t: bool(t.statement.strip()) or not t.usable,
+            cost_tier=CostTier.BALANCED,
+            context="gd_topic_prep",
+        )
+    except AIProviderUnavailableError:
+        logger.warning("gd_prepare_unavailable_using_raw_topic")
+        return GDPrepareResponse(
+            statement=request.topic.strip(),
+            framing="",
+            points_for=[],
+            points_against=[],
+            usable=True,
+            reason="",
+        )
+
+    return GDPrepareResponse(
+        statement=prepared.statement.strip() or request.topic.strip(),
+        framing=prepared.framing.strip(),
+        points_for=[p.strip() for p in prepared.points_for if p.strip()][:5],
+        points_against=[p.strip() for p in prepared.points_against if p.strip()][:5],
+        usable=prepared.usable,
+        reason=prepared.reason.strip(),
+    )
 
 
 @router.post("/turn", response_model=GDTurnResponse, dependencies=[Depends(_gd_rate_limit)])
@@ -204,9 +397,10 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
         system_template="gd_panel",
         user_content="Give the next panelist contribution(s) now, as JSON.",
         topic=request.topic,
-        panelists=", ".join(PANELISTS),
+        panelists=_render_panel(),
         transcript=_render_transcript(request.history, window=_TRANSCRIPT_WINDOW),
         situation=_describe_situation(request),
+        candidate_name=_candidate_name(request.candidate_name),
         phase=request.phase,
         ignored_questions=str(request.ignored_questions),
     )
@@ -235,7 +429,7 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
     valid = [
         GDContributionOut(speaker=c.speaker, text=c.text.strip())
         for c in turn.contributions
-        if c.text.strip() and c.speaker in PANELISTS
+        if c.text.strip() and c.speaker in PANELIST_NAMES
     ][:2]
 
     # Trust the model's flag only if it actually asked something; and treat a

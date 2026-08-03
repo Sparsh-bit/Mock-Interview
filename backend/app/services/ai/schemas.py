@@ -50,6 +50,29 @@ class GDPanelTurn(BaseModel):
     addressed_candidate: bool = False
 
 
+class GDPreparedTopic(BaseModel):
+    """
+    Matches the output of app/prompts/gd_topic_prep.md.
+
+    What the AI produces when a candidate types their own GD topic. A raw phrase
+    like "AI in education" is not a discussable motion — a real GD is given a
+    proposition with two defensible sides, so this turns the phrase into one and
+    supplies the framing a moderator would read out.
+    """
+
+    #: The topic restated as something you can actually argue about.
+    statement: str
+    #: One or two sentences of context, as a moderator would introduce it.
+    framing: str = ""
+    #: Points the "for" side would make. Shown to the candidate as preparation.
+    points_for: list[str] = Field(default_factory=list)
+    points_against: list[str] = Field(default_factory=list)
+    #: False when the input is not a viable discussion topic at all.
+    usable: bool = True
+    #: Why it was rejected, when usable is False.
+    reason: str = ""
+
+
 class GDEvaluation(BaseModel):
     """Matches the output of app/prompts/gd_evaluator.md."""
 

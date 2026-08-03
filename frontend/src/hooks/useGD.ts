@@ -4,6 +4,32 @@ import { getBrowserApiClient } from '@/lib/api';
 export interface GDTopic {
   id: number;
   text: string;
+  /** Technology | Work | Business | Society | Ethics — panels rotate between them. */
+  category: string;
+}
+
+/**
+ * A panelist as the SERVER defines them.
+ *
+ * Fetched rather than hardcoded here: the names appear in the prompt, the
+ * transcript, the voice allocation and the evaluation, and a frontend copy that
+ * drifts means "Riya" speaks in Arjun's voice or a contribution from an unknown
+ * panelist is silently dropped.
+ */
+export interface GDPanelist {
+  name: string;
+  gender: string;
+  stance: string;
+}
+
+/** A custom topic, turned into a discussable motion with both sides argued. */
+export interface GDPreparedTopic {
+  statement: string;
+  framing: string;
+  points_for: string[];
+  points_against: string[];
+  usable: boolean;
+  reason: string;
 }
 
 export interface GDTurn {
@@ -46,10 +72,31 @@ export interface GDTurnArgs {
   /** Seconds since the candidate last spoke. */
   candidate_silent_seconds?: number;
   phase?: GDPhase;
+  /** The candidate's first name, so the panel can address them by it. */
+  candidate_name?: string;
+}
+
+export function useGDPanel() {
+  return useQuery({
+    queryKey: ['gd', 'panel'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/gd/panel');
+      return res.data as GDPanelist[];
+    },
+    staleTime: Infinity,
+  });
 }
 
 export function useGD() {
   const api = getBrowserApiClient();
+
+  /** Turn a candidate's own topic into a motion with both sides prepared. */
+  const prepareTopic = useMutation({
+    mutationFn: async (topic: string) => {
+      const res = await api.post('/api/v1/gd/prepare', { topic });
+      return res.data as GDPreparedTopic;
+    },
+  });
 
   const panelTurn = useMutation({
     mutationFn: async (args: GDTurnArgs) => {
@@ -69,5 +116,5 @@ export function useGD() {
     },
   });
 
-  return { panelTurn, evaluate };
+  return { panelTurn, evaluate, prepareTopic };
 }

@@ -15,6 +15,7 @@ import {
 import { motion } from 'framer-motion';
 import { useUserStats, useUserSessions, useTracks } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
+import { useCandidateName } from '@/hooks/useCandidateName';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
@@ -34,7 +35,7 @@ export default function DashboardPage() {
   const { data: sessions, isLoading: sessionsLoading } = useUserSessions(5);
   const { data: tracks, isLoading: tracksLoading } = useTracks();
 
-  const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
+  const { greeting: displayName } = useCandidateName();
 
   // Stats failing is NOT the same as stats being zero. Rendering "0 interviews,
   // 0% average" when the request errored tells the candidate they have done

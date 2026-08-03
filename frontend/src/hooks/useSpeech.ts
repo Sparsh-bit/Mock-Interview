@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PauseEvent } from '@/lib/speech/delivery';
 import { correctTechnicalTerms } from '@/lib/speech/vocabulary';
+import { allocatePanelVoices, type PanelVoice } from '@/lib/speech/panel-voices';
+import { scoreVoice } from '@/lib/speech/voice-ranking';
 
 // Silence longer than this (between recognized speech) counts as a pause worth
 // surfacing — shorter gaps are natural speech rhythm.
@@ -241,79 +243,11 @@ export function useSpeechRecognition() {
   };
 }
 
-/**
- * Named Indian-English voices, best first. These are the platform voices that
- * actually sound like an Indian interviewer:
- *   neerja/prabhat — Microsoft "Online (Natural)" on Edge, the most natural
- *   rishi          — macOS / iOS en-IN
- *   veena          — older macOS en-IN
- *   heera/ravi     — Windows en-IN
- */
-const INDIAN_VOICE_NAMES = ['neerja', 'prabhat', 'rishi', 'veena', 'heera', 'ravi', 'aditi'];
+// Voice ranking lives in lib/speech/voice-ranking.ts — see the note there about
+// the import cycle. Re-exported so existing callers and tests are unaffected.
+export { INDIAN_VOICE_NAMES, qualityTier } from '@/lib/speech/voice-ranking';
+export { scoreVoice };
 
-/**
- * How good an engine actually sounds, which matters more than accent.
- *
- * Only the top tier is genuinely neural — Microsoft's "Online (Natural)" voices
- * stream from their cloud and are the closest this browser API gets to a Gemini
- * or ChatGPT-style voice. Apple's default voices are formant-synthesis and sound
- * robotic no matter how you tune rate and pitch.
- */
-export function qualityTier(name: string): number {
-  // Neural, cloud-streamed (Edge). "Neerja Online (Natural)" is both neural AND
-  // Indian, which is the ideal case.
-  if (name.includes('natural') || name.includes('online')) return 1000;
-  // Chrome's network-backed voices — clearly better than local synthesis.
-  if (name.includes('google')) return 800;
-  // Apple's downloadable higher-quality voices.
-  if (name.includes('premium')) return 400;
-  if (name.includes('enhanced')) return 300;
-  // Default local synthesis.
-  return 10;
-}
-
-/**
- * Ranks an available voice for interview narration. Higher = better.
- *
- * Quality tier dominates, then accent within that tier. This ordering is
- * deliberate and was a correction: ranking accent first picked Apple's local
- * `Rishi` over Microsoft's neural `Neerja`, which is exactly the robotic
- * "sounds like a TTS engine" result we were trying to avoid. A neural voice
- * reading in a non-Indian accent still sounds far more human than a synthetic
- * Indian one — and where a neural Indian voice exists it wins outright.
- */
-export function scoreVoice(v: SpeechSynthesisVoice): number {
-  const name = v.name.toLowerCase();
-  const lang = v.lang?.toLowerCase() ?? '';
-  if (!lang.startsWith('en')) return -1;
-
-  // Known novelty/robotic voices are never acceptable, whatever else matches.
-  if (/albert|bad news|bahh|bells|boing|bubbles|cellos|fred|jester|organ|superstar|trinoids|whisper|wobble|zarvox|compact/.test(name)) {
-    return -1;
-  }
-
-  let score = qualityTier(name);
-
-  // Accent, applied within the tier.
-  if (lang === 'en-in') score += 50;
-  else if (lang === 'en-gb') score += 5; // closer to Indian English than en-US
-  else if (lang === 'en-us') score += 3;
-
-  // Named Indian voices, best first — breaks ties inside the same tier+accent.
-  const idx = INDIAN_VOICE_NAMES.findIndex((n) => name.includes(n));
-  if (idx !== -1) score += 20 - idx;
-
-  return score;
-}
-
-/**
- * Split text into utterance-sized chunks at sentence boundaries.
- *
- * One long utterance is read as an undifferentiated run, which is a large part
- * of why it sounds mechanical — the engine inserts a natural breath between
- * utterances but not reliably mid-string. Very short fragments are merged back
- * so the delivery doesn't become choppy.
- */
 export function toSpeechChunks(text: string, minChars = 12): string[] {
   const sentences = text
     .replace(/\s+/g, ' ')
@@ -421,4 +355,124 @@ export function useSpeechSynthesis() {
       : null;
 
   return { supported, speaking, speak, cancel, voices, voiceURI, setVoiceURI, activeVoice };
+}
+
+/* ─── Group-discussion panel voices ────────────────────────────────────────── */
+
+/**
+ * Gives each GD panelist their own voice and plays their turns one at a time.
+ *
+ * TWO REQUIREMENTS THIS EXISTS TO MEET, both of which the GD round previously
+ * failed because it spoke nothing aloud at all:
+ *
+ *   THREE DIFFERENT VOICES, gender-matched to the name. Delegated to
+ *   `allocatePanelVoices`, which is pure and tested — including against the
+ *   hardware that only has one usable voice.
+ *
+ *   ONE PERSON SPEAKS AT A TIME. This is a queue, not a set of parallel calls.
+ *   `speechSynthesis` will happily accept three utterances at once and interleave
+ *   them, which sounds like a crowd rather than a discussion and makes the round
+ *   impossible to follow. Each turn waits for the previous one to finish.
+ *
+ * `speakingNow` is the name of whoever currently holds the floor, which the UI
+ * uses to show who is talking — and, by being null, who is listening.
+ */
+export function usePanelVoices(panel: Array<{ name: string; gender: string }>) {
+  const [voiceMap, setVoiceMap] = useState<Map<string, PanelVoice>>(new Map());
+  const [speakingNow, setSpeakingNow] = useState<string | null>(null);
+
+  //: Serialises playback. Every speakAs chains onto this promise, so N calls in
+  //: one render still play in order rather than on top of each other.
+  const chainRef = useRef<Promise<void>>(Promise.resolve());
+  //: Set false by cancelAll so an in-flight queue stops instead of draining.
+  const activeRef = useRef(true);
+
+  const panelKey = panel.map((p) => `${p.name}:${p.gender}`).join('|');
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !panel.length) return;
+
+    const allocate = () => {
+      const available = window.speechSynthesis.getVoices();
+      // Voices load asynchronously; an empty list here is normal on first paint.
+      if (!available.length) return;
+      setVoiceMap(
+        allocatePanelVoices(
+          available,
+          panel.map((p) => ({
+            name: p.name,
+            gender: p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown',
+          })),
+        ),
+      );
+    };
+
+    allocate();
+    window.speechSynthesis.addEventListener('voiceschanged', allocate);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', allocate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelKey]);
+
+  const cancelAll = useCallback(() => {
+    activeRef.current = false;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeakingNow(null);
+    // A fresh chain, so a later speakAs is not queued behind the cancelled one.
+    chainRef.current = Promise.resolve();
+  }, []);
+
+  /**
+   * Queue one panelist's turn. Resolves when they have finished speaking.
+   *
+   * Sentence-chunked like the interviewer voice: the engine puts a natural breath
+   * between utterances, and it keeps a long turn from being truncated by the
+   * per-utterance limits some engines impose.
+   */
+  const speakAs = useCallback(
+    (speaker: string, text: string): Promise<void> => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
+        return Promise.resolve();
+      }
+      activeRef.current = true;
+
+      const run = async () => {
+        if (!activeRef.current) return;
+        const assigned = voiceMap.get(speaker);
+        const all = window.speechSynthesis.getVoices();
+        const chosen = assigned?.voiceURI
+          ? (all.find((v) => v.voiceURI === assigned.voiceURI) ?? null)
+          : null;
+
+        setSpeakingNow(speaker);
+        for (const chunk of toSpeechChunks(text)) {
+          if (!activeRef.current) break;
+          await new Promise<void>((resolve) => {
+            const utter = new SpeechSynthesisUtterance(chunk);
+            if (chosen) {
+              utter.voice = chosen;
+              utter.lang = chosen.lang;
+            } else {
+              utter.lang = 'en-IN';
+            }
+            utter.pitch = assigned?.pitch ?? 1;
+            utter.rate = assigned?.rate ?? 1;
+            // Resolve on error too — a failed utterance must not stall the queue
+            // and leave the discussion silent for the rest of the round.
+            utter.onend = () => resolve();
+            utter.onerror = () => resolve();
+            window.speechSynthesis.speak(utter);
+          });
+        }
+        if (activeRef.current) setSpeakingNow(null);
+      };
+
+      chainRef.current = chainRef.current.then(run, run);
+      return chainRef.current;
+    },
+    [voiceMap],
+  );
+
+  return { voiceMap, speakingNow, speakAs, cancelAll, ready: voiceMap.size > 0 };
 }
