@@ -61,6 +61,7 @@ FEATURE_LABELS: dict[str, str] = {
     "communication_evaluation": "Communication round scoring",
     "communication_cross_question": "Communication round follow-up",
     "gd_panel_turn": "Group discussion — one AI panellist's turn",
+    "gd_topic_prep": "Group discussion — turning a candidate's own topic into a motion",
     "gd_evaluation": "Group discussion scoring",
 }
 
