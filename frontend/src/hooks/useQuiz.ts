@@ -1,9 +1,16 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
 
+export type QuizDifficulty = 'easy' | 'medium' | 'hard';
+
 export interface BankTopic {
   topic: string;
   count: number;
+  /** Per-level counts, so the picker can grey out a level a topic has none of
+   *  rather than offering it and then failing with a 404. */
+  easy: number;
+  medium: number;
+  hard: number;
 }
 
 export interface QuizQuestion {
@@ -61,11 +68,17 @@ export function useQuiz() {
   });
 
   const startBankQuiz = useMutation({
-    mutationFn: async (opts: { topic?: string; count: number; minutes: number }) => {
+    mutationFn: async (opts: {
+      topic?: string;
+      count: number;
+      minutes: number;
+      difficulty?: QuizDifficulty | null;
+    }) => {
       const res = await api.post('/api/v1/quiz/bank/start', {
         topic: opts.topic || null,
         count: opts.count,
         minutes: opts.minutes,
+        difficulty: opts.difficulty || null,
       });
       return res.data as StartQuizResponse;
     },

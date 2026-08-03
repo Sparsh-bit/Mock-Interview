@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
-import { useQuiz, useBankTopics, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
+import { useQuiz, useBankTopics, type QuizDifficulty, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
@@ -66,6 +66,10 @@ function Quiz() {
   const [topic, setTopic] = useState(presetTopic);
   const [company, setCompany] = useState('');
   const [bankTopic, setBankTopic] = useState(presetTopic); // '' = mix of all topics
+  // null = any difficulty. The bank always reported each question's level to
+  // the client but there was no way to ask for one, so wanting a hard round
+  // meant re-rolling until enough hard questions happened to come up.
+  const [bankDifficulty, setBankDifficulty] = useState<QuizDifficulty | null>(null);
 
   const [quizId, setQuizId] = useState<string>('');
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -104,7 +108,10 @@ function Quiz() {
     const onError = (err: Error) => toast.error(err.message || 'Could not start the quiz.');
 
     if (mode === 'instant') {
-      startBankQuiz.mutate({ topic: bankTopic, count, minutes }, { onSuccess, onError });
+      startBankQuiz.mutate(
+        { topic: bankTopic, count, minutes, difficulty: bankDifficulty },
+        { onSuccess, onError },
+      );
     } else {
       startQuiz.mutate({ count, minutes, topic, company }, { onSuccess, onError });
     }
@@ -220,6 +227,49 @@ function Quiz() {
                     </option>
                   ))}
                 </select>
+
+                {/* Difficulty. Levels a topic has none of are disabled rather than
+                    offered and then 404'd — the count comes from the same endpoint
+                    as the topic list, so it cannot disagree with the bank. */}
+                <div className="mt-4">
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Difficulty
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {([null, 'easy', 'medium', 'hard'] as const).map((level) => {
+                      const selected = bankTopics?.find((t) => t.topic === bankTopic);
+                      const available =
+                        level === null
+                          ? true
+                          : !selected || selected[level] > 0;
+                      const n =
+                        level === null
+                          ? null
+                          : selected
+                            ? selected[level]
+                            : (bankTopics ?? []).reduce((sum, t) => sum + t[level], 0);
+                      return (
+                        <button
+                          key={level ?? 'any'}
+                          type="button"
+                          disabled={!available}
+                          onClick={() => setBankDifficulty(level)}
+                          className={cn(
+                            'rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-colors',
+                            bankDifficulty === level
+                              ? 'border-accent-indigo bg-accent-indigo text-white'
+                              : 'border-border bg-surface-elevated text-muted-foreground hover:text-foreground',
+                            !available && 'cursor-not-allowed opacity-40 hover:text-muted-foreground',
+                          )}
+                          title={!available ? `No ${level} questions for this topic yet` : undefined}
+                        >
+                          {level ?? 'Any'}
+                          {n !== null && <span className="ml-1 opacity-70">({n})</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             ) : (
               <>

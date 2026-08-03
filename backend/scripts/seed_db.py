@@ -2,12 +2,11 @@ import asyncio
 import re
 import uuid
 
-import yaml
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionFactory
 from app.models.company import Company, InterviewTrack, QuestionCategory
-from app.models.question import FollowUpQuestion, Question, QuestionDifficulty, QuestionType, Topic
+from app.models.question import Question, QuestionDifficulty, QuestionType, Topic
 
 
 async def seed_companies_and_tracks(session):
@@ -142,17 +141,15 @@ async def seed_knowledge_base():
         else:
             track.is_active = True
 
-        # Parse YAML
-        try:
-            with open("knowledge/questions/java_core.yaml") as f:
-                data = yaml.safe_load(f)
-        except Exception:
-            try:
-                with open("backend/knowledge/questions/java_core.yaml") as f:
-                    data = yaml.safe_load(f)
-            except Exception as e2:
-                print(f"Error reading YAML: {e2}")
-                return
+        # The shared bank — app/data/java_fundamentals.py — not a YAML copy.
+        #
+        # This used to read knowledge/questions/java_core.yaml, which held five
+        # questions while the orchestrator's runtime seeder held five different
+        # ones. Two divergent sources, neither big enough to fill an interview.
+        # The YAML also defined `follow_ups` rows that nothing ever read: the
+        # orchestrator generates cross-questions with the AI instead, so the
+        # FollowUpQuestion table was written by this script and never queried.
+        from app.data.java_fundamentals import JAVA_QUESTION_BANK
 
         topics_cache = {}
 
@@ -171,7 +168,7 @@ async def seed_knowledge_base():
         else:
             cat.is_active = True
 
-        for q_data in data.get("questions", []):
+        for q_data in JAVA_QUESTION_BANK:
             topic_name = q_data["topic"]
             if topic_name not in topics_cache:
                 top = await session.scalar(select(Topic).where(Topic.slug == topic_name.lower().replace(" ", "-"), Topic.category_id == cat.id))
@@ -189,7 +186,15 @@ async def seed_knowledge_base():
 
             top = topics_cache[topic_name]
 
-            existing = await session.scalar(select(Question).where(Question.content == q_data["content"]))
+            # session_id IS NULL: only ever match a bank row. Without it this
+            # dedupe could "find" a question generated inside a candidate's
+            # interview and skip seeding the real one.
+            existing = await session.scalar(
+                select(Question).where(
+                    Question.content == q_data["content"],
+                    Question.session_id.is_(None),
+                )
+            )
             if not existing:
                 q = Question(
                     id=uuid.uuid4(),
@@ -197,21 +202,10 @@ async def seed_knowledge_base():
                     content=q_data["content"],
                     difficulty=QuestionDifficulty(q_data["difficulty"]),
                     question_type=QuestionType(q_data["type"]),
-                    expected_keywords=q_data["expected_keywords"],
-                    ideal_answer=q_data["ideal_answer"],
+                    expected_keywords=q_data["keywords"],
+                    ideal_answer=q_data["ideal"],
                 )
                 session.add(q)
-                await session.flush()
-
-                for f_data in q_data.get("follow_ups", []):
-                    f = FollowUpQuestion(
-                        id=uuid.uuid4(),
-                        parent_question_id=q.id,
-                        content=f_data["content"],
-                        trigger_condition=f_data["trigger"],
-                    )
-                    session.add(f)
-
                 await session.flush()
                 print(f"Added question: {q_data['content'][:30]}...")
 

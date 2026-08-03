@@ -91,7 +91,8 @@ class Question(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """
     A single interview question.
 
-    Populated from the knowledge base (backend/knowledge/questions/) via seed scripts.
+    Populated from app/data/java_fundamentals.py — by scripts/seed_db.py, and at runtime by
+    orchestrator._ensure_seed_questions when a track has no bank questions yet.
     The Interview Orchestrator selects questions based on topic, difficulty, and
     the candidate's resume analysis results.
     """
@@ -156,9 +157,18 @@ class FollowUpQuestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """
     A follow-up question linked to a parent question.
 
-    The Interview Orchestrator selects follow-ups based on the AI evaluator's
-    assessment: incomplete_answer → probe deeper, bluffing_detected → challenge,
-    strong_answer → go harder, always → always ask after parent.
+    CURRENTLY UNUSED, and the docstring used to claim otherwise: it said "the
+    Interview Orchestrator selects follow-ups based on the AI evaluator's
+    assessment", which was never true in this codebase. Nothing reads this table.
+
+    Follow-ups are generated live instead — orchestrator._generate_cross_question
+    builds one from what the candidate actually just said, which is strictly
+    better than picking a pre-written one, because it can quote them. The table
+    was written by the old YAML seeder and queried by nothing.
+
+    Kept because the schema is harmless and a pre-written fallback for when the AI
+    is unavailable is a plausible future use. If that never happens, drop it —
+    but do not wire it up on the strength of the old docstring.
     """
 
     __tablename__ = "follow_up_questions"

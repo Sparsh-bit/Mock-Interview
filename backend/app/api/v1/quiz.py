@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import random
 import uuid
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -193,12 +194,21 @@ async def start_quiz(
 class BankTopic(BaseModel):
     topic: str
     count: int
+    #: How many questions this topic has at each level, so the picker can show
+    #: what is actually available instead of offering "hard" on a topic with none.
+    easy: int
+    medium: int
+    hard: int
 
 
 class StartBankQuizRequest(BaseModel):
     topic: str | None = None  # None = mix across all topics
     count: int = Field(default=8, ge=3, le=30)
     minutes: int = Field(default=10, ge=1, le=60)
+    #: None = any difficulty. The bank endpoint has always returned each
+    #: question's difficulty to the client but there was no way to ask for one,
+    #: so a candidate who wanted a hard round had to keep re-rolling.
+    difficulty: Literal["easy", "medium", "hard"] | None = None
 
 
 @router.get("/bank/topics", response_model=list[BankTopic])
@@ -206,7 +216,19 @@ async def bank_topics(current_user: CurrentUser):
     """List curated bank topics and how many questions each has."""
     from app.data.quiz_bank import QUIZ_BANK  # noqa: PLC0415
 
-    return [BankTopic(topic=t, count=len(qs)) for t, qs in QUIZ_BANK.items()]
+    def _n(qs: list[dict], level: str) -> int:
+        return sum(1 for q in qs if q.get("difficulty") == level)
+
+    return [
+        BankTopic(
+            topic=t,
+            count=len(qs),
+            easy=_n(qs, "easy"),
+            medium=_n(qs, "medium"),
+            hard=_n(qs, "hard"),
+        )
+        for t, qs in QUIZ_BANK.items()
+    ]
 
 
 @router.post("/bank/start", response_model=StartQuizResponse)
@@ -227,6 +249,22 @@ async def start_bank_quiz(
         pool = [{**q, "topic": request.topic} for q in QUIZ_BANK[request.topic]]
     else:
         pool = [{**q, "topic": t} for t, qs in QUIZ_BANK.items() for q in qs]
+
+    # Narrow by difficulty when asked. Deliberately not silent: if the filter
+    # leaves nothing, say which combination is empty rather than quietly serving a
+    # mixed-difficulty quiz the candidate did not ask for.
+    if request.difficulty:
+        filtered = [q for q in pool if q.get("difficulty") == request.difficulty]
+        if not filtered:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No {request.difficulty} questions"
+                    + (f" for '{request.topic}'" if request.topic else "")
+                    + " in the bank yet."
+                ),
+            )
+        pool = filtered
 
     if not pool:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No questions in the bank.")
