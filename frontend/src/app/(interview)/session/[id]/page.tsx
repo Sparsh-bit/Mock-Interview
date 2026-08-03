@@ -122,6 +122,75 @@ export default function LiveSessionPage() {
   // (initial load, refetch after submit, or a live cross-question being built).
   const preparing = isLoading || (isFetching && !question) || submitAnswer.isPending;
 
+  /**
+   * HANDS-FREE. The mic opens itself when the interviewer stops talking, and closes
+   * itself when the candidate stops.
+   *
+   * In a real interview nobody presses anything: the panel finishes their question
+   * and you answer. Tapping a button before and after every answer is the single
+   * biggest thing standing between this and a real room, and it also breaks the
+   * illusion at the worst moment — right when the candidate should be thinking about
+   * Spring transaction propagation, they are thinking about a UI control.
+   *
+   * Opt-out rather than opt-in, because the point is that you forget it exists. The
+   * button still works and still stops it — an explicit stop pins the mic closed
+   * until the next question, so a candidate who wants manual control gets it by
+   * using it.
+   */
+  const [handsFree, setHandsFree] = useState(true);
+  //: The open/close actions, held in refs so the hands-free effects can call them
+  //: without listing them as dependencies — `answer` is in their closure and would
+  //: otherwise re-run the arming effect on every transcribed word.
+  const openMicRef = useRef<(() => void) | null>(null);
+  const closeMicRef = useRef<(() => void) | null>(null);
+  //: Set when the candidate stops the mic themselves. Cleared on a new question, so
+  //: opting out is per-answer rather than a mode they have to remember to undo.
+  const pinnedClosedRef = useRef(false);
+  //: The question we have already auto-opened for, so re-renders do not re-open a
+  //: mic the candidate has deliberately closed.
+  const armedForRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    pinnedClosedRef.current = false;
+    armedForRef.current = null;
+  }, [question?.id]);
+
+  useEffect(() => {
+    if (!handsFree || useTyping || preparing) return;
+    if (!question?.id || !stt.supported) return;
+    // Wait for the interviewer to finish. Opening the mic while TTS is still
+    // playing means the question gets transcribed into the answer.
+    if (tts.speaking || stt.listening || stt.error) return;
+    if (pinnedClosedRef.current || armedForRef.current === question.id) return;
+    armedForRef.current = question.id;
+    // A beat after they stop, the way you do not start talking the instant someone's
+    // last word lands.
+    const t = setTimeout(() => {
+      if (pinnedClosedRef.current) return;
+      openMicRef.current?.();
+    }, 550);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handsFree, useTyping, preparing, question?.id, tts.speaking, stt.supported, stt.listening, stt.error]);
+
+  /**
+   * END OF ANSWER. Sustained silence after they have actually said something.
+   *
+   * Deliberately long: 4.5s is well past a thinking pause mid-answer, and the cost
+   * of being wrong is asymmetric — closing early truncates an answer, closing late
+   * costs nothing because the transcript is still theirs to submit. The mic closing
+   * is also NOT a submit: the candidate still reviews and sends, because auto-sending
+   * a possibly-mistranscribed answer is not something to do on someone's behalf.
+   */
+  useEffect(() => {
+    if (!handsFree || !stt.listening || !answer.trim()) return;
+    const t = setTimeout(() => {
+      closeMicRef.current?.();
+    }, 4500);
+    return () => clearTimeout(t);
+    // `answer` in the deps is the point — every new word restarts the timer.
+  }, [handsFree, stt.listening, answer]);
+
   // Read each new question aloud (voice-first feel) unless typing. Coding
   // questions are read too — a real interviewer states the problem out loud,
   // and they were previously the one type left silent.
@@ -136,20 +205,36 @@ export default function LiveSessionPage() {
     if (stt.transcript) setAnswer(stt.transcript);
   }, [stt.transcript]);
 
+  const closeMic = () => {
+    stt.stop();
+    if (speakStartRef.current) {
+      speakSecondsRef.current += (Date.now() - speakStartRef.current) / 1000;
+      speakStartRef.current = null;
+    }
+  };
+
+  const openMic = () => {
+    if (!answer) {
+      stt.reset();
+      speakSecondsRef.current = 0;
+    }
+    speakStartRef.current = Date.now();
+    stt.start();
+  };
+  openMicRef.current = openMic;
+  closeMicRef.current = closeMic;
+
+  /** The button. An explicit stop also pins the mic closed for this question. */
   const toggleMic = () => {
     if (stt.listening) {
-      stt.stop();
-      if (speakStartRef.current) {
-        speakSecondsRef.current += (Date.now() - speakStartRef.current) / 1000;
-        speakStartRef.current = null;
-      }
+      // Deliberate: the candidate reaching for the button to stop is them asking for
+      // manual control, so hands-free does not immediately re-open it. Cleared when
+      // the next question arrives, so they never have to undo a mode.
+      pinnedClosedRef.current = true;
+      closeMic();
     } else {
-      if (!answer) {
-        stt.reset();
-        speakSecondsRef.current = 0;
-      }
-      speakStartRef.current = Date.now();
-      stt.start();
+      pinnedClosedRef.current = false;
+      openMic();
     }
   };
 
@@ -492,11 +577,47 @@ export default function LiveSessionPage() {
                 {stt.error
                   ? 'Fix the permission, then tap to try again'
                   : stt.listening
-                    ? 'Listening… tap to stop'
-                    : answer
-                      ? 'Tap the mic to add more, or submit'
-                      : 'Tap the mic and speak your answer'}
+                    ? handsFree
+                      ? 'Listening — just talk. It stops when you do.'
+                      : 'Listening… tap to stop'
+                    : tts.speaking && handsFree
+                      ? 'Let them finish…'
+                      : answer
+                        ? handsFree
+                          ? 'Done. Review it and submit, or start talking again.'
+                          : 'Tap the mic to add more, or submit'
+                        : handsFree
+                          ? 'The mic opens on its own — start speaking'
+                          : 'Tap the mic and speak your answer'}
               </p>
+
+              {/* Legible, not silent. A mic that opens by itself is unnerving if the
+                  candidate cannot see that it is meant to. */}
+              {stt.supported && (
+                <button
+                  onClick={() => {
+                    setHandsFree((on) => !on);
+                    if (handsFree && stt.listening) {
+                      pinnedClosedRef.current = true;
+                      closeMic();
+                    }
+                  }}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors',
+                    handsFree
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      handsFree ? 'bg-primary' : 'bg-muted-foreground/50'
+                    )}
+                  />
+                  Hands-free {handsFree ? 'on' : 'off'}
+                </button>
+              )}
 
               {/* Said is said. Stays up for the rest of the question even after the
                   candidate edits the word out, because a panel cannot un-hear it. */}
