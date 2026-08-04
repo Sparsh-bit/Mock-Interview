@@ -1,0 +1,274 @@
+"""
+The pgvector cache, against real pgvector — tests/test_vector_cache_db.py
+
+Separate from test_vector_cache.py, which is pure. Everything here needs a Postgres with
+the vector extension, because the parts being tested are the parts that only exist in the
+database: the HNSW index and its operator class, the `<=>` distance operator, the
+UPDATE ... RETURNING that counts a hit without a read-then-write race, and the scope
+filter that keeps one user's entries away from another's.
+
+None of that can be checked in Python. An HNSW index built for the wrong operator class,
+for instance, is not an error — it is simply never used, and the only symptom is that
+queries stay slow.
+
+docker-compose now runs pgvector/pgvector:pg15 rather than postgres:15-alpine precisely so
+these can run locally instead of only in production.
+"""
+
+import pytest
+from sqlalchemy import text
+
+from app.services.ai import vector_cache as vc
+
+
+#: Skip rather than fail when there is no database. These are the only tests in the
+#: suite that require one plus the vector extension, and CI runs lint and typecheck
+#: only — a hard failure there would say "the cache is broken" when it means "there is
+#: no Postgres here".
+pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+async def clean_cache():
+    """
+    A session against the dev database, with the cache emptied.
+
+    Self-contained rather than reusing test_integration.py's db_session: that fixture
+    builds the whole schema from metadata, and the `embedding vector(512)` column is
+    created by migration 014 rather than by the model — so a metadata-built schema has
+    no vector column and every one of these tests would fail for the wrong reason.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.db.session import AsyncSessionFactory
+
+    try:
+        async with AsyncSessionFactory() as db:
+            # Build exactly what migration 014 builds, idempotently. The test suite
+            # points at its own database whose schema comes from SQLAlchemy metadata,
+            # and the vector column is not in the model (see the note in
+            # models/ai_cache.py) — so without this the table here would have no
+            # embedding column and every near-match test would fail for the wrong
+            # reason. Kept in step with 014 by test_vector_cache_schema below.
+            await db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await db.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_cache (
+                        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                        created_at timestamptz NOT NULL DEFAULT now(),
+                        feature varchar(64) NOT NULL,
+                        cache_key varchar(500) NOT NULL,
+                        key_hash varchar(64) NOT NULL,
+                        scope varchar(64) NOT NULL DEFAULT 'global',
+                        payload jsonb NOT NULL,
+                        hit_count integer NOT NULL DEFAULT 0,
+                        last_used_at timestamptz NOT NULL DEFAULT now(),
+                        embedding vector(512),
+                        CONSTRAINT uq_ai_cache_feature_key UNIQUE (feature, key_hash)
+                    )
+                    """
+                )
+            )
+            # ADD COLUMN as well as CREATE TABLE, and this is not belt-and-braces.
+            # test_integration.py's _setup_schema builds every table from SQLAlchemy
+            # metadata, and ai_cache IS in the metadata — so when the full suite runs,
+            # the table already exists WITHOUT the vector column and CREATE TABLE IF NOT
+            # EXISTS silently does nothing. These tests then skipped rather than ran,
+            # which is the worst outcome: a green suite covering none of this.
+            await db.execute(
+                text("ALTER TABLE ai_cache ADD COLUMN IF NOT EXISTS embedding vector(512)")
+            )
+            await db.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ai_cache_embedding ON ai_cache "
+                    "USING hnsw (embedding vector_cosine_ops)"
+                )
+            )
+            await db.execute(text("DELETE FROM ai_cache"))
+            await db.commit()
+            yield db
+            await db.rollback()
+    except (SQLAlchemyError, OSError) as exc:
+        pytest.skip(f"needs Postgres with the vector extension: {exc}")
+
+
+class TestRoundTrip:
+    async def test_a_stored_generation_comes_back(self, clean_cache):
+        db = clean_cache
+        await vc.store(
+            db,
+            feature="gd_topic_prep",
+            key="Difference between HashMap and Hashtable",
+            payload={"answer": "HashMap is unsynchronised and permits one null key."},
+        )
+        await db.commit()
+
+        got = await vc.lookup(
+            db, feature="gd_topic_prep", key="Difference between HashMap and Hashtable"
+        )
+        assert got is not None
+        assert got["answer"].startswith("HashMap is unsynchronised")
+
+    async def test_a_restatement_of_the_same_question_hits(self, clean_cache):
+        # The saving only exists if this works. Different wording, same ideal answer.
+        db = clean_cache
+        await vc.store(
+            db,
+            feature="gd_topic_prep",
+            key="What is the difference between final, finally and finalize?",
+            payload={"answer": "final is a modifier; finally always runs; finalize was a GC hook."},
+        )
+        await db.commit()
+
+        got = await vc.lookup(db, feature="gd_topic_prep", key="final vs finally vs finalize")
+        assert got is not None, "a restatement of a cached question must hit"
+
+    async def test_a_different_question_does_not_hit(self, clean_cache):
+        # The failure that matters: showing a candidate the ideal answer to something
+        # they were not asked.
+        db = clean_cache
+        await vc.store(
+            db,
+            feature="gd_topic_prep",
+            key="Difference between HashMap and Hashtable",
+            payload={"answer": "..."},
+        )
+        await db.commit()
+
+        assert (
+            await vc.lookup(
+                db, feature="gd_topic_prep", key="Difference between ArrayList and LinkedList"
+            )
+            is None
+        )
+
+    async def test_features_do_not_bleed_into_each_other(self, clean_cache):
+        db = clean_cache
+        await vc.store(db, feature="gd_topic_prep", key="Should AI grade exams", payload={"n": 1})
+        await db.commit()
+        # Same key, different feature. A plan must never be served as a quiz.
+        assert await vc.lookup(db, feature="interview_plan", key="Should AI grade exams") is None
+
+
+class TestTheUpdateOnEveryUse:
+    """
+    "Gets updated whenever anyone uses it" was an explicit requirement. It is also what
+    makes the cache warm itself from real traffic instead of needing a seed job, and what
+    gives LRU eviction something honest to sort on.
+    """
+
+    async def test_every_hit_is_counted(self, clean_cache):
+        db = clean_cache
+        key = "Difference between HashMap and Hashtable"
+        await vc.store(db, feature="gd_topic_prep", key=key, payload={"answer": "..."})
+        await db.commit()
+
+        for _ in range(3):
+            assert await vc.lookup(db, feature="gd_topic_prep", key=key) is not None
+        await db.commit()
+
+        hits = await db.scalar(text("SELECT hit_count FROM ai_cache WHERE feature='gd_topic_prep'"))
+        assert hits == 3
+
+    async def test_a_near_match_hit_is_counted_too(self, clean_cache):
+        # The near path is a different SQL statement from the exact path, so it needs its
+        # own assertion — an uncounted hit means the eviction order and the "is this cache
+        # earning its keep" figure are both wrong.
+        db = clean_cache
+        await vc.store(
+            db,
+            feature="gd_topic_prep",
+            key="What is the difference between final, finally and finalize?",
+            payload={"answer": "..."},
+        )
+        await db.commit()
+
+        assert await vc.lookup(db, feature="gd_topic_prep", key="final vs finally vs finalize")
+        await db.commit()
+        hits = await db.scalar(text("SELECT hit_count FROM ai_cache"))
+        assert hits == 1
+
+    async def test_last_used_moves_forward(self, clean_cache):
+        db = clean_cache
+        key = "Collections framework overview"
+        await vc.store(db, feature="gd_topic_prep", key=key, payload={"a": 1})
+        await db.commit()
+        before = await db.scalar(text("SELECT last_used_at FROM ai_cache"))
+
+        await vc.lookup(db, feature="gd_topic_prep", key=key)
+        await db.commit()
+        after = await db.scalar(text("SELECT last_used_at FROM ai_cache"))
+        assert after >= before
+
+    async def test_storing_the_same_key_twice_keeps_one_row(self, clean_cache):
+        # Two concurrent requests for one key both generate — a cache cannot prevent that,
+        # only a lock could, and a lock in front of a cache is a worse trade. What it must
+        # do is not accumulate duplicate rows.
+        db = clean_cache
+        for answer in ("first", "second"):
+            await vc.store(
+                db, feature="gd_topic_prep", key="Explain polymorphism", payload={"a": answer}
+            )
+            await db.commit()
+
+        rows = await db.scalar(text("SELECT count(*) FROM ai_cache"))
+        assert rows == 1
+        got = await vc.lookup(db, feature="gd_topic_prep", key="Explain polymorphism")
+        assert got == {"a": "second"}, "the newer generation should win"
+
+
+class TestScopeIsolation:
+    async def test_a_scoped_entry_is_invisible_to_another_scope(self, clean_cache):
+        # The mechanism that would let a per-user cache exist safely. Nothing uses it
+        # today — everything on the allowlist is global — but the isolation has to be
+        # proven before anything relies on it.
+        db = clean_cache
+        await vc.store(
+            db, feature="gd_topic_prep", key="Threads hard", payload={"q": 1}, scope="user-A"
+        )
+        await db.commit()
+
+        assert await vc.lookup(db, feature="gd_topic_prep", key="Threads hard", scope="user-A")
+        assert (
+            await vc.lookup(db, feature="gd_topic_prep", key="Threads hard", scope="user-B")
+            is None
+        )
+        # And not visible to the global scope either.
+        assert await vc.lookup(db, feature="gd_topic_prep", key="Threads hard") is None
+
+
+class TestFailingSoft:
+    async def test_a_lookup_on_a_broken_session_is_a_miss_not_an_error(self, clean_cache):
+        # A cache that can fail a request is worse than no cache. This also covers
+        # deploying the code before migration 014 has run: it costs money, it does not
+        # break every feature that consults the cache.
+        db = clean_cache
+        await db.execute(text("DROP TABLE ai_cache"))
+        assert await vc.lookup(db, feature="gd_topic_prep", key="anything") is None
+        await db.rollback()
+
+
+class TestEvictionAndStats:
+    async def test_stats_report_hits_and_never_hit_entries(self, clean_cache):
+        # A table full of hit_count=0 rows is the signal that caching a feature bought
+        # nothing, which is the only honest way to decide whether to keep doing it.
+        db = clean_cache
+        await vc.store(db, feature="gd_topic_prep", key="Explain encapsulation", payload={"a": 1})
+        await vc.store(db, feature="gd_topic_prep", key="Explain inheritance", payload={"a": 2})
+        await db.commit()
+        await vc.lookup(db, feature="gd_topic_prep", key="Explain encapsulation")
+        await db.commit()
+
+        rows = await vc.stats(db)
+        entry = next(r for r in rows if r["feature"] == "gd_topic_prep")
+        assert entry["entries"] == 2
+        assert entry["hits"] == 1
+        assert entry["never_hit"] == 1
+
+    async def test_eviction_leaves_the_cache_intact_when_under_the_cap(self, clean_cache):
+        db = clean_cache
+        await vc.store(db, feature="gd_topic_prep", key="Explain abstraction", payload={"a": 1})
+        await db.commit()
+        assert await vc.evict_lru(db, feature="gd_topic_prep") == 0
+        assert await db.scalar(text("SELECT count(*) FROM ai_cache")) == 1

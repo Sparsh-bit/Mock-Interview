@@ -24,6 +24,7 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.services.activity import log_activity
+from app.services.ai import vector_cache
 from app.services.progress.rating import Tier
 from app.services.progress.recorder import record_round
 
@@ -396,7 +397,14 @@ class GDPrepareResponse(BaseModel):
     dependencies=[Depends(_gd_rate_limit)],
     summary="Turn a candidate's own topic into a discussable motion",
 )
-async def gd_prepare(request: GDPrepareRequest, current_user: CurrentUser):
+async def gd_prepare(
+    request: GDPrepareRequest,
+    current_user: CurrentUser,
+    # Needed only for the topic cache. This endpoint touched no tables before, so the
+    # session is new here — it costs one pooled connection for two indexed statements,
+    # which buys skipping a $0.016 generation on most requests.
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
     """
     Prepare a custom topic for discussion.
 
@@ -416,11 +424,22 @@ async def gd_prepare(request: GDPrepareRequest, current_user: CurrentUser):
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import GDPreparedTopic  # noqa: PLC0415
 
+    raw_topic = request.topic.strip()
+
+    # Ask the cache first. Preparing a topic is a $0.016 generation and candidates
+    # converge hard on the same handful of phrases — "AI in education", "work from
+    # home", "social media" — so most requests after the first week are a restatement
+    # of one already paid for. Safe to share globally: the only input is the topic
+    # phrase, which is public, and nothing a candidate SAID in a round reaches here.
+    cached = await vector_cache.lookup(db, feature="gd_topic_prep", key=raw_topic)
+    if cached is not None:
+        return GDPrepareResponse(**cached)
+
     builder = PromptBuilder(get_prompt_loader())
     messages = builder.chat(
         system_template="gd_topic_prep",
         user_content="Prepare this topic now, as JSON.",
-        raw_topic=request.topic.strip(),
+        raw_topic=raw_topic,
     )
 
     try:
@@ -445,14 +464,25 @@ async def gd_prepare(request: GDPrepareRequest, current_user: CurrentUser):
             reason="",
         )
 
-    return GDPrepareResponse(
-        statement=prepared.statement.strip() or request.topic.strip(),
+    response = GDPrepareResponse(
+        statement=prepared.statement.strip() or raw_topic,
         framing=prepared.framing.strip(),
         points_for=[p.strip() for p in prepared.points_for if p.strip()][:5],
         points_against=[p.strip() for p in prepared.points_against if p.strip()][:5],
         usable=prepared.usable,
         reason=prepared.reason.strip(),
     )
+
+    # Remember it, so the next candidate who types this topic pays nothing. Stored even
+    # when usable is false: "that is a factual question, not a debate" is a verdict
+    # worth reusing rather than re-buying. Never raises — failing to remember must not
+    # fail the request that produced it.
+    await vector_cache.store(
+        db, feature="gd_topic_prep", key=raw_topic, payload=response.model_dump(mode="json")
+    )
+    await db.commit()
+
+    return response
 
 
 @router.post("/turn", response_model=GDTurnResponse, dependencies=[Depends(_gd_rate_limit)])

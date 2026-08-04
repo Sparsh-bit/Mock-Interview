@@ -11,7 +11,10 @@
 
 services:
   postgres:
-    image: postgres:15-alpine
+    # pgvector, not plain postgres. Supabase has the vector extension enabled, so a
+    # local Postgres without it means migration 014 fails locally and the vector cache
+    # can only ever be tested in production — which is the same as not testing it.
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: interviewos
       POSTGRES_PASSWORD: password

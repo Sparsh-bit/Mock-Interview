@@ -6,6 +6,7 @@ declarative registry before Alembic introspects the metadata.
 """
 
 from .activity import ActivityLog
+from .ai_cache import AICache
 from .ai_usage import AIUsage  # TEMPORARY — token counter
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .company import Company, InterviewTrack, QuestionCategory
@@ -54,4 +55,6 @@ __all__ = [
     "ActivityLog",
     # Progress
     "RatingEvent",
+    # AI cache
+    "AICache",
 ]
