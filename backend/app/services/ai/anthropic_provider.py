@@ -63,11 +63,18 @@ logger = structlog.get_logger(__name__)
 # ─── Daily spend circuit breaker ──────────────────────────────────────────────
 
 
-async def _spend_key() -> str:
-    """Redis key holding today's total metered spend (UTC day)."""
+async def _spend_key(scope: str = "") -> str:
+    """
+    Redis key holding today's metered spend (UTC day).
+
+    `scope` empty means the whole product; a user id scopes it to that user. Same
+    key shape and same expiry for both, so the per-user cap inherits the
+    fail-closed behaviour the global one already has.
+    """
     from datetime import datetime  # noqa: PLC0415
 
-    return f"ai:spend:{datetime.now(UTC):%Y-%m-%d}"
+    day = f"{datetime.now(UTC):%Y-%m-%d}"
+    return f"ai:spend:{day}:{scope}" if scope else f"ai:spend:{day}"
 
 
 # In-process spend fallback, keyed by UTC day.
@@ -80,12 +87,14 @@ async def _spend_key() -> str:
 _local_spend: dict[str, float] = {}
 
 
-async def _spend_today() -> float:
+async def _spend_today(scope: str = "") -> float:
     """
-    Total USD spent today — the higher of the shared Redis counter and this
-    process's own tally, so neither source failing can under-report.
+    USD spent today — the higher of the shared Redis counter and this process's own
+    tally, so neither source failing can under-report.
+
+    `scope` empty for the product total, a user id for one user.
     """
-    key = await _spend_key()
+    key = await _spend_key(scope)
     local = _local_spend.get(key, 0.0)
 
     from app.db.redis import cache_get, get_redis  # noqa: PLC0415
@@ -100,17 +109,21 @@ async def _spend_today() -> float:
     return max(shared, local)
 
 
-async def _record_spend(amount: float) -> None:
+async def _record_spend(amount: float, scope: str = "") -> None:
     """Add to today's spend counters. Local first so it cannot be skipped."""
     if amount <= 0:
         return
 
-    key = await _spend_key()
+    key = await _spend_key(scope)
     # Record locally before the network call — if Redis throws, the spend is
     # still counted and the cap still converges.
     _local_spend[key] = _local_spend.get(key, 0.0) + amount
-    # Keep only the current day; this dict must not grow forever.
-    for stale in [k for k in _local_spend if k != key]:
+    # Keep only the current day; this dict must not grow forever. Matched on the DAY
+    # prefix, not the whole key — there is now one entry per user per day, and the
+    # original `k != key` would have deleted every OTHER user's tally on every call,
+    # so no per-user cap could ever accumulate.
+    day_prefix = ":".join(key.split(":")[:3])  # ai:spend:YYYY-MM-DD
+    for stale in [k for k in _local_spend if not k.startswith(day_prefix)]:
         del _local_spend[stale]
 
     from app.db.redis import get_redis  # noqa: PLC0415
@@ -124,13 +137,49 @@ async def _record_spend(amount: float) -> None:
         logger.warning("ai_spend_record_failed_counted_locally", amount=amount)
 
 
+def _current_user_scope() -> str | None:
+    """
+    The authenticated user for this request, as a spend scope, or None.
+
+    Read from the contextvar core/security.py already sets — so per-user metering
+    needs no change at any of the thirteen generate_structured call sites, and cannot
+    be forgotten at a new one.
+    """
+    try:
+        from app.services.ai.usage import current_user_id  # noqa: PLC0415
+
+        uid = current_user_id.get()
+        return str(uid) if uid else None
+    except Exception:  # noqa: BLE001 — accounting must never break a request
+        return None
+
+
 class BudgetExceededError(ProviderError):
     """
-    Today's metered AI budget is spent.
+    Today's metered AI budget is spent, PRODUCT-WIDE.
 
     Subclasses ProviderError so generate_structured's existing handling moves on
     to the next provider in the chain — i.e. the app degrades to the free
     provider rather than failing or overspending.
+
+    This is an operations alarm, not a user-facing limit. It means the circuit
+    breaker tripped and EVERY user is now on the free provider, so it should page
+    somebody rather than be shown to a candidate as though they did something.
+    """
+
+
+class UserBudgetExceededError(BudgetExceededError):
+    """
+    ONE user has spent their own daily allowance.
+
+    Distinct from the global breaker because the two need completely different
+    handling. This one is normal, expected, and about a single person: they have
+    had a lot of practice today, they stay on the free provider until the UTC day
+    rolls over, and nothing is wrong with the service.
+
+    Kept as a subclass so existing `except BudgetExceededError` handling keeps
+    working — the fallback to the free provider is the right behaviour for both.
+    What differs is what the user is told, which is why the two exist at all.
     """
 
 # ─── Price sheet (USD per million tokens) ─────────────────────────────────────
@@ -185,6 +234,7 @@ class AnthropicProvider(BaseAIProvider):
         prompt_caching: bool = False,
         max_output_tokens: int = 4096,
         daily_budget_usd: float = 2.0,
+        user_daily_budget_usd: float = 0.0,
         timeout: float = 120.0,
         max_retries: int = 2,
     ) -> None:
@@ -193,6 +243,7 @@ class AnthropicProvider(BaseAIProvider):
         self._model = model
         self._provider_name = provider_name
         self._prompt_caching = prompt_caching
+        self._user_daily_budget_usd = user_daily_budget_usd
         self._max_output_tokens = max_output_tokens
         self._daily_budget_usd = daily_budget_usd
         # max_retries covers 429/5xx/connection errors with backoff in-SDK.
@@ -227,6 +278,24 @@ class AnthropicProvider(BaseAIProvider):
                 raise BudgetExceededError(
                     f"Daily AI budget of ${self._daily_budget_usd:.2f} reached "
                     f"(${spent:.4f} spent). Falling back to the free provider.",
+                    provider=self.provider_name,
+                )
+
+        # Then the per-user allowance. Checked SECOND: if the product-wide breaker has
+        # tripped, that is the more urgent fact and the one worth logging.
+        if self._user_daily_budget_usd > 0 and (uid := _current_user_scope()) is not None:
+            user_spent = await _spend_today(uid)
+            if user_spent >= self._user_daily_budget_usd:
+                logger.info(
+                    "ai_user_budget_exceeded",
+                    user_id=uid,
+                    spent_usd=round(user_spent, 4),
+                    budget_usd=self._user_daily_budget_usd,
+                )
+                raise UserBudgetExceededError(
+                    f"You have used your ${self._user_daily_budget_usd:.2f} of AI practice "
+                    "for today. Everything still works — you are on the standby model "
+                    "until tomorrow.",
                     provider=self.provider_name,
                 )
 
@@ -298,7 +367,15 @@ class AnthropicProvider(BaseAIProvider):
             ) from exc
 
         response = self._to_response(message, model, log)
-        await _record_spend(response.estimated_cost_usd or 0.0)
+        cost = response.estimated_cost_usd or 0.0
+        await _record_spend(cost)
+        # And against the user who caused it, so their own allowance converges. The
+        # contextvar is set by core/security.py on every authenticated request; it is
+        # None for a background task or a script, and those spend against the global
+        # breaker only — deliberately, because attributing anonymous spend to some
+        # user would be worse than not attributing it.
+        if (uid := _current_user_scope()) is not None:
+            await _record_spend(cost, uid)
         return response
 
     async def health_check(self) -> bool:

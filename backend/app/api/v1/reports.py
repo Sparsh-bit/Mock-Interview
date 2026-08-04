@@ -143,6 +143,49 @@ _REQUIRED_DIMENSIONS = (
 )
 
 
+#: Why a report came back unscored. The candidate sees a different sentence for each,
+#: because they mean different things and imply different actions.
+_REASON_USER_QUOTA = "user_quota"
+_REASON_SERVICE_LIMIT = "service_limit"
+_REASON_TIMEOUT = "timeout"
+_REASON_PROVIDER = "provider_unavailable"
+
+
+def _classify_failure(exc: BaseException) -> str:
+    """
+    Turn a generation failure into the reason a candidate should be shown.
+
+    The order matters: UserBudgetExceededError subclasses BudgetExceededError, so the
+    more specific one has to be tested first or every personal allowance would be
+    reported as a service-wide outage — which is both wrong and alarming.
+
+    Imported locally because core report generation should not fail to import if the
+    provider module is unavailable.
+    """
+    try:
+        from app.services.ai.anthropic_provider import (  # noqa: PLC0415
+            BudgetExceededError,
+            UserBudgetExceededError,
+        )
+    except Exception:  # noqa: BLE001
+        return _REASON_PROVIDER
+
+    # AIProviderUnavailableError wraps the last provider error; check the chain.
+    seen: list[BaseException] = []
+    cur: BaseException | None = exc
+    while cur is not None and cur not in seen:
+        seen.append(cur)
+        if isinstance(cur, UserBudgetExceededError):
+            return _REASON_USER_QUOTA
+        if isinstance(cur, BudgetExceededError):
+            return _REASON_SERVICE_LIMIT
+        cur = cur.__cause__ or cur.__context__
+
+    if isinstance(exc, TimeoutError):
+        return _REASON_TIMEOUT
+    return _REASON_PROVIDER
+
+
 def _report_is_complete(report, answered: int) -> bool:
     """
     Is this report actually usable, or just schema-valid?
@@ -267,6 +310,12 @@ class ReportResponse(BaseModel):
     pdf_url: str | None
     delivery: dict | None = None
     previous: dict | None = None
+    #: Null on a real report. On an unscored one, WHY — "user_quota",
+    #: "service_limit", "timeout" or "provider_unavailable". The client shows a
+    #: different sentence for each, because one generic "temporarily unavailable"
+    #: covering all four tells a candidate who has used their day's practice the same
+    #: thing as one hitting an outage, and only one of those has an action.
+    unscored_reason: str | None = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -557,6 +606,9 @@ async def generate_report(
     )
 
     ai_report: ReportGeneratorResponse | None = None
+    #: Set by whichever except branch runs. Defaults to the generic provider reason so
+    #: the field is never absent from a stored unscored report.
+    unscored_reason = _REASON_PROVIDER
     last_raw_content = ""
     _ai_started = perf_counter()
     try:
@@ -610,10 +662,12 @@ async def generate_report(
             timeout=report_ai_budget_seconds(),
         )
     except (AIProviderUnavailableError, TimeoutError) as exc:
+        unscored_reason = _classify_failure(exc)
         logger.warning(
             "ai_report_unavailable_using_heuristic",
             session_id=str(session_id),
             reason=type(exc).__name__,
+            unscored_reason=unscored_reason,
             elapsed_s=round(perf_counter() - _ai_started, 1),
         )
     except Exception:
@@ -682,6 +736,12 @@ async def generate_report(
             improvement_roadmap=[],
             raw_report={
                 "generated_by": _UNSCORED,
+                # WHY it is unscored, so the candidate is told the truth instead of one
+                # generic "temporarily unavailable" for four different situations. A
+                # candidate who has used their day's practice needs to hear something
+                # completely different from one hitting a provider outage, and before
+                # this both produced the same sentence.
+                "unscored_reason": unscored_reason,
                 # Counts toward _MAX_UNSCORED_ATTEMPTS so repeated page views
                 # cannot keep paying for a model that is failing.
                 "unscored_attempts": unscored_attempts + 1,
@@ -1007,4 +1067,9 @@ def _build_report_response(report) -> ReportResponse:
         pdf_url=report.pdf_url,
         delivery=raw.get("delivery") if isinstance(raw.get("delivery"), dict) else None,
         previous=raw.get("previous") if isinstance(raw.get("previous"), dict) else None,
+        # Only meaningful when the report is unscored; None otherwise, so the client can
+        # branch on its presence rather than comparing a label.
+        unscored_reason=(
+            raw.get("unscored_reason") if raw.get("generated_by") == _UNSCORED else None
+        ),
     )

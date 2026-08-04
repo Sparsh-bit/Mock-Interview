@@ -1,21 +1,9 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useReport, useToggleShareReport } from '@/hooks/useData';
+import { type ReportData, useReport, useToggleShareReport } from '@/hooks/useData';
 import { motion } from 'framer-motion';
-import {
-  Award,
-  BookOpen,
-  CheckCircle2,
-  ChevronLeft,
-  ExternalLink,
-  ListChecks,
-  Loader2,
-  ShieldCheck,
-  Sparkles,
-  TrendingUp,
-  XCircle,
-} from 'lucide-react';
+import { Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ShareMenu } from '@/components/report/ShareMenu';
@@ -249,6 +237,14 @@ export default function ReportDetailPage() {
           </div>
         </Card>
       </motion.div>
+
+      {/* The report did not finish scoring. Say WHY, because the four reasons imply
+          completely different actions — and one of them is not a fault at all. */}
+      {report.unscored_reason && (
+        <motion.div variants={fadeUp}>
+          <UnscoredNotice reason={report.unscored_reason} onRetry={() => refetch()} retrying={isFetching} />
+        </motion.div>
+      )}
 
       {/* Progress vs last interview + delivery (pauses / fillers / pace) */}
       {(report.previous || report.delivery) && (
@@ -554,5 +550,93 @@ export default function ReportDetailPage() {
         </motion.div>
       )}
     </motion.div>
+  );
+}
+
+/**
+ * Why the report did not finish scoring.
+ *
+ * Four situations that used to produce one sentence — "AI scoring is temporarily
+ * unavailable, please retry shortly". That sentence is wrong for three of them and
+ * actively misleading for one: a candidate who has used their day's practice allowance
+ * is not looking at a broken service, and telling them to retry shortly sends them into
+ * a loop that cannot succeed.
+ *
+ * So each reason gets its own copy, its own tone, and — the part that matters — a retry
+ * button only where retrying can actually work.
+ */
+function UnscoredNotice({
+  reason,
+  onRetry,
+  retrying,
+}: {
+  reason: NonNullable<ReportData['unscored_reason']>;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const copy = {
+    user_quota: {
+      tone: 'amber' as const,
+      title: "You've used today's AI practice",
+      body:
+        "Nothing is broken and nothing is lost — your answers are all saved. Full scoring " +
+        'resumes tomorrow, and your report will generate then. This limit exists so one ' +
+        'very heavy day cannot use up everyone else’s.',
+      // Deliberately NO retry. Retrying cannot succeed until the day rolls over, and a
+      // button that is guaranteed to fail is worse than no button.
+      canRetry: false,
+    },
+    service_limit: {
+      tone: 'coral' as const,
+      title: 'Scoring is paused across the service',
+      body:
+        'This is on our side, not yours — a safety limit tripped and we have been alerted. ' +
+        'Your answers are saved. Try again in a little while.',
+      canRetry: true,
+    },
+    timeout: {
+      tone: 'coral' as const,
+      title: 'Scoring took too long',
+      body:
+        'A long interview is a lot to grade at once and this one ran past the time limit. ' +
+        'Your answers are saved — generating again usually works.',
+      canRetry: true,
+    },
+    provider_unavailable: {
+      tone: 'coral' as const,
+      title: 'Scoring could not be completed',
+      body:
+        'The model was unreachable. Your answers are saved, so nothing needs redoing — ' +
+        'generate the report again in a moment.',
+      canRetry: true,
+    },
+  }[reason];
+
+  return (
+    <Card
+      className={cn(
+        'flex flex-col gap-3 p-6 sm:flex-row sm:items-start sm:justify-between',
+        copy.tone === 'amber'
+          ? 'border-accent-amber/40 bg-accent-amber/5'
+          : 'border-accent-coral/40 bg-accent-coral/5'
+      )}
+    >
+      <div className="min-w-0">
+        <p
+          className={cn(
+            'text-sm font-semibold',
+            copy.tone === 'amber' ? 'text-accent-amber-ink' : 'text-accent-coral-ink'
+          )}
+        >
+          {copy.title}
+        </p>
+        <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">{copy.body}</p>
+      </div>
+      {copy.canRetry && (
+        <Button variant="secondary" size="sm" onClick={onRetry} loading={retrying} className="shrink-0">
+          <RefreshCw className="h-3.5 w-3.5" /> Generate again
+        </Button>
+      )}
+    </Card>
   );
 }

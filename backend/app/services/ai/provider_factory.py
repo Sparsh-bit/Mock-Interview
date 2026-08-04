@@ -254,6 +254,7 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 prompt_caching=settings.ANTHROPIC_PROMPT_CACHING,
                 max_output_tokens=settings.ANTHROPIC_MAX_OUTPUT_TOKENS,
                 daily_budget_usd=settings.AI_DAILY_BUDGET_USD,
+                user_daily_budget_usd=settings.AI_USER_DAILY_BUDGET_USD,
             )
         case _:
             raise ValueError(

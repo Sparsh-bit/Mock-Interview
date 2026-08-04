@@ -74,6 +74,14 @@ export interface ReportData {
   session_id: string;
   overall_score: number;
   overall_score_label: string;
+  /**
+   * Null on a real report. On an unscored one, WHY generation did not finish.
+   * The report page shows a different message per value — one generic
+   * "temporarily unavailable" told a candidate who had used their day's practice
+   * exactly the same thing as one hitting an outage, and only one of those has an
+   * action they can take.
+   */
+  unscored_reason?: 'user_quota' | 'service_limit' | 'timeout' | 'provider_unavailable' | null;
   executive_summary: string;
   readiness_level: string;
   readiness_reasoning: string;

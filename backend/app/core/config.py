@@ -183,12 +183,32 @@ class Settings(BaseSettings):
         description="Max live follow-up cross-questions injected during an interview.",
     )
     AI_DAILY_BUDGET_USD: float = Field(
-        default=2.0,
+        default=60.0,
         description=(
-            "Circuit breaker on metered AI spend per UTC day, across all users. "
-            "When exceeded, the paid provider refuses further calls and the chain "
-            "degrades to the free fallback provider instead of draining the "
-            "balance. 0 disables the cap (not recommended)."
+            "CIRCUIT BREAKER on metered AI spend per UTC day, across all users. Not a "
+            "daily allowance — that is AI_USER_DAILY_BUDGET_USD. This exists to stop a "
+            "runaway loop or a compromised key draining the balance overnight, so it "
+            "should sit well ABOVE a busy legitimate day and tripping it should page "
+            "somebody. It was 2.0, which is about nine full interviews across the whole "
+            "product, so it was doing duty as an allowance and one user (or one test "
+            "run) could starve everybody until midnight UTC. 60 is roughly 400 GD rounds "
+            "or 260 interviews a day; raise it as traffic grows and keep the per-user cap "
+            "as the thing that actually rations. 0 disables it (not recommended). See "
+            "AI-COST-MODEL.md for the per-feature arithmetic."
+        ),
+    )
+    AI_USER_DAILY_BUDGET_USD: float = Field(
+        default=1.20,
+        description=(
+            "Per-user metered AI spend per UTC day. THIS is the allowance. When a user "
+            "exceeds it their calls fall through to the free provider for the rest of the "
+            "day — nothing breaks and no feature is blocked, they are on the standby "
+            "model. Scoped by the authenticated user from the contextvar core/security.py "
+            "sets, so unauthenticated or background work counts only against the global "
+            "breaker. 1.20 is about three full mock interviews or eight group discussions "
+            "in a day, which is more practice than anyone does honestly and cheap enough "
+            "to carry a thousand users. 0 disables per-user metering. This is the seam the "
+            "credit/subscription system will replace — see TEMPORARY-token-counter.md."
         ),
     )
     # ── TEMPORARY: token counter ─────────────────────────────────────────
