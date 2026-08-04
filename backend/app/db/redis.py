@@ -10,6 +10,8 @@ Never create Redis connections manually in services.
 
 from __future__ import annotations
 
+import base64
+
 import structlog
 from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.retry import Retry
@@ -92,12 +94,59 @@ def get_default_ttl() -> int:
     return _DEFAULT_TTL
 
 
+#: Largest single value cache_set_bytes will store. One utterance of MP3 is tens of
+#: kilobytes; anything near a megabyte is a vendor returning something unexpected, and Redis
+#: memory is shared with rate limits and spend counters that matter more.
+_MAX_CACHED_BYTES = 512 * 1024
+
+
 async def cache_set(redis: Redis, key: str, value: str, ttl: int | None = None) -> None:
     """Set a string value with TTL. Silently logs on failure."""
     try:
         await redis.setex(key, ttl if ttl is not None else get_default_ttl(), value)
     except RedisError:
         logger.exception("cache_set_failed", key=key)
+
+
+async def cache_set_bytes(key: str, value: bytes, ttl_seconds: int) -> None:
+    """
+    Cache binary data — audio — through the shared pool.
+
+    BASE64, not raw bytes, and that is forced by the pool rather than chosen: the connection
+    is built with decode_responses=True, so anything read back is UTF-8 decoded and MP3 bytes
+    are not valid UTF-8. The alternatives were a second connection pool with decoding off, or
+    this. A ~33% size penalty on a TTL-bounded ~30KB utterance is a better trade than a second
+    pool to keep alive and configure.
+
+    Bounded by size as well as TTL. A vendor returning something unexpectedly large should not
+    be able to push everything else out of Redis; past the ceiling the cache simply declines
+    and the next request re-synthesises.
+    """
+    if len(value) > _MAX_CACHED_BYTES:
+        logger.warning("cache_set_bytes_too_large", key=key, size=len(value))
+        return
+    try:
+        redis = get_redis()
+        await redis.setex(key, ttl_seconds, base64.b64encode(value).decode("ascii"))
+    except RedisError:
+        logger.exception("cache_set_bytes_failed", key=key)
+
+
+async def cache_get_bytes(key: str) -> bytes | None:
+    """Read binary data cached by cache_set_bytes. None on miss, error, or corrupt value."""
+    try:
+        redis = get_redis()
+        raw = await redis.get(key)
+        if raw is None:
+            return None
+        text = raw.decode() if isinstance(raw, bytes) else str(raw)
+        return base64.b64decode(text)
+    except (RedisError, ValueError, TypeError):
+        # ValueError covers a value that is not valid base64 — a truncated write, or a key
+        # collision with something else. Treated as a miss so a corrupt entry costs one
+        # re-synthesis instead of a 500.
+        logger.warning("cache_get_bytes_failed", key=key, exc_info=True)
+        return None
 
 
 async def cache_get(redis: Redis, key: str) -> str | None:
@@ -175,6 +224,16 @@ class CacheKeys:
         generation must not be able to do it by leaving the cheap calls alone.
         """
         return f"rate_limit:report:{user_id}"
+
+    @staticmethod
+    def rate_limit_tts(user_id: str) -> str:
+        """Speech synthesis. Own namespace — it is metered per character, not per token."""
+        return f"rate_limit:tts:{user_id}"
+
+    @staticmethod
+    def tts_audio(digest: str) -> str:
+        """Cached audio, keyed by a hash of provider + voice + exact text."""
+        return f"tts:audio:{digest}"
 
     @staticmethod
     def rate_limit_read(user_id: str) -> str:

@@ -392,14 +392,28 @@ export default function GDPage() {
         {
           onSuccess: (data) => {
             if (data.contributions.length) {
-              setHistory((h) => [...h, ...data.contributions]);
               setPanelTurns((n) => n + 1);
-              // Speak them, in order, one at a time. speakAs queues, so two
-              // contributions in one turn do not talk over each other — which is
-              // what speechSynthesis does if you hand it both at once.
-              for (const c of data.contributions) {
-                void panelVoices.speakAs(c.speaker, c.text);
-              }
+              /*
+               * Reveal each contribution AS ITS VOICE STARTS, not all on arrival.
+               *
+               * A turn returns one or two contributions together. Pushing both into the
+               * transcript immediately and then speaking them in sequence meant the
+               * candidate read the second person's line while the first was still talking —
+               * the text ran seconds ahead of the room, which is the opposite of being in
+               * one. Now each line appears when its speaker takes the floor.
+               *
+               * A contribution cancelled before it starts is never revealed, deliberately:
+               * the candidate cut in, so it was never said. That is what makes interrupting
+               * mean something, and it keeps the transcript honest about what was actually
+               * heard — which matters because the transcript is what gets evaluated.
+               */
+              void (async () => {
+                for (const c of data.contributions) {
+                  await panelVoices.speakAs(c.speaker, c.text, {
+                    onStart: () => setHistory((h) => [...h, c]),
+                  });
+                }
+              })();
             }
             // Being addressed puts you on the spot; otherwise the panel is
             // talking amongst itself and the slate is clean again.
@@ -775,6 +789,14 @@ export default function GDPage() {
           </p>
         </div>
       </div>
+
+      {/* Which voices the candidate is actually hearing. Without this, someone on browser
+          speech assumes flat system voices are simply how the product sounds. */}
+      {!panelVoices.neuralProvider && (
+        <p className="-mb-1 text-[10px] text-muted-foreground/70">
+          Standby voices — your browser&apos;s built-in speech
+        </p>
+      )}
 
       <PanelStrip
         panel={panel ?? []}

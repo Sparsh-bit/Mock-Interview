@@ -286,6 +286,80 @@ class Settings(BaseSettings):
     #: issuing unbounded queries against a shared database.
     RATE_LIMIT_READ_PER_MINUTE: int = 120
 
+    # ── Neural text-to-speech ────────────────────────────────────────────────
+    #
+    # OFF by default, and that is a cost decision rather than caution. TTS is priced per
+    # CHARACTER, and on ElevenLabs' Creator tier a single GD round of neural speech costs
+    # about twelve times every AI call in that round combined — see the table in
+    # services/tts/base.py and AI-COST-MODEL.md. The browser's speechSynthesis is free and
+    # already works; this is a paid upgrade to how it sounds, so it has to be switched on
+    # deliberately by somebody who has looked at the numbers.
+    TTS_ENABLED: bool = False
+    TTS_PROVIDER: str = Field(
+        default="elevenlabs",
+        description=(
+            "Which vendor. 'elevenlabs' is the best-sounding and the most expensive. Azure "
+            "and Google Neural are roughly 14x cheaper per character AND have native en-IN "
+            "voices (Neerja, Prabhat) — for Indian campus practice an authentic accent is "
+            "usually worth more than emotional range. Add one as a new module in "
+            "services/tts/ and a branch in factory.py; nothing else changes."
+        ),
+    )
+    ELEVENLABS_API_KEY: str = Field(default="", description="Server-side only. Never sent to the browser.")
+    ELEVENLABS_MODEL: str = Field(
+        default="eleven_flash_v2_5",
+        description=(
+            "flash_v2_5 bills at HALF the credits per character and answers in ~75ms rather "
+            "than several hundred. Both matter in a live discussion. multilingual_v2 is "
+            "richer and is the right choice only for pre-rendered audio."
+        ),
+    )
+    ELEVENLABS_TIER: str = Field(
+        default="creator",
+        description=(
+            "Your subscription tier — free | starter | creator | pro | scale | business. Used "
+            "ONLY to estimate cost per character, which varies nearly twofold across tiers. "
+            "Setting it wrong makes the spend log wrong, not the synthesis."
+        ),
+    )
+    TTS_VOICE_IDS: str = Field(
+        default="",
+        description=(
+            "Speaker-to-voice map, as 'Riya:voiceid,Arjun:voiceid,Meera:voiceid,"
+            "interviewer:voiceid'. Names must match PANELISTS in api/v1/gd.py. Resolved "
+            "server-side so a client cannot choose its own voice — which is what keeps Meera "
+            "female, and on a metered vendor also what stops a caller picking an expensive "
+            "model. Voice ids are account-specific, so they live in the environment rather "
+            "than the repo."
+        ),
+    )
+    TTS_DAILY_BUDGET_USD: float = Field(
+        default=5.0,
+        description=(
+            "Circuit breaker on speech spend per UTC day, across all users. Separate from "
+            "AI_DAILY_BUDGET_USD because characters and tokens are not interchangeable and "
+            "one silently eating the other is how a bill becomes a surprise. Past it, "
+            "everyone falls back to browser speech and nothing breaks. 0 disables the cap."
+        ),
+    )
+    TTS_CACHE_TTL_SECONDS: int = Field(
+        default=60 * 60 * 24 * 14,
+        description=(
+            "How long synthesised audio is cached. Fourteen days because the interview reads "
+            "questions from a FIXED bank — the same ~37 for every candidate — so after the "
+            "first user those are free. That cache is worth far more than the GD one, where "
+            "every contribution is unique text and will never hit."
+        ),
+    )
+    TTS_RATE_LIMIT_PER_HOUR: int = Field(
+        default=200,
+        description=(
+            "Synthesis requests per user per hour. A GD round is up to ~40 utterances and an "
+            "interview ~16, so this covers several rounds while stopping a loop from spending "
+            "a month's character allowance in an afternoon."
+        ),
+    )
+
     # ── Code execution (self-hosted Piston) ───────────────────────────────
     PISTON_BASE_URL: str = Field(
         default="http://localhost:2000/api/v2",

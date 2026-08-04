@@ -9,6 +9,7 @@ import {
   type PanelVoice,
 } from '@/lib/speech/panel-voices';
 import { personaFor } from '@/lib/speech/persona';
+import { fetchTTSStatus, fetchUtterance, playBlob } from '@/lib/speech/neural-tts';
 import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
 // qualityTier is also re-exported at the bottom of this file, but `export … from`
 // creates no local binding, so it has to be imported here to be callable.
@@ -525,6 +526,14 @@ export function usePanelVoices(
    */
   const genRef = useRef(0);
 
+  //: Is server-side neural speech available for this round? Probed ONCE — asking per
+  //: utterance would add a round trip to every contribution to learn something that does
+  //: not change mid-round.
+  const neuralRef = useRef(false);
+  //: The audio element currently playing, so cancelAll can stop it. Browser speech is
+  //: cancelled through speechSynthesis.cancel(); an <audio> element is not.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   //: Who spoke last, so a lead-in beat is only spent on an actual handover.
   const lastSpeakerRef = useRef<string | null>(null);
   //: Did the last thing said end in a question? If so the next voice waits longer.
@@ -542,6 +551,30 @@ export function usePanelVoices(
    * everyone's voice mid-discussion.
    */
   const stanceOf = useMemo(() => new Map(panel.map((p) => [p.name, p.stance])), [panel]);
+
+  /**
+   * Ask the server once whether neural speech is on for this round.
+   *
+   * Once, not per utterance: a round is up to 40 contributions and the answer does not
+   * change mid-round, so probing each time would add a round trip to every one of them to
+   * learn something already known. If it says no — off, unconfigured, or budget spent —
+   * every utterance goes straight to speechSynthesis with no wasted attempt.
+   *
+   * `enabled` already folds in the budget, so this also means a round that starts with the
+   * budget spent never tries.
+   */
+  const [neuralProvider, setNeuralProvider] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTTSStatus().then((status) => {
+      if (cancelled) return;
+      neuralRef.current = !!status?.enabled;
+      setNeuralProvider(status?.enabled ? status.provider : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !panel.length) return;
@@ -613,6 +646,13 @@ export function usePanelVoices(
 
   const cancelAll = useCallback(() => {
     genRef.current += 1;
+    // Stop neural audio too. speechSynthesis.cancel() below does nothing to an <audio>
+    // element, so without this the candidate takes the floor and a panelist keeps talking
+    // over them — and their microphone transcribes it into their own answer.
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -633,8 +673,31 @@ export function usePanelVoices(
    * per-utterance limits some engines impose.
    */
   const speakAs = useCallback(
-    (speaker: string, text: string): Promise<void> => {
+    (
+      speaker: string,
+      text: string,
+      opts: {
+        /**
+         * Fires the moment this speaker actually takes the floor — after their handover
+         * beat, before their first word.
+         *
+         * This exists so the TRANSCRIPT can be revealed in step with the voice. A panel
+         * turn returns one or two contributions at once, and pushing both into the
+         * transcript on arrival meant the candidate read Arjun's line while Riya was still
+         * speaking: the text ran several seconds ahead of the room. Revealing on this
+         * callback puts them back together.
+         *
+         * Not fired if the utterance is cancelled before it starts, which is deliberate —
+         * a contribution that was talked over was never said, so it should not appear.
+         */
+        onStart?: () => void;
+      } = {},
+    ): Promise<void> => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
+        // No speech engine at all. Fire onStart anyway: the caller uses it to reveal the
+        // text, and silently withholding the transcript would be far worse than showing it
+        // without audio.
+        opts.onStart?.();
         return Promise.resolve();
       }
       const myGen = genRef.current;
@@ -681,6 +744,36 @@ export function usePanelVoices(
         setTakingFloor(null);
         setSpeakingNow(speaker);
         lastSpeakerRef.current = speaker;
+        // The floor is theirs — reveal their line now, in step with the audio.
+        opts.onStart?.();
+
+        /*
+         * NEURAL SPEECH FIRST, browser speech as the fallback.
+         *
+         * Tried only when the server said it is available (checked once per round, not per
+         * utterance), and any failure — budget spent, vendor down, slow connection — falls
+         * straight through to speechSynthesis below. The candidate hears a worse voice, not
+         * silence, which is the only acceptable failure mode inside a live discussion.
+         *
+         * The audio element is registered so cancelAll can stop it: without that, taking
+         * the floor would silence the queue but leave the current utterance playing over
+         * the candidate, and their own microphone would transcribe it into their answer.
+         */
+        if (neuralRef.current) {
+          const blob = await fetchUtterance(speaker, text);
+          if (blob && live()) {
+            await playBlob(blob, (el) => {
+              audioRef.current = el;
+            });
+            audioRef.current = null;
+            // A neural utterance is one audio file, so there is no per-clause pause to
+            // hold and no question-handover to add here — the vendor's own delivery
+            // carries it. Only the next speaker's lead-in still applies.
+            heldQuestionRef.current = /\?\s*$/.test(text.trim());
+            if (live()) setSpeakingNow(null);
+            return;
+          }
+        }
 
         const network = isNetworkVoice(chosen);
         // Local formant synthesis needs the extra room to stay intelligible;
@@ -724,5 +817,16 @@ export function usePanelVoices(
     [voiceMap, stanceOf],
   );
 
-  return { voiceMap, speakingNow, takingFloor, speakAs, cancelAll, ready: voiceMap.size > 0 };
+  return {
+    voiceMap,
+    speakingNow,
+    takingFloor,
+    speakAs,
+    cancelAll,
+    ready: voiceMap.size > 0,
+    //: Which vendor is speaking, or null for browser voices. Exposed so the UI can say so —
+    //: a candidate hearing flat system speech should know the round is on standby voices
+    //: rather than assume that is how the product sounds.
+    neuralProvider,
+  };
 }

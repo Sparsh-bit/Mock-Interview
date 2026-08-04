@@ -23,6 +23,7 @@ from app.api.v1 import (
     quiz,
     reports,
     resume,
+    tts,
     users,
 )
 
@@ -43,6 +44,7 @@ v1_router.include_router(gd.router, prefix="/gd", tags=["Group Discussion"])
 v1_router.include_router(code.router, prefix="/code", tags=["Code Execution"])
 v1_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 v1_router.include_router(progress.router, tags=["Progress"])
+v1_router.include_router(tts.router, tags=["Speech"])
 v1_router.include_router(analysis.router, prefix="/analysis", tags=["Detailed Analysis"])
 v1_router.include_router(resume.router, prefix="/resume", tags=["Resume"])
 
