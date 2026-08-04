@@ -365,7 +365,11 @@ class AnthropicProvider(BaseAIProvider):
             return [], turns
 
         block: dict = {"type": "text", "text": "\n\n".join(system_parts)}
-        if self._prompt_caching:
+        # Both must agree: the CALL SITE declares its system block is stable, and the
+        # deployment has not switched caching off. Either alone is not enough — a
+        # global flag would bill a 1.25x write on every call whose prompt is not
+        # static, which is the trap the setting was disabled to avoid.
+        if request.cache_system and self._prompt_caching:
             # Sonnet 5 only caches prefixes >= 1024 tokens. Shorter prompts
             # silently don't cache (no error, no charge) — verify with the
             # cache_read_input_tokens we log below.

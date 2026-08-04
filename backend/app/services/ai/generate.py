@@ -49,6 +49,7 @@ async def generate_structured(
     attempts_per_provider: int = 2,
     is_valid: Callable[[T], bool] | None = None,
     context: str = "ai_generation",
+    cache_system: bool = False,
 ) -> tuple[T, str]:
     """
     Generate a validated `schema` instance from the model, trying each provider
@@ -57,6 +58,12 @@ async def generate_structured(
     `cost_tier` declares how much reasoning the task is worth paying for on
     metered providers (see CostTier); free-tier providers ignore it. Pass it at
     every call site — the default is deliberately mid-range, not cheapest.
+
+    `cache_system` declares that this call's system block is byte-identical across
+    requests, so marking it cacheable produces reads rather than only writes. Set it ONLY
+    from a call site whose prompt template carries no per-request substitutions — a cache
+    write bills at 1.25x input, so getting this wrong costs 25% extra on every call
+    forever and never reads. See prompts/gd_panel.md and its test.
 
     Raises AIProviderUnavailableError if no provider produced a valid result.
     """
@@ -74,6 +81,7 @@ async def generate_structured(
                         max_tokens=max_tokens,
                         temperature=temperature,
                         cost_tier=cost_tier,
+                        cache_system=cache_system,
                     )
                 )
             except ProviderError:

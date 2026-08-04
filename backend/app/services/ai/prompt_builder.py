@@ -72,6 +72,33 @@ class PromptBuilder:
             ProviderMessage(role="user", content=user_content),
         ]
 
+    def chat_static(
+        self,
+        system_template: str,
+        user_content: str,
+    ) -> list[ProviderMessage]:
+        """
+        Build [system, user] where the system block is the template VERBATIM.
+
+        The point is that the system block comes out byte-identical on every call, which
+        is what makes prompt caching pay: a cached prefix reads at 0.1x input instead of
+        being re-charged in full. `chat()` cannot do this — it substitutes per-request
+        variables INTO the system template, so no two calls share a prefix and a cache
+        marker would bill a 1.25x write every time and never read.
+
+        So everything that varies per request has to be in `user_content`. A template
+        used here must contain no $variables at all; test_prompt_caching.py asserts that
+        for every template a call site marks cacheable, because the failure is silent —
+        the call still works, it just quietly costs 25% more forever.
+        """
+        return [
+            # Loaded, NOT rendered. safe_substitute on a template with no variables
+            # would be a no-op, but going through render() invites someone to pass a
+            # variable later and break the byte-identity without noticing.
+            ProviderMessage(role="system", content=self._loader.load(system_template)),
+            ProviderMessage(role="user", content=user_content),
+        ]
+
     def append_assistant(
         self,
         messages: list[ProviderMessage],

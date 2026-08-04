@@ -3,10 +3,13 @@
 Answering the direct question: **the $2/day cap — that is one user doing what, how many
 times?**
 
-Short answer: **$2/day is roughly 9 full interviews or 5 group discussions, across every
+Short answer: **$2/day is roughly 9 full interviews or 14 group discussions, across every
 user on the product combined.** One user doing one interview and one GD in a day spends
-**$0.59**, so the current cap supports about **3 such users per day** before it trips and
+**$0.37**, so the current cap supports about **5 such users per day** before it trips and
 everybody gets the unscored-report fallback until midnight UTC.
+
+(Both GD figures improved after this document's first version: prompt caching cut the GD
+round by 59%. See below.)
 
 That cap is a runaway-loop circuit breaker that has been doing duty as a daily allowance.
 It needs raising and, more importantly, splitting per user — see *What to change* below.
@@ -71,25 +74,38 @@ enough input in it to matter.
 
 | feature | calls | in | out | $/call | $/round | note |
 |---|---:|---:|---:|---:|---:|---|
-| `gd_panel_turn` | 26 | 2,606 | 350 | 0.0131 | **0.3398** | input grows with the transcript |
+| `gd_panel_turn` | 26 | 336 + 2,856 cached | 350 | **0.0045** | **0.1259** | prompt caching now on — was $0.0119/turn |
 | `gd_evaluation` | 1 | 1,463 | 800 | 0.0164 | **0.0164** | |
 | `gd_topic_prep` | 1 | 741 | 900 | 0.0157 | *0.0157* | custom topics only — **now cached** |
-| | | | | | **$0.3562** | |
+| | | | | | **$0.1423** | was $0.3562 |
 
-**The GD round is the most expensive thing in the product**, more than a full interview,
-and that was not obvious before measuring it. It is 26 small calls rather than one big
-one, and unlike everything else it is **input**-dominated: $0.0078 of input against
-$0.0053 of output per turn, because each turn re-sends a 1,906-token static system prompt
-plus the growing transcript.
+**Prompt caching is now on for this feature and it is measured, not projected.** The
+static rulebook is 2,856 tokens; the first turn of a round writes it to cache at 1.25×
+($0.0143) and every subsequent turn reads it at 0.1× ($0.0045 against $0.0119 before).
+Across 26 turns that is **$0.310 → $0.126, a 59% cut**, and it takes the whole GD round
+from $0.356 to **$0.142**. `$2/day` goes from ~6 GD rounds to **~14**.
 
-That makes it the one place where **prompt caching is worth real money** — 25 of the 26
-turns in a round could read that system block from cache at 0.1×, cutting roughly
-**$0.13 per round (about 37%)**. It is off today for a documented reason
-(`ANTHROPIC_PROMPT_CACHING` in `core/config.py`): `PromptBuilder` substitutes per-request
-variables *into* the system template, so no two requests share a prefix. Fixing it means
-restructuring `gd_panel.md` so the static rules stay in the system block and the
-per-round variables move to the user message. **Not yet done — the highest-value cost
-work outstanding.**
+The cache entry has a 5-minute TTL and each read refreshes it, so with a panel turn every
+18 seconds a round stays warm from start to finish.
+
+**The GD round WAS the most expensive thing in the product**, more than a full interview,
+and that was not obvious before measuring it. It is 26 small calls rather than one big one,
+and unlike everything else it was **input**-dominated: $0.0078 of input against $0.0053 of
+output per turn, because every turn re-sent the same static system prompt plus the growing
+transcript. At $0.142 it is now cheaper than an interview, and the report is once again the
+most expensive single call.
+
+That made it the one place where prompt caching was worth real money, and it is **now
+done and measured**: `gd_panel.md` carries no placeholders and is loaded verbatim as the
+system block, with the per-round content (roster, topic, transcript, situation, phase,
+name) moved into the user message by `_round_brief` in `api/v1/gd.py`. Caching is opt-in
+per call (`ProviderRequest.cache_system`) rather than a global setting, because a global
+flag would bill a 1.25× cache *write* on every other feature — whose prompts do still
+carry per-request substitutions — and never read. Only `gd_panel_turn` opts in.
+
+Realised saving: **59% off the round**, better than the 37% projected, because the static
+block turned out to be 2,856 tokens rather than the 1,906 estimated from the template
+alone.
 
 ---
 
@@ -99,9 +115,9 @@ work outstanding.**
 |---|---:|
 | full interviews, cold plan | **8.7** |
 | full interviews, plan cache hit | **12.0** |
-| full GD rounds | **5.6** |
+| full GD rounds | **14.0** (was 5.6 before caching) |
 | reports alone | **14.8** |
-| users doing 1 interview + 1 GD | **3.4** |
+| users doing 1 interview + 1 GD | **5.4** (was 3.4) |
 
 An earlier note in this repo said "~44 reports/day". That was derived from the
 2-question test report at 4.5¢; a real 12-question report is 13.5¢, so the true figure is
@@ -120,8 +136,7 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
 3. **Distinguish the two failures in the UI.** "You have used your practice for today" and
    "the service is over its safety limit" must not look the same, and neither should look
    like a crash. Today both produce the unscored-report placeholder.
-4. **Restructure `gd_panel.md` for prompt caching** — the single biggest saving available,
-   ~37% of the most expensive feature.
+4. ~~Restructure `gd_panel.md` for prompt caching~~ — **done**, 59% off the GD round.
 5. **Then re-derive this whole document from the `ai_usage` ledger**, which is what it is
    for. Every estimate above should become a measurement.
 

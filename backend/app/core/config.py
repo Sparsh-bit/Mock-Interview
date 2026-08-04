@@ -149,15 +149,20 @@ class Settings(BaseSettings):
         ),
     )
     ANTHROPIC_PROMPT_CACHING: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Mark the system prompt as cacheable. OFF by default and that is "
-            "deliberate: PromptBuilder substitutes per-request variables (company, "
-            "transcript, ...) INTO the system template, so every request has a "
-            "unique prefix. That means a cache WRITE at 1.25x input on every call "
-            "and never a read — strictly worse than not caching. Turn this on only "
-            "after restructuring prompts so the system block is byte-identical "
-            "across requests and the variables live in the user turn."
+            "Kill switch for prompt caching. Caching is now OPT-IN PER CALL "
+            "(ProviderRequest.cache_system), so this being on does not cache anything "
+            "by itself — a call site has to declare that its system block is "
+            "byte-identical across requests. That distinction is the whole point: this "
+            "setting used to mean 'cache every system prompt', which was strictly worse "
+            "than not caching, because PromptBuilder.chat substitutes per-request "
+            "variables INTO the system template, so every call was a cache WRITE at "
+            "1.25x input and never a read. Only gd_panel_turn opts in today: gd_panel.md "
+            "is loaded verbatim via chat_static with the per-round content in the user "
+            "message, and a GD round re-sends that same ~2100-token rulebook up to 26 "
+            "times. Set this false only to rule caching out while debugging a cost or "
+            "correctness question."
         ),
     )
     INTERVIEW_QUESTION_COUNT: int = Field(

@@ -77,6 +77,15 @@ class ProviderRequest(BaseModel):
     #: Providers that support a native JSON mode will enable it;
     #: others receive a prompt-level instruction.
     json_mode: bool = False
+    #: This call's system block is byte-identical across requests, so marking it
+    #: cacheable will produce cache READS and not just writes.
+    #:
+    #: Opt-in per call, deliberately. A cache write bills at 1.25x input, so switching
+    #: caching on for a call whose system block carries per-request substitutions costs
+    #: 25% extra every time and never reads — which is exactly why the provider-level
+    #: flag was left off. Only a call site that has made its system prompt static may
+    #: set this, and there is a test asserting the prompt really is static.
+    cache_system: bool = False
     #: Optionally override the configured model for a single request.
     model_override: str | None = None
 

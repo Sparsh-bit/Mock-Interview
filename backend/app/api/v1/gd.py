@@ -259,6 +259,44 @@ def _mentions(text: str, name: str) -> bool:
     return re.search(rf"(?<![\w']){re.escape(name)}(?![\w'])", text, re.IGNORECASE) is not None
 
 
+def _round_brief(request: GDTurnRequest) -> str:
+    """
+    Everything about THIS round, as the user message.
+
+    This content used to be substituted into the gd_panel system template, which meant no
+    two calls shared a system prefix and prompt caching could never pay. A GD round is up
+    to 26 turns each re-sending the same ~2100-token rulebook, so moving the variable part
+    down here turns 25 of those 26 system reads into cache hits at 0.1x input — about 37%
+    off the most expensive feature in the product.
+
+    Section headings mirror the ones the system prompt refers to, so the rules can point
+    at "the unanswered-question count in the user message" and mean something findable.
+    """
+    return "\n".join(
+        [
+            "## This round",
+            "",
+            "### Your panel",
+            _render_panel(),
+            "",
+            f"### The candidate's name\n{_candidate_name(request.candidate_name)}",
+            "",
+            f"### Topic\n{request.topic}",
+            "",
+            "### Discussion so far",
+            _render_transcript(request.history, window=_TRANSCRIPT_WINDOW),
+            "",
+            "### Current situation",
+            _describe_situation(request),
+            "",
+            f"Discussion phase: {request.phase}",
+            f"Direct questions the candidate has left unanswered: {request.ignored_questions}",
+            "",
+            "Give the next panelist contribution(s) now, as JSON.",
+        ]
+    )
+
+
 def _aimed_at_candidate(text: str, name: str, others: list[str]) -> bool:
     """
     Is this contribution putting a question to the CANDIDATE?
@@ -496,16 +534,9 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
     from app.services.ai.schemas import GDPanelTurn  # noqa: PLC0415
 
     builder = PromptBuilder(get_prompt_loader())
-    messages = builder.chat(
+    messages = builder.chat_static(
         system_template="gd_panel",
-        user_content="Give the next panelist contribution(s) now, as JSON.",
-        topic=request.topic,
-        panelists=_render_panel(),
-        transcript=_render_transcript(request.history, window=_TRANSCRIPT_WINDOW),
-        situation=_describe_situation(request),
-        candidate_name=_candidate_name(request.candidate_name),
-        phase=request.phase,
-        ignored_questions=str(request.ignored_questions),
+        user_content=_round_brief(request),
     )
 
     try:
@@ -521,6 +552,15 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
             is_valid=lambda t: bool(t.contributions),
             cost_tier=CostTier.CHEAP,
             context="gd_panel_turn",
+            # The one call site in the app that may set this. gd_panel.md is loaded
+            # verbatim via chat_static and carries no placeholders, so the system block
+            # is byte-identical across every turn of every round for every user — which
+            # is what makes the cache read rather than only write. A round is up to 26
+            # turns re-sending the same ~2100-token rulebook; cached, that is roughly 37%
+            # off the most expensive feature in the product. Guarded by
+            # tests/test_prompt_caching.py, because breaking it is silent and costs 25%
+            # MORE rather than failing.
+            cache_system=True,
         )
     except AIProviderUnavailableError:
         # Non-fatal: return an empty turn so the candidate can keep going.
