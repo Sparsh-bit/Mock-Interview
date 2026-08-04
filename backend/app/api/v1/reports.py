@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 import uuid
 from datetime import datetime
 from time import perf_counter
@@ -60,24 +59,40 @@ _report_rate_limit = rate_limiter(
 #: the WHOLE request including a cold start. That is why the budget was flat: a
 #: cold start costs ~37s, so 37 + 50 = 87s was the only safe assumption.
 #:
-#: But cold is the exception, not the rule. Process uptime tells us which case we
-#: are in — a request arriving two minutes after boot is not paying a cold start —
-#: so we can spend the headroom when it is genuinely there:
+#: But cold is the exception, not the rule, so the headroom can be spent when it is
+#: genuinely there:
 #:
-#:   cold (uptime < 120s):  37 + 50 = 87s   — unchanged, proven safe
-#:   warm (uptime > 120s):  1.5 + 85 = 87s  — same ceiling, 35 more seconds of work
+#:   cold:  37 + 50 = 87s   — unchanged, proven safe
+#:   warm:  1.5 + 85 = 87s  — same ceiling, 35 more seconds of actual work
 #:
-#: Both land in the same place against the gateway. Exceeding the budget is still
-#: not a failure: the handler falls back to the honest unscored report, which the
-#: candidate can regenerate.
+#: Both land in the same place against the gateway. Exceeding the budget is still not a
+#: failure: the handler falls back to the honest unscored report, which the candidate can
+#: regenerate.
+#:
+#: WHICH CASE ARE WE IN? This used to be "process uptime < 120s means cold", and that
+#: proxy is wrong in a way that shows up as reports timing out for no reason. A cold start
+#: is paid by the ONE request that triggers the boot — its gateway timer started 37s before
+#: our code ran. A request arriving 30 seconds later did not trigger anything: the process
+#: was already up, so its timer started when IT arrived, and it has the full window. Under
+#: the uptime rule that request got 50s instead of 85s purely because the container had
+#: been restarted recently, which is exactly when a restart storm makes reports fail. It
+#: also made the test suite flaky: a full run finishes inside 120s, so every report in it
+#: was scored against the cold budget while the app was thoroughly warm.
+#:
+#: So the signal is "has this process finished serving a request yet" — which is precisely
+#: the boot-triggering request and nothing else.
 _REPORT_AI_BUDGET_COLD_SECONDS = 50.0
 _REPORT_AI_BUDGET_WARM_SECONDS = 85.0
 
-#: Above this uptime the instance cannot be paying a cold start.
-_WARM_AFTER_SECONDS = 120.0
+#: Flipped true once this process has completed any request. Set by the request middleware
+#: in main.py, so it does not depend on a report being the first thing served.
+_served_a_request = False
 
-#: Monotonic clock at import, i.e. process start.
-_PROCESS_STARTED_AT = time.monotonic()
+
+def mark_request_served() -> None:
+    """Called once per request by the middleware; only the first call matters."""
+    global _served_a_request
+    _served_a_request = True
 
 #: How many reports may be generating at once, per process.
 #:
@@ -98,15 +113,14 @@ _report_slots = asyncio.Semaphore(_REPORT_CONCURRENCY)
 
 def report_ai_budget_seconds() -> float:
     """
-    How long AI report generation may run, given how long this process has been up.
+    How long AI report generation may run.
 
-    Monotonic, so a system clock change cannot make a cold instance look warm.
+    The tighter budget applies only to a request that may itself have paid the container
+    cold start — i.e. the first one this process serves. Everything after that has the
+    full gateway window available. See the note above _REPORT_AI_BUDGET_COLD_SECONDS.
     """
-    uptime = time.monotonic() - _PROCESS_STARTED_AT
     return (
-        _REPORT_AI_BUDGET_WARM_SECONDS
-        if uptime >= _WARM_AFTER_SECONDS
-        else _REPORT_AI_BUDGET_COLD_SECONDS
+        _REPORT_AI_BUDGET_WARM_SECONDS if _served_a_request else _REPORT_AI_BUDGET_COLD_SECONDS
     )
 
 #: Marker for the placeholder report written when AI scoring is unavailable. It

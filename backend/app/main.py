@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
+from app.api.v1.reports import mark_request_served
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
@@ -193,6 +194,12 @@ def create_app() -> FastAPI:
 
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        # This process has now served a request, so nothing after this point can be the
+        # one that paid the container cold start. Report generation reads this to choose
+        # its time budget — see _REPORT_AI_BUDGET_COLD_SECONDS in api/v1/reports.py.
+        # Set here rather than in the endpoint so the signal is true even when the first
+        # request served is something else entirely.
+        mark_request_served()
         structlog.contextvars.unbind_contextvars("request_id")
         return response
 
