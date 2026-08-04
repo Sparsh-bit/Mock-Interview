@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -229,5 +231,53 @@ describe('scaling beyond three', () => {
 
   it('handles an empty speaker list', () => {
     expect(allocatePanelVoices(RICH, []).size).toBe(0);
+  });
+});
+
+/** usePanelVoices' body with comments removed, so an assertion cannot match prose. */
+function hookSource(): string {
+  const src = readFileSync(new URL('../../hooks/useSpeech.ts', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('export function usePanelVoices'));
+  return body
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//'))
+    .join('\n');
+}
+
+describe('the no-voices fallback must be REACHABLE from the hook', () => {
+  /**
+   * The bug this exists for, which shipped and was reported as "Meera has a male voice".
+   *
+   * `allocatePanelVoices([], panel)` correctly assigns gender-anchored pitches, and the test
+   * above proves it. But usePanelVoices opened with `if (!available.length) return;` — so
+   * when the browser had not finished enumerating voices, voiceMap stayed EMPTY and this
+   * branch was never called. speakAs then read `assigned?.pitch ?? 1`, giving every panelist
+   * pitch 1.0 and no voice: three people in the browser's single default voice.
+   *
+   * A passing unit test on an unreachable code path is worse than no test, because it reads
+   * as coverage. So this asserts the CALLER, by source — the hook must commit an allocation
+   * on every path, and there is no way to check that from the pure module.
+   */
+  it('usePanelVoices commits an allocation even with no voices available', () => {
+    // Comments stripped before matching. The doc comment in the hook QUOTES the old buggy
+    // line to explain the bug, and matching raw source found its own explanation — the same
+    // way a test for template placeholders once matched the word "$variable" in a comment
+    // about placeholders.
+    const hook = hookSource();
+
+    expect(hook).not.toMatch(/if\s*\(\s*!available\.length\s*\)\s*return\s*;/);
+    // And the fallback is called with an explicitly empty list, which is the only way the
+    // pitch-only branch is ever exercised.
+    expect(hook).toMatch(/allocatePanelVoices\(\[\], speakers\)/);
+  });
+
+  it('usePanelVoices polls, because voiceschanged cannot be relied on', () => {
+    // Safari frequently never fires `voiceschanged` and simply starts returning a populated
+    // list. Listening only for the event leaves those users on the pitch-only fallback for a
+    // whole round while real voices sat there unused.
+    const hook = hookSource();
+    expect(hook).toMatch(/setInterval/);
+    expect(hook).toMatch(/voiceschanged/);
   });
 });

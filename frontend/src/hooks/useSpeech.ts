@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PauseEvent } from '@/lib/speech/delivery';
 import { correctTechnicalTerms } from '@/lib/speech/vocabulary';
-import { allocatePanelVoices, type PanelVoice } from '@/lib/speech/panel-voices';
+import {
+  allocatePanelVoices,
+  type PanelSpeaker,
+  type PanelVoice,
+} from '@/lib/speech/panel-voices';
 import { personaFor } from '@/lib/speech/persona';
 import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
 // qualityTier is also re-exported at the bottom of this file, but `export … from`
@@ -542,24 +546,68 @@ export function usePanelVoices(
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !panel.length) return;
 
-    const allocate = () => {
+    const speakers: PanelSpeaker[] = panel.map((p) => ({
+      name: p.name,
+      gender: p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown',
+    }));
+
+    /**
+     * Commit an allocation, and say whether the real voice list was available.
+     *
+     * THE BUG THIS FIXES. This used to be `if (!available.length) return;` — so when the
+     * voice list was not ready, voiceMap stayed EMPTY. speakAs then read
+     * `assigned?.pitch ?? 1` and every panelist got pitch 1.0 and no voice, meaning all
+     * three spoke in the browser's default voice at the same pitch. On macOS that default
+     * is Samantha, so Arjun sounded female too — the panel was one woman reading three
+     * name tags, which is the exact failure this whole layer exists to prevent.
+     *
+     * And allocatePanelVoices' no-voices branch, which assigns gender-anchored pitches
+     * (0.86 male / 1.14 female) precisely for this case, was UNREACHABLE from here. It has
+     * a passing unit test, which is why nothing caught it: the fallback worked, it just
+     * could never be triggered.
+     *
+     * So an allocation is always committed. With no voices that is pitch-only, which is
+     * degraded but still three distinguishable people.
+     */
+    const allocate = (): boolean => {
       const available = window.speechSynthesis.getVoices();
-      // Voices load asynchronously; an empty list here is normal on first paint.
-      if (!available.length) return;
-      setVoiceMap(
-        allocatePanelVoices(
-          available,
-          panel.map((p) => ({
-            name: p.name,
-            gender: p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown',
-          })),
-        ),
-      );
+      if (available.length) {
+        setVoiceMap(allocatePanelVoices(available, speakers));
+        return true;
+      }
+      // Pitch-only fallback, committed once. The functional form matters: this runs on
+      // every poll tick below, and unconditionally setting a fresh Map would re-render
+      // forever.
+      setVoiceMap((prev) => (prev.size ? prev : allocatePanelVoices([], speakers)));
+      return false;
     };
 
-    allocate();
+    if (allocate()) return;
+
+    /*
+     * POLL, because `voiceschanged` cannot be relied on.
+     *
+     * getVoices() is empty until the engine has enumerated its voices, and the event that
+     * announces it is inconsistent: Chrome fires it, sometimes late; Safari frequently
+     * never fires it at all and simply starts returning a populated list. Listening only
+     * for the event means Safari users get the pitch-only fallback for the whole round
+     * even though real voices were available seconds in.
+     *
+     * 250ms x 20 is five seconds — well past when any engine has settled, and it stops
+     * either way, so a browser with genuinely no voices costs five seconds of a timer
+     * rather than an endless one.
+     */
+    let tries = 0;
+    const poll = window.setInterval(() => {
+      tries += 1;
+      if (allocate() || tries >= 20) window.clearInterval(poll);
+    }, 250);
+
     window.speechSynthesis.addEventListener('voiceschanged', allocate);
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', allocate);
+    return () => {
+      window.clearInterval(poll);
+      window.speechSynthesis.removeEventListener('voiceschanged', allocate);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelKey]);
 
