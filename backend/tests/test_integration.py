@@ -332,9 +332,25 @@ class TestReportEndpoints:
         # legitimate runtime outcome — the endpoint degrades to it rather than 503ing
         # a candidate — but this test exists to prove the AI path works end to end, so
         # accepting it would make the test pass while the thing it covers is broken.
+        #
+        # ONE RETRY, because the endpoint's contract IS placeholder-then-retry and this
+        # test should exercise that contract rather than assume the provider is fast.
+        # Report generation against a live model takes ~21s typically and occasionally
+        # runs past its 85s budget purely on provider latency; without a retry this test
+        # failed roughly one run in five for a reason that had nothing to do with the
+        # code. Retrying also covers the recovery path — should_regenerate replacing a
+        # placeholder in place — which nothing else asserts.
+        if data["overall_score_label"] == "Pending":
+            retry = await async_client.post(
+                f"/api/v1/reports/{session_id}/generate", headers=auth_headers
+            )
+            assert retry.status_code == 200, retry.text
+            data = retry.json()
+
         assert data["overall_score_label"] != "Pending", (
-            "got the unscored placeholder, which means the AI report path did not "
-            f"complete: {data['executive_summary']}"
+            "the AI report path did not complete on either attempt — this is a real "
+            f"failure, not provider latency: {data['executive_summary']} "
+            f"(reason: {data.get('unscored_reason')})"
         )
 
         for key in (

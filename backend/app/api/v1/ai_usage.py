@@ -40,6 +40,7 @@ from app.core.config import settings
 from app.core.security import AdminUser
 from app.db.session import get_db
 from app.models.ai_usage import AIUsage
+from app.services.ai import vector_cache
 
 router = APIRouter(prefix="/ai-usage", tags=["ai-usage (temporary)"])
 
@@ -241,4 +242,10 @@ async def get_ai_usage(
             "unattributed_cost_usd": _money(unattributed),
         },
         "daily_budget_usd": settings.AI_DAILY_BUDGET_USD,
+        "user_daily_budget_usd": settings.AI_USER_DAILY_BUDGET_USD,
+        # Cache performance, joined by the SAME `feature` label as the spend above, so
+        # "what did this feature cost" and "how often did we avoid paying for it" read
+        # side by side. Entries with hit_count 0 are the honest signal that caching a
+        # feature bought nothing — a table of those is a table of wasted writes.
+        "cache": await vector_cache.stats(db),
     }

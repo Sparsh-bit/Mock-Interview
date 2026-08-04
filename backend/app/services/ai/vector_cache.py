@@ -197,6 +197,12 @@ _MAX_DISTANCE = 1.0 - _SIMILARITY_THRESHOLD
 #: that hundreds of entries cost nothing to search, and the question bank is finite.
 _MAX_ROWS_PER_FEATURE = 5_000
 
+#: Run eviction on every Nth write rather than every write. The DELETE is much more
+#: expensive than the INSERT it follows, and the only cost of batching is that a feature
+#: can sit up to this many rows above its cap.
+_EVICT_EVERY = 50
+_writes_since_evict = 0
+
 
 def normalize_key(key: str) -> str:
     """
@@ -416,6 +422,23 @@ async def store(
             },
         )
         logger.debug("ai_cache_stored", feature=feature, key=key[:80])
+
+        # Trim opportunistically. Railway runs one service and there is no scheduler, so
+        # if eviction is not driven from the write path it never happens at all — which is
+        # how a cache becomes a slow disk-space outage. (It was documented as
+        # "called opportunistically after a store" and then never called: caught by
+        # noticing evict_lru had no callers.)
+        #
+        # Every _EVICT_EVERY writes rather than every write, because a DELETE with an
+        # OFFSET subquery is far more expensive than the INSERT it follows and the table
+        # cannot overshoot its cap by more than that many rows.
+        global _writes_since_evict
+        _writes_since_evict += 1
+        if _writes_since_evict >= _EVICT_EVERY:
+            _writes_since_evict = 0
+            removed = await evict_lru(db, feature=feature)
+            if removed:
+                logger.info("ai_cache_evicted", feature=feature, removed=removed)
     except Exception:
         logger.warning("ai_cache_store_failed", feature=feature, exc_info=True)
 
