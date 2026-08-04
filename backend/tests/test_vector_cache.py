@@ -13,15 +13,15 @@ separately against real pgvector (see tests/test_vector_cache_db.py).
 
 import pytest
 
+from app.models.ai_cache import EMBEDDING_DIM
 from app.services.ai.vector_cache import (
+    _SIMILARITY_THRESHOLD,
     CACHEABLE_FEATURES,
     UncacheableFeature,
-    _SIMILARITY_THRESHOLD,
     embed,
     key_hash,
     normalize_key,
 )
-from app.models.ai_cache import EMBEDDING_DIM
 
 
 def cos(a: str, b: str) -> float:
@@ -64,7 +64,7 @@ class TestTheTenancyAllowlist:
             )
 
     def test_the_allowlist_holds_only_public_topic_data(self):
-        assert CACHEABLE_FEATURES == frozenset({"gd_topic_prep", "interview_plan"})
+        assert frozenset({"gd_topic_prep", "interview_plan"}) == CACHEABLE_FEATURES
 
     @pytest.mark.asyncio
     async def test_an_unlisted_feature_is_refused_at_runtime(self):
@@ -220,7 +220,6 @@ class TestTheTestFixtureCannotDriftFromTheMigration:
 
     def test_the_dimension_agrees_across_all_three_places(self):
         import pathlib
-        import re
 
         from app.models.ai_cache import EMBEDDING_DIM
 

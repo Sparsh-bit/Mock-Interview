@@ -10,6 +10,8 @@ have to hold for the split to mean anything.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from app.api.v1.reports import (
@@ -19,11 +21,9 @@ from app.api.v1.reports import (
     _REASON_USER_QUOTA,
     _classify_failure,
 )
-import uuid
-
 from app.core.config import settings
-from app.services.ai import anthropic_provider as ap
 from app.core.exceptions import AIProviderUnavailableError
+from app.services.ai import anthropic_provider as ap
 
 
 class TestTheTwoCapsAreDifferentThings:

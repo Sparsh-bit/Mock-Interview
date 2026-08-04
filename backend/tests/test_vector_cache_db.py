@@ -20,7 +20,6 @@ from sqlalchemy import text
 
 from app.services.ai import vector_cache as vc
 
-
 #: Skip rather than fail when there is no database. These are the only tests in the
 #: suite that require one plus the vector extension, and CI runs lint and typecheck
 #: only — a hard failure there would say "the cache is broken" when it means "there is
