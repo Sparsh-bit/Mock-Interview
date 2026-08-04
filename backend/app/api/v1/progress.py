@@ -23,7 +23,10 @@ from pydantic import BaseModel
 from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import get_db
 from app.models.progress import RatingEvent
 from app.services.progress.rating import (
@@ -37,6 +40,17 @@ from app.services.progress.rating import (
 from app.services.progress.recorder import current_rating
 
 router = APIRouter(prefix="/progress", tags=["progress"])
+
+#: These are cheap indexed reads, so this is not about cost. It is about one
+#: authenticated client in a retry loop — or a scraper holding a valid token — issuing
+#: unbounded queries against a database shared with everyone else. The percentile query
+#: in particular is a window function over every active user's newest rating.
+_read_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_READ_PER_MINUTE,
+    window_seconds=60,
+    key_builder=lambda user_id: CacheKeys.rate_limit_read(user_id),
+    action="loading your standing",
+)
 
 
 class TierProgress(BaseModel):
@@ -118,7 +132,11 @@ def _note(ev: RatingEvent) -> str:
     return "Solid round against a fair expectation."
 
 
-@router.get("", summary="The candidate's rating, rank and cleared-round ledger")
+@router.get(
+    "",
+    summary="The candidate's rating, rank and cleared-round ledger",
+    dependencies=[Depends(_read_rate_limit)],
+)
 async def get_progress(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),  # noqa: B008

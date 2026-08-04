@@ -177,6 +177,18 @@ class CacheKeys:
         return f"rate_limit:report:{user_id}"
 
     @staticmethod
+    def rate_limit_read(user_id: str) -> str:
+        """
+        Plain authenticated reads — standing, profile, stats.
+
+        These cost no AI and touch few rows, so the limit is not about cost. It is about
+        one authenticated client in a retry loop, or a scraper with a valid token, being
+        able to issue unbounded queries against a shared Postgres. Generous enough that
+        no honest UI notices, low enough that a runaway loop stops.
+        """
+        return f"rate_limit:read:{user_id}"
+
+    @staticmethod
     def rate_limit_admin(user_id: str) -> str:
         """Admin mutations. Own namespace so it cannot borrow another budget."""
         return f"rate_limit:admin:{user_id}"

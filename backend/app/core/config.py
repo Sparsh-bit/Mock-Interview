@@ -35,6 +35,17 @@ class Settings(BaseSettings):
 
     # ── Application ───────────────────────────────────────────────────────
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
+    #: Supabase issues aud="authenticated" for a signed-in user. Verified rather than
+    #: skipped: without it, a token minted for a different audience — a service role, or
+    #: another project sharing a secret — satisfies this API as an ordinary user.
+    SUPABASE_JWT_AUDIENCE: str = "authenticated"
+    #: Accept a JWT WITHOUT verifying its signature when no key is available. A total
+    #: auth bypass, so it is off by default and additionally requires
+    #: ENVIRONMENT=development — see _unverified_jwt_allowed in core/security.py. The
+    #: previous behaviour keyed off ENVIRONMENT alone, which DEFAULTS to development, so
+    #: a deployment that forgot to set it accepted forged tokens the first time the JWKS
+    #: endpoint hiccuped. Never set this outside local development.
+    ALLOW_UNVERIFIED_JWT: bool = False
     APP_NAME: str = "InterviewOS"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
@@ -269,6 +280,11 @@ class Settings(BaseSettings):
     #: cannot finish six interviews in an hour, and the endpoint already returns an
     #: existing report without regenerating, so repeat views do not count against it.
     RATE_LIMIT_REPORT_PER_HOUR: int = 6
+    #: Authenticated read endpoints (standing, profile, stats) per minute per user.
+    #: 120 is two a second sustained — far above anything the UI does, including a
+    #: dashboard that refetches on focus — but it stops an authenticated retry loop from
+    #: issuing unbounded queries against a shared database.
+    RATE_LIMIT_READ_PER_MINUTE: int = 120
 
     # ── Code execution (self-hosted Piston) ───────────────────────────────
     PISTON_BASE_URL: str = Field(

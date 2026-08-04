@@ -47,6 +47,33 @@ CREDENTIALS_EXCEPTION = HTTPException(
 
 _HS_ALGORITHMS = {"HS256", "HS384", "HS512"}
 
+#: Asymmetric algorithms this service will accept. An allowlist, because the
+#: alternative is trusting the token's own header to say how it should be verified.
+#:
+#: Supabase signs with ES256 (current projects) or RS256 (older ones). Anything else —
+#: "none" above all — is refused before a key is even looked up. The classic
+#: algorithm-confusion attack is narrower here than usual, because each branch already
+#: uses a branch-appropriate key source rather than one shared key, but "the attack we
+#: can think of does not work" is a weaker property than "only the two algorithms we
+#: actually issue are accepted".
+_ASYMMETRIC_ALGORITHMS = {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
+
+
+def _unverified_jwt_allowed() -> bool:
+    """
+    May this process accept a token WITHOUT verifying its signature?
+
+    Reading an unverified token means anyone can mint any identity, so this is a total
+    auth bypass and it needs to be impossible to enable by accident.
+
+    It used to be gated on `settings.is_development` alone — and ENVIRONMENT defaults to
+    "development". So a deployment that simply forgot to set ENVIRONMENT=production
+    accepted forged tokens the moment the JWT secret was missing or the JWKS endpoint
+    was briefly unreachable, with nothing in the logs saying auth had been disabled.
+    Two independent conditions now have to hold, one of which nobody sets by omission.
+    """
+    return settings.ALLOW_UNVERIFIED_JWT and settings.is_development
+
 # ─── JWKS cache ────────────────────────────────────────────────────────────
 # Supabase's signing keys rotate rarely; a short in-process cache avoids a
 # network round-trip on every request without risking long-lived staleness.
@@ -103,14 +130,18 @@ async def verify_supabase_jwt(token: str) -> dict:
         raise CREDENTIALS_EXCEPTION from exc
 
     alg = header.get("alg", "")
+    if alg not in _HS_ALGORITHMS and alg not in _ASYMMETRIC_ALGORITHMS:
+        # Covers alg:"none" and every other unexpected value, before any key lookup.
+        logger.warning("jwt_algorithm_not_permitted", alg=alg)
+        raise CREDENTIALS_EXCEPTION
 
     if alg in _HS_ALGORITHMS:
         secret_unconfigured = (
             not settings.SUPABASE_JWT_SECRET or settings.SUPABASE_JWT_SECRET == "your-jwt-secret"
         )
         if secret_unconfigured:
-            if not settings.is_development:
-                logger.error("jwt_secret_unconfigured_in_non_development")
+            if not _unverified_jwt_allowed():
+                logger.error("jwt_secret_unconfigured_refusing_unverified_token")
                 raise CREDENTIALS_EXCEPTION
             return jwt.get_unverified_claims(token)
 
@@ -118,8 +149,11 @@ async def verify_supabase_jwt(token: str) -> dict:
             return jwt.decode(
                 token,
                 settings.SUPABASE_JWT_SECRET,
-                algorithms=[alg],
-                options={"verify_aud": False},
+                # The whole HS set, not the header's claim. Narrowing to `alg` would be
+                # taking the attacker's word for which algorithm to use; both are inside
+                # the allowlist checked above, so this only removes the header as an input.
+                algorithms=sorted(_HS_ALGORITHMS),
+                audience=settings.SUPABASE_JWT_AUDIENCE,
             )
         except JWTError as exc:
             logger.warning("jwt_verification_failed", error=str(exc), alg=alg)
@@ -131,7 +165,7 @@ async def verify_supabase_jwt(token: str) -> dict:
         keys = await _get_jwks()
     except Exception as exc:  # network error, bad JWKS response, etc.
         logger.error("jwks_fetch_failed", error=str(exc))
-        if settings.is_development:
+        if _unverified_jwt_allowed():
             return jwt.get_unverified_claims(token)
         raise CREDENTIALS_EXCEPTION from exc
 
@@ -141,11 +175,18 @@ async def verify_supabase_jwt(token: str) -> dict:
         raise CREDENTIALS_EXCEPTION
 
     try:
+        # The KEY declares its algorithm; the token does not get a say. The old
+        # `matching_key.get("alg", alg)` fell back to the header when a JWKS entry omitted
+        # `alg`, which handed that decision back to the caller.
+        key_alg = matching_key.get("alg")
+        if key_alg not in _ASYMMETRIC_ALGORITHMS:
+            logger.warning("jwks_key_algorithm_not_permitted", kid=kid, alg=key_alg)
+            raise CREDENTIALS_EXCEPTION
         return jwt.decode(
             token,
             matching_key,
-            algorithms=[matching_key.get("alg", alg)],
-            options={"verify_aud": False},
+            algorithms=[key_alg],
+            audience=settings.SUPABASE_JWT_AUDIENCE,
         )
     except JWTError as exc:
         logger.warning("jwt_verification_failed", error=str(exc), alg=alg)

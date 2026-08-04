@@ -719,11 +719,27 @@ class InterviewOrchestrator:
                         ordered.append(q)
                         chosen.add(id(q))
 
-        for q in ordered:
-            ordered_ids.append(str(q.id))
-            topic = await self.db.get(Topic, q.topic_id)
-            if topic and topic.name not in topics:
-                topics.append(topic.name)
+        ordered_ids.extend(str(q.id) for q in ordered)
+
+        # ONE query for every topic in the plan, not one per question.
+        #
+        # This was `db.get(Topic, q.topic_id)` inside the loop. The identity map made it
+        # at most one round trip per DISTINCT topic rather than per question, which is why
+        # it never looked slow — but a 12-question plan still spans several topics, so a
+        # cold session start paid several sequential round trips where one does. At a
+        # thousand candidates starting interviews inside the same few minutes, which is
+        # exactly what a campus drive looks like, that difference is thousands of extra
+        # queries against a shared pool.
+        topic_ids = list(dict.fromkeys(q.topic_id for q in ordered if q.topic_id))
+        if topic_ids:
+            topic_result = await self.db.execute(select(Topic).where(Topic.id.in_(topic_ids)))
+            by_id = {t.id: t for t in topic_result.scalars()}
+            # Ordered by the PLAN, not by whatever order the database returned, because
+            # this list is shown to the candidate as the topics they will be asked about.
+            for q in ordered:
+                topic = by_id.get(q.topic_id)
+                if topic and topic.name not in topics:
+                    topics.append(topic.name)
 
         return ordered_ids, topics
 
@@ -1192,11 +1208,23 @@ class InterviewOrchestrator:
         # seeding everything under a single "Java Fundamentals" topic — as this
         # did — made the topic breakdown a single bar and told a candidate nothing
         # about where they were weak.
+        # Fetch every existing topic for this category in one query, then fill the gaps.
+        # This looked up each bank topic individually — around twenty round trips — and
+        # while seeding only runs when the bank is empty, it runs INSIDE a candidate's
+        # first request, so they wore all of it.
+        wanted = list(dict.fromkeys(q["topic"] for q in JAVA_QUESTION_BANK))
+        existing_topics = {
+            t.name: t
+            for t in (
+                await self.db.execute(
+                    select(Topic).where(Topic.category_id == cat.id, Topic.name.in_(wanted))
+                )
+            ).scalars()
+        }
+
         topic_rows: dict[str, Topic] = {}
-        for name in dict.fromkeys(q["topic"] for q in JAVA_QUESTION_BANK):
-            row = await self.db.scalar(
-                select(Topic).where(Topic.category_id == cat.id, Topic.name == name)
-            )
+        for name in wanted:
+            row = existing_topics.get(name)
             if not row:
                 row = Topic(
                     id=uuid.uuid4(),
@@ -1223,14 +1251,28 @@ class InterviewOrchestrator:
             for q in JAVA_QUESTION_BANK
         ]
 
+        # And one query for every bank question that already exists, rather than one per
+        # question — this is the bigger of the two, because the bank is ~37 questions.
+        # Bank questions are session_id IS NULL by definition (migration 010), so this is
+        # the same predicate the loop used, hoisted out of it.
+        wanted_contents = [sq["content"] for sq in sample_questions]
+        # Whole rows, not just contents: the branch below reuses the existing Question
+        # object when the bank question is already seeded.
+        already = {
+            q.content: q
+            for q in (
+                await self.db.execute(
+                    select(Question).where(
+                        Question.content.in_(wanted_contents),
+                        Question.session_id.is_(None),
+                    )
+                )
+            ).scalars()
+        }
+
         created_questions = []
         for sq in sample_questions:
-            existing = await self.db.scalar(
-                select(Question).where(
-                    Question.content == sq["content"],
-                    Question.session_id.is_(None),
-                )
-            )
+            existing = already.get(str(sq["content"]))
             if not existing:
                 q = Question(
                     id=uuid.uuid4(),

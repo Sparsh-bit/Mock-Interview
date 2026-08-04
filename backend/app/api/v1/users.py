@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from app.core.config import settings
+from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import AsyncSession, get_db
 from app.models.session import InterviewSession
 from app.models.user import Profile
@@ -85,7 +88,21 @@ class SessionSummaryResponse(BaseModel):
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
-@router.get("/me/profile", response_model=ProfileResponse)
+#: Authenticated reads. Shared namespace with /progress, because a client hammering the
+#: dashboard hits several of these together and they should draw on one budget rather than
+#: each getting its own.
+_read_rate_limit = rate_limiter(
+    limit=settings.RATE_LIMIT_READ_PER_MINUTE,
+    window_seconds=60,
+    key_builder=lambda user_id: CacheKeys.rate_limit_read(user_id),
+    action="loading your account",
+)
+
+
+@router.get(
+    "/me/profile", response_model=ProfileResponse,
+    dependencies=[Depends(_read_rate_limit)],
+)
 async def get_profile(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -113,7 +130,11 @@ async def get_profile(
     )
 
 
-@router.patch("/me/profile", response_model=ProfileResponse)
+@router.patch(
+    "/me/profile",
+    response_model=ProfileResponse,
+    dependencies=[Depends(_read_rate_limit)],
+)
 async def update_profile(
     body: UpdateProfileRequest,
     current_user: CurrentUser,
@@ -197,7 +218,10 @@ async def _streak_days(db: AsyncSession, user_id: uuid.UUID) -> int:
     return streak
 
 
-@router.get("/me/stats", response_model=UserStatsResponse)
+@router.get(
+    "/me/stats", response_model=UserStatsResponse,
+    dependencies=[Depends(_read_rate_limit)],
+)
 async def get_stats(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
@@ -277,7 +301,10 @@ async def get_stats(
     )
 
 
-@router.get("/me/sessions", response_model=list[SessionSummaryResponse])
+@router.get(
+    "/me/sessions", response_model=list[SessionSummaryResponse],
+    dependencies=[Depends(_read_rate_limit)],
+)
 async def get_session_history(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
