@@ -79,6 +79,22 @@ _WARM_AFTER_SECONDS = 120.0
 #: Monotonic clock at import, i.e. process start.
 _PROCESS_STARTED_AT = time.monotonic()
 
+#: How many reports may be generating at once, per process.
+#:
+#: The queue that replaced the accidental one. Report generation used to hold a pooled
+#: Postgres connection for its whole ~21s, so the 30-connection pool was itself the
+#: limiter — badly, because exhausting it stalled every OTHER endpoint too. With the
+#: connection released across the model call (see generate_report) a thousand concurrent
+#: requests could all reach the provider at once, which trades a database outage for a
+#: rate-limit storm and a day's budget spent in minutes.
+#:
+#: 4 is chosen against the numbers rather than picked: a report is ~21s, so four slots
+#: sustain roughly 11 reports a minute per process, which is a busy drive; and four
+#: in-flight ~17k-token prompts is bounded memory. Raise it with replica count, not
+#: instead of it.
+_REPORT_CONCURRENCY = 4
+_report_slots = asyncio.Semaphore(_REPORT_CONCURRENCY)
+
 
 def report_ai_budget_seconds() -> float:
     """
@@ -611,6 +627,29 @@ async def generate_report(
     unscored_reason = _REASON_PROVIDER
     last_raw_content = ""
     _ai_started = perf_counter()
+
+    # RELEASE THE DATABASE CONNECTION BEFORE THE MODEL CALL.
+    #
+    # This is the change that decides whether a campus drive takes the site down, and it
+    # is worth being precise about why. The AI call is awaited, so it does NOT block the
+    # event loop — uvicorn happily serves other requests during those twenty seconds.
+    # What it DID hold is a pooled Postgres connection, because Depends(get_db) opens the
+    # session when the request starts and closes it when the response returns.
+    #
+    # The pool is DB_POOL_SIZE + DB_MAX_OVERFLOW = 30 per process. A report holds one
+    # connection for ~21s, so a sustained ~1.4 reports a second exhausts it — and once
+    # exhausted, EVERY other endpoint blocks for up to DB_POOL_TIMEOUT (30s) waiting for
+    # a connection. A thousand candidates finishing interviews in the same ten minutes,
+    # which is exactly what a drive looks like, is several times that rate. The symptom
+    # would not be "reports are slow", it would be the whole API timing out.
+    #
+    # Committing here returns the connection to the pool. The reads above are already
+    # done and the session factory sets expire_on_commit=False, so every object loaded
+    # so far stays usable; the write below re-acquires a connection lazily. Net effect:
+    # a report occupies a connection for milliseconds at each end instead of for the
+    # whole generation.
+    await db.commit()
+
     try:
         # HARD time budget. Managed hosts (Render included) cut the request at
         # their gateway after ~100s and return a 502 that carries no CORS
@@ -618,49 +657,62 @@ async def generate_report(
         # a real failure. Report generation is the slowest AI path in the app
         # (DEEP tier buys reasoning), so it must be capped well inside that
         # window and degrade to the heuristic report rather than be killed.
-        ai_report, last_raw_content = await asyncio.wait_for(
-            generate_structured(
-                ReportGeneratorResponse,
-                messages,
-                # Output is 5x the price of input and this is the largest
-                # response in the app, so the budget is what THIS report needs
-                # -- scaled to the question count -- rather than a flat constant
-                # that is simultaneously wasteful for short interviews and too
-                # small for long ones.
-                max_tokens=report_token_budget(len(transcript_rows)),
-                # One attempt per provider: a second full retry cannot fit in the
-                # budget below, and the heuristic fallback is a better use of the
-                # remaining time than a retry that gets cut off.
-                #
-                # The fallback provider is deliberately KEPT in the chain. It is worth
-                # the least when the primary is merely slow and the most when the
-                # primary refuses outright — which is exactly what the daily spend cap
-                # does, instantly and for the rest of the UTC day. Removing it to give
-                # the primary two attempts would mean that once the cap is hit, nobody
-                # gets a report at all until midnight.
-                attempts_per_provider=1,
-                # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
-                # as output and roughly doubled the cost of the single most
-                # expensive call in the app. The scoring rubric is already
-                # explicit in the prompt, so it does not need to reason its way
-                # to the criteria.
-                cost_tier=CostTier.BALANCED,
-                # Reject a report that omits the two sections a candidate
-                # actually reads. Both are optional in the schema
-                # (default_factory), and the prompt only showed them in an
-                # example — so when the model economised on a long response it
-                # dropped them and the report saved with a blank competencies
-                # panel and no per-question breakdown. Every report in production
-                # had dimension_scores={} and question_analysis=[].
-                #
-                # Rejecting means falling back to the honest unscored report,
-                # which the candidate can regenerate. That is strictly better than
-                # storing a report that looks finished and is not.
-                is_valid=lambda r: _report_is_complete(r, len(transcript_rows)),
-                context="report_generation",
-            ),
-            timeout=report_ai_budget_seconds(),
-        )
+        # And cap how many reports may be generating at once, per process.
+        #
+        # Releasing the connection above means a thousand concurrent requests can now all
+        # reach the model instead of queuing on the pool — which trades a database
+        # outage for a provider rate-limit storm and a budget drained in minutes. The
+        # semaphore is the actual queue: excess requests wait here, cheaply, holding no
+        # connection. It also bounds peak memory, since each in-flight report holds a
+        # ~17k-token prompt.
+        #
+        # Waiting counts against the same wall-clock budget as generating, deliberately:
+        # a candidate who has been queued for 50 seconds is better served the honest
+        # unscored placeholder with a retry than a request that hangs past the gateway.
+        async with _report_slots:
+            ai_report, last_raw_content = await asyncio.wait_for(
+                generate_structured(
+                    ReportGeneratorResponse,
+                    messages,
+                    # Output is 5x the price of input and this is the largest
+                    # response in the app, so the budget is what THIS report needs
+                    # -- scaled to the question count -- rather than a flat constant
+                    # that is simultaneously wasteful for short interviews and too
+                    # small for long ones.
+                    max_tokens=report_token_budget(len(transcript_rows)),
+                    # One attempt per provider: a second full retry cannot fit in the
+                    # budget below, and the heuristic fallback is a better use of the
+                    # remaining time than a retry that gets cut off.
+                    #
+                    # The fallback provider is deliberately KEPT in the chain. It is worth
+                    # the least when the primary is merely slow and the most when the
+                    # primary refuses outright — which is exactly what the daily spend cap
+                    # does, instantly and for the rest of the UTC day. Removing it to give
+                    # the primary two attempts would mean that once the cap is hit, nobody
+                    # gets a report at all until midnight.
+                    attempts_per_provider=1,
+                    # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
+                    # as output and roughly doubled the cost of the single most
+                    # expensive call in the app. The scoring rubric is already
+                    # explicit in the prompt, so it does not need to reason its way
+                    # to the criteria.
+                    cost_tier=CostTier.BALANCED,
+                    # Reject a report that omits the two sections a candidate
+                    # actually reads. Both are optional in the schema
+                    # (default_factory), and the prompt only showed them in an
+                    # example — so when the model economised on a long response it
+                    # dropped them and the report saved with a blank competencies
+                    # panel and no per-question breakdown. Every report in production
+                    # had dimension_scores={} and question_analysis=[].
+                    #
+                    # Rejecting means falling back to the honest unscored report,
+                    # which the candidate can regenerate. That is strictly better than
+                    # storing a report that looks finished and is not.
+                    is_valid=lambda r: _report_is_complete(r, len(transcript_rows)),
+                    context="report_generation",
+                ),
+                timeout=report_ai_budget_seconds(),
+            )
     except (AIProviderUnavailableError, TimeoutError) as exc:
         unscored_reason = _classify_failure(exc)
         logger.warning(
