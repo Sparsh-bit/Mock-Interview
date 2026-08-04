@@ -1,4 +1,7 @@
-# Deploying to Railway + Supabase
+# Deploying — environment variables and migrations
+
+Written to be platform-neutral. Currently deployed on **Render**; the Render-specific notes
+are called out where they differ, and nothing here assumes a particular host beyond that.
 
 Three migrations are pending against production: **013, 014, 015**. All three apply and
 reverse cleanly against a local Postgres, and the whole test suite (493 backend, 112
@@ -11,37 +14,92 @@ That is the correct state for a checked-in file — it just means step 3 is your
 
 ---
 
-## 1. Environment variables — the one that matters most
+## 1. Environment variables
 
-**`ENVIRONMENT=production` is not optional, and forgetting it is a security incident, not a
-config nit.** It defaults to `development`, and in development the app:
+### Required — the app refuses to start without these
 
-- allows `localhost` CORS origins **and** a permissive `http://(localhost|127\.0\.0\.1|192\.168\.…)`
-  regex, together with `allow_credentials=True`
-- permits `ALLOW_UNVERIFIED_JWT` to take effect at all
+There are deliberately no defaults for secrets, so a missing one fails at startup rather
+than silently running wrong.
 
-Set these on Railway:
+| variable | notes |
+|---|---|
+| `DATABASE_URL` | must start `postgresql+asyncpg://` — see §2 for which host to use |
+| `SUPABASE_URL` | project URL |
+| `SUPABASE_ANON_KEY` | ships in the browser bundle; not a secret, but required |
+| `SUPABASE_SERVICE_KEY` | server-side only, never expose |
+| `SUPABASE_JWT_SECRET` | used to verify tokens locally, so no round trip to Supabase per request |
 
-| variable | value | why |
+### Required in practice — these have defaults, and the defaults are wrong in production
+
+**This is the section that matters.** None of these will stop the app booting. Each one
+quietly changes behaviour, and two of them are security or cost problems.
+
+| variable | default | why the default is wrong deployed |
 |---|---|---|
-| `ENVIRONMENT` | `production` | see above |
-| `ALLOW_UNVERIFIED_JWT` | leave unset | defaults false; only ever true in local dev |
-| `DATABASE_URL` | Supabase **pooler**, port `6543` | see step 2 |
-| `DB_POOL_SIZE` | `5` | see step 2 |
-| `DB_MAX_OVERFLOW` | `10` | see step 2 |
-| `AI_DAILY_BUDGET_USD` | `60` (default) | circuit breaker, not an allowance |
-| `AI_USER_DAILY_BUDGET_USD` | `1.20` (default) | ~3 interviews or 8 GD rounds per user per day |
-| `ANTHROPIC_PROMPT_CACHING` | `true` (default) | worth ~59% of every GD round — see `AI-COST-MODEL.md` |
-| `CORS_ORIGINS` | the Cloudflare Pages origin(s) | explicit list; nothing else is allowed in production |
-| `SUPABASE_JWT_AUDIENCE` | `authenticated` (default) | only change if your project issues something else |
+| `ENVIRONMENT` | `development` | **Security.** In development the app allows `localhost` CORS origins *and* a permissive `192.168.*` regex with `allow_credentials=True`, and permits `ALLOW_UNVERIFIED_JWT` to take effect. Set it to `production`. |
+| `REDIS_URL` | `redis://localhost:6379/0` | **Three silent degradations** — see below. There is no localhost Redis on a managed host. |
+| `AI_PROVIDER` | `glm` | The cost model, prompt caching and budgets in `AI-COST-MODEL.md` all describe Anthropic. Left at the default you are running a different model entirely. Set `anthropic`. |
+| `AI_FALLBACK_PROVIDER` | `nvidia` | Set to whatever you actually want as the standby — this is what serves a user who has spent their daily allowance. |
+| `ANTHROPIC_API_KEY` | `""` | Required if `AI_PROVIDER=anthropic`. |
+| `CORS_ORIGINS` | `["http://localhost:3000", …]` | The frontend cannot call the API until this lists its real origin. |
+
+### Worth setting explicitly
+
+| variable | default | notes |
+|---|---|---|
+| `AI_DAILY_BUDGET_USD` | `60` | Circuit breaker across all users, not an allowance. Needs Redis to be global rather than per-instance. |
+| `AI_USER_DAILY_BUDGET_USD` | `1.20` | ≈3 interviews or 8 GD rounds per user per day. |
+| `ANTHROPIC_PROMPT_CACHING` | `true` | Worth ~59% of every GD round. Only leave it off to rule caching out while debugging. |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `20` | Lower to `5` / `10` behind a pooler — see §2. |
+| `SUPABASE_JWT_AUDIENCE` | `authenticated` | Only change if your project issues something else. |
+| `ALLOW_UNVERIFIED_JWT` | `false` | Leave unset. It is a full auth bypass and additionally requires `ENVIRONMENT=development`. |
+
+### REDIS_URL — the one that costs money
+
+Redis is deliberately **not** a hard startup failure: every Redis-backed feature degrades
+rather than breaking, so refusing to boot would trade a working-but-degraded service for no
+service. But without it, three things stop protecting you and none announces itself at the
+point of failure:
+
+1. **Rate limiting fails OPEN.** `core/rate_limit.py` catches `RedisError` and returns, so
+   every limit in the app stops existing — including the 6/hour on report generation, the
+   most expensive call there is.
+2. **The AI spend cap becomes per-process.** `_spend_today` falls back to a local counter, so
+   the effective ceiling is `AI_DAILY_BUDGET_USD × instance count`, and it resets to zero on
+   every restart or redeploy.
+3. **The interview-plan cache always misses**, so every plan is bought again at ~$0.065.
+
+Startup now logs this as an **error** in production with those consequences spelled out, so
+grep the deploy logs for `redis_unreachable_at_startup_running_degraded`.
+
+### Render-specific
+
+* **`PORT`** is injected by Render and your start command must use it:
+  `uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT`. A hardcoded port binds to the
+  wrong one and health checks fail.
+* **Redis** is a separate Render service (Key Value / Redis). Use its *internal* connection
+  URL — the external one costs latency on every request.
+* **Cold starts matter more here.** A free instance spins down after inactivity, so the next
+  request pays a ~37s boot out of the gateway's ~100s window. Report generation already
+  handles this: the first request a process serves gets a tighter AI budget, everything after
+  it gets the full one. A paid instance does not spin down and this stops applying.
+* **The gateway cuts a request at ~100s** with a 502 that carries no CORS headers, which
+  reaches the browser as an opaque failure. The report budget is sized to land inside that.
+
+### Moving to another platform later
+
+Nothing above is Render-specific except `PORT` and where Redis lives. On any host you need:
+the five required variables, `ENVIRONMENT=production`, a reachable `REDIS_URL`,
+`CORS_ORIGINS`, the AI provider and key, and a start command that binds `0.0.0.0` on
+whatever port the platform supplies. If the platform's request timeout is much below ~100s,
+lower `_REPORT_AI_BUDGET_*` in `api/v1/reports.py` to match, or reports will be cut off
+mid-generation instead of degrading cleanly.
 
 Confirm after deploy:
 
 ```bash
 curl -s https://<your-api>/api/v1/health | jq
 ```
-
----
 
 ## 2. Use the Supabase connection pooler, and keep the app pool small
 

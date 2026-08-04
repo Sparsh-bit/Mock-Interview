@@ -72,13 +72,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.info("schema_matches_models")
 
-    # Verify Redis connection
+    # Verify Redis connection.
+    #
+    # NOT a hard failure — unlike the database, every Redis-backed feature degrades
+    # rather than breaking, so refusing to boot would trade a working-but-degraded
+    # service for no service at all.
+    #
+    # But it is an ERROR in production, not a warning, because THREE things silently
+    # stop protecting the service and none of them announces itself at the point of
+    # failure:
+    #
+    #   * rate limiting fails OPEN (core/rate_limit.py catches RedisError and returns),
+    #     so every limit in the app stops existing — including the 6/hour on report
+    #     generation, the most expensive call there is
+    #   * the AI daily spend cap falls back to a per-PROCESS counter
+    #     (anthropic_provider._spend_today returns `local`), so the effective ceiling
+    #     becomes AI_DAILY_BUDGET_USD x instance count, and resets to zero on restart
+    #   * the interview-plan semantic cache always misses (semantic_cache returns []),
+    #     so every plan is bought again at ~$0.065
+    #
+    # The first two are the ones that cost money, which is why this is loud.
     from app.db.redis import check_redis_connection
     redis_ok = await check_redis_connection()
-    if not redis_ok:
-        logger.warning("redis_unreachable_at_startup")
-    else:
+    if redis_ok:
         logger.info("redis_connected")
+    elif settings.is_production:
+        logger.error(
+            "redis_unreachable_at_startup_running_degraded",
+            hint=(
+                "rate limiting is disabled, the AI spend cap is per-process and resets "
+                "on restart, and the interview-plan cache always misses. Set REDIS_URL."
+            ),
+        )
+    else:
+        logger.warning("redis_unreachable_at_startup")
 
     # Warm prompt template cache
     from app.prompts.prompt_loader import get_prompt_loader
