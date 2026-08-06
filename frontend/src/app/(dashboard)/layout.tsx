@@ -33,7 +33,7 @@ export default async function DashboardLayout({
             a dashboard that stretches body text across a 2000px monitor is
             unreadable, and macOS apps always inset their content. */}
         <main className="flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-6xl px-6 py-8 sm:px-8">{children}</div>
+          <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8">{children}</div>
         </main>
       </div>
     </div>

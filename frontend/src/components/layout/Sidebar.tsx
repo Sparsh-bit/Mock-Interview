@@ -26,7 +26,11 @@ import { getBrowserApiClient } from '@/lib/api';
 import { useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
-const NAV_ITEMS = [
+/**
+ * The navigation. Exported so the mobile drawer renders the SAME list — two copies of a nav
+ * is two navs that drift, and the one that drifts is always the one you look at less.
+ */
+export const NAV_ITEMS = [
   {
     group: 'Main',
     items: [
@@ -58,7 +62,7 @@ const NAV_ITEMS = [
 
 // Admin-only. `Users` is permanent; `AI cost` goes when the temporary ledger
 // does — see TEMPORARY-token-counter.md.
-const ADMIN_NAV_ITEMS = [
+export const ADMIN_NAV_ITEMS = [
   { href: '/admin', icon: ShieldCheck, label: 'Users' },
   { href: '/ai-usage', icon: Coins, label: 'AI cost' },
 ];
@@ -79,7 +83,7 @@ interface SidebarProps {
  * exactly one request, and the answer is cached for the session so it does not
  * re-probe on every navigation. A non-admin simply never sees the links.
  */
-function useIsAdmin(): boolean {
+export function useIsAdmin(): boolean {
   const { data } = useQuery({
     queryKey: ['is-admin'],
     queryFn: async () => {
@@ -112,7 +116,10 @@ export function AppSidebar({ user }: SidebarProps) {
       // background is opaque anyway so the backdrop is never visible. What it
       // did do was force the compositor to re-sample and re-blur a 240x950
       // region every frame the page scrolled.
-      className="relative flex flex-shrink-0 flex-col border-r border-border/70 bg-surface"
+      // `hidden lg:flex` — the rail is desktop-only. It used to render at every width,
+      // taking 240px of a 375px phone and leaving the page about 135px. Below lg the
+      // drawer in MobileNav.tsx takes over.
+      className="relative hidden flex-shrink-0 flex-col border-r border-border/70 bg-surface lg:flex"
     >
       {/* Logo */}
       <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center')}>

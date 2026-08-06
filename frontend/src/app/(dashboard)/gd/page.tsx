@@ -770,7 +770,7 @@ export default function GDPage() {
 
   // ─── Discussion ─────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-3xl flex-col gap-4">
+    <div className="mx-auto flex h-[calc(100dvh-7rem)] max-w-3xl flex-col gap-3 sm:h-[calc(100vh-8rem)] sm:gap-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topic</p>

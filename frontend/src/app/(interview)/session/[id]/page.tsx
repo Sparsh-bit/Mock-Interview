@@ -309,7 +309,7 @@ export default function LiveSessionPage() {
           initial="hidden"
           animate="visible"
           variants={scalePop}
-          className="glass max-w-md rounded-2xl border-border/50 p-10 text-center"
+          className="glass max-w-md rounded-2xl border-border/50 p-6 text-center sm:p-10"
         >
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <WifiOff className="h-7 w-7 text-destructive" />
@@ -334,12 +334,12 @@ export default function LiveSessionPage() {
           initial="hidden"
           animate="visible"
           variants={scalePop}
-          className="glass max-w-md rounded-2xl border-border/50 p-10 text-center"
+          className="glass max-w-md rounded-2xl border-border/50 p-6 text-center sm:p-10"
         >
           <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
             <Sparkles className="h-7 w-7 text-primary" />
           </div>
-          <h2 className="mb-3 text-2xl font-semibold">Interview Complete</h2>
+          <h2 className="mb-3 text-xl font-semibold sm:text-2xl">Interview Complete</h2>
           <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
             Nicely done{answered ? ` — you answered ${answered} question${answered === 1 ? '' : 's'}` : ''}.
             We&apos;ll now score every answer and build your full report.
@@ -387,11 +387,11 @@ export default function LiveSessionPage() {
         initial="hidden"
         animate="visible"
         variants={staggerContainer(0.1)}
-        className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 p-6 md:flex-row"
+        className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-4 p-4 sm:gap-6 sm:p-6 md:flex-row"
       >
         {/* Left: Question Area */}
         <motion.div variants={fadeUp} className="flex flex-1 flex-col gap-6">
-          <div className="glass flex h-full flex-col rounded-2xl border-border/50 p-8">
+          <div className="glass flex h-full flex-col rounded-2xl border-border/50 p-5 sm:p-8">
             <AnimatePresence mode="wait">
               {preparing ? (
                 <GeneratingQuestion key="gen" label="Thinking about your next question…" />
@@ -409,7 +409,7 @@ export default function LiveSessionPage() {
                       <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
                     )}
                   </div>
-                  <h1 className="text-2xl font-semibold leading-relaxed tracking-[-0.01em]">
+                  <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-2xl">
                     {question?.content}
                   </h1>
                 </motion.div>
@@ -555,7 +555,7 @@ export default function LiveSessionPage() {
                 disabled={preparing}
                 aria-label={stt.listening ? 'Stop recording' : 'Start recording'}
                 className={cn(
-                  'relative flex h-24 w-24 items-center justify-center rounded-full transition-[color,background-color,border-color,box-shadow,transform,opacity] disabled:opacity-50',
+                  'relative flex h-20 w-20 items-center justify-center rounded-full transition-[color,background-color,border-color,box-shadow,transform,opacity] disabled:opacity-50 sm:h-24 sm:w-24',
                   // Deliberately NOT disabled on error. `error` is only cleared by
                   // start() or reset(), and start() is only reachable through this
                   // button — so disabling it removes the exact recovery Chrome
@@ -570,7 +570,7 @@ export default function LiveSessionPage() {
                 {stt.listening && (
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-40" />
                 )}
-                {stt.listening ? <MicOff className="h-9 w-9" /> : <Mic className="h-9 w-9" />}
+                {stt.listening ? <MicOff className="h-7 w-7 sm:h-9 sm:w-9" /> : <Mic className="h-7 w-7 sm:h-9 sm:w-9" />}
               </button>
 
               <p className="text-sm font-medium text-muted-foreground">
