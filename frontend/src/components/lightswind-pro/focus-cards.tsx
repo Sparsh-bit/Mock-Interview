@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -38,6 +38,65 @@ export interface FocusCardsProps {
   className?: string;
   /** Rendered inside each card, after the text. */
   renderExtra?: (item: FocusCardItem) => React.ReactNode;
+}
+
+/**
+ * The focus BEHAVIOUR, without the card markup.
+ *
+ * FocusCards below renders its own simple card, which is right for a list of names. Several
+ * places in the dashboard already have rich cards — icon, badge, description, stats, a CTA —
+ * and replacing those with a simple one to gain the dimming would be a downgrade dressed as a
+ * feature. So the mechanic is available as a wrapper too, exactly like TimelineLayout: the
+ * caller keeps its own content and gets the focus.
+ *
+ * Context, not prop drilling, because the group and the items are usually separated by a
+ * `.map` and a motion wrapper.
+ */
+const FocusContext = createContext<{
+  active: string | null;
+  setActive: (id: string | null) => void;
+} | null>(null);
+
+export function FocusGroup({ children, className }: { children: React.ReactNode; className?: string }) {
+  const [active, setActive] = useState<string | null>(null);
+  return (
+    <FocusContext.Provider value={{ active, setActive }}>
+      <div className={className}>{children}</div>
+    </FocusContext.Provider>
+  );
+}
+
+export function FocusItem({
+  id,
+  children,
+  className,
+}: {
+  id: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const ctx = useContext(FocusContext);
+  // Usable outside a FocusGroup — it simply does nothing, rather than throwing. A layout
+  // component that crashes when it is not perfectly nested is a component nobody reaches for.
+  const dimmed = ctx ? ctx.active !== null && ctx.active !== id : false;
+
+  return (
+    <div
+      onMouseEnter={() => ctx?.setActive(id)}
+      onMouseLeave={() => ctx?.setActive(null)}
+      // Focus follows hover so a keyboard user gets the same emphasis. Capture, because the
+      // focus lands on a child link rather than this wrapper.
+      onFocusCapture={() => ctx?.setActive(id)}
+      onBlurCapture={() => ctx?.setActive(null)}
+      className={cn(
+        'transition-opacity duration-300',
+        dimmed ? 'opacity-45' : 'opacity-100',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export default function FocusCards({ items, className, renderExtra }: FocusCardsProps) {

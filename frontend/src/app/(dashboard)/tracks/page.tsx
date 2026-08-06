@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { FocusGroup, FocusItem } from '@/components/lightswind-pro/focus-cards';
 import { DataError } from '@/components/ui/data-error';
 import { useTracks } from '@/hooks/useData';
 import { Code2, Loader2, Play, Sparkles } from 'lucide-react';
@@ -38,9 +39,13 @@ export default function TracksPage() {
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
+        /* Hovering one track dims the others, so a grid stops being a wall and becomes the
+           one you are considering. The existing card keeps all of its own markup — the
+           wrapper supplies only the focus. */
+        <FocusGroup className="grid gap-6 md:grid-cols-2">
           {(tracks || []).map((track) => (
-            <motion.div key={track.id} variants={fadeUp}>
+            <FocusItem key={track.id} id={track.id}>
+            <motion.div variants={fadeUp}>
               <Card hoverable className="flex h-full flex-col justify-between p-6">
                 <div>
                   <div className="mb-4 flex items-center justify-between">
@@ -82,9 +87,9 @@ export default function TracksPage() {
                 </div>
               </Card>
             </motion.div>
+            </FocusItem>
           ))}
-
-        </div>
+        </FocusGroup>
       )}
     </motion.div>
   );

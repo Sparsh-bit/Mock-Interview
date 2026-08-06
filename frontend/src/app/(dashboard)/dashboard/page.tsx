@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Loader2, Play, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { FocusGroup, FocusItem } from '@/components/lightswind-pro/focus-cards';
 import { useProgress, useTracks, useUserSessions, useUserStats } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
 import { useCandidateName } from '@/hooks/useCandidateName';
@@ -149,11 +150,14 @@ export default function DashboardPage() {
                 </Link>
               </div>
             ) : (
-              <div className="space-y-3">
+              // Focus: hovering one session dims the rest. On a list you are scanning for
+              // one particular round, that is the difference between reading and finding.
+              <FocusGroup className="space-y-3">
                 {sessions.map((sess) => (
-                  <div
+                  <FocusItem
                     key={sess.id}
-                    className="flex items-center justify-between rounded-xl border border-border/50 bg-surface/50 p-4 transition-colors hover:bg-surface"
+                    id={sess.id}
+                    className="flex items-center justify-between rounded-xl border border-border/50 bg-surface/50 p-4 hover:bg-surface"
                   >
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-2">
@@ -176,9 +180,9 @@ export default function DashboardPage() {
                         {sess.status === 'completed' ? <FileText className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                       </Link>
                     </div>
-                  </div>
+                  </FocusItem>
                 ))}
-              </div>
+              </FocusGroup>
             )}
           </Card>
         </motion.div>

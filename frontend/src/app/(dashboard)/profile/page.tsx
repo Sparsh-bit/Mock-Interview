@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ResumeUploadCard } from '@/components/resume/ResumeUploadCard';
-import { Input } from '@/components/ui/input';
+import FloatingLabelInput from '@/components/lightswind-pro/floating-label-input';
 import { Button } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { PageHeader } from '@/components/ui/page-header';
@@ -82,37 +82,24 @@ export default function ProfilePage() {
             {/* ── Left: the details ─────────────────────────────────────── */}
             <Card className="order-2 space-y-6 p-8 lg:order-1">
               <div className="grid gap-6 sm:grid-cols-2">
-              <div>
-                <label htmlFor="full_name" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Full Name
-                </label>
-                <Input
+              <FloatingLabelInput
+                  label="Full Name"
                   id="full_name"
                   type="text"
                   value={formData.full_name}
                   onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                  placeholder="e.g. Rahul Sharma"
                 />
-              </div>
 
-              <div>
-                <label htmlFor="target_company" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Target Company
-                </label>
-                <Input
+              <FloatingLabelInput
+                  label="Target Company"
                   id="target_company"
                   type="text"
                   value={formData.target_company}
                   onChange={(e) => setFormData({ ...formData, target_company: e.target.value })}
-                  placeholder="e.g. Cognizant, TCS"
                 />
-              </div>
 
-              <div>
-                <label htmlFor="experience_years" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Years of Experience
-                </label>
-                <Input
+              <FloatingLabelInput
+                  label="Years of Experience"
                   id="experience_years"
                   type="number"
                   min="0"
@@ -120,31 +107,22 @@ export default function ProfilePage() {
                   value={formData.experience_years}
                   onChange={(e) => setFormData({ ...formData, experience_years: parseInt(e.target.value) || 0 })}
                 />
-              </div>
 
-              <div>
-                <label htmlFor="linkedin_url" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  LinkedIn Profile URL
-                </label>
-                <Input
+              <FloatingLabelInput
+                  label="LinkedIn Profile URL"
                   id="linkedin_url"
                   type="url"
                   value={formData.linkedin_url}
                   onChange={(e) => setFormData({ ...formData, linkedin_url: e.target.value })}
-                  placeholder="https://linkedin.com/in/…"
                 />
-              </div>
 
               <div className="sm:col-span-2">
-                <label htmlFor="github_url" className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  GitHub Profile URL
-                </label>
-                <Input
+                <FloatingLabelInput
+                  label="GitHub Profile URL"
                   id="github_url"
                   type="url"
                   value={formData.github_url}
                   onChange={(e) => setFormData({ ...formData, github_url: e.target.value })}
-                  placeholder="https://github.com/…"
                 />
               </div>
               </div>
