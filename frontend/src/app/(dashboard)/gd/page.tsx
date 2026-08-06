@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Loader2, Mic, MicOff, Send, Users, Play, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCandidateName } from '@/hooks/useCandidateName';
+import { SlideToConfirm } from '@/components/lightswind/slide-to-confirm';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
@@ -908,9 +909,19 @@ export default function GDPage() {
                   <Send className="h-4 w-4" /> Add point
                 </Button>
               </div>
-              <Button variant="ghost" size="sm" onClick={endDiscussion} disabled={myContributions === 0}>
-                <CheckCircle2 className="h-4 w-4" /> End & get feedback
-              </Button>
+              {/* A slide rather than a button, because this one is irreversible: it closes
+                  the round, scores it, and there is no way back in. On a phone, mid-round,
+                  with the mic live, a stray tap on a plain button ends the discussion. The
+                  slide asks for intent without a modal stealing focus from someone who may be
+                  mid-sentence. */}
+              <SlideToConfirm
+                tone="danger"
+                label="Slide to end & get feedback"
+                confirmedLabel="Scoring your round…"
+                disabled={myContributions === 0}
+                onConfirm={endDiscussion}
+                className="max-w-[260px]"
+              />
             </div>
           </>
         )}

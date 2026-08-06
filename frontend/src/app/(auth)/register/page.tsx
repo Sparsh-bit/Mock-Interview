@@ -11,7 +11,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { getBrowserApiClient } from '@/lib/api';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import FloatingLabelInput from '@/components/lightswind-pro/floating-label-input';
+import PasswordStrength from '@/components/lightswind-pro/password-strength';
 import { Button } from '@/components/ui/button';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 
@@ -44,9 +45,12 @@ export default function RegisterPage() {
   const [done, setDone] = useState(false);
   const { signUp } = useAuth();
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({
+  const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
+  // Watched so the strength meter updates as they type. Scoped to this one field rather than
+  // watch() with no argument, which re-renders the whole form on every keystroke of every input.
+  const passwordValue = watch('password');
 
   const onSubmit = async (data: FormData) => {
     const { error } = await signUp(data.email, data.password, { full_name: data.full_name });
@@ -131,47 +135,62 @@ export default function RegisterPage() {
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              <div>
-                <label htmlFor="full_name" className="mb-1.5 block text-sm font-medium">Full name</label>
-                <Input id="full_name" type="text" autoComplete="name" placeholder="Arjun Sharma" {...register('full_name')} />
-                {errors.full_name && <p className="mt-1 text-xs text-destructive">{errors.full_name.message}</p>}
-              </div>
+              {/* Floating labels rather than placeholders. A placeholder vanishes the moment
+                  you type, so anyone interrupted mid-signup returns to filled boxes with no
+                  idea what each wanted — which on the form that creates the account is a real
+                  defect, not a style preference. */}
+              <FloatingLabelInput
+                label="Full name"
+                id="full_name"
+                type="text"
+                autoComplete="name"
+                error={errors.full_name?.message}
+                {...register('full_name')}
+              />
+
+              <FloatingLabelInput
+                label="Email address"
+                id="email"
+                type="email"
+                autoComplete="email"
+                error={errors.email?.message}
+                {...register('email')}
+              />
 
               <div>
-                <label htmlFor="email" className="mb-1.5 block text-sm font-medium">Email address</label>
-                <Input id="email" type="email" autoComplete="email" placeholder="you@example.com" {...register('email')} />
-                {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email.message}</p>}
-              </div>
-
-              <div>
-                <label htmlFor="password" className="mb-1.5 block text-sm font-medium">Password</label>
                 <div className="relative">
-                  <Input
+                  <FloatingLabelInput
+                    label="Password"
                     id="password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="new-password"
-                    placeholder="Minimum 8 characters"
                     className="pr-10"
+                    error={errors.password?.message}
                     {...register('password')}
                   />
-                  <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => setShowPassword((v) => !v)}>
+                  <button
+                    type="button"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3 top-[22px] text-muted-foreground"
+                    onClick={() => setShowPassword((v) => !v)}
+                  >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {errors.password && <p className="mt-1 text-xs text-destructive">{errors.password.message}</p>}
+                {/* Advisory only — it never blocks submission. Length is weighted far above
+                    punctuation because that is where the entropy actually is, and an obvious
+                    sequence caps the score however long it is. */}
+                <PasswordStrength password={passwordValue ?? ''} />
               </div>
 
-              <div>
-                <label htmlFor="confirmPassword" className="mb-1.5 block text-sm font-medium">Confirm password</label>
-                <Input
-                  id="confirmPassword"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="new-password"
-                  placeholder="Repeat your password"
-                  {...register('confirmPassword')}
-                />
-                {errors.confirmPassword && <p className="mt-1 text-xs text-destructive">{errors.confirmPassword.message}</p>}
-              </div>
+              <FloatingLabelInput
+                label="Confirm password"
+                id="confirmPassword"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="new-password"
+                error={errors.confirmPassword?.message}
+                {...register('confirmPassword')}
+              />
 
               <Button type="submit" className="w-full" loading={isSubmitting}>
                 {isSubmitting ? 'Creating account…' : 'Create free account'}

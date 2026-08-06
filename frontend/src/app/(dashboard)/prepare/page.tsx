@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import TimelineLayout, { TimelineItem } from '@/components/lightswind-pro/timeline-layout';
 import {
   ArrowRight,
   BookOpen,
@@ -380,19 +381,31 @@ export default function PreparePage() {
           </div>
         )}
 
-        {/* ── The plan itself ──────────────────────────────────────────────── */}
+        {/* ── The plan itself ──────────────────────────────────────────────────
+            On a spine, because a study plan IS a sequence and a stack of sections does not
+            say so. The line draws itself as each phase scrolls in, which is the shape a
+            candidate counting weeks to a drive actually needs to see. The phase content is
+            unchanged — TimelineItem supplies the spine and node and nothing else. */}
+        <TimelineLayout>
         {roadmap?.phases.map((phase, pi) => (
-          <motion.section
+          <TimelineItem
             key={phase.phase}
+            index={pi}
+            marker={String(phase.phase).padStart(2, '0')}
+            isLast={pi === (roadmap?.phases.length ?? 0) - 1}
+            // The phase we are in today, so the eye lands on what to do now rather than on
+            // the top of a plan that may be weeks old.
+            active={
+              new Date(phase.starts_on) <= new Date() && new Date(phase.ends_on) >= new Date()
+            }
+          >
+          <motion.section
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: pi * 0.06, ease: EASE }}
             className="mb-12"
           >
             <div className="mb-5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-foreground/15 pb-2">
-              <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                {String(phase.phase).padStart(2, '0')}
-              </span>
               <h2 className="text-base font-semibold tracking-[-0.01em]">{phase.title}</h2>
               <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
                 {new Date(phase.starts_on).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} –{' '}
@@ -452,7 +465,9 @@ export default function PreparePage() {
               );
             })}
           </motion.section>
+          </TimelineItem>
         ))}
+        </TimelineLayout>
 
         {/* Rounds */}
         <section className="mb-10">

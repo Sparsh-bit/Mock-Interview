@@ -11,6 +11,9 @@ import {
   ReportArtefact,
 } from '@/components/landing/Artefacts';
 import { CROP, ParallaxPhoto, Photo } from '@/components/landing/Photo';
+import FlipWords from '@/components/lightswind-pro/flip-words';
+import FocusCards from '@/components/lightswind-pro/focus-cards';
+import TextGenerateEffect from '@/components/lightswind-pro/text-generate-effect';
 
 /**
  * InterviewOS — landing page.
@@ -79,6 +82,26 @@ const ROUNDS = [
 ];
 
 /** The primary call to action. Indigo, because indigo is the product. */
+/**
+ * The recruiters this product has tracks for, with what each one's fresher programme is
+ * actually called. The programme name is the part a candidate recognises — "GenC Next" means
+ * something to someone preparing for Cognizant in a way that "Cognizant" alone does not.
+ */
+const RECRUITERS: { name: string; programme: string }[] = [
+  { name: 'Cognizant', programme: 'GenC · GenC Next · Digital Nurture' },
+  { name: 'TCS', programme: 'NQT · Ninja · Digital' },
+  { name: 'Infosys', programme: 'SP · DSE · Power Programmer' },
+  { name: 'Wipro', programme: 'Elite NTH · Turbo' },
+  { name: 'Accenture', programme: 'ASE · Advanced App Engineer' },
+  { name: 'Capgemini', programme: 'Analyst · Senior Analyst' },
+  { name: 'HCLTech', programme: 'TechBee · Graduate Engineer' },
+  { name: 'Tech Mahindra', programme: 'Associate Software Engineer' },
+  { name: 'LTIMindtree', programme: 'Graduate Engineer Trainee' },
+  { name: 'IBM', programme: 'Associate System Engineer' },
+  { name: 'Deloitte', programme: 'Analyst · NLA' },
+  { name: 'Amazon', programme: 'SDE I · Support Engineer' },
+];
+
 const CTA =
   'group inline-flex items-center gap-2 rounded-full bg-accent-indigo px-6 py-3 text-sm font-medium text-white shadow-elev-1 transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-accent-indigo-ink hover:shadow-elev-2';
 
@@ -126,6 +149,19 @@ export default function LandingPage() {
                   </span>
                 </WipeUp>
               </h1>
+
+              {/* Twelve recruiters are covered and a static line can only name one. Cycling
+                  them tells a candidate preparing for Wipro that this is for them, without
+                  printing a list above the fold. */}
+              <WipeUp delay={0.22}>
+                <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Practise for{' '}
+                  <FlipWords
+                    words={['Cognizant', 'TCS', 'Infosys', 'Wipro', 'Accenture', 'Capgemini']}
+                    className="font-semibold text-accent-indigo"
+                  />
+                </p>
+              </WipeUp>
 
               <WipeUp delay={0.28}>
                 <p className="mt-7 max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
@@ -228,11 +264,14 @@ export default function LandingPage() {
                 <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-accent-emerald-ink">
                   How to answer it
                 </p>
-                <p className="mt-4 text-lg leading-relaxed">
-                  The JVM is what actually runs my Java code. javac compiles to bytecode, and the JVM
-                  executes that bytecode on whatever OS I&apos;m on — that&apos;s what makes Java
-                  platform independent. It also handles memory for me through garbage collection.
-                </p>
+                {/* Resolves word by word as it scrolls in — because this panel IS generated
+                    text, so the effect shows what the product does rather than decorating it.
+                    The words are in the DOM from the first frame, only their opacity animates,
+                    so the paragraph stays selectable and readable without JavaScript. */}
+                <TextGenerateEffect
+                  className="mt-4 text-lg leading-relaxed"
+                  text="The JVM is what actually runs my Java code. javac compiles to bytecode, and the JVM executes that bytecode on whatever OS I'm on — that's what makes Java platform independent. It also handles memory for me through garbage collection."
+                />
               </div>
             </WipeUp>
           </div>
@@ -451,18 +490,18 @@ export default function LandingPage() {
         <div className="mx-auto max-w-6xl px-6 py-20 sm:px-10">
           <SectionMark n="06" label="Who you can prepare for" />
           <WipeUp delay={0.1}>
-            <div className="mt-8 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
-              {['TCS', 'Cognizant', 'Infosys', 'Wipro', 'Accenture', 'Capgemini', 'HCLTech', 'Tech Mahindra', 'LTIMindtree', 'IBM', 'Deloitte', 'Amazon'].map(
-                (c, i) => (
-                  <div key={c} className="flex items-baseline gap-3 border-b border-border/60 pb-2">
-                    <span className="font-mono text-[10px] tabular-nums text-accent-indigo">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
-                    <span className="text-sm">{c}</span>
-                  </div>
-                ),
-              )}
-            </div>
+            {/* Focus cards rather than a flat list: hovering one dims the rest, so a grid of
+                twelve stops being a wall and becomes the one you are considering. Still a
+                contents page — no logos, because we have no rights to their marks. */}
+            <FocusCards
+              className="mt-8"
+              items={RECRUITERS.map((c, i) => ({
+                id: c.name,
+                index: String(i + 1).padStart(2, '0'),
+                title: c.name,
+                subtitle: c.programme,
+              }))}
+            />
           </WipeUp>
         </div>
       </section>
