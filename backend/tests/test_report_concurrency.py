@@ -104,3 +104,52 @@ class TestConcurrencyIsBounded:
         """
         body = _generate_report_body()
         assert body.find("_report_slots") < body.find("asyncio.wait_for")
+
+
+class TestTheRateLimitChargesGenerationsNotReads:
+    """
+    The 429s reported from production.
+
+    /reports/{id}/generate is idempotent and therefore doubles as the client's READ path —
+    hooks/useData.ts::useReport POSTs to it rather than probing with a GET first, because a
+    GET on a session with no report yet logs a 404 in the console that JavaScript cannot
+    suppress.
+
+    So when the limiter was a route DEPENDENCY it ran before the handler and charged every
+    call, including the ones that just hand back a finished report. Six per hour then meant a
+    candidate who opened their own completed report six times was locked out of generating a
+    new one — the limit punishing the action it was never meant to police.
+
+    The check now sits where the model call is about to happen. Everything above it returns
+    free.
+    """
+
+    def test_the_limit_is_not_a_route_dependency(self):
+        src = REPORTS.read_text()
+        decorator = src[src.index('@router.post(\n    "/{session_id}/generate"') : src.index("async def generate_report(")]
+        assert "_report_rate_limit" not in decorator and "rate_limiter" not in decorator, (
+            "the rate limit is back on the route decorator, so it charges cached reads again "
+            "— see this class's docstring for what that broke"
+        )
+
+    def test_the_limit_is_charged_after_the_cached_report_returns(self):
+        body = _generate_report_body()
+        cached_return = body.find("report_served_from_database")
+        charge = body.find("enforce_limit(")
+        model_call = body.find("asyncio.wait_for")
+
+        assert cached_return != -1 and charge != -1, "could not locate both points"
+        assert cached_return < charge, (
+            "an already-generated report must be served BEFORE the limit is charged, or "
+            "reading a finished report costs a generation"
+        )
+        assert charge < model_call, (
+            "the limit must be charged BEFORE the model call, or it protects nothing"
+        )
+
+    def test_the_limit_allows_more_than_a_handful(self):
+        # A generation that degrades to the unscored placeholder is legitimately retried, and
+        # each retry is a real attempt. Too tight and the retry path is unusable.
+        from app.core.config import settings
+
+        assert settings.RATE_LIMIT_REPORT_PER_HOUR >= 10

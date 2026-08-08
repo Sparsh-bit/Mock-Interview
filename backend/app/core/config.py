@@ -273,13 +273,20 @@ class Settings(BaseSettings):
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
-    #: Report generations per hour, per user. The most expensive call in the app by a
-    #: wide margin — roughly 4.5 cents and tens of seconds of a worker — and it had NO
-    #: limit at all, which is both a cost hole and the easiest way for one user to
-    #: saturate every worker on the instance. Six an hour is generous: a candidate
-    #: cannot finish six interviews in an hour, and the endpoint already returns an
-    #: existing report without regenerating, so repeat views do not count against it.
-    RATE_LIMIT_REPORT_PER_HOUR: int = 6
+    #: Report generations per hour, per user. The most expensive call in the app by a wide
+    #: margin — roughly 13.5 cents for a full interview — so it needs a ceiling.
+    #:
+    #: Only real GENERATIONS count. The endpoint doubles as the client's read path (it is
+    #: idempotent, so useReport POSTs to it), and the limiter used to be a route dependency
+    #: that charged for every call including the ones that just returned a finished report.
+    #: Six an hour then meant a candidate re-reading their own report six times was locked
+    #: out. The check now sits at the point a model call is about to be made — see
+    #: api/v1/reports.py — so reads are free.
+    #:
+    #: Raised from 6 to 15 as well, because a generation that degrades to the unscored
+    #: placeholder is legitimately retried, and each retry is a real attempt. Fifteen still
+    #: bounds a runaway loop and no honest candidate reaches it.
+    RATE_LIMIT_REPORT_PER_HOUR: int = 15
     #: Authenticated read endpoints (standing, profile, stats) per minute per user.
     #: 120 is two a second sustained — far above anything the UI does, including a
     #: dashboard that refetches on focus — but it stops an authenticated retry loop from

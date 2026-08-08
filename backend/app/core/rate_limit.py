@@ -50,26 +50,57 @@ def rate_limiter(
         current_user: CurrentUser,
         redis: Redis = Depends(get_redis),
     ) -> None:
-        key = key_builder(str(current_user.user_id))
-        try:
-            count = await redis.incr(key)
-            if count == 1:
-                await redis.expire(key, window_seconds)
-        except RedisError:
-            logger.exception("rate_limit_check_failed", key=key, action=action)
-            return
-
-        if count > limit:
-            ttl = await _safe_ttl(redis, key)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=(
-                    f"Rate limit exceeded for {action}: {limit} requests per "
-                    f"{window_seconds}s. Try again in {ttl}s."
-                ),
-            )
+        await enforce_limit(
+            redis,
+            key=key_builder(str(current_user.user_id)),
+            limit=limit,
+            window_seconds=window_seconds,
+            action=action,
+        )
 
     return _check
+
+
+async def enforce_limit(
+    redis: Redis,
+    *,
+    key: str,
+    limit: int,
+    window_seconds: int,
+    action: str,
+) -> None:
+    """
+    The check itself, callable directly rather than only as a dependency.
+
+    A route dependency runs BEFORE the handler, which is wrong whenever the expensive thing
+    it protects happens only on some paths through that handler. Report generation is the
+    case that forced this out: its endpoint is idempotent and doubles as the client's READ
+    path, so as a dependency the limiter charged a candidate for re-opening a report that was
+    already finished — and locked them out of generating a new one.
+
+    Callers that need it on every request keep using `rate_limiter()`; callers that need it
+    at one specific point call this.
+
+    Fails OPEN on a Redis error, same as the dependency: a limiter outage must not take down
+    the interview flow.
+    """
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, window_seconds)
+    except RedisError:
+        logger.exception("rate_limit_check_failed", key=key, action=action)
+        return
+
+    if count > limit:
+        ttl = await _safe_ttl(redis, key)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Rate limit exceeded for {action}: {limit} requests per "
+                f"{window_seconds}s. Try again in {ttl}s."
+            ),
+        )
 
 
 async def _safe_ttl(redis: Redis, key: str) -> int:

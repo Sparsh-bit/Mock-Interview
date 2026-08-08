@@ -21,9 +21,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.rate_limit import rate_limiter
+from app.core.rate_limit import enforce_limit
 from app.core.security import CurrentUser
-from app.db.redis import CacheKeys
+from app.db.redis import CacheKeys, get_redis
 from app.db.session import AsyncSession, get_db
 from app.events import ReportGeneratedEvent, ReportGeneratedPayload, get_event_emitter
 from app.events.emitter import EventEmitter
@@ -32,18 +32,6 @@ from app.services.progress.recorder import record_round
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
-
-#: Report generation had no rate limit at all, which was the largest hole in the API:
-#: the most expensive call in the app, unmetered, on an endpoint that occupies a
-#: worker for tens of seconds. One script could exhaust both the AI budget and every
-#: worker on the instance. Its own namespace rather than the shared AI budget — see
-#: CacheKeys.rate_limit_report.
-_report_rate_limit = rate_limiter(
-    limit=settings.RATE_LIMIT_REPORT_PER_HOUR,
-    window_seconds=3600,
-    key_builder=lambda user_id: CacheKeys.rate_limit_report(user_id),
-    action="generating a report",
-)
 
 #: Wall-clock ceiling on AI report generation, chosen from how long the process
 #: has been running.
@@ -435,7 +423,6 @@ async def get_report(
     # 200, not 201: this is idempotent and returns an existing report unchanged
     # as often as it creates a new one.
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(_report_rate_limit)],
 )
 async def generate_report(
     session_id: uuid.UUID,
@@ -633,6 +620,27 @@ async def generate_report(
         }
         if prev
         else None
+    )
+
+    # RATE LIMIT HERE, not as a route dependency — and this is the fix for the 429s.
+    #
+    # As a dependency it ran before the handler, so it counted EVERY call, including the
+    # ones that just hand back a report already in the database. But the client's read path
+    # IS this endpoint: useReport POSTs to /generate because generation is idempotent, so
+    # opening a finished report, coming back to the tab after staleTime, or tapping
+    # "Generate again" each spent one of six per hour. A candidate re-reading their own
+    # finished report six times was locked out of the thing the limit was supposed to
+    # protect.
+    #
+    # The limit exists to stop repeated EXPENSIVE AI CALLS, so it belongs at the point one
+    # is about to be made. Everything above this line — an existing scored report, a
+    # placeholder out of retries — has already returned, free and unmetered.
+    await enforce_limit(
+        get_redis(),
+        key=CacheKeys.rate_limit_report(str(current_user.user_id)),
+        limit=settings.RATE_LIMIT_REPORT_PER_HOUR,
+        window_seconds=3600,
+        action="generating a report",
     )
 
     ai_report: ReportGeneratorResponse | None = None

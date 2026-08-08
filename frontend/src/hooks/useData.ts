@@ -228,12 +228,24 @@ export function useReport(sessionId: string) {
         );
         return res.data as ReportData;
       } catch (err: unknown) {
+        const e = err as { isTimeout?: boolean; status?: number };
+
         // If we stopped waiting, the server may still have committed the report.
         // Looking once more is a cheap read, never a second billed generation.
-        if ((err as { isTimeout?: boolean })?.isTimeout === true) {
+        if (e?.isTimeout === true) {
           const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
           if (retry) return retry.data as ReportData;
         }
+
+        // 429 — this user has generated a lot of reports this hour. If one already
+        // exists, SHOW IT: the limit is on making new reports, not on reading finished
+        // ones, and refusing to render a report that is sitting in the database because
+        // of a generation cap would be the limiter punishing the wrong action.
+        if (e?.status === 429) {
+          const existing = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
+          if (existing) return existing.data as ReportData;
+        }
+
         throw err;
       }
     },
