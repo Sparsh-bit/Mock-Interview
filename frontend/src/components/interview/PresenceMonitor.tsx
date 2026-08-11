@@ -14,7 +14,21 @@ import { cn } from '@/lib/utils';
  * in-browser and discarded when stopped.
  */
 export function PresenceMonitor() {
-  const [consented, setConsented] = useState(false);
+  /*
+   * ON BY DEFAULT, for the whole interview.
+   *
+   * This was opt-in behind an "Enable camera & mic" button, which meant the common case was a
+   * candidate practising with the camera off — and a mock interview with no camera is missing
+   * the thing that makes a real one uncomfortable. Real rounds are invigilated from the
+   * moment they start; you do not get asked whether you would like to be watched.
+   *
+   * The privacy position is unchanged and is what makes defaulting to on defensible: every
+   * frame is analysed in the browser by MediaPipe and NOTHING is recorded, saved or uploaded.
+   * There is no stream to send because there is no server involved. The candidate can still
+   * turn it off at any point, and the browser's own permission prompt is the real gate — this
+   * default only decides whether we ask for it up front or make them go looking.
+   */
+  const [consented, setConsented] = useState(true);
   const { videoRef, active, loading, error, metrics, start, stop } = usePresenceMonitor();
 
   // Start only AFTER the <video> element has mounted (consent flips true),
@@ -36,16 +50,16 @@ export function PresenceMonitor() {
       <div className="glass rounded-2xl border-border/50 p-5">
         <div className="mb-3 flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-semibold">Presence check (optional)</h3>
+          <h3 className="text-sm font-semibold">Camera is off</h3>
         </div>
         <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-          Enable your camera and microphone to get live feedback on eye contact and speaking
-          during the interview — just like a real one. Everything is analyzed on your device in
-          real time and <strong>never recorded, saved, or uploaded</strong>. You can turn it off
-          anytime.
+          The camera stays on for the whole interview, the way a real panel round is
+          invigilated — it tracks your eye contact, and it flags if a second person appears in
+          frame. Everything is analysed on your device and{' '}
+          <strong>never recorded, saved, or uploaded</strong>. You can turn it off at any time.
         </p>
         <Button size="sm" onClick={enable}>
-          <Camera className="h-4 w-4" /> Enable camera &amp; mic
+          <Camera className="h-4 w-4" /> Turn the camera back on
         </Button>
       </div>
     );

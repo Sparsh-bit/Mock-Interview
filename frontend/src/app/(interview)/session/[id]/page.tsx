@@ -2,7 +2,7 @@
 
 import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, Loader2, Mic, MicOff, RefreshCw, Send, Sparkles, StopCircle, Volume2, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,7 +12,9 @@ import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
 import { PresenceMonitor } from '@/components/interview/PresenceMonitor';
 import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import type { CodeLanguage } from '@/hooks/useCode';
-import { useSpeechRecognition, useSpeechSynthesis } from '@/hooks/useSpeech';
+import { useSpeechRecognition, useSpeechSynthesis, usePanelVoices } from '@/hooks/useSpeech';
+import { useCandidateName } from '@/hooks/useCandidateName';
+import { useInterviewPanel, useInterviewers, type PanelLine } from '@/hooks/useInterviewPanel';
 import { countUnprofessional, summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -66,6 +68,38 @@ export default function LiveSessionPage() {
 
   const stt = useSpeechRecognition();
   const tts = useSpeechSynthesis();
+
+  /*
+   * THE PANEL. Two interviewers rather than one voice reading questions.
+   *
+   * It wraps the question the orchestrator already chose — none of the adaptive selection,
+   * per-session ownership or cross-question scoping changes. What it adds is who says it,
+   * what they say to each other around it, and a correction on the spot when the last answer
+   * was wrong.
+   *
+   * It also solves the "same question every time" complaint from the other direction: the
+   * panel puts the question IN ITS OWN WORDS, so even a repeated question from the bank
+   * arrives phrased differently, by a different person, with different framing.
+   *
+   * Everything here degrades: no panel turns means the bare question is shown and read by the
+   * single voice, exactly as before. A presentation failure must not cost somebody their
+   * interview.
+   */
+  // Same precedence the dashboard and the GD round use — profile name, then signup metadata,
+  // then the email local part — reduced to something a person would say out loud.
+  const { first: candidateName } = useCandidateName();
+  const { data: interviewers } = useInterviewers();
+  const { turn: panelTurn } = useInterviewPanel();
+  const panelVoices = usePanelVoices(
+    useMemo(
+      () => (interviewers ?? []).map((i) => ({ name: i.name, gender: i.gender, stance: i.disposition })),
+      [interviewers],
+    ),
+  );
+  const [panelLines, setPanelLines] = useState<PanelLine[]>([]);
+  //: The question we have already run the panel for, so a re-render does not buy a second
+  //: turn for the same question.
+  const panelForRef = useRef<string | null>(null);
   // Track how long the candidate actually spoke this answer, for pace/delivery.
   const speakStartRef = useRef<number | null>(null);
   const speakSecondsRef = useRef(0);
@@ -160,7 +194,11 @@ export default function LiveSessionPage() {
     if (!question?.id || !stt.supported) return;
     // Wait for the interviewer to finish. Opening the mic while TTS is still
     // playing means the question gets transcribed into the answer.
-    if (tts.speaking || stt.listening || stt.error) return;
+    // Wait for whoever is actually talking — the panel when it is in use, the single voice
+    // otherwise. Opening the mic while either is mid-sentence transcribes the interviewer
+    // into the candidate's answer.
+    if (tts.speaking || panelVoices.speakingNow || panelVoices.takingFloor) return;
+    if (stt.listening || stt.error) return;
     if (pinnedClosedRef.current || armedForRef.current === question.id) return;
     armedForRef.current = question.id;
     // A beat after they stop, the way you do not start talking the instant someone's
@@ -171,7 +209,7 @@ export default function LiveSessionPage() {
     }, 550);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handsFree, useTyping, preparing, question?.id, tts.speaking, stt.supported, stt.listening, stt.error]);
+  }, [handsFree, useTyping, preparing, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
 
   /**
    * END OF ANSWER. Sustained silence after they have actually said something.
@@ -195,11 +233,39 @@ export default function LiveSessionPage() {
   // questions are read too — a real interviewer states the problem out loud,
   // and they were previously the one type left silent.
   useEffect(() => {
-    if (!useTyping && questionText && tts.supported) {
-      tts.speak(questionText);
-    }
+    if (!questionText || !question?.id || useTyping) return;
+    if (panelForRef.current === question.id) return;
+    panelForRef.current = question.id;
+    setPanelLines([]);
+
+    void (async () => {
+      const result = await panelTurn.mutateAsync({
+        session_id: sessionId,
+        // The first question is a greeting and introductions; everything after is normal
+        // flow, where a wrong previous answer gets corrected before the next question.
+        stage: answered === 0 ? 'opening' : 'mid',
+        question: questionText,
+        candidate_name: candidateName,
+      });
+
+      if (result.turns.length) {
+        // Reveal each line AS ITS VOICE STARTS, not all at once — the same lesson the GD
+        // round taught. Showing both lines immediately and then speaking them in sequence
+        // means the candidate reads the second interviewer while the first is still talking.
+        for (const line of result.turns) {
+          await panelVoices.speakAs(line.speaker, line.text, {
+            onStart: () => setPanelLines((prev) => [...prev, line]),
+          });
+        }
+        return;
+      }
+
+      // No panel — provider down, or it returned nothing usable. Fall back to the single
+      // voice reading the question, which is exactly the old behaviour.
+      if (tts.supported) tts.speak(questionText);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionText]);
+  }, [questionText, question?.id, useTyping]);
 
   useEffect(() => {
     if (stt.transcript) setAnswer(stt.transcript);
@@ -409,9 +475,45 @@ export default function LiveSessionPage() {
                       <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
                     )}
                   </div>
-                  <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-2xl">
-                    {question?.content}
-                  </h1>
+
+                  {panelLines.length > 0 ? (
+                    /* The panel talking. Each line is attributed, and the one being spoken
+                       is ringed so the text and the voice are visibly the same person. */
+                    <div className="space-y-3">
+                      {panelLines.map((line, i) => {
+                        const speaking =
+                          panelVoices.speakingNow === line.speaker && i === panelLines.length - 1;
+                        return (
+                          <motion.div
+                            key={`${line.speaker}-${i}`}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.25 }}
+                            className={cn(
+                              'rounded-xl border px-4 py-3 transition-shadow',
+                              speaking
+                                ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/30'
+                                : 'border-border/50 bg-surface/40',
+                            )}
+                          >
+                            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              {line.speaker}
+                              {interviewers?.find((iv) => iv.name === line.speaker)?.role && (
+                                <span className="ml-2 font-normal normal-case tracking-normal opacity-70">
+                                  {interviewers.find((iv) => iv.name === line.speaker)?.role}
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-base leading-relaxed sm:text-lg">{line.text}</p>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-2xl">
+                      {question?.content}
+                    </h1>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
