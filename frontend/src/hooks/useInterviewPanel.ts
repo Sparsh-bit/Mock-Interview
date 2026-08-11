@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import { getBrowserApiClient } from '@/lib/api';
+import type { SpeechTone } from '@/lib/speech/neural-tts';
 
 /**
  * The two-person interview panel — hooks/useInterviewPanel.ts
@@ -29,6 +30,15 @@ export interface Interviewer {
 export interface PanelLine {
   speaker: string;
   text: string;
+  /**
+   * How the line is delivered — see SpeechTone.
+   *
+   * Tagged by the model, not inferred here. The model is the only thing that knows which
+   * of its own lines is the correction and which is an aside to the other interviewer;
+   * recovering that from the text with keywords would be guessing at something it already
+   * decided. Optional so an older backend simply yields flat delivery rather than an error.
+   */
+  tone?: SpeechTone;
 }
 
 /**

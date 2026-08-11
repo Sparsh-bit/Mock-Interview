@@ -29,7 +29,10 @@ class TestTheClientCannotChooseAVoice:
         # voice_id field, a client can give Meera a male voice again.
         from app.api.v1.tts import SpeakRequest
 
-        assert set(SpeakRequest.model_fields) == {"text", "speaker"}
+        # `tone` is a NAME from an allowlist, resolved to prosody server-side, so it does
+        # not weaken this: the client still cannot pick a voice, and it cannot pick a speed
+        # either — which matters because speed is what decides how much audio gets billed.
+        assert set(SpeakRequest.model_fields) == {"text", "speaker", "tone"}
 
     def test_the_voice_map_is_parsed_from_config(self, monkeypatch):
         from app.services.tts import factory
@@ -98,28 +101,38 @@ class TestCostEstimation:
 
 class TestTheAudioCacheIsExactNotSemantic:
     def test_identical_text_shares_a_key(self):
-        a = _cache_key("elevenlabs", "v1", "What is a HashMap?")
-        b = _cache_key("elevenlabs", "v1", "  What is a HashMap?  ")
+        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking")
+        b = _cache_key("elevenlabs", "v1", "  What is a HashMap?  ", "asking")
         assert a == b
 
     def test_different_text_does_not(self):
         # Audio must be byte-identical to what is on screen. A near-match — which the
         # SEMANTIC cache would happily serve for generations — would play the candidate a
         # different sentence from the one they are reading.
-        a = _cache_key("elevenlabs", "v1", "What is a HashMap?")
-        b = _cache_key("elevenlabs", "v1", "What is a Hashtable?")
+        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking")
+        b = _cache_key("elevenlabs", "v1", "What is a Hashtable?", "asking")
         assert a != b
 
     def test_the_voice_is_part_of_the_key(self):
         # Same words in a different voice is different audio. Without this, Riya's cached
         # line would be served in Arjun's turn.
-        assert _cache_key("elevenlabs", "v_riya", "Yes.") != _cache_key(
-            "elevenlabs", "v_arjun", "Yes."
+        assert _cache_key("elevenlabs", "v_riya", "Yes.", "neutral") != _cache_key(
+            "elevenlabs", "v_arjun", "Yes.", "neutral"
         )
 
     def test_the_provider_is_part_of_the_key(self):
         # Switching vendor must not serve the old vendor's audio.
-        assert _cache_key("elevenlabs", "v1", "Yes.") != _cache_key("azure", "v1", "Yes.")
+        assert _cache_key("elevenlabs", "v1", "Yes.", "neutral") != _cache_key(
+            "azure", "v1", "Yes.", "neutral"
+        )
+
+    def test_the_tone_is_part_of_the_key(self):
+        # Otherwise the first delivery of a line wins for a fortnight. A sentence spoken
+        # once in passing would be served back — flat — to every candidate who later got
+        # that question wrong, which is precisely the thing tone exists to prevent.
+        assert _cache_key("fish", "v1", "That is not quite right.", "correcting") != _cache_key(
+            "fish", "v1", "That is not quite right.", "neutral"
+        )
 
 
 class TestBudgetAndBounds:
@@ -176,3 +189,87 @@ class TestTheResultCarriesWhatTheLedgerNeeds:
         )
         assert r.characters == 12
         assert "token" not in str(SynthesisResult.__dataclass_fields__.keys())
+
+
+class TestToneIsAllowlistedServerSide:
+    """
+    Tone is what makes a correction sound like a correction rather than being read out in
+    the same breezy voice as the greeting. It is also billable output, so the browser gets
+    to send a NAME and the server owns the numbers.
+    """
+
+    def test_every_tone_the_prompt_can_emit_resolves(self):
+        # The five names in prompts/interview_panel.md. A name the prompt is told to use
+        # that the table does not know would silently flatten every line tagged with it.
+        from app.services.tts.base import TONE_PROSODY
+
+        for name in ("neutral", "asking", "correcting", "affirming", "aside"):
+            assert name in TONE_PROSODY
+
+    def test_an_unknown_tone_is_neutral_not_an_error(self):
+        # A client on last week's bundle sending a tone this deploy has never heard of must
+        # still get audio. Silence is a far worse failure than flat delivery.
+        from app.services.tts.base import TONE_PROSODY, prosody_for
+
+        assert prosody_for("enthusiastic-pirate") == TONE_PROSODY["neutral"]
+        assert prosody_for(None) == TONE_PROSODY["neutral"]
+        assert prosody_for("") == TONE_PROSODY["neutral"]
+
+    def test_a_correction_is_slower_than_a_question_which_is_slower_than_an_aside(self):
+        # The actual claim being made about how a room sounds: you slow down to tell
+        # somebody they are wrong, and you speed up when muttering to your colleague. If
+        # these ever collapse to equal, tone is doing nothing and the tests should say so.
+        from app.services.tts.base import prosody_for
+
+        assert (
+            prosody_for("correcting")["speed"]
+            < prosody_for("asking")["speed"]
+            < prosody_for("aside")["speed"]
+        )
+
+    def test_no_tone_can_be_used_to_run_up_the_bill(self):
+        # Speed is what decides how many seconds of audio a request produces, and audio is
+        # charged per character but rendered per second — an extreme value is a denial-of-
+        # budget dressed as a stylistic choice. Bounded on both sides.
+        from app.services.tts.base import TONE_PROSODY
+
+        for name, p in TONE_PROSODY.items():
+            assert 0.8 <= p["speed"] <= 1.25, name
+            assert p["volume"] == 0.0, name
+
+    async def test_fish_sends_the_prosody_the_tone_resolves_to(self):
+        # The end-to-end claim: a tone NAME on the request becomes real prosody in the
+        # vendor call. Verified against the live API separately that speed genuinely changes
+        # the audio length (0.80 -> 53.9KB, 1.20 -> 35.5KB on identical text), so this is
+        # checking the wiring, not the premise.
+        import httpx
+
+        from app.services.tts.base import TONE_PROSODY
+        from app.services.tts.fish import FishAudioProvider
+
+        sent: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            import json as _json
+
+            sent.update(_json.loads(request.content))
+            return httpx.Response(200, content=b"\xff\xfb" + b"\x00" * 64,
+                                  headers={"content-type": "audio/mpeg"})
+
+        transport = httpx.MockTransport(handler)
+        provider = FishAudioProvider(api_key="k")
+
+        original = httpx.AsyncClient
+
+        class _Patched(original):  # type: ignore[misc,valid-type]
+            def __init__(self, **kw):
+                kw["transport"] = transport
+                super().__init__(**kw)
+
+        httpx.AsyncClient = _Patched  # type: ignore[misc]
+        try:
+            await provider.synthesize("You are wrong.", voice_id="v1", tone="correcting")
+        finally:
+            httpx.AsyncClient = original  # type: ignore[misc]
+
+        assert sent["prosody"] == TONE_PROSODY["correcting"]

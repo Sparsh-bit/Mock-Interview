@@ -67,6 +67,47 @@ const INITIAL: PresenceMetrics = {
  * signal from the eyeLook* blendshapes. Mic loudness comes from the Web
  * Audio API. Everything stops and releases the tracks on stop().
  */
+//: How long a second face must persist (net of the decay below) before we say so. Long
+//: enough that someone crossing the room behind the candidate does not trip it, short
+//: enough to catch someone sitting down beside them.
+export const MULTI_PERSON_MS = 1200;
+//: And how long an empty frame must last before we say the candidate left. Longer, because
+//: leaning out of shot to think is normal and being accused of walking out is not.
+export const ABSENT_MS = 2500;
+
+/**
+ * Advance one sustained-signal accumulator by `dt` milliseconds.
+ *
+ * EXPORTED SO IT CAN BE TESTED, and it is exported because of a specific bug. The previous
+ * version of this lived inline in the render loop and required 75 CONSECUTIVE frames of the
+ * condition, resetting to zero on any frame that missed. A face at the edge of frame — which
+ * is exactly where a second person sits — is detected in most frames and not all, so the run
+ * reset every twenty or thirty frames and never once reached seventy-five. The second-person
+ * warning was unreachable by construction, and nothing in the codebase could have told you
+ * that, because the only way to exercise it was to sit two people in front of a webcam.
+ *
+ * Now: accumulate while the condition holds, and BLEED OFF at `decay`× that rate while it
+ * does not. Flicker barely dents the total; genuinely one person drains it to zero in a
+ * fraction of the time it took to fill.
+ *
+ * DECAY IS 0.7 AND THAT NUMBER IS THE WHOLE DESIGN. It sets a break-even detection rate of
+ * decay/(1+decay) — about 41%. Above it the accumulator climbs and the warning fires
+ * eventually; below it the accumulator can NEVER reach the threshold however long the
+ * interview runs, so anything detected less often than that is invisible forever rather
+ * than merely late. That cliff, not the threshold, is what decides who gets caught.
+ *
+ * It was 2 to begin with, which is a 67% break-even, and that is the consecutive-frame bug
+ * one notch quieter: a second person half-lit or turned away detects around 60% of frames
+ * and would have been unwarnable. 41% leaves real room for a bad webcam in a hostel room
+ * while still ignoring the sporadic hits — motion blur, a reflection — that land well under
+ * it. It does mean the accumulator drains slower than it fills, so a cleared warning takes
+ * a second or two to disappear; that reads as the system being sure rather than twitchy,
+ * which for a proctoring signal is the right way to be wrong.
+ */
+export function accumulate(current: number, dt: number, holds: boolean, decay = 0.7): number {
+  return holds ? current + dt : Math.max(0, current - dt * decay);
+}
+
 export function usePresenceMonitor() {
   const [active, setActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -83,11 +124,29 @@ export function usePresenceMonitor() {
   const framesRef = useRef({
     total: 0,
     contact: 0,
-    //: Consecutive frames with more than one face, with zero faces, and the longest run of
-    //: the former this session. See the note where these are updated.
-    multiFrames: 0,
-    absentFrames: 0,
-    multiPeak: 0,
+    /*
+     * MILLISECONDS, NOT FRAMES, AND THEY DECAY RATHER THAN RESET.
+     *
+     * This is why the second-person warning never fired. It used to need 75 CONSECUTIVE
+     * frames of faceCount > 1, and a single dropped frame put the counter back to zero.
+     * A face at the edge of frame — which is exactly where a second person sits — is
+     * detected in most frames, not all of them, so the run reset every twenty or thirty
+     * frames and never once reached seventy-five. The signal was unreachable in practice.
+     *
+     * Frames were the wrong unit too: this loop is driven by requestAnimationFrame, so
+     * "75 frames" is 0.6s on a 120Hz MacBook and 2.5s on a throttled 30fps laptop. The
+     * threshold has to be in time, because what we mean is "for over a second".
+     *
+     * So: accumulate elapsed time while the condition holds, and BLEED IT OFF at twice
+     * that rate while it does not. Flicker barely dents the total; genuinely one person
+     * drains it to zero in half the time it took to fill. That is standard hysteresis,
+     * and it is the difference between a detector that works and one that only works in a
+     * perfectly-lit test.
+     */
+    multiMs: 0,
+    absentMs: 0,
+    multiPeakMs: 0,
+    lastTs: 0,
   });
   const restoreLogsRef = useRef<(() => void) | null>(null);
 
@@ -101,7 +160,7 @@ export function usePresenceMonitor() {
     analyserRef.current = null;
     landmarkerRef.current?.close();
     landmarkerRef.current = null;
-    framesRef.current = { total: 0, contact: 0, multiFrames: 0, absentFrames: 0, multiPeak: 0 };
+    framesRef.current = { total: 0, contact: 0, multiMs: 0, absentMs: 0, multiPeakMs: 0, lastTs: 0 };
     startingRef.current = false;
     // Restore console after MediaPipe is torn down.
     restoreLogsRef.current?.();
@@ -120,7 +179,15 @@ export function usePresenceMonitor() {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
         throw new Error('unsupported');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        // `video: true` gets whatever the browser feels like, and on most laptops that is
+        // 640x480. A second person sitting beside the candidate occupies maybe 60 pixels of
+        // that, which is at or under what the detector can find. Asking for 720p is the
+        // other half of why two people were not being detected. `ideal` rather than `exact`
+        // so a webcam that cannot do it still gives us something instead of throwing.
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: true,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -158,7 +225,17 @@ export function usePresenceMonitor() {
         // Two rather than more: the cost is per detected face, this runs every animation
         // frame, and the question being answered is "is the candidate alone?" — which two
         // answers as well as five, for half the work.
-        numFaces: 2,
+        // Three, not two. With a cap of two the answer to "is anyone else here" is right
+        // but faceCount saturates, so a room with three people and a room with two look
+        // identical in the metric and in the warning copy.
+        numFaces: 3,
+        // Default is 0.5. A face at the edge of frame, half-lit, in profile — a person
+        // leaning in to help — scores below that and simply does not exist as far as the
+        // task is concerned. Lowered for DETECTION only; the hysteresis above is what
+        // keeps the extra false positives this admits from reaching the candidate.
+        minFaceDetectionConfidence: 0.3,
+        minFacePresenceConfidence: 0.3,
+        minTrackingConfidence: 0.3,
         outputFaceBlendshapes: true,
       });
       landmarkerRef.current = landmarker;
@@ -229,12 +306,17 @@ export function usePresenceMonitor() {
          * glance away does not trip them, short enough to catch someone actually sitting down
          * beside the candidate.
          */
-        if (faceCount > 1) f.multiFrames += 1;
-        else f.multiFrames = 0;
-        if (faceCount === 0) f.absentFrames += 1;
-        else f.absentFrames = 0;
+        const now = performance.now();
+        // Clamped: a backgrounded tab stops firing rAF, and the one huge gap on return
+        // would otherwise instantly trip "absent" or, worse, be credited to whichever
+        // condition happened to hold on the first frame back.
+        const dt = f.lastTs ? Math.min(now - f.lastTs, 100) : 0;
+        f.lastTs = now;
 
-        if (f.multiFrames > f.multiPeak) f.multiPeak = f.multiFrames;
+        f.multiMs = accumulate(f.multiMs, dt, faceCount > 1);
+        f.absentMs = accumulate(f.absentMs, dt, faceCount === 0);
+
+        if (f.multiMs > f.multiPeakMs) f.multiPeakMs = f.multiMs;
 
         setMetrics({
           faceDetected,
@@ -242,12 +324,12 @@ export function usePresenceMonitor() {
           eyeContactPct,
           micLevel,
           faceCount,
-          multiplePeople: f.multiFrames >= 75,
-          candidateAbsent: f.absentFrames >= 150,
+          multiplePeople: f.multiMs >= MULTI_PERSON_MS,
+          candidateAbsent: f.absentMs >= ABSENT_MS,
           // Sticky for the whole session: a second person who appeared and left still
           // happened, and a warning that clears itself the moment they duck out of frame is
           // a warning that can be defeated by ducking out of frame.
-          multiplePeopleEver: f.multiPeak >= 75,
+          multiplePeopleEver: f.multiPeakMs >= MULTI_PERSON_MS,
         });
         rafRef.current = requestAnimationFrame(loop);
       };

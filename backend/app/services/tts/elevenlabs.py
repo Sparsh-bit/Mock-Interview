@@ -98,7 +98,14 @@ class ElevenLabsProvider:
     def estimate_cost_usd(self, characters: int) -> float:
         return characters * self._credits_per_char * self._usd_per_credit
 
-    async def synthesize(self, text: str, *, voice_id: str) -> SynthesisResult:
+    async def synthesize(
+        self, text: str, *, voice_id: str, tone: str | None = None
+    ) -> SynthesisResult:
+        # Accepted and ignored. ElevenLabs has no per-request speed control on the v1
+        # endpoint — delivery comes from the voice settings on the voice itself — so rather
+        # than fake it with stability nudges that do something else entirely, this provider
+        # simply speaks flat. Signature parity is what keeps `tone` from being a Fish-only
+        # concept that the caller has to know about.
         clean = (text or "").strip()
         if not clean:
             raise TTSError("nothing to speak")

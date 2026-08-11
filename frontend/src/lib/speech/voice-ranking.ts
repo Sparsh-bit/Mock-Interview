@@ -65,14 +65,33 @@ export function scoreVoice(v: SpeechSynthesisVoice): number {
 
   let score = qualityTier(name);
 
-  // Accent, applied within the tier.
-  if (lang === 'en-in') score += 50;
-  else if (lang === 'en-gb') score += 5; // closer to Indian English than en-US
-  else if (lang === 'en-us') score += 3;
+  /*
+   * ACCENT, applied within the tier — and this ordering was deliberately reversed.
+   *
+   * en-IN used to win by a mile, on the reasoning that a candidate rehearsing a Cognizant
+   * panel should hear the accent they will actually face. That reasoning was sound and the
+   * result was not: the en-IN voices the platforms actually ship are the WEAKEST in their
+   * range — Rishi and Veena are formant synths from a decade ago, Heera and Ravi barely
+   * better — so ranking accent above quality reliably picked a robotic voice over a good
+   * one. Told to choose, the product should sound like a person with a slightly wrong
+   * accent, not like a machine with the right one.
+   *
+   * en-GB is LAST among the three by request. It is not a quality judgement — it is that a
+   * British interviewer is the wrong character entirely for Indian campus placement, and it
+   * lands as more incongruous than a neutral American voice does.
+   *
+   * This only decides the FALLBACK. When Fish is up nobody hears any of this; the roster in
+   * TTS_VOICE_IDS is neutral-English and gender-verified against the catalogue.
+   */
+  if (lang === 'en-us') score += 12;
+  else if (lang === 'en-in') score += 8;
+  else if (lang === 'en-gb') score += 2;
 
-  // Named Indian voices, best first — breaks ties inside the same tier+accent.
+  // Named Indian voices still break ties INSIDE a tier, which is where the original intent
+  // survives: given two equally good voices, the one that sounds like the room wins. What
+  // it can no longer do is drag a bad voice above a good one.
   const idx = INDIAN_VOICE_NAMES.findIndex((n) => name.includes(n));
-  if (idx !== -1) score += 20 - idx;
+  if (idx !== -1) score += (20 - idx) / 8;
 
   return score;
 }

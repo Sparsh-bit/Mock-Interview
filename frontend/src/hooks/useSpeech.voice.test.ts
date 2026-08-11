@@ -19,10 +19,37 @@ describe('scoreVoice', () => {
       .toBeGreaterThan(scoreVoice(v('Rishi', 'en-IN')));
   });
 
-  it('prefers Indian within the same quality tier', () => {
+  // ACCENT ORDER, reversed on purpose — see the long note in voice-ranking.ts.
+  //
+  // en-IN used to win by 50 points, which is what made it able to drag a bad voice above a
+  // good one. It is now a nudge, applied inside a tier, and neutral English leads.
+  it('prefers neutral US English to en-IN within the same quality tier', () => {
     const inIN = v('Microsoft Prabhat Online (Natural) - English (India)', 'en-IN');
     const inUS = v('Microsoft Aria Online (Natural) - English (US)', 'en-US');
-    expect(scoreVoice(inIN)).toBeGreaterThan(scoreVoice(inUS));
+    expect(scoreVoice(inUS)).toBeGreaterThan(scoreVoice(inIN));
+  });
+
+  // British last of the three. Not a quality judgement — a British interviewer is simply
+  // the wrong character for an Indian campus panel, and it reads as more incongruous than
+  // a neutral American one does.
+  it('ranks en-GB below both en-US and en-IN within a tier', () => {
+    const gb = v('Microsoft Libby Online (Natural) - English (GB)', 'en-GB');
+    const us = v('Microsoft Aria Online (Natural) - English (US)', 'en-US');
+    const inIN = v('Microsoft Prabhat Online (Natural) - English (India)', 'en-IN');
+    expect(scoreVoice(us)).toBeGreaterThan(scoreVoice(gb));
+    expect(scoreVoice(inIN)).toBeGreaterThan(scoreVoice(gb));
+  });
+
+  // The point of the reversal is that accent can no longer outrank quality. This is the
+  // test that would catch someone restoring the old +50 while keeping US ahead nominally.
+  it('never lets accent outrank the quality tier', () => {
+    const neuralUS = v('Microsoft Aria Online (Natural) - English (US)', 'en-US');
+    const neuralGB = v('Microsoft Libby Online (Natural) - English (GB)', 'en-GB');
+    const localIN = v('Rishi', 'en-IN');
+    // Even the LAST-ranked accent, when neural, beats the FIRST-ranked accent when it is a
+    // decade-old formant synth.
+    expect(scoreVoice(neuralGB)).toBeGreaterThan(scoreVoice(localIN));
+    expect(scoreVoice(neuralUS)).toBeGreaterThan(scoreVoice(localIN));
   });
 
   it('rejects novelty, compact and non-English voices outright', () => {
@@ -32,7 +59,7 @@ describe('scoreVoice', () => {
     expect(scoreVoice(v('Google Deutsch', 'de-DE'))).toBe(-1);
   });
 
-  it('ranks a realistic macOS/Edge voice list with the neural Indian voice first', () => {
+  it('ranks a realistic macOS/Edge list with a neural neutral voice first', () => {
     const list = [
       v('Fred', 'en-US'),
       v('Rishi', 'en-IN'),
@@ -41,7 +68,10 @@ describe('scoreVoice', () => {
       v('Microsoft Neerja Online (Natural) - English (India)', 'en-IN'),
     ];
     const best = [...list].sort((a, b) => scoreVoice(b) - scoreVoice(a))[0];
-    expect(best.name).toContain('Neerja');
+    expect(best.name).toContain('Aria');
+    // Whatever wins, it is never one of the local synths — that was the original bug and it
+    // stays fixed independently of which accent is on top.
+    expect(['Fred', 'Rishi', 'Samantha']).not.toContain(best.name);
   });
 });
 

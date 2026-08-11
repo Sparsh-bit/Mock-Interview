@@ -41,7 +41,49 @@ TWO RULES THAT ARE NOT NEGOTIABLE.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
+
+#: How a line is delivered.
+#:
+#: A real interviewer does not say "walk me through your approach" and "no, that is not what
+#: a HashMap does" in the same voice. The first is open and unhurried; the second is slower,
+#: flatter and quieter — the sound of somebody stopping you. Reading both in one register is
+#: the single clearest tell that nobody is actually in the room, and no amount of good
+#: writing in the prompt fixes it, because the words are not what carries that.
+#:
+#:   asking       putting a question. Measured, a touch slow, leaves room to think.
+#:   correcting   the answer was wrong. Slower and quieter: serious, not angry.
+#:   affirming    the answer was good. A little quicker and warmer.
+#:   aside        talking to the other interviewer, not the candidate. Quicker, offhand.
+#:   neutral      everything else, including greetings and the close.
+Tone = Literal["neutral", "asking", "correcting", "affirming", "aside"]
+
+#: Tone → prosody, SERVER-SIDE AND ALLOWLISTED.
+#:
+#: The client sends a tone NAME, never numbers. Prosody is billable output that a caller
+#: could otherwise drive to an extreme — speed 0.1 on a long answer is a minute of audio
+#: charged to the daily budget — and there is no reason for the browser to have that dial.
+#: An unknown name resolves to neutral rather than erroring, because a tone the server does
+#: not recognise must never be the thing that costs somebody their interview.
+#:
+#: Volume is in dB and stays at 0. These are speech-to-speech models, and pushing gain here
+#: mostly produces clipping; loudness differences that matter are in the writing.
+#:
+#: Kept narrow on purpose — verified against the live Fish API that speed genuinely changes
+#: duration (0.80 → 53.9KB, 1.00 → 47.2KB, 1.20 → 35.5KB on identical text), so these are
+#: real and audible, not a placebo field.
+TONE_PROSODY: dict[str, dict[str, float]] = {
+    "neutral": {"speed": 1.0, "volume": 0.0},
+    "asking": {"speed": 0.95, "volume": 0.0},
+    "correcting": {"speed": 0.88, "volume": 0.0},
+    "affirming": {"speed": 1.04, "volume": 0.0},
+    "aside": {"speed": 1.08, "volume": 0.0},
+}
+
+
+def prosody_for(tone: str | None) -> dict[str, float]:
+    """Tone name → prosody. Unknown or missing names fall back to neutral, never raise."""
+    return TONE_PROSODY.get(tone or "neutral", TONE_PROSODY["neutral"])
 
 
 class TTSError(Exception):
@@ -84,9 +126,15 @@ class TTSProvider(Protocol):
     @property
     def provider_name(self) -> str: ...
 
-    async def synthesize(self, text: str, *, voice_id: str) -> SynthesisResult:
+    async def synthesize(
+        self, text: str, *, voice_id: str, tone: str | None = None
+    ) -> SynthesisResult:
         """
-        Speak `text` in `voice_id`.
+        Speak `text` in `voice_id`, delivered as `tone`.
+
+        `tone` is a name from TONE_PROSODY, not numbers — see the note there. A provider
+        with no prosody control is free to ignore it; the delivery is then flat, which is
+        worse but not broken.
 
         Raises TTSError on any failure, including a timeout — callers are required to
         degrade to browser speech rather than surface an error, so there is no partial

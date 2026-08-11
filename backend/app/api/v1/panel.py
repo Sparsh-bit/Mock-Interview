@@ -33,6 +33,7 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys
 from app.db.session import get_db
+from app.services.tts.base import TONE_PROSODY
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/panel", tags=["Interview Panel"])
@@ -261,7 +262,15 @@ async def panel_turn(
     # Only real panel members may speak. The model must never be able to put words in the
     # candidate's mouth — the same guard the GD panel carries, for the same reason.
     valid = [
-        {"speaker": c.speaker, "text": c.text.strip()}
+        {
+            "speaker": c.speaker,
+            "text": c.text.strip(),
+            # Re-checked here rather than trusted: this is what the browser hands straight
+            # back to /tts/speak, and an unrecognised name there would silently become
+            # neutral anyway. Normalising at the boundary means the tone in the transcript
+            # is the tone that was actually spoken.
+            "tone": c.tone if c.tone in TONE_PROSODY else "neutral",
+        }
         for c in turn.turns
         if c.text.strip() and c.speaker in INTERVIEWER_NAMES
     ][:4]

@@ -35,7 +35,7 @@ from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys, cache_get_bytes, cache_set_bytes
-from app.services.tts.base import TTSBudgetExceededError, TTSError
+from app.services.tts.base import TONE_PROSODY, TTSBudgetExceededError, TTSError
 from app.services.tts.factory import get_tts_provider, panel_voice_id
 from app.services.tts.spend import record_tts_spend, tts_spend_today
 
@@ -64,17 +64,31 @@ class SpeakRequest(BaseModel):
     #: so a client cannot select an arbitrary voice — which on a metered vendor is both a
     #: cost and a correctness question, since it is what keeps Meera female.
     speaker: str = Field(min_length=1, max_length=64)
+    #: How to deliver it — see TONE_PROSODY in services/tts/base.py. A NAME, not numbers:
+    #: prosody is billable (speed 0.1 on a long line is a minute of audio charged to the
+    #: daily budget) and there is no reason a browser should hold that dial. An unrecognised
+    #: name resolves to neutral rather than 422, because a client on an older bundle sending
+    #: a tone this deploy does not know must still get audio.
+    tone: str | None = Field(default=None, max_length=32)
 
 
-def _cache_key(provider: str, voice_id: str, text: str) -> str:
+def _cache_key(provider: str, voice_id: str, text: str, tone: str) -> str:
     """
     Exact-match key. Deliberately NOT the semantic cache used for generations.
 
     Audio must be byte-identical to what was asked for: a near-match would play a candidate
     a different sentence from the one on their screen. Provider and voice are in the key
     because the same text in a different voice is different audio.
+
+    TONE IS IN THE KEY for exactly the same reason. "That is not right" delivered as a
+    correction and the same words delivered flat are different audio, and leaving tone out
+    would mean the first delivery of a line wins for a fortnight — so a correction spoken
+    once in a neutral context would be served back, flat, to every candidate who got it
+    wrong afterwards. That is the bug the tone work exists to fix, cached.
     """
-    digest = hashlib.sha256(f"{provider}|{voice_id}|{text.strip()}".encode()).hexdigest()
+    digest = hashlib.sha256(
+        f"{provider}|{voice_id}|{tone}|{text.strip()}".encode()
+    ).hexdigest()
     return CacheKeys.tts_audio(digest)
 
 
@@ -106,7 +120,8 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
         logger.warning("tts_provider_unavailable", error=str(exc))
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
-    key = _cache_key(provider.provider_name, voice_id, text)
+    tone = request.tone if request.tone in TONE_PROSODY else "neutral"
+    key = _cache_key(provider.provider_name, voice_id, text, tone)
 
     # Cache first, and before the budget check — a hit costs nothing, so a spent budget must
     # not stop it being served. This is what makes the fixed question bank nearly free.
@@ -132,7 +147,7 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
         )
 
     try:
-        result = await provider.synthesize(text, voice_id=voice_id)
+        result = await provider.synthesize(text, voice_id=voice_id, tone=tone)
     except TTSBudgetExceededError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
     except TTSError as exc:
@@ -145,6 +160,7 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
     logger.info(
         "tts_synthesised",
         speaker=request.speaker,
+        tone=tone,
         provider=result.provider,
         characters=result.characters,
         cost_usd=round(result.estimated_cost_usd, 6),

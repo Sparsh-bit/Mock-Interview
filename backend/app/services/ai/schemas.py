@@ -50,10 +50,30 @@ class GDPanelTurn(BaseModel):
     addressed_candidate: bool = False
 
 
+class PanelUtterance(BaseModel):
+    """
+    One line from one interviewer, with how it is delivered.
+
+    Separate from GDContribution because of `tone`. A discussion panellist argues in one
+    register throughout; an interviewer does not — putting a question and telling somebody
+    their answer is wrong are different acts, and hearing them in the same voice is the
+    clearest possible tell that nobody is really there. The model tags each line because
+    the model is the only thing that knows which one is the correction; inferring it back
+    out of the text with keywords would be guessing at what it already knew.
+    """
+
+    speaker: str
+    text: str
+    #: A name from TONE_PROSODY in services/tts/base.py. Free-form rather than an enum so
+    #: an unexpected value degrades to neutral speech instead of failing validation and
+    #: costing the whole turn — the panel falling silent is far worse than a flat line.
+    tone: str = "neutral"
+
+
 class InterviewPanelTurn(BaseModel):
     """Matches the output of app/prompts/interview_panel.md."""
 
-    turns: list[GDContribution] = Field(default_factory=list)
+    turns: list[PanelUtterance] = Field(default_factory=list)
     #: True when one of these turns actually puts the given question to the candidate.
     #: False for a stage that does not ask one — a wrap-up decline, the "any questions for
     #: us?" prompt, or answering something the candidate asked. The caller uses it to decide

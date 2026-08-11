@@ -1,3 +1,14 @@
+> **SUPERSEDED — see [VOICES.md](VOICES.md).**
+>
+> The product runs on Fish Audio, not ElevenLabs, and the roster is neutral English rather
+> than Indian-accented. Both changed after this was written. VOICES.md has the current ids,
+> the env vars to set on Render, the tone table, and the one command that checks a voice
+> against the catalogue before it ships.
+>
+> This file is kept only for the cost comparison below, which is what decided the vendor and
+> is still the reasoning to revisit if speech ever needs to move again. Everything else in
+> it — the setup steps, the voice ids, the env var names — is out of date. Do not follow it.
+
 # Neural voices — ElevenLabs setup
 
 The code is written and wired. This is the part only you can do, plus the numbers you should

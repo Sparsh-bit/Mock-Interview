@@ -30,6 +30,37 @@
 
 import { getBrowserApiClient } from '@/lib/api';
 
+/**
+ * How a line is delivered. Mirrors TONE_PROSODY in backend/app/services/tts/base.py.
+ *
+ * Kept as a type rather than validated at runtime: an unrecognised name resolves to
+ * neutral server-side, so drift between the two lists costs a flat line, never an error.
+ */
+export type SpeechTone = 'neutral' | 'asking' | 'correcting' | 'affirming' | 'aside';
+
+/**
+ * The same five, for BROWSER speech — a rate multiplier and a pitch offset.
+ *
+ * Needed separately because speechSynthesis has no equivalent of the server's prosody
+ * field, and because the fallback is not a rare path: it is what every candidate hears the
+ * moment the daily TTS budget is spent. A correction that sounds like a correction only
+ * when the vendor is up is a feature that works in the demo and not in the product.
+ *
+ * Smaller numbers than the server's. speechSynthesis rate compounds with the persona tempo
+ * and the voice's own base rate, and stacking three multipliers is how you end up with a
+ * panelist who gabbles; the server applies tone to a single fixed baseline instead.
+ */
+export const BROWSER_TONE: Record<SpeechTone, { rate: number; pitch: number }> = {
+  neutral: { rate: 1.0, pitch: 0 },
+  asking: { rate: 0.97, pitch: 0 },
+  // Lower as well as slower. Dropping pitch is most of what makes a line read as serious
+  // rather than merely slow — slow on its own sounds uncertain, which is the opposite of
+  // what somebody telling you that you are wrong sounds like.
+  correcting: { rate: 0.92, pitch: -0.06 },
+  affirming: { rate: 1.03, pitch: 0.04 },
+  aside: { rate: 1.06, pitch: 0 },
+};
+
 export interface TTSStatus {
   enabled: boolean;
   provider: string | null;
@@ -63,13 +94,20 @@ export async function fetchTTSStatus(): Promise<TTSStatus | null> {
  * The client deliberately cannot choose a voice: that is what keeps Meera female, and on a
  * metered vendor it is also what stops a caller selecting an expensive model.
  */
-export async function fetchUtterance(speaker: string, text: string): Promise<Blob | null> {
+export async function fetchUtterance(
+  speaker: string,
+  text: string,
+  tone?: SpeechTone,
+): Promise<Blob | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
   try {
     const res = await getBrowserApiClient().post(
       '/api/v1/tts/speak',
-      { speaker, text: trimmed },
+      // A tone NAME, never prosody numbers — the server owns the mapping. Same reasoning as
+      // the speaker name above: this is metered output, and the dial that decides how long
+      // an utterance is does not belong in a bundle anyone can edit.
+      { speaker, text: trimmed, tone },
       // Longer than the server's own 12s vendor timeout so the server is always the one to
       // give up first — then the failure carries a reason instead of being a bare abort.
       //

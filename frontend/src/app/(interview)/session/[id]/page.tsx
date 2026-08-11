@@ -97,6 +97,9 @@ export default function LiveSessionPage() {
     ),
   );
   const [panelLines, setPanelLines] = useState<PanelLine[]>([]);
+  //: True from the moment a question arrives until the panel either speaks or gives up. It
+  //: is what stops the question text appearing seconds before the voice that says it.
+  const [panelPending, setPanelPending] = useState(false);
   //: The question we have already run the panel for, so a re-render does not buy a second
   //: turn for the same question.
   const panelForRef = useRef<string | null>(null);
@@ -237,6 +240,7 @@ export default function LiveSessionPage() {
     if (panelForRef.current === question.id) return;
     panelForRef.current = question.id;
     setPanelLines([]);
+    setPanelPending(true);
 
     void (async () => {
       const result = await panelTurn.mutateAsync({
@@ -248,6 +252,7 @@ export default function LiveSessionPage() {
         candidate_name: candidateName,
       });
 
+      setPanelPending(false);
       if (result.turns.length) {
         // Reveal each line AS ITS VOICE STARTS, not all at once — the same lesson the GD
         // round taught. Showing both lines immediately and then speaking them in sequence
@@ -255,6 +260,10 @@ export default function LiveSessionPage() {
         for (const line of result.turns) {
           await panelVoices.speakAs(line.speaker, line.text, {
             onStart: () => setPanelLines((prev) => [...prev, line]),
+            // Tagged by the panel itself, per line. This is what makes a correction sound
+            // like one — slower and lower — instead of being read out in the same voice as
+            // the greeting, which was the giveaway that nobody was really in the room.
+            tone: line.tone,
           });
         }
         return;
@@ -509,6 +518,32 @@ export default function LiveSessionPage() {
                         );
                       })}
                     </div>
+                  ) : panelPending ? (
+                    /*
+                     * THE LAG YOU FELT. The bare question used to render the instant it
+                     * arrived, while the panel's voice was still two to four seconds behind
+                     * it — so you read the question, then heard it, and the room was always
+                     * a beat behind the screen.
+                     *
+                     * While the panel is being written we show that somebody is about to
+                     * speak instead of showing the words. Text and voice then land together,
+                     * which is what makes it feel like a room rather than a page with audio
+                     * bolted on. If the panel fails, the branch below still shows the
+                     * question — nobody is ever left with nothing.
+                     */
+                    <div className="flex items-center gap-2.5 py-2 text-sm text-muted-foreground">
+                      <span className="flex gap-1" aria-hidden>
+                        {[0, 0.18, 0.36].map((d) => (
+                          <motion.span
+                            key={d}
+                            className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
+                            animate={{ opacity: [0.25, 1, 0.25] }}
+                            transition={{ duration: 1.1, repeat: Infinity, delay: d }}
+                          />
+                        ))}
+                      </span>
+                      The panel is talking…
+                    </div>
                   ) : (
                     <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-2xl">
                       {question?.content}
@@ -534,49 +569,15 @@ export default function LiveSessionPage() {
             </span>
             <div className="flex items-center gap-2">
               {isCoding && <Badge variant="violet">Coding round</Badge>}
-              {tts.supported && questionText && (
-                <button
-                  onClick={() => (tts.speaking ? tts.cancel() : tts.speak(questionText))}
-                  title="Read question aloud"
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                    tts.speaking
-                      ? 'border-primary/30 bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <Volume2 className="h-3 w-3" /> {tts.speaking ? 'Speaking…' : 'Hear question'}
-                </button>
-              )}
+              {/* No "Hear question" button and no voice-name strip.
+                  Both were from when a single synthetic voice read the question and the
+                  candidate might reasonably want to replay it or check which voice they had
+                  been given. The panel talks on its own, in two voices, and a button offering
+                  to re-read "the question" has nothing to point at — the question is now
+                  something Priya said, in her own words, in the middle of a conversation.
+                  Naming the browser voice was worse: it announced the machinery. */}
             </div>
           </div>
-
-          {/* One consistent interviewer voice — Indian English, auto-selected.
-              No picker: the interviewer is a person, and letting the voice
-              change mid-session broke that illusion. */}
-          {!useTyping && tts.supported && tts.activeVoice && (
-            <div className="mb-4 flex items-center gap-2">
-              <span className="flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
-                <Volume2 className="h-3 w-3" />
-                Interviewer voice: {tts.activeVoice.name}
-                {!tts.activeVoice.lang.toLowerCase().startsWith('en-in') && (
-                  <span
-                    className="text-accent-amber-ink"
-                    title="No Indian English voice is installed on this device, so the closest available one is used."
-                  >
-                    · not en-IN
-                  </span>
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={() => tts.speak('Hi, I will be your interviewer today. Let us begin.')}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Preview
-              </button>
-            </div>
-          )}
 
           {isCoding ? (
             <CodingWorkspace

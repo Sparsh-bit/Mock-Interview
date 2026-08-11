@@ -100,9 +100,9 @@ Return ONLY a valid JSON object:
 ```json
 {
   "turns": [
-    {"speaker": "Anil", "text": "Okay, Sparsh — that's not quite right. A HashMap allows one null key; it's Hashtable that doesn't allow any."},
-    {"speaker": "Anil", "text": "Priya, do you want to take the next one?"},
-    {"speaker": "Priya", "text": "Sure. So, Sparsh — tell me how you'd handle an exception you can't recover from."}
+    {"speaker": "Anil", "text": "Okay, Sparsh — that's not quite right. A HashMap allows one null key; it's Hashtable that doesn't allow any.", "tone": "correcting"},
+    {"speaker": "Anil", "text": "Priya, do you want to take the next one?", "tone": "aside"},
+    {"speaker": "Priya", "text": "Sure. So, Sparsh — tell me how you'd handle an exception you can't recover from.", "tone": "asking"}
   ],
   "asked_question": true
 }
@@ -114,6 +114,16 @@ Rules for the fields:
   name — you never speak for them.
 - Two to four turns. Fewer than two and it is not a panel; more than four and the candidate
   is listening instead of interviewing.
+- `tone` is how the line is SAID, and it is what makes this sound like a room. Pick one:
+  - `asking` — you are putting a question to the candidate.
+  - `correcting` — you are telling them they were wrong. Serious, not angry.
+  - `affirming` — you are telling them that was good.
+  - `aside` — you are talking to the other interviewer, not to the candidate.
+  - `neutral` — anything else: greetings, the close, answering their question.
+
+  Tag every turn. A correction tagged `neutral` is read out in the same breezy voice as the
+  greeting, which is exactly the thing that gives the game away. If a line does two jobs,
+  tag it for the job that matters — a correction that ends by handing over is `correcting`.
 - `asked_question` is `true` when one of these turns actually puts the given question to the
   candidate, `false` for a stage that does not ask one (wrapping with a decline,
   candidate_questions, answering_candidate).

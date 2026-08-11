@@ -9,7 +9,13 @@ import {
   type PanelVoice,
 } from '@/lib/speech/panel-voices';
 import { personaFor } from '@/lib/speech/persona';
-import { fetchTTSStatus, fetchUtterance, playBlob } from '@/lib/speech/neural-tts';
+import {
+  BROWSER_TONE,
+  fetchTTSStatus,
+  fetchUtterance,
+  playBlob,
+  type SpeechTone,
+} from '@/lib/speech/neural-tts';
 import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
 // qualityTier is also re-exported at the bottom of this file, but `export … from`
 // creates no local binding, so it has to be imported here to be callable.
@@ -432,9 +438,13 @@ export function useSpeechSynthesis() {
             utter.voice = chosen;
             utter.lang = chosen.lang;
           } else {
-            // Ask for Indian English even without a matching voice object — some
-            // engines still pick an en-IN variant from the lang hint alone.
-            utter.lang = 'en-IN';
+            // Neutral English, not en-IN. Some engines pick a variant from the lang hint
+            // alone even with no matching voice object, and the en-IN variants they ship
+            // are the oldest formant synths in the range — see the accent note in
+            // voice-ranking.ts. The RECOGNISER stays en-IN: that one is listening to a real
+            // Indian speaker and needs the right model. This one is only choosing an accent
+            // to speak in, and a good neutral voice beats a robotic local one.
+            utter.lang = 'en-US';
           }
           // The interviewer slows on the question itself and on the clause they
           // end on. That is the "your turn" cue; without it a candidate is
@@ -691,6 +701,15 @@ export function usePanelVoices(
          * a contribution that was talked over was never said, so it should not appear.
          */
         onStart?: () => void;
+        /**
+         * How this line is delivered — see SpeechTone.
+         *
+         * The panel tags every turn, because it is the only thing that knows which line is
+         * the correction. Putting a question and telling somebody their answer is wrong in
+         * one flat register is the clearest tell that nobody is in the room, and it is not
+         * something better writing can fix: the words already say it, the voice does not.
+         */
+        tone?: SpeechTone;
       } = {},
     ): Promise<void> => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window) || !text.trim()) {
@@ -760,7 +779,7 @@ export function usePanelVoices(
          * the candidate, and their own microphone would transcribe it into their answer.
          */
         if (neuralRef.current) {
-          const blob = await fetchUtterance(speaker, text);
+          const blob = await fetchUtterance(speaker, text, opts.tone);
           if (blob && live()) {
             // The persona tempo applies to neural audio too, via playbackRate. Without it
             // the per-panelist pacing — the whole reason three voices were tellable apart
@@ -782,11 +801,17 @@ export function usePanelVoices(
           }
         }
 
+        // Tone for browser speech. The server applies its own on the neural path above, so
+        // this is only reached when neural audio was unavailable — which is exactly when it
+        // matters most, since that is the path a spent budget puts everyone on.
+        const toneShape = BROWSER_TONE[opts.tone ?? 'neutral'] ?? BROWSER_TONE.neutral;
+
         const network = isNetworkVoice(chosen);
         // Local formant synthesis needs the extra room to stay intelligible;
         // neural voices are already well paced. Persona tempo multiplies on top of
         // whatever rate panel-voices assigned, so neither overwrites the other.
-        const baseRate = (assigned?.rate ?? 1) * (network ? 1.0 : 0.94) * persona.tempo;
+        const baseRate =
+          (assigned?.rate ?? 1) * (network ? 1.0 : 0.94) * persona.tempo * toneShape.rate;
         // finalPauseMs 0: the next speaker's lead-in owns the gap after a
         // contribution, so adding one here would double it.
         const chunks = toProsodyChunks(text, { networkVoice: network, finalPauseMs: 0 });
@@ -798,12 +823,13 @@ export function usePanelVoices(
             utter.voice = chosen;
             utter.lang = chosen.lang;
           } else {
-            utter.lang = 'en-IN';
+            // Same reasoning as the interviewer path above.
+            utter.lang = 'en-US';
           }
-          // Pitch belongs to panel-voices: it is the value allDistinguishable
-          // relies on to keep two panelists sharing one voice tellable apart, so
-          // nudging it per chunk would erode that margin for no audible gain.
-          utter.pitch = assigned?.pitch ?? 1;
+          // Pitch is panel-voices' to set — it is the value allDistinguishable relies on to
+          // keep two panelists on one voice tellable apart. Tone only OFFSETS it, by at most
+          // 0.06, which is well inside that margin and still audible as gravity.
+          utter.pitch = Math.max(0.5, Math.min(2, (assigned?.pitch ?? 1) + toneShape.pitch));
           utter.rate = Math.min(
             1.35,
             Math.max(0.7, Math.round(baseRate * shapingFor(chunk) * 100) / 100),

@@ -27,7 +27,12 @@ from __future__ import annotations
 import httpx
 import structlog
 
-from app.services.tts.base import SynthesisResult, TTSBudgetExceededError, TTSError
+from app.services.tts.base import (
+    SynthesisResult,
+    TTSBudgetExceededError,
+    TTSError,
+    prosody_for,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -81,7 +86,9 @@ class FishAudioProvider:
     def estimate_cost_usd(self, characters: int) -> float:
         return characters * _USD_PER_CHAR
 
-    async def synthesize(self, text: str, *, voice_id: str) -> SynthesisResult:
+    async def synthesize(
+        self, text: str, *, voice_id: str, tone: str | None = None
+    ) -> SynthesisResult:
         clean = (text or "").strip()
         if not clean:
             raise TTSError("nothing to speak")
@@ -108,6 +115,12 @@ class FishAudioProvider:
                         # question is full of exactly that.
                         "normalize": True,
                         "latency": "normal",
+                        # Delivery. Verified against the live API on identical text that
+                        # speed genuinely changes the audio length rather than being
+                        # silently accepted and dropped: 0.80 gave 53.9KB, 1.00 gave
+                        # 47.2KB, 1.20 gave 35.5KB. Resolved from a name server-side, so
+                        # the browser cannot ask for speed 0.1 and bill a minute of audio.
+                        "prosody": prosody_for(tone),
                     },
                 )
         except httpx.HTTPError as exc:
