@@ -131,7 +131,14 @@ class TestBudgetAndBounds:
 
     def test_tts_is_off_by_default(self):
         # A per-character bill has to be opted into by somebody who has seen the numbers.
-        assert settings.TTS_ENABLED is False
+        #
+        # Asserts the FIELD DEFAULT, not the loaded value: `settings` reads .env, so checking
+        # the runtime value makes this test pass or fail based on the machine it runs on
+        # rather than on the code. It failed the moment TTS was switched on locally, which is
+        # exactly the wrong signal.
+        from app.core.config import Settings
+
+        assert Settings.model_fields["TTS_ENABLED"].default is False
 
     def test_an_utterance_length_ceiling_exists(self):
         # A panel contribution is 1-3 sentences by prompt rule. At per-character pricing an

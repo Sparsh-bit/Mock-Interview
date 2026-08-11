@@ -312,6 +312,27 @@ class Settings(BaseSettings):
             "services/tts/ and a branch in factory.py; nothing else changes."
         ),
     )
+    FISH_API_KEY: str = Field(
+        default="",
+        description=(
+            "Fish Audio API key. Server-side only, never sent to the browser. NOTE: Fish "
+            "bills API credit SEPARATELY from platform credit — a valid key on an account "
+            "with no API credit returns HTTP 402. Top up at fish.audio/app/developers."
+        ),
+    )
+    FISH_MODEL: str = Field(
+        default="s2.1-pro-free",
+        description=(
+            "Fish synthesis backend, sent as a HEADER rather than a body field.\n\n"
+            "'s2.1-pro-free' is the free tier and is the default because it is what actually "
+            "works on a new account: the paid backends return HTTP 402 until API credit is "
+            "added, and Fish bills API credit separately from platform credit, so an account "
+            "can look funded and still be refused. Verified live — s2.1-pro-free returns real "
+            "audio on a zero-credit key in ~3.5s.\n\n"
+            "Move to 's1' or 'speech-1.6' once credit is topped up if the free tier rate-limits "
+            "under real traffic."
+        ),
+    )
     ELEVENLABS_API_KEY: str = Field(default="", description="Server-side only. Never sent to the browser.")
     ELEVENLABS_MODEL: str = Field(
         default="eleven_flash_v2_5",

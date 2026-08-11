@@ -50,6 +50,17 @@ class GDPanelTurn(BaseModel):
     addressed_candidate: bool = False
 
 
+class InterviewPanelTurn(BaseModel):
+    """Matches the output of app/prompts/interview_panel.md."""
+
+    turns: list[GDContribution] = Field(default_factory=list)
+    #: True when one of these turns actually puts the given question to the candidate.
+    #: False for a stage that does not ask one — a wrap-up decline, the "any questions for
+    #: us?" prompt, or answering something the candidate asked. The caller uses it to decide
+    #: whether the question it supplied has now been spent.
+    asked_question: bool = False
+
+
 class GDPreparedTopic(BaseModel):
     """
     Matches the output of app/prompts/gd_topic_prep.md.

@@ -27,7 +27,7 @@ PROMPTS = BACKEND / "app" / "prompts"
 API = BACKEND / "app" / "api" / "v1"
 
 #: Templates a call site marks cacheable. Each must be free of placeholders.
-CACHED_TEMPLATES = ("gd_panel",)
+CACHED_TEMPLATES = ("gd_panel", "interview_panel")
 
 
 def _static_templates() -> set[str]:
@@ -83,9 +83,11 @@ class TestTheCachedPromptIsActuallyStatic:
     def test_exactly_one_call_site_opts_into_caching(self):
         # Not a style rule. Every additional opt-in is another chance for a prompt to
         # regain a placeholder and start costing more, and the only symptom is the bill.
-        assert _cache_opt_in_count() == 1, (
-            f"{_cache_opt_in_count()} call sites pass cache_system=True. Each one needs "
-            "its template listed in CACHED_TEMPLATES and covered below."
+        assert _cache_opt_in_count() == len(CACHED_TEMPLATES), (
+            f"{_cache_opt_in_count()} call sites pass cache_system=True but "
+            f"{len(CACHED_TEMPLATES)} templates are listed. Every opt-in needs its template "
+            "listed here and asserted placeholder-free below — an unlisted one costs 25% "
+            "MORE per call, silently, forever."
         )
 
     def test_a_cached_template_has_no_placeholders(self):
@@ -112,16 +114,16 @@ class TestTheCachedPromptIsActuallyStatic:
         assert a[0].content == b[0].content, "the system block differs between requests"
         assert a[1].content != b[1].content, "the per-round content should differ"
 
-    def test_the_cached_prefix_clears_the_minimum_size(self):
+    def test_every_cached_prefix_clears_the_minimum_size(self):
         # Sonnet 5 only caches prefixes of 1024 tokens or more. Below that the marker is
         # accepted and silently does nothing — no error, no saving. gd_panel.md is the
         # reason this is worth caching at all, so its size is part of the contract.
-        raw = (PROMPTS / "gd_panel.md").read_text()
-        approx_tokens = len(raw) / 4
-        assert approx_tokens >= 1024, (
-            f"gd_panel.md is ~{approx_tokens:.0f} tokens, below Sonnet's 1024-token "
-            "minimum cacheable prefix — the cache_control marker would do nothing."
-        )
+        for name in CACHED_TEMPLATES:
+            approx_tokens = len((PROMPTS / f"{name}.md").read_text()) / 4
+            assert approx_tokens >= 1024, (
+                f"{name}.md is ~{approx_tokens:.0f} tokens, below Sonnet's 1024-token "
+                "minimum cacheable prefix — the cache_control marker would do nothing."
+            )
 
 
 class TestCachingIsOptInPerCall:

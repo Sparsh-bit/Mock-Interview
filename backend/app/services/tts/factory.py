@@ -46,6 +46,15 @@ def get_tts_provider() -> TTSProvider:
         )
         return _provider
 
+    if name == "fish":
+        from app.services.tts.fish import FishAudioProvider  # noqa: PLC0415
+
+        _provider = FishAudioProvider(
+            api_key=settings.FISH_API_KEY, model=settings.FISH_MODEL
+        )
+        logger.info("tts_provider_created", provider="fish", model=settings.FISH_MODEL)
+        return _provider
+
     raise TTSError(f"unknown or unset TTS_PROVIDER: {name!r}")
 
 
@@ -82,6 +91,11 @@ def configured_voices() -> dict[str, bool]:
     voice at a time instead of dropping the whole round to browser speech.
     """
     from app.api.v1.gd import PANELIST_NAMES  # noqa: PLC0415
+    from app.api.v1.panel import INTERVIEWER_NAMES  # noqa: PLC0415
 
     have = _voice_map()
-    return {name: name.lower() in have for name in [*PANELIST_NAMES, "interviewer"]}
+    # Both panels, plus the solo interviewer used when the panel layer is unavailable. A name
+    # missing here falls back to browser speech for that speaker ALONE, which is why this is
+    # reported per name rather than as one boolean.
+    speakers = [*INTERVIEWER_NAMES, *PANELIST_NAMES, "interviewer"]
+    return {name: name.lower() in have for name in speakers}
