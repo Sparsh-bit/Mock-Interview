@@ -109,12 +109,13 @@ class PanelTurnRequest(BaseModel):
     stage: str = Field(default="mid", pattern="^(opening|mid|wrapping|candidate_questions|answering_candidate)$")
     #: The question the orchestrator chose. Empty for stages that do not ask one.
     question: str = Field(default="", max_length=2000)
-    #: What the candidate last said, so a wrong answer can be corrected in the room.
-    last_answer: str = Field(default="", max_length=4000)
-    #: The expected concepts for the LAST question, so the correction is grounded in the
-    #: bank's own answer rather than whatever the model recalls. This is what stops a
-    #: "correction" that is itself wrong.
-    last_expected: str = Field(default="", max_length=2000)
+    # NOTE: the last answer and the concepts a correct answer covers are NOT accepted from
+    # the client. They are read from the database using session_id — see _last_exchange.
+    #
+    # Two reasons, and the second is the important one. The client would have to be given the
+    # bank's expected answer to send it back, which is the answer key; and a correction is
+    # only worth anything if it is grounded in what the question actually wanted, so letting
+    # the caller supply that would let a wrong "correction" be produced by a wrong caller.
     #: What the candidate asked, for the answering_candidate stage.
     candidate_question: str = Field(default="", max_length=1000)
     candidate_name: str = Field(default="", max_length=80)
@@ -123,6 +124,59 @@ class PanelTurnRequest(BaseModel):
 class PanelTurnResponse(BaseModel):
     turns: list[dict]
     asked_question: bool
+
+
+async def _last_exchange(
+    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID
+) -> tuple[str, str]:
+    """
+    The candidate's most recent answer, and what a correct answer to THAT question covers.
+
+    Read server-side rather than accepted from the client. The expected concepts are the
+    bank's answer key — handing them to the browser so it can hand them back would put the
+    answers in the page for anyone who opens dev tools, and a correction grounded in
+    caller-supplied "expectations" is a correction a caller can make wrong.
+
+    Scoped by user_id as well as session_id. Every read in this app is, since the bug that
+    quoted one candidate's words at another; a panel that corrected somebody using a
+    different candidate's answer would be that same defect wearing a new hat.
+
+    Returns empty strings when there is no previous answer — the opening question, or a
+    session whose first answer has not landed. The prompt is explicit that it must not invent
+    a correction in that case.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models.question import Question  # noqa: PLC0415
+    from app.models.session import Answer, InterviewSession  # noqa: PLC0415
+
+    owns = await db.scalar(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id, InterviewSession.user_id == user_id
+        )
+    )
+    if not owns:
+        return "", ""
+
+    row = (
+        await db.execute(
+            select(Answer.content, Question.expected_keywords, Question.ideal_answer)
+            .join(Question, Question.id == Answer.question_id)
+            .where(Answer.session_id == session_id)
+            .order_by(Answer.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return "", ""
+
+    content, keywords, ideal = row
+    expected_parts: list[str] = []
+    if keywords:
+        expected_parts.append("Key concepts: " + ", ".join(str(k) for k in keywords))
+    if ideal:
+        expected_parts.append(str(ideal))
+    return (content or ""), "\n".join(expected_parts)
 
 
 @router.get("/interviewers", summary="Who is on the panel")
@@ -152,6 +206,9 @@ async def panel_turn(
     from app.services.ai.schemas import InterviewPanelTurn  # noqa: PLC0415
 
     name = _candidate_name(request.candidate_name)
+    last_answer, last_expected = await _last_exchange(
+        db, request.session_id, current_user.user_id
+    )
 
     brief = "\n".join(
         [
@@ -166,10 +223,10 @@ async def panel_turn(
             "",
             f"### The question to put\n{request.question or '(none for this stage)'}",
             "",
-            f"### What the candidate last said\n{request.last_answer or '(nothing yet)'}",
+            f"### What the candidate last said\n{last_answer or '(nothing yet)'}",
             "",
             "### What a correct answer to THAT last question covers",
-            request.last_expected or "(not available — do not invent a correction)",
+            last_expected or "(not available — do not invent a correction)",
             "",
             f"### What the candidate just asked you\n{request.candidate_question or '(nothing)'}",
             "",

@@ -29,6 +29,24 @@ export interface PresenceMetrics {
   eyeContactPct: number;
   /** 0–1 microphone loudness (RMS), for a live "speaking" meter. */
   micLevel: number;
+  /** How many faces are in frame right now. Capped at 2 by the detector config. */
+  faceCount: number;
+  /**
+   * More than one person, sustained for ~1.2s.
+   *
+   * Sustained rather than instantaneous: someone walking past behind the candidate is not a
+   * second interviewee, and a warning that fires on a passer-by is a warning nobody believes.
+   */
+  multiplePeople: boolean;
+  /** Nobody in frame for ~2.5s. The candidate has walked away or covered the camera. */
+  candidateAbsent: boolean;
+  /**
+   * A second person was detected at ANY point this session, and this never clears.
+   *
+   * Deliberately sticky. A live-only flag can be defeated by having the other person duck out
+   * of frame, which makes it worth nothing as a proctoring signal.
+   */
+  multiplePeopleEver: boolean;
 }
 
 const INITIAL: PresenceMetrics = {
@@ -36,6 +54,10 @@ const INITIAL: PresenceMetrics = {
   lookingAtScreen: false,
   eyeContactPct: 100,
   micLevel: 0,
+  faceCount: 0,
+  multiplePeople: false,
+  candidateAbsent: false,
+  multiplePeopleEver: false,
 };
 
 /**
@@ -58,7 +80,15 @@ export function usePresenceMonitor() {
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const framesRef = useRef({ total: 0, contact: 0 });
+  const framesRef = useRef({
+    total: 0,
+    contact: 0,
+    //: Consecutive frames with more than one face, with zero faces, and the longest run of
+    //: the former this session. See the note where these are updated.
+    multiFrames: 0,
+    absentFrames: 0,
+    multiPeak: 0,
+  });
   const restoreLogsRef = useRef<(() => void) | null>(null);
 
   const stop = useCallback(() => {
@@ -71,7 +101,7 @@ export function usePresenceMonitor() {
     analyserRef.current = null;
     landmarkerRef.current?.close();
     landmarkerRef.current = null;
-    framesRef.current = { total: 0, contact: 0 };
+    framesRef.current = { total: 0, contact: 0, multiFrames: 0, absentFrames: 0, multiPeak: 0 };
     startingRef.current = false;
     // Restore console after MediaPipe is torn down.
     restoreLogsRef.current?.();
@@ -120,7 +150,15 @@ export function usePresenceMonitor() {
       const landmarker = await vision.FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
         runningMode: 'VIDEO',
-        numFaces: 1,
+        // TWO, not one. A second person in frame is the single thing a proctored interview
+        // most needs to notice, and with numFaces: 1 the detector returns at most one set of
+        // landmarks — so somebody sitting beside the candidate was invisible BY
+        // CONFIGURATION, not by oversight in the loop below.
+        //
+        // Two rather than more: the cost is per detected face, this runs every animation
+        // frame, and the question being answered is "is the candidate alone?" — which two
+        // answers as well as five, for half the work.
+        numFaces: 2,
         outputFaceBlendshapes: true,
       });
       landmarkerRef.current = landmarker;
@@ -147,13 +185,15 @@ export function usePresenceMonitor() {
 
         let faceDetected = false;
         let lookingAtScreen = false;
+        let faceCount = 0;
         // Only run detection once the frame actually has pixels — calling
         // detectForVideo on a 0x0 frame makes MediaPipe throw (ROI must be
         // > 0), which would otherwise crash the loop.
         if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
           try {
             const res = lm.detectForVideo(video, performance.now());
-            faceDetected = (res.faceLandmarks?.length ?? 0) > 0;
+            faceCount = res.faceLandmarks?.length ?? 0;
+            faceDetected = faceCount > 0;
             const shapes = res.faceBlendshapes?.[0]?.categories;
             if (faceDetected && shapes) {
               const byName: Record<string, number> = {};
@@ -176,7 +216,39 @@ export function usePresenceMonitor() {
         if (faceDetected && lookingAtScreen) f.contact += 1;
         const eyeContactPct = f.total > 0 ? Math.round((f.contact / f.total) * 100) : 100;
 
-        setMetrics({ faceDetected, lookingAtScreen, eyeContactPct, micLevel });
+        /*
+         * SUSTAINED signals, not per-frame ones.
+         *
+         * Detection flickers: a candidate turns to think and the face is lost for three
+         * frames; someone walks past behind them and there are briefly two. Raising a warning
+         * on a single frame would make the UI strobe and would cry wolf, which is worse than
+         * not warning at all — a proctoring signal nobody believes is noise.
+         *
+         * So both are counted in consecutive frames and only reported once they persist.
+         * At ~60fps these are roughly 1.2 and 2.5 seconds: long enough that a passer-by or a
+         * glance away does not trip them, short enough to catch someone actually sitting down
+         * beside the candidate.
+         */
+        if (faceCount > 1) f.multiFrames += 1;
+        else f.multiFrames = 0;
+        if (faceCount === 0) f.absentFrames += 1;
+        else f.absentFrames = 0;
+
+        if (f.multiFrames > f.multiPeak) f.multiPeak = f.multiFrames;
+
+        setMetrics({
+          faceDetected,
+          lookingAtScreen,
+          eyeContactPct,
+          micLevel,
+          faceCount,
+          multiplePeople: f.multiFrames >= 75,
+          candidateAbsent: f.absentFrames >= 150,
+          // Sticky for the whole session: a second person who appeared and left still
+          // happened, and a warning that clears itself the moment they duck out of frame is
+          // a warning that can be defeated by ducking out of frame.
+          multiplePeopleEver: f.multiPeak >= 75,
+        });
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);

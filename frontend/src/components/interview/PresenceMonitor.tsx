@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, Eye, EyeOff, Loader2, Mic, ShieldCheck, X } from 'lucide-react';
+import { Camera, Eye, EyeOff, Loader2, Mic, ShieldCheck, UserX, Users, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePresenceMonitor } from '@/hooks/usePresenceMonitor';
 import { cn } from '@/lib/utils';
@@ -62,6 +62,44 @@ export function PresenceMonitor() {
             <span className="text-xs">Starting camera analysis…</span>
           </div>
         )}
+        {/* PROCTORING WARNINGS.
+            A real interview is invigilated, and the two things an invigilator would actually
+            say something about are somebody else in the room and the candidate leaving it.
+            Both are sustained signals rather than per-frame ones — see usePresenceMonitor —
+            because a warning that fires on a passer-by is a warning nobody believes. */}
+        {active && metrics.multiplePeople && (
+          <div
+            role="alert"
+            className="mb-3 flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-snug text-destructive"
+          >
+            <Users className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              <span className="font-semibold">Another person is in frame.</span> In a real
+              interview this ends the round. Make sure you are alone before continuing.
+            </span>
+          </div>
+        )}
+        {active && !metrics.multiplePeople && metrics.multiplePeopleEver && (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink">
+            <Users className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            {/* Sticky on purpose: a flag that clears when the second person ducks out of
+                frame can be defeated by ducking out of frame. */}
+            <span>A second person was detected earlier in this interview.</span>
+          </div>
+        )}
+        {active && metrics.candidateAbsent && (
+          <div
+            role="alert"
+            className="mb-3 flex items-start gap-2 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink"
+          >
+            <UserX className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              <span className="font-semibold">We cannot see you.</span> The panel is still
+              waiting — come back into frame.
+            </span>
+          </div>
+        )}
+
         {active && (
           <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
             <span className="h-1.5 w-1.5 rounded-full bg-accent-coral" /> Live · on device

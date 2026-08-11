@@ -96,7 +96,24 @@ export async function fetchUtterance(speaker: string, text: string): Promise<Blo
  * to load can emit neither `ended` nor `error`, and an await on that never returns. Here
  * that would silence the panel for the rest of the round.
  */
-export function playBlob(blob: Blob, register: (el: HTMLAudioElement) => void): Promise<void> {
+export function playBlob(
+  blob: Blob,
+  register: (el: HTMLAudioElement) => void,
+  /**
+   * Playback rate, from the speaker's persona tempo.
+   *
+   * WHY THIS MATTERS. persona.ts gives each panelist a stable speaking tempo — the assertive
+   * one 9% faster, the synthesiser 8% slower — and that was the main thing separating three
+   * voices when they had to share one. Neural audio arrives as a finished file, so without
+   * this the tempo differentiation is silently LOST the moment neural speech switches on, and
+   * the panel gets less distinguishable rather than more.
+   *
+   * playbackRate keeps it. Clamped tight because a media element resamples rather than
+   * pitch-shifting: past roughly ±12% the voice starts sounding sped-up rather than brisk,
+   * which is worse than uniform.
+   */
+  rate = 1,
+): Promise<void> {
   return new Promise<void>((resolve) => {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
@@ -111,6 +128,8 @@ export function playBlob(blob: Blob, register: (el: HTMLAudioElement) => void): 
       URL.revokeObjectURL(url);
       resolve();
     };
+
+    audio.playbackRate = Math.min(1.12, Math.max(0.88, rate));
 
     // Generous: it must never cut off real speech. An utterance is a couple of sentences, so
     // 30s is far past any legitimate length and still bounded.

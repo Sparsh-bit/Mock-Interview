@@ -762,9 +762,16 @@ export function usePanelVoices(
         if (neuralRef.current) {
           const blob = await fetchUtterance(speaker, text);
           if (blob && live()) {
-            await playBlob(blob, (el) => {
-              audioRef.current = el;
-            });
+            // The persona tempo applies to neural audio too, via playbackRate. Without it
+            // the per-panelist pacing — the whole reason three voices were tellable apart
+            // before — would vanish the moment neural speech came on.
+            await playBlob(
+              blob,
+              (el) => {
+                audioRef.current = el;
+              },
+              persona.tempo,
+            );
             audioRef.current = null;
             // A neural utterance is one audio file, so there is no per-clause pause to
             // hold and no question-handover to add here — the vendor's own delivery
