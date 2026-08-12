@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PauseEvent } from '@/lib/speech/delivery';
+import { toSpokenForm } from '@/lib/speech/speakable';
 import { correctTechnicalTerms } from '@/lib/speech/vocabulary';
 import {
   allocatePanelVoices,
@@ -428,7 +429,13 @@ export function useSpeechSynthesis() {
       // finalPauseMs 250: unlike the panel there is no next speaker whose lead-in
       // owns the gap after the last sentence, so a statement would otherwise end
       // abruptly the moment the audio stops.
-      const chunks = toProsodyChunks(text, { networkVoice: network, finalPauseMs: 250 });
+      // Same spoken-form pass as the panel path. This is the single-voice fallback used when
+      // the panel is unavailable, and it reads the same questions — so it hit the same
+      // "equal equal" bug and would have kept hitting it.
+      const chunks = toProsodyChunks(toSpokenForm(text), {
+        networkVoice: network,
+        finalPauseMs: 250,
+      });
 
       void (async () => {
         for (let i = 0; i < chunks.length; i++) {
@@ -766,8 +773,20 @@ export function usePanelVoices(
          * moment the voice does. `takingFloor` stays set across the whole wait, which is
          * what makes it read as somebody drawing breath rather than as a stall.
          */
+        /*
+         * SPOKEN FORM, NOT THE WRITTEN ONE.
+         *
+         * "==" is correct on screen and wrong in the ear — the panel read it out as "equal
+         * equal" and "===" as "equal equal equal", and said "oop" as a word instead of
+         * O-O-P. Only the copy handed to the synthesiser goes through this; `text` is what
+         * appears in the thread and what ends up in the transcript, because a transcript
+         * saying "double equals" would be quoted back at the candidate in a follow-up and
+         * printed in their report as though somebody had typed it.
+         */
+        const spoken = toSpokenForm(text);
+
         const audioPromise = neuralRef.current
-          ? fetchUtterance(speaker, text, opts.tone)
+          ? fetchUtterance(speaker, spoken, opts.tone)
           : null;
 
         setTakingFloor(speaker);
@@ -840,7 +859,9 @@ export function usePanelVoices(
           (assigned?.rate ?? 1) * (network ? 1.0 : 0.94) * persona.tempo * toneShape.rate;
         // finalPauseMs 0: the next speaker's lead-in owns the gap after a
         // contribution, so adding one here would double it.
-        const chunks = toProsodyChunks(text, { networkVoice: network, finalPauseMs: 0 });
+        // The browser path needs the same treatment — it is what every candidate hears once
+        // the daily TTS budget is spent, and speechSynthesis mangles operators just as badly.
+        const chunks = toProsodyChunks(spoken, { networkVoice: network, finalPauseMs: 0 });
 
         for (const chunk of chunks) {
           if (!live()) break;

@@ -231,3 +231,86 @@ describe('delivery summary', () => {
     expect(s.unprofessionalCount).toBe(0);
   });
 });
+
+/**
+ * MISHEARINGS — the recogniser substituting ordinary English for a technical word.
+ *
+ * Reported from a real session and visible in the transcript: "you keep the FEELS private
+ * and only allow access through public CATCHERS". Both are real words, which is what makes
+ * this class of error different from the split-word corrections above and much more
+ * dangerous to fix: a blind rule rewrites somebody's actual sentence.
+ *
+ * So the over-correction tests below matter more than the correction ones. A missed
+ * mishearing leaves a transcript slightly wrong; a wrong correction makes it confidently
+ * wrong, and it then gets scored, quoted back in a follow-up, and printed in a report.
+ */
+describe('misheard technical words', () => {
+  it('fixes the exact transcript that was reported', () => {
+    expect(
+      correctTechnicalTerms(
+        'you keep the feels private and only allow access through public catchers',
+      ),
+    ).toBe('you keep the fields private and only allow access through public getters');
+  });
+
+  it.each([
+    ['instance feels are private', 'instance fields are private'],
+    ['getters and settlers', 'getters and setters'],
+    ['gutters and setters', 'getters and setters'],
+    ['public avoid main', 'public void main'],
+    ['it throws a no pointer', 'it throws a null pointer'],
+    ['threat safe collections', 'thread safe collections'],
+    ['multi threat environment', 'multithread environment'],
+    ['memory cash', 'memory cache'],
+    ['bite code runs on the JVM', 'bytecode runs on the JVM'],
+    ['rapper class for int', 'wrapper class for int'],
+    ['car array', 'char array'],
+    ['priority cue', 'priority queue'],
+    ['string arcs', 'string args'],
+    ['abstract clause', 'abstract class'],
+    ['a bullion value', 'a boolean value'],
+    ['inter face', 'interface'],
+    ['in heritance', 'inheritance'],
+    ['construct or', 'constructor'],
+    ['im mutable', 'immutable'],
+  ])('corrects %j', (heard, meant) => {
+    expect(correctTechnicalTerms(heard).toLowerCase()).toContain(meant.toLowerCase());
+  });
+
+  describe('does NOT corrupt ordinary English', () => {
+    it.each([
+      // Every one of these is a sentence a candidate could plausibly say, containing a word
+      // that appears in the misheard list without its technical anchor.
+      'it feels wrong to me',
+      'that feels like the right approach',
+      'I want to avoid that problem',
+      'we should avoid duplicate code',
+      'there is no reason to do that',
+      'no problem sir',
+      'that is a security threat',
+      'I paid cash for the course',
+      'take a bite out of the problem',
+      'he is a rapper',
+      'I drove the car to college',
+      'take my cue from the requirements',
+      'the arcs of the diagram',
+      'the where clause filters rows',
+      'if clause and else clause',
+      'in stance we take a position',
+    ])('leaves %j alone', (sentence) => {
+      expect(correctTechnicalTerms(sentence)).toBe(sentence);
+    });
+  });
+
+  it('is still idempotent with the mishearing pass in front', () => {
+    // The hook corrects each finalised chunk as it arrives, and the caller may correct the
+    // whole transcript again before submitting. A rule that fires twice would compound.
+    const once = correctTechnicalTerms('keep the feels private, use public catchers');
+    expect(correctTechnicalTerms(once)).toBe(once);
+  });
+
+  it('runs mishearings before term corrections, so both can apply', () => {
+    // "bite code" must become "byte code" before the split-word rule folds it to "bytecode".
+    expect(correctTechnicalTerms('bite code')).toBe('bytecode');
+  });
+});

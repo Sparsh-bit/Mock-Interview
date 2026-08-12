@@ -181,6 +181,97 @@ const RULES: Rule[] = [
   rule('finalise', 'finalize'),
 ];
 
+/*
+ * ── MISHEARINGS, WHICH NEED A GUARD ──────────────────────────────────────────
+ *
+ * Everything above is a term the recogniser SPLITS or spells out, where the wrong form is
+ * not a word anyone would otherwise say. "hash map" is always HashMap.
+ *
+ * This section is different and more dangerous. The recogniser also SUBSTITUTES ordinary
+ * English for technical words that sound like it — reported from a real session, and visible
+ * in that transcript: "you keep the FEELS private and only allow access through public
+ * CATCHERS". Both of those are real words. A blind `feels -> fields` rule would rewrite
+ * "it feels wrong" in the middle of somebody's actual sentence, and a transcript that is
+ * confidently wrong is worse than one that is obviously wrong: it gets scored, quoted back
+ * in a follow-up, and printed in their report.
+ *
+ * So every rule here requires a TECHNICAL ANCHOR beside the mis-heard word. "feels" alone is
+ * left exactly as it is; "private feels" is not something anyone says, so it is safe.
+ *
+ * No lookbehind. It is unsupported on Safari before 16.4, and a meaningful share of this
+ * product's users are on older iPhones — a regex that throws at parse time would take the
+ * whole correction pass down with it. Capture groups and $1 do the same job everywhere.
+ */
+const MISHEARD: Rule[] = [
+  // fields — "keep the feels private", "instance feels"
+  {
+    pattern:
+      /\b(private|public|protected|static|instance|member|class|these|those|the|its|all)\s+feels\b/gi,
+    replacement: '$1 fields',
+  },
+  { pattern: /\bfeels\s+(are|is)\s+(private|public|protected|static)\b/gi, replacement: 'fields $1 $2' },
+
+  // getters and setters — "public catchers", "gutters and setters"
+  // Either half can be the one that was misheard, so the pair is matched with both sides
+  // optional-but-anchored rather than assuming the first word is always the wrong one.
+  { pattern: /\b(getters|catchers|gutters|guttars)\s+and\s+(setters|settlers|sitters)\b/gi, replacement: 'getters and setters' },
+  { pattern: /\b(setters|settlers|sitters)\s+and\s+(getters|catchers|gutters)\b/gi, replacement: 'setters and getters' },
+  { pattern: /\b(public|private|through|using|via|the)\s+(catchers|gutters)\b/gi, replacement: '$1 getters' },
+  { pattern: /\b(public|private|through|using|via|the)\s+(settlers|sitters)\b/gi, replacement: '$1 setters' },
+
+  // void — "public avoid main" is the classic
+  { pattern: /\b(public|private|protected|static|returns?|return type)\s+avoid\b/gi, replacement: '$1 void' },
+  { pattern: /\bavoid\s+main\b/gi, replacement: 'void main' },
+
+  // null — "no pointer exception", "returns no"
+  { pattern: /\bno\s+pointer\b/gi, replacement: 'null pointer' },
+  { pattern: /\b(returns?|assign|assigned|checks? for|equals)\s+no\b/gi, replacement: '$1 null' },
+
+  // thread — "threat safe", "threat pool"
+  { pattern: /\bthreat\s+(safe|safety|pool|local|dump|priority)\b/gi, replacement: 'thread $1' },
+  { pattern: /\b(multi|single|worker|main|new)\s+threat\b/gi, replacement: '$1 thread' },
+
+  // cache — only near a memory or storage word, because "cash" is a real word
+  { pattern: /\b(memory|cpu|browser|local|distributed|redis|l1|l2|write|read)\s+cash\b/gi, replacement: '$1 cache' },
+  { pattern: /\bcash\s+(memory|hit|miss|line|eviction|invalidation)\b/gi, replacement: 'cache $1' },
+
+  // byte — "bite code", "bite array"
+  { pattern: /\bbite\s+(code|array|stream|size)\b/gi, replacement: 'byte $1' },
+  { pattern: /\b(\d+)\s+bites\b/gi, replacement: '$1 bytes' },
+
+  // wrapper — "rapper class"
+  { pattern: /\brapper\s+(class|classes|type|types|object)\b/gi, replacement: 'wrapper $1' },
+
+  // char — "car array", "car data type"
+  { pattern: /\bcar\s+(array|data type|datatype|variable|literal)\b/gi, replacement: 'char $1' },
+
+  // queue — "priority cue", "cue and stack"
+  { pattern: /\b(priority|linked|blocking|circular|message)\s+cue\b/gi, replacement: '$1 queue' },
+  { pattern: /\bcue\s+(data structure|and stack|is empty)\b/gi, replacement: 'queue $1' },
+
+  // args — "string arcs"
+  { pattern: /\b(string|command line)\s+arcs\b/gi, replacement: '$1 args' },
+
+  // class — tightly guarded. "where clause" and "if clause" are real SQL and grammar terms,
+  // so this only fires next to words that are unambiguously about OOP.
+  { pattern: /\b(abstract|inner|outer|nested|anonymous|parent|child|base|derived|wrapper)\s+clause\b/gi, replacement: '$1 class' },
+
+  // boolean — "bullion value"
+  { pattern: /\bbullion\b/gi, replacement: 'boolean' },
+
+  // interface — "inter face"
+  { pattern: /\binter\s+face\b/gi, replacement: 'interface' },
+  { pattern: /\bin\s+heritance\b/gi, replacement: 'inheritance' },
+  { pattern: /\bin\s+stance\s+(variable|method|of)\b/gi, replacement: 'instance $1' },
+  { pattern: /\bconstruct\s+or\b/gi, replacement: 'constructor' },
+  { pattern: /\bsingle\s+ton\s+(pattern|class|design)\b/gi, replacement: 'singleton $1' },
+  { pattern: /\bim\s+mutable\b/gi, replacement: 'immutable' },
+  { pattern: /\ba\s+ray\s+(list|of|index|element)\b/gi, replacement: 'array $1' },
+  { pattern: /\bprim\s+itive\b/gi, replacement: 'primitive' },
+  { pattern: /\be\s+num\b/gi, replacement: 'enum' },
+  { pattern: /\bit\s+rate\s+(over|through)\b/gi, replacement: 'iterate $1' },
+];
+
 /**
  * Apply the domain corrections to a transcript.
  *
@@ -192,6 +283,13 @@ const RULES: Rule[] = [
 export function correctTechnicalTerms(text: string): string {
   if (!text) return text;
   let out = text;
+  // Mishearings FIRST. They restore the technical word — "feels" becomes "fields",
+  // "clause" becomes "class" — and several of the rules above then depend on that word
+  // being present. Running them the other way round would leave every substitution
+  // uncorrected, because RULES matches terms and MISHEARD matches the wrong words.
+  for (const { pattern, replacement } of MISHEARD) {
+    out = out.replace(pattern, replacement);
+  }
   for (const { pattern, replacement } of RULES) {
     out = out.replace(pattern, replacement);
   }

@@ -63,20 +63,102 @@ def _business_context(company: str) -> str:
         return "(no specific business context on file for this company)"
     return entry.business_context
 
-def _must_cover_block(track_name: str, program: str) -> str:
+def _is_java_role(track_name: str, program: str) -> bool:
     """
-    The fundamentals list handed to the planner, as markdown bullets.
+    Does this role actually get asked Java?
 
-    Grouped by topic with the question count, so the model can see which areas
-    carry weight rather than treating a flat list as equally important. Filtered
-    by role — see java_fundamentals.for_track — which is what keeps Spring and
-    JPA out of a round that does not ask about them.
+    The curated bank in java_fundamentals is Java, all of it. It is the right list for a
+    Digital Nurture Java FSE and it is the WRONG list for a Deloitte Analyst, a Capgemini
+    Analyst or an Infosys System Engineer — and handing it to the planner for those roles is
+    what made every Analyst interview the same interview.
+
+    Reuses the bank's own role test rather than inventing a second one. `_wants_frameworks`
+    already encodes which roles are Java/backend roles, it is exercised by the bank's tests,
+    and two role classifiers that disagree is a worse bug than either being slightly wrong.
     """
+    from app.data.java_fundamentals import _wants_frameworks  # noqa: PLC0415
+
+    blob = f"{track_name} {program}".lower()
+    # The framework roles, plus the ones that are Java-first without being framework-heavy.
+    return _wants_frameworks(track_name, program) or any(
+        k in blob for k in ("java", "backend", "full stack", "fullstack", "fse")
+    )
+
+
+def _company_topic_block(company: str) -> str:
+    """
+    What THIS COMPANY actually weights, from the catalogue, as markdown bullets.
+
+    THIS IS THE FIX FOR "why is it asking an Analyst the same thing every time". The planner
+    used to be handed a Java fundamentals list whatever the role was, so a Deloitte Analyst —
+    a consulting role whose rounds are case reasoning, DBMS and a group discussion — was
+    briefed to cover core Java, and got core Java. Every time, because the bank is fixed.
+
+    The catalogue already carries the right answer per company and has done all along:
+    Deloitte Analyst is Aptitude & Case Reasoning 22, Programming Fundamentals 18, Data
+    Structures 15, DBMS & SQL 15, Group Discussion & Communication 15, OOP 10, HR & Project
+    5. Those weights are validated at load to sum to 100, so they are a real distribution and
+    the planner can allocate a twelve-question interview across them directly.
+    """
+    from app.services.prep import get_company, load_catalogue  # noqa: PLC0415
+
+    slug = slugify(company)
+    entry = get_company(slug) or get_company(slug.replace("-", ""))
+    if entry is None:
+        collapsed = slug.replace("-", "")
+        entry = next(
+            (
+                c
+                for c in load_catalogue().companies
+                if c.slug in collapsed or collapsed.startswith(c.slug)
+            ),
+            None,
+        )
+    if entry is None or not entry.topics:
+        return ""
+
+    rounds = ""
+    if entry.rounds:
+        # The rounds matter as much as the weights for a consulting role: knowing there is a
+        # group discussion and a case round tells the planner this is not a coding screen.
+        rounds = "\nTheir actual rounds: " + " → ".join(entry.rounds) + "\n"
+    weights = "\n".join(
+        f"- **{t.name}** — {t.weight:g}% of the assessment" for t in entry.topics
+    )
+    return f"{rounds}\n{weights}"
+
+
+def _must_cover_block(track_name: str, program: str, company: str = "") -> str:
+    """
+    What the planner is told this interview must cover.
+
+    ROLE FIRST, and that ordering is the whole point. For a Java role this is the curated
+    bank grouped by topic, exactly as before. For everything else it is the company's own
+    weighting, and the Java bank is not mentioned at all — because mentioning it is an
+    instruction to ask about it, and an Analyst being asked about the JVM is the complaint
+    this function now exists to prevent.
+    """
+    company_block = _company_topic_block(company)
+
+    if not _is_java_role(track_name, program):
+        if company_block:
+            return (
+                "This is NOT a Java/backend role. Do not build the interview around Java "
+                "language internals. Cover what this company actually assesses, in roughly "
+                f"these proportions:\n{company_block}"
+            )
+        return (
+            "This is NOT a Java/backend role. Build the interview from the role title and "
+            "the company research above — programming fundamentals, DBMS and SQL, data "
+            "structures, and the reasoning and communication this role is really screened "
+            "for. Do not default to Java language internals."
+        )
+
     from app.data.java_fundamentals import for_track  # noqa: PLC0415
 
     questions = for_track(track_name, program)
     if not questions:
-        return "(no curated fundamentals list for this role — use the company weighting)"
+        return company_block or "(no curated fundamentals list — use the company weighting)"
 
     by_topic: dict[str, list[str]] = {}
     for q in questions:
@@ -87,6 +169,12 @@ def _must_cover_block(track_name: str, program: str) -> str:
         lines.append(f"- **{topic}** — e.g. {contents[0]}")
         for extra in contents[1:]:
             lines.append(f"    - {extra}")
+    # The company weighting is added even for a Java role: it is what decides how much of a
+    # Java interview is actually DBMS and aptitude, which for a mass recruiter is most of it.
+    if company_block:
+        lines.append("")
+        lines.append("How this company weights the assessment overall:")
+        lines.append(company_block)
     return "\n".join(lines)
 
 
@@ -338,7 +426,7 @@ class InterviewOrchestrator:
             track_name = await self.db.scalar(
                 select(InterviewTrack.name).where(InterviewTrack.id == track_id)
             )
-            must_cover = _must_cover_block(track_name or "", program)
+            must_cover = _must_cover_block(track_name or "", program, company)
 
             messages = self.prompt_builder.chat(
                 system_template="interview_plan",
@@ -1225,8 +1313,35 @@ class InterviewOrchestrator:
         return sorted(candidates, key=score, reverse=True)[0]
 
     async def _ensure_seed_questions(self, track_id: uuid.UUID, answered_ids: list[uuid.UUID]) -> Question | None:
+        """
+        Last-resort questions when a track has an empty bank.
+
+        JAVA ONLY, AND ONLY FOR JAVA ROLES. This is the other half of why a Deloitte Analyst
+        got the same interview every time: when AI planning failed or the bank was empty,
+        this seeded the Java fundamentals set for whatever the track was — the same ~37
+        questions, in the same order, forever.
+
+        For a non-Java role it now seeds nothing and returns None. That is not a worse
+        outcome than it looks: the caller treats None as "no more questions", which ends the
+        interview cleanly and lets the candidate reach their report, whereas the alternative
+        is filling a consulting screen with questions about the JVM. Being asked about the
+        wrong subject is worse than being asked less, because it is the thing that makes a
+        practice interview feel fake.
+        """
         from app.models.company import QuestionCategory
         from app.models.question import QuestionDifficulty, QuestionType, Topic
+
+        track = await self.db.get(InterviewTrack, track_id)
+        track_name = track.name if track else ""
+        if not _is_java_role(track_name, ""):
+            logger.info(
+                "seed_skipped_non_java_role",
+                track_id=str(track_id),
+                track_name=track_name,
+                reason="the curated seed bank is Java; seeding it here would ask this role "
+                "about the wrong subject",
+            )
+            return None
 
         cat = await self.db.scalar(select(QuestionCategory).where(QuestionCategory.track_id == track_id))
         if not cat:

@@ -214,7 +214,6 @@ async def _pivot_topic(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UU
     """
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.data import java_fundamentals  # noqa: PLC0415
     from app.models.question import Question  # noqa: PLC0415
     from app.models.session import Answer, InterviewSession  # noqa: PLC0415
 
@@ -238,17 +237,79 @@ async def _pivot_topic(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UU
     # subject because two ids differed would be the exact failure rule 1 is about.
     seen_text = " ".join((r[1] or "") for r in rows).lower()
 
-    for topic in _PIVOT_ORDER:
+    # ROLE-APPROPRIATE, which matters more here than anywhere else. A pivot is offered to
+    # somebody who has just admitted they do not know something, so offering a Deloitte
+    # Analyst "JVM, JDK & JRE" as a lifeline is worse than offering nothing — it tells them
+    # the panel has not understood what they applied for, at the moment they are already
+    # uncomfortable.
+    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
+
+    role = (
+        await db.execute(
+            select(InterviewTrack.name, Company.name)
+            .join(InterviewSession, InterviewSession.track_id == InterviewTrack.id)
+            .join(Company, Company.id == InterviewTrack.company_id)
+            .where(InterviewSession.id == session_id)
+        )
+    ).first()
+    track_name = role[0] if role else ""
+    company_name = role[1] if role else ""
+
+    for topic in _pivot_order_for(track_name, company_name):
         if topic.lower() in seen_text:
             continue
-        if topic in java_fundamentals.ALL_TOPICS:
-            return topic
+        return topic
     return ""
 
 
-#: Easiest first. A candidate who has just admitted they do not know something is not helped
-#: by being offered Hibernate next; they are helped by being offered OOP, which every CS
-#: student in the country has covered. The order is the pedagogy.
+def _pivot_order_for(track_name: str, company_name: str) -> list[str]:
+    """
+    Topics to offer this role, easiest first.
+
+    For a Java role, the curated bank's own topics — those are questions we can actually
+    source, which is the constraint that stops a pivot becoming a dead end.
+
+    For anything else, what the company itself says it assesses. Those come from the
+    catalogue, are validated to sum to 100, and are ordered by weight — so the first thing
+    offered is the thing this employer cares most about, which is also the thing the
+    candidate is most likely to have prepared.
+    """
+    from app.data import java_fundamentals  # noqa: PLC0415
+    from app.services.interview.orchestrator import _is_java_role  # noqa: PLC0415
+    from app.services.interview.research_lookup import slugify  # noqa: PLC0415
+    from app.services.prep import get_company  # noqa: PLC0415
+
+    if _is_java_role(track_name, ""):
+        return [t for t in _PIVOT_ORDER if t in java_fundamentals.ALL_TOPICS]
+
+    slug = slugify(company_name)
+    entry = get_company(slug) or get_company(slug.replace("-", ""))
+    if entry and entry.topics:
+        ranked = sorted(entry.topics, key=lambda t: -t.weight)
+        # HR and behavioural topics are dropped: a pivot is meant to find technical ground
+        # the candidate can stand on, and "shall we talk about your project instead?" reads
+        # as giving up on the technical round rather than adapting it.
+        return [
+            t.name
+            for t in ranked
+            if not any(k in t.name.lower() for k in ("hr", "behavioural", "behavioral"))
+        ]
+    # No catalogue entry. These are the areas every Indian campus technical round covers
+    # whatever the role is, so they are safe to offer without knowing the employer.
+    return [
+        "Programming fundamentals",
+        "DBMS & SQL",
+        "Data structures",
+        "OOP concepts",
+        "Operating systems",
+    ]
+
+
+#: Easiest first, FOR A JAVA ROLE. A candidate who has just admitted they do not know
+#: something is not helped by being offered Hibernate next; they are helped by being offered
+#: OOP, which every CS student in the country has covered. The order is the pedagogy.
+#:
+#: Non-Java roles do not use this list at all — see _pivot_order_for.
 _PIVOT_ORDER: list[str] = [
     "OOP & class design",
     "Strings & the String pool",
@@ -261,6 +322,84 @@ _PIVOT_ORDER: list[str] = [
     "SOLID principles",
     "Spring Boot",
 ]
+
+
+async def _should_use_name(
+    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID, stage: str
+) -> bool:
+    """
+    Should the panel say the candidate's name in THIS turn?
+
+    DECIDED HERE BECAUSE THE MODEL CANNOT DECIDE IT. Every turn is a separate stateless call
+    with no memory of the last one, so an instruction like "don't use their name if you used
+    it last turn" is unfollowable — the model has no way to know. Told only to use names
+    sparingly, it reached for one every single question, and reported back as: "it is calling
+    the name again and again in every question that feels annoying".
+
+    The rule a real panel follows: at hello, at goodbye, and otherwise only now and then. So:
+    the social stages always, and during the questions roughly one in three.
+
+    Counting answers rather than turns keeps it stable — a pivot or a code review in the
+    middle of a question must not shift the rhythm, because those are the same moment
+    continuing rather than a new one.
+    """
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from app.models.session import Answer, InterviewSession  # noqa: PLC0415
+
+    # The moments where a name is what a person would actually say: greeting them, wrapping
+    # up, asking whether they have questions, and answering the one they asked.
+    if stage in {"opening", "skill_check", "wrapping", "candidate_questions", "answering_candidate"}:
+        return True
+
+    owns = await db.scalar(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id, InterviewSession.user_id == user_id
+        )
+    )
+    if not owns:
+        return False
+
+    answered = (
+        await db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.session_id == session_id)
+        )
+        or 0
+    )
+    # Every third answered question. Not random: the same candidate replaying the same
+    # session should get the same rhythm, and a coin flip per turn would sometimes produce
+    # three in a row, which is the exact thing being fixed.
+    return answered % 3 == 0
+
+
+async def _role_for_session(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    """
+    Which job this interview is for, as one line for the prompt.
+
+    Read from the session's track rather than accepted from the client, for the same reason
+    everything else here is: it is what the orchestrator planned the interview against, and a
+    caller-supplied role could put the panel and the questions in different jobs.
+
+    Falls back to a neutral line rather than an empty one — a prompt slot that says nothing
+    invites the model to assume, and what it assumes is Java.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
+    from app.models.session import InterviewSession  # noqa: PLC0415
+
+    row = (
+        await db.execute(
+            select(InterviewTrack.name, Company.name)
+            .join(InterviewSession, InterviewSession.track_id == InterviewTrack.id)
+            .join(Company, Company.id == InterviewTrack.company_id)
+            .where(InterviewSession.id == session_id, InterviewSession.user_id == user_id)
+        )
+    ).first()
+    if not row:
+        return "a general software engineering fresher role"
+    track_name, company_name = row
+    return f"{track_name} at {company_name}"
 
 
 @router.get("/interviewers", summary="Who is on the panel")
@@ -297,6 +436,9 @@ async def panel_turn(
     # Chosen server-side, and only for the stage that uses it — see _pivot_topic for why the
     # client is not allowed to pick. An empty string means there is nothing left to offer,
     # and the prompt is told to close the topic out rather than invent one.
+    role_line = await _role_for_session(db, request.session_id, current_user.user_id)
+    use_name = await _should_use_name(db, request.session_id, current_user.user_id, request.stage)
+
     pivot_topic = ""
     if request.stage == "pivot":
         pivot_topic = await _pivot_topic(db, request.session_id, current_user.user_id)
@@ -309,6 +451,20 @@ async def panel_turn(
             _render_panel(),
             "",
             f"### The candidate\n{name}",
+            "",
+            # THE ROLE, in every turn. Without it the panel has no idea what job this is
+            # and defaults to Java — which is how an Analyst ended up being asked to rate
+            # themselves in a language their role never touches.
+            f"### The role they are interviewing for\n{role_line}",
+            "",
+            "### Using their name this turn",
+            (
+                "YES — use the candidate's name once in this turn."
+                if use_name
+                else "NO. Do NOT use the candidate's name anywhere in this turn. You used it "
+                "recently and repeating it every question is the single most artificial "
+                "thing this panel does. Address them without it."
+            ),
             "",
             f"### Stage\n{request.stage}",
             "",
@@ -356,7 +512,18 @@ async def panel_turn(
             # failure returns no turns at all — which the caller already handles by showing
             # the question on its own.
             max_tokens=320,
-            attempts_per_provider=1,
+            # TWO ATTEMPTS, NOT ONE.
+            #
+            # One attempt meant any single hiccup — a truncated body, a stray prose
+            # preamble, one malformed field — produced no turns at all, and the candidate
+            # dropped to the bare-question fallback. Reported as "sometimes the old UI comes
+            # in with the different question", and "different" is the giveaway: the fallback
+            # shows the bank's own wording, while the panel would have rephrased it, so a
+            # silent failure looks like being asked something else entirely.
+            #
+            # A retry is cheap here in a way it is not elsewhere: the system block is cached,
+            # so a second attempt bills a few hundred fresh tokens rather than three thousand.
+            attempts_per_provider=2,
             is_valid=lambda t: bool(t.turns),
             cost_tier=CostTier.CHEAP,
             context="interview_panel_turn",
@@ -374,6 +541,18 @@ async def panel_turn(
 
     # Only real panel members may speak. The model must never be able to put words in the
     # candidate's mouth — the same guard the GD panel carries, for the same reason.
+    # Nothing usable. Logged rather than silently degraded, because this is invisible from
+    # the outside — the interview carries on and only the wording changes — so without a log
+    # line there is no way to tell a provider problem from a prompt that stopped working.
+    if not turn.turns:
+        logger.warning(
+            "panel_turn_empty",
+            session_id=str(request.session_id),
+            stage=request.stage,
+            reason="the model returned no usable turns; the caller falls back to the "
+            "bare question",
+        )
+
     valid = [
         {
             "speaker": c.speaker,

@@ -39,6 +39,16 @@ export interface PanelThreadProps {
    * The fallback that makes the panel safe to fail: provider down, budget spent, malformed
    * response — the candidate still gets their question and the interview continues. A
    * presentation failure must never cost somebody their interview.
+   *
+   * IT IS RENDERED AS A PANEL LINE, not as a bare heading, and that is a fix rather than a
+   * flourish. It used to be an <h1> in a different type size with no speaker on it, so a
+   * failed turn did not read as "the same interview, plainly worded" — it read as the app
+   * changing into something else mid-round. Reported as "sometimes the old UI comes in with
+   * the different question", and the word "different" is the whole diagnosis: the wording
+   * changes too, because the panel rephrases and this does not, so the visual lurch and the
+   * unfamiliar phrasing arrive together and compound.
+   *
+   * Attributed to the lead interviewer, because somebody in the room did ask it.
    */
   fallbackQuestion?: string | null;
   /** True while the turn is being written and nobody can be heard yet. */
@@ -69,6 +79,9 @@ export function PanelThread({
   pending,
 }: PanelThreadProps) {
   const roleOf = (name: string) => interviewers?.find((iv) => iv.name === name)?.role;
+  //: Whoever leads the panel. Used only to attribute the fallback, so a question the panel
+  //: could not dress up still comes from a person rather than from the page.
+  const lead = interviewers?.[0];
 
   if (!lines.length) {
     // Nobody has spoken yet this question. Either the turn is still being written — in which
@@ -79,9 +92,17 @@ export function PanelThread({
         <Dots /> The panel is talking…
       </div>
     ) : fallbackQuestion ? (
-      <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-xl">
-        {fallbackQuestion}
-      </h1>
+      <div className="rounded-xl border border-border/50 bg-surface/40 px-4 py-3">
+        <p className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {lead?.name ?? 'Interviewer'}
+          {lead?.role && (
+            <span className="font-normal normal-case tracking-normal opacity-70">
+              {lead.role}
+            </span>
+          )}
+        </p>
+        <p className="text-[15px] leading-relaxed">{fallbackQuestion}</p>
+      </div>
     ) : null;
   }
 

@@ -128,3 +128,80 @@ class TestTheStagesStillExist:
         # A stage the API accepts but the prompt has never heard of produces a turn written
         # to no rules at all, which is worse than rejecting it.
         assert stage in prompt, f"the prompt no longer describes the {stage} stage"
+
+
+class TestTheNameIsNotSaidEveryTurn:
+    """
+    Reported: "it is calling the name again and again in every question that feels annoying
+    keep the name in starting only."
+
+    The interesting part is WHY telling the model to use names sparingly did not work. Every
+    turn is a separate stateless call, so "don't use their name if you used it last turn" is
+    an instruction the model has no way to follow — it cannot see the last turn. It reached
+    for the name every question because, from inside any single call, once IS sparing.
+
+    So the decision moved to the server, which is the only thing that can see the sequence.
+    """
+
+    def test_the_social_moments_always_use_it(self):
+        # Greeting somebody, wrapping up, asking whether they have questions — a person uses
+        # a name at every one of those, and it never grates because it is doing real work.
+        from app.api.v1.panel import _should_use_name
+
+        assert _should_use_name.__doc__ is not None
+        source = _PANEL.read_text()
+        for stage in ("opening", "skill_check", "wrapping", "candidate_questions"):
+            assert f'"{stage}"' in source
+
+    def test_the_prompt_tells_the_model_when_to_stay_off_it(self):
+        # An empty slot invites the model to decide, and what it decides is "every turn".
+        source = _PANEL.read_text()
+        assert "Do NOT use the candidate's name anywhere in this turn" in source
+
+    def test_the_cadence_is_deterministic_rather_than_random(self):
+        # A coin flip per turn would sometimes produce three in a row, which is the exact
+        # thing being fixed — and the same session replayed would behave differently.
+        source = _PANEL.read_text()
+        assert "answered % 3 == 0" in source
+        # Checked against the CODE, not the prose. The comment beside this rule explains why
+        # it is not random, so a naive substring search matches its own explanation — the
+        # same mistake this repo has now made three times.
+        code = re.sub(r"#.*$", "", source, flags=re.M)
+        code = re.sub(r'"""[\s\S]*?"""', "", code)
+        assert "random" not in code.lower()
+
+    def test_the_prompt_says_it_plainly_too(self, prompt: str):
+        # Belt and braces: the server decides, and the prompt explains why, so a model that
+        # sees the YES slot still does not stack the name three times in one turn.
+        assert "USE THE CANDIDATE'S NAME SPARINGLY" in prompt
+        assert "Not on every question" in prompt
+        # Using each OTHER'S names must stay frequent — that is how a listener tracks who is
+        # about to speak, and it is the thing that makes a handover audible.
+        assert "Use each OTHER'S names freely" in prompt
+
+
+class TestThePanelSoundsAlive:
+    """Requested: thinking sounds, and laughter where it is genuinely warranted."""
+
+    def test_it_is_told_to_hesitate_where_a_person_would(self, prompt: str):
+        assert "THINK OUT LOUD WHERE A PERSON WOULD ACTUALLY BE THINKING" in prompt
+        # The reasoning matters more than the rule: fluency at the moment a human would
+        # hesitate is the single clearest tell of a machine.
+        assert "fluency at the moments a human would hesitate" in prompt
+
+    def test_laughter_is_allowed_and_bounded(self, prompt: str):
+        assert "LAUGH WHEN SOMETHING IS ACTUALLY FUNNY" in prompt
+        # The bound is what makes it safe. A panel laughing at a wrong answer, at nerves or
+        # at an accent would be far worse than one that never laughs.
+        assert "anything the candidate could read as being laughed AT" in prompt
+        assert "if there is any doubt, do not" in prompt
+
+    def test_the_gd_panel_got_the_same_treatment(self):
+        import re
+
+        raw = (_PROMPT.parent / "gd_panel.md").read_text()
+        gd = re.sub(r"\s+", " ", raw)
+        assert "THINK OUT LOUD, AND LAUGH" in gd
+        assert "NEVER at the candidate" in gd
+        # And the same name discipline, for the same reason.
+        assert "Not in consecutive turns" in gd

@@ -96,6 +96,19 @@ export function CodingWorkspace({
   const [code, setCode] = useState<string>(STARTERS.java);
   const [stdin, setStdin] = useState('');
   const runCode = useRunCode();
+  /*
+   * HAS THIS EXACT CODE BEEN RUN?
+   *
+   * A real interviewer does not accept "I think it works" — they say run it, and they watch.
+   * Submitting unrun code wastes the round for both sides: the panel reviews something the
+   * candidate has not themselves seen execute, and the candidate finds out it did not
+   * compile from a stranger rather than from the compiler in front of them.
+   *
+   * Keyed on the CODE, not a boolean, and that distinction is the whole point: editing one
+   * character after a green run makes it unrun again. A flag would let somebody run a stub,
+   * paste a solution, and submit something that had never been executed.
+   */
+  const [ranSource, setRanSource] = useState<string | null>(null);
   const analyse = useAnalyseCode();
 
   const extensions = useMemo(() => {
@@ -173,11 +186,28 @@ export function CodingWorkspace({
         />
       </div>
 
+      {/* Why the submit is not available yet. A disabled button with no explanation is the
+          most frustrating thing an interface can do, and here the reason is also the advice:
+          a real interviewer would tell you to run it. */}
+      {!hideSubmit && ranSource !== code && (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          Run your code before submitting — the panel reviews what it actually does, and so
+          should you.
+        </p>
+      )}
+
       {/* Actions */}
       <div className="flex items-center gap-3">
         <Button
           variant="secondary"
-          onClick={() => runCode.mutate({ language, source: code, stdin })}
+          onClick={() =>
+            runCode.mutate(
+              { language, source: code, stdin },
+              // Recorded on success only. A run that failed to reach the runner tells the
+              // candidate nothing about their code, so it must not unlock the submit.
+              { onSuccess: () => setRanSource(code) },
+            )
+          }
           loading={runCode.isPending}
           disabled={disabled}
         >
@@ -203,8 +233,13 @@ export function CodingWorkspace({
           <ScanSearch className="h-4 w-4" /> Review my code
         </Button>
         {!hideSubmit && (
-          <Button onClick={() => onSubmit({ language, code })} loading={submitting} disabled={disabled}>
-            Submit for Evaluation
+          <Button
+            onClick={() => onSubmit({ language, code })}
+            loading={submitting}
+            disabled={disabled || ranSource !== code}
+            title={ranSource !== code ? 'Run your code first' : undefined}
+          >
+            {ranSource !== code ? 'Run it first' : 'Submit for Evaluation'}
           </Button>
         )}
       </div>

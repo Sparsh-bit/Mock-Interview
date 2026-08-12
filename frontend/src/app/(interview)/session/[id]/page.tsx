@@ -276,7 +276,11 @@ export default function LiveSessionPage() {
   useEffect(() => {
     pinnedClosedRef.current = false;
     armedForRef.current = null;
-  }, [question?.id]);
+    // PHASE AS WELL AS QUESTION, and this was the other half of the same bug. The guard is
+    // keyed on "have we already armed for this?", and it used to mean "for this question" —
+    // so the skill check consumed the one arming that belonged to question one, and the mic
+    // never opened for the question itself. Every phase that takes speech gets its own.
+  }, [question?.id, phase]);
 
   useEffect(() => {
     if (!handsFree || useTyping || preparing) return;
@@ -298,6 +302,15 @@ export default function LiveSessionPage() {
      * out of the transcript; the buttons on screen are the fallback for when it cannot.
      */
     if (phase !== 'asking' && phase !== 'skill_check') return;
+    /*
+     * NOT ON A CODING QUESTION. The editor is the answer channel, not the microphone.
+     *
+     * The mic used to arm anyway, so a candidate sat with an open microphone that was
+     * recording them muttering while they wrote code — and whatever it caught became their
+     * "answer" alongside the code. There is nothing for it to hear on a coding question:
+     * the panel asked them to write something, and the thing they write is in the editor.
+     */
+    if (isCoding) return;
     if (!question?.id || !stt.supported) return;
     /*
      * THE INTERLOCK. Nothing opens this microphone while anyone else has the floor.
@@ -332,22 +345,30 @@ export default function LiveSessionPage() {
     }, 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handsFree, useTyping, preparing, phase, panelBusy, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
+  }, [handsFree, useTyping, preparing, phase, panelBusy, isCoding, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
 
   /**
-   * END OF ANSWER. Sustained silence after they have actually said something.
+   * END OF ANSWER — A LABEL, NOT A CLOSE. The mic stays open until they submit.
    *
-   * Deliberately long: 4.5s is well past a thinking pause mid-answer, and the cost
-   * of being wrong is asymmetric — closing early truncates an answer, closing late
-   * costs nothing because the transcript is still theirs to submit. The mic closing
-   * is also NOT a submit: the candidate still reviews and sends, because auto-sending
-   * a possibly-mistranscribed answer is not something to do on someone's behalf.
+   * IT USED TO CLOSE, and that was a trap. Four and a half seconds of silence shut the
+   * microphone, and because the arming guard had already fired for this question it could
+   * NEVER RE-OPEN — so a candidate who paused five seconds to think lost the mic for the
+   * rest of the question and had to reach for the button. The interface said "start talking
+   * again" while being physically unable to hear them. That is the "it automatically shuts
+   * off the mic" report, and the copy was the giveaway: it promised something the code did
+   * not do.
+   *
+   * Closing bought nothing anyway. It was never a submit — the candidate always reviewed and
+   * sent — so all it did was end the one thing they might still want. Silence now only
+   * changes the prompt underneath, which is what it was really for.
    */
+  const [looksDone, setLooksDone] = useState(false);
   useEffect(() => {
-    if (!handsFree || !stt.listening || !answer.trim()) return;
-    const t = setTimeout(() => {
-      closeMicRef.current?.();
-    }, 4500);
+    if (!handsFree || !stt.listening || !answer.trim()) {
+      setLooksDone(false);
+      return;
+    }
+    const t = setTimeout(() => setLooksDone(true), 3000);
     return () => clearTimeout(t);
     // `answer` in the deps is the point — every new word restarts the timer.
   }, [handsFree, stt.listening, answer]);
@@ -549,16 +570,34 @@ export default function LiveSessionPage() {
    */
   useEffect(() => {
     if (phase !== 'skill_check' || !stt.transcript.trim()) return;
-    // Not while they are still talking — "six" is a complete answer and so is the "six" at
-    // the start of "six... no, seven", and acting on the first one would take the wrong
-    // number. The mic closing on its own silence is the signal that they have finished.
-    if (stt.listening) return;
     const parsed = parseSelfRating(stt.transcript);
     if (!parsed) return;
-    selfRating.mutate({ java_rating: parsed.rating, strengths: parsed.strengths });
-    setAnswer('');
-    stt.reset();
-    setPhase('asking');
+
+    /*
+     * DEBOUNCED ON THE TRANSCRIPT, not on the microphone closing.
+     *
+     * It used to wait for `!stt.listening`, on the reasoning that the mic closing itself
+     * after silence was the signal they had finished. Two things were wrong with that. The
+     * mic no longer auto-closes at all — closing it was a trap, see the note above — so the
+     * signal never arrives. And even before that, it meant saying "2" and then sitting for
+     * four and a half seconds before anything happened, which reads as the app not having
+     * heard you. Reported exactly that way: "when i spoke 2 it did not catch it".
+     *
+     * Every new word restarts this timer, so "six... no, seven" still lands on seven — the
+     * self-correction case the last-number-wins rule in parseSelfRating exists for. 1.4s is
+     * long enough to cover the gap between "six" and "no, seven" and short enough that a
+     * one-word answer feels answered.
+     */
+    const t = setTimeout(
+      () => {
+        selfRating.mutate({ java_rating: parsed.rating, strengths: parsed.strengths });
+        setAnswer('');
+        stt.reset();
+        setPhase('asking');
+      },
+      stt.listening ? 1400 : 250,
+    );
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, stt.transcript, stt.listening]);
 
@@ -1088,7 +1127,16 @@ export default function LiveSessionPage() {
             their own controls in the thread above for the same reason: neither is a moment
             when "Submit & Next" means anything.
           */}
-          {phase !== 'asking' ? (
+          {/* On a coding question the answer is in the middle pane, so this side says where
+              to go rather than offering a second, wrong way to answer. Showing a microphone
+              here would be offering the candidate a channel that files a spoken answer
+              against a question that asked for code. */}
+          {phase === 'asking' && isCoding ? (
+            <p className="flex items-center justify-center gap-2 py-2 text-center text-xs text-muted-foreground">
+              <Code2 className="h-3.5 w-3.5 flex-shrink-0" />
+              Write your solution in the editor, run it, then submit.
+            </p>
+          ) : phase !== 'asking' ? (
             <p className="py-2 text-center text-xs text-muted-foreground">
               {phase === 'skill_check'
                 ? 'Say your rating out loud, or tap a number above.'
@@ -1185,18 +1233,22 @@ export default function LiveSessionPage() {
               </button>
 
               <p className="text-sm font-medium text-muted-foreground">
+                {/* The copy now matches what the microphone actually does. It used to say
+                    "start talking again" after auto-closing in a state where it could not
+                    re-open, which is the worst kind of interface lie: the one that makes a
+                    candidate think they are the problem. */}
                 {stt.error
                   ? 'Fix the permission, then tap to try again'
                   : stt.listening
                     ? handsFree
-                      ? 'Listening — just talk. It stops when you do.'
+                      ? looksDone
+                        ? 'Still listening — keep going, or submit when you are ready.'
+                        : 'Listening — just talk.'
                       : 'Listening… tap to stop'
                     : tts.speaking && handsFree
                       ? 'Let them finish…'
                       : answer
-                        ? handsFree
-                          ? 'Done. Review it and submit, or start talking again.'
-                          : 'Tap the mic to add more, or submit'
+                        ? 'Tap the mic to add more, or submit'
                         : handsFree
                           ? 'The mic opens on its own — start speaking'
                           : 'Tap the mic and speak your answer'}
