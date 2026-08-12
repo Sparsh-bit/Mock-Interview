@@ -109,6 +109,32 @@ export default function LiveSessionPage() {
   //: True from the moment a question arrives until the panel either speaks or gives up. It
   //: is what stops the question text appearing seconds before the voice that says it.
   const [panelPending, setPanelPending] = useState(false);
+  /*
+   * IS THE PANEL TALKING? One signal, for the WHOLE turn.
+   *
+   * THIS IS THE BUG THAT PUT THE INTERVIEWER'S VOICE IN THE CANDIDATE'S ANSWER. The mic used
+   * to wait on `speakingNow || takingFloor`, and both of those are PER-UTTERANCE: speakAs
+   * sets speakingNow back to null the moment one line finishes, and the next line's
+   * takingFloor is not set until the chained promise resumes and React re-renders. In that
+   * window — with a two- or three-line turn, there are two of them — nobody appeared to be
+   * talking, the mic armed, and Priya's next sentence went straight into the answer box. It
+   * is visible in the transcript as her own words, mangled by the recogniser: "you keep the
+   * feels private and only allow access through public catchers".
+   *
+   * A turn-level flag cannot have that gap, because it is set once before the first line and
+   * cleared once after the last. The per-utterance signals are still exactly right for the
+   * UI — the ring around whoever is speaking — and are still used there. They were only ever
+   * wrong as a microphone interlock.
+   */
+  const [panelBusy, setPanelBusy] = useState(false);
+  //: The same flag, readable from inside a timeout that was scheduled before it changed.
+  //: State is captured by the closure; this is not.
+  const panelBusyRef = useRef(false);
+  panelBusyRef.current = panelBusy;
+  //: Clears the answer box and the recogniser's own buffer. Held in a ref for the same
+  //: reason the mic actions are: `answer` is in its closure and listing it as a dependency
+  //: would rebuild speakTurn on every transcribed word.
+  const resetAnswerRef = useRef<(() => void) | null>(null);
   //: The question we have already run the panel for, so a re-render does not buy a second
   //: turn for the same question.
   const panelForRef = useRef<string | null>(null);
@@ -273,24 +299,40 @@ export default function LiveSessionPage() {
      */
     if (phase !== 'asking' && phase !== 'skill_check') return;
     if (!question?.id || !stt.supported) return;
-    // Wait for the interviewer to finish. Opening the mic while TTS is still
-    // playing means the question gets transcribed into the answer.
-    // Wait for whoever is actually talking — the panel when it is in use, the single voice
-    // otherwise. Opening the mic while either is mid-sentence transcribes the interviewer
-    // into the candidate's answer.
-    if (tts.speaking || panelVoices.speakingNow || panelVoices.takingFloor) return;
+    /*
+     * THE INTERLOCK. Nothing opens this microphone while anyone else has the floor.
+     *
+     * `panelBusy` is the turn-level flag and is the one that matters — the per-utterance
+     * signals have gaps between lines, and that is precisely how the interviewer's own
+     * sentence ended up transcribed into an answer. The other two are kept as well: they
+     * cost nothing, and `tts.speaking` covers the single-voice fallback path when the panel
+     * is unavailable, which panelBusy knows nothing about.
+     */
+    if (panelBusy || tts.speaking || panelVoices.speakingNow || panelVoices.takingFloor) return;
     if (stt.listening || stt.error) return;
     if (pinnedClosedRef.current || armedForRef.current === question.id) return;
     armedForRef.current = question.id;
-    // A beat after they stop, the way you do not start talking the instant someone's
-    // last word lands.
+    /*
+     * A beat after they stop — the way you do not start talking the instant someone's last
+     * word lands.
+     *
+     * 900ms rather than 550. Most candidates are on a laptop with the speakers on, so the
+     * panel's last syllable is still physically in the room after the audio element reports
+     * that it ended, and a recogniser that opens too eagerly captures the tail of it. The
+     * cost of waiting is that a very fast candidate says three or four words before the mic
+     * catches up; the cost of not waiting is the interviewer's words inside their answer,
+     * which is what this is fixing.
+     *
+     * Re-checked inside the timeout, not just before it: nine hundred milliseconds is long
+     * enough for the next turn to have begun.
+     */
     const t = setTimeout(() => {
-      if (pinnedClosedRef.current) return;
+      if (pinnedClosedRef.current || panelBusyRef.current) return;
       openMicRef.current?.();
-    }, 550);
+    }, 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handsFree, useTyping, preparing, phase, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
+  }, [handsFree, useTyping, preparing, phase, panelBusy, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
 
   /**
    * END OF ANSWER. Sustained silence after they have actually said something.
@@ -328,6 +370,36 @@ export default function LiveSessionPage() {
     }): Promise<{ spoke: boolean; pivotTopic: string }> => {
       if (args.reset !== false) setPanelLines([]);
       setPanelPending(true);
+      // Held from BEFORE the request until after the last word — the request itself counts,
+      // because a mic opened while the turn is being written is a mic that is open when it
+      // arrives.
+      setPanelBusy(true);
+      /*
+       * AND IF IT IS SOMEHOW ALREADY OPEN, CLOSE IT.
+       *
+       * The interlock above stops the mic OPENING during a turn. This covers the other
+       * direction — a mic that was already listening when a turn begins, which happens on
+       * every path where the panel speaks in response to something the candidate did rather
+       * than at the start of a question: the pivot after a decline, the review after a code
+       * submission. Cheap, and the failure it prevents is the one that has already shipped
+       * twice.
+       */
+      closeMicRef.current?.();
+      /*
+       * AND THROW AWAY WHATEVER IT HEARD.
+       *
+       * Closing the mic is not enough on its own: the recogniser keeps its own transcript,
+       * so anything captured in the instant before the close still flows into the answer box
+       * the moment the effect below next runs. That is how a fragment of the interviewer's
+       * sentence survives even a correct interlock.
+       *
+       * Safe to discard because a panel turn only ever begins AFTER an answer has been
+       * submitted — the skill check is before any answer exists, and the question, pivot,
+       * review and closing turns all follow a submit that already cleared this. There is no
+       * path on which this can take a candidate's own words away from them.
+       */
+      resetAnswerRef.current?.();
+      try {
       const result = await panelTurn.mutateAsync({
         session_id: sessionId,
         stage: args.stage,
@@ -355,6 +427,13 @@ export default function LiveSessionPage() {
         });
       }
       return { spoke: true, pivotTopic: result.pivot_topic ?? '' };
+      } finally {
+        // `finally`, so a provider failure or a thrown mutation cannot leave the microphone
+        // interlocked for the rest of the interview — that would be a worse bug than the one
+        // it is fixing, and a silent one.
+        setPanelPending(false);
+        setPanelBusy(false);
+      }
     },
     // panelTurn and panelVoices are stable enough for this to be safe, and listing them
     // would re-create the callback on every transcribed word.
@@ -440,8 +519,20 @@ export default function LiveSessionPage() {
   }, [question, preparing, phase]);
 
   useEffect(() => {
+    // Never while the panel has the floor. The interlock upstream should mean the mic is
+    // shut, but this is the last gate before their words become the candidate's answer, and
+    // it costs one comparison.
+    if (panelBusy) return;
     if (stt.transcript) setAnswer(stt.transcript);
-  }, [stt.transcript]);
+  }, [stt.transcript, panelBusy]);
+
+  //: The thread scrolls inside its own pane now, so the newest line would otherwise arrive
+  //: below the fold — the candidate would be reading one sentence behind the voice, which is
+  //: the same complaint as text-before-voice wearing a different hat.
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [panelLines.length, panelPending]);
 
   /*
    * THE SPOKEN RATING. "Out of ten, how would you rate yourself in Java?" — and they say it.
@@ -477,6 +568,11 @@ export default function LiveSessionPage() {
       speakSecondsRef.current += (Date.now() - speakStartRef.current) / 1000;
       speakStartRef.current = null;
     }
+  };
+
+  resetAnswerRef.current = () => {
+    setAnswer('');
+    stt.reset();
   };
 
   const openMic = () => {
@@ -700,9 +796,22 @@ export default function LiveSessionPage() {
   const wordCount = answer.trim() ? answer.trim().split(/\s+/).length : 0;
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    /*
+     * EXACTLY ONE VIEWPORT TALL, and each pane scrolls inside it.
+     *
+     * THE JUMPING MIC BUTTON. The page used to grow with its content, so every line the
+     * panel added pushed the answer controls further down — the microphone moved under your
+     * thumb between one sentence and the next, which during an interview is genuinely
+     * disorienting. Bounding the page is what pins them: the thread scrolls, the mic does
+     * not move.
+     *
+     * 100dvh rather than 100vh: on mobile Safari and Chrome, vh is the height with the
+     * browser chrome HIDDEN, so a 100vh page is permanently taller than the visible area and
+     * the bottom of it — the mic — sits under the address bar. dvh tracks the real viewport.
+     */
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="flex h-16 items-center justify-between border-b border-border/50 bg-surface/60 px-6 backdrop-blur-md">
+      <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border/50 bg-surface/60 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-coral opacity-60" />
@@ -749,7 +858,7 @@ export default function LiveSessionPage() {
           screens below the question it belongs to, and the video below that, so a candidate
           would be scrolling during an interview. Tabs keep each pane full-height and one
           thumb away. Above lg they disappear and all three are simply on screen. */}
-      <div className="flex items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden">
+      <div className="flex flex-shrink-0 items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden">
         {([
           { id: 'talk', label: 'Interview', icon: MessageSquare },
           { id: 'code', label: 'Compiler', icon: Code2 },
@@ -788,7 +897,10 @@ export default function LiveSessionPage() {
         initial="hidden"
         animate="visible"
         variants={staggerContainer(0.08)}
-        className="mx-auto grid w-full max-w-[1800px] flex-1 gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)_minmax(280px,0.85fr)] lg:gap-5 lg:p-5"
+        // min-h-0 is what actually makes the panes scroll rather than the page: a grid item
+        // defaults to min-height:auto, which means "as tall as my content" and silently
+        // defeats every overflow rule inside it.
+        className="mx-auto grid w-full min-h-0 max-w-[1800px] flex-1 gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)_minmax(280px,0.85fr)] lg:gap-5 lg:p-5"
       >
         {/* ── LEFT: the conversation ──────────────────────────────────────── */}
         <motion.div
@@ -963,6 +1075,7 @@ export default function LiveSessionPage() {
                 </motion.div>
               )}
             </AnimatePresence>
+            <div ref={threadEndRef} />
           </div>
 
           {/* ── The answer channel, pinned to the bottom of the conversation ── */}

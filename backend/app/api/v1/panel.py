@@ -344,7 +344,18 @@ async def panel_turn(
         turn, _ = await generate_structured(
             InterviewPanelTurn,
             messages,
-            max_tokens=500,
+            # 320, down from 500, and the ceiling is doing real work rather than just
+            # capping cost: the panel was lecturing — three-sentence corrections that
+            # explained the concept the candidate had just got wrong — and a budget that
+            # comfortably fits a lecture is an invitation to write one. Four short spoken
+            # lines plus the JSON scaffolding is about 220 tokens, so this leaves headroom
+            # without leaving room for a paragraph.
+            #
+            # It cannot truncate a response into a failure that costs the candidate anything:
+            # a cut-off body fails JSON validation, generate_structured retries, and a second
+            # failure returns no turns at all — which the caller already handles by showing
+            # the question on its own.
+            max_tokens=320,
             attempts_per_provider=1,
             is_valid=lambda t: bool(t.turns),
             cost_tier=CostTier.CHEAP,
