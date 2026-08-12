@@ -14,6 +14,7 @@ import {
   fetchTTSStatus,
   fetchUtterance,
   playBlob,
+  prefetchUtterance,
   type SpeechTone,
 } from '@/lib/speech/neural-tts';
 import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
@@ -749,8 +750,28 @@ export function usePanelVoices(
           lastSpeakerRef.current && lastSpeakerRef.current !== speaker ? persona.leadInMs : 0;
         if (heldQuestionRef.current) leadIn += QUESTION_HANDOVER_MS;
 
+        /*
+         * THE AUDIO IS FETCHED BEFORE THE TEXT IS REVEALED, AND THE FETCH STARTS FIRST.
+         *
+         * This ordering was the real cause of "the text comes first and the voice after".
+         * onStart — which puts the line on screen — used to fire, and only THEN did the
+         * vendor request go out. Fish takes about three and a half seconds to synthesise a
+         * sentence, so the candidate read the whole line, waited, and then heard it. No
+         * amount of work further up the page could fix that, because the gap was created
+         * here, inside the utterance itself.
+         *
+         * Two changes. The request is started NOW, before the handover pause, so those two
+         * waits overlap instead of stacking — a 520ms lead-in is 520ms of the synthesis
+         * paid for free. And onStart moves below the await, so the words appear at the
+         * moment the voice does. `takingFloor` stays set across the whole wait, which is
+         * what makes it read as somebody drawing breath rather than as a stall.
+         */
+        const audioPromise = neuralRef.current
+          ? fetchUtterance(speaker, text, opts.tone)
+          : null;
+
+        setTakingFloor(speaker);
         if (leadIn > 0) {
-          setTakingFloor(speaker);
           await sleep(leadIn);
           // speechSynthesis.cancel() cannot stop an utterance that has not been
           // queued yet, so this check is the ONLY thing standing between a
@@ -760,10 +781,18 @@ export function usePanelVoices(
             return;
           }
         }
+
+        const blob = audioPromise ? await audioPromise : null;
+        if (!live()) {
+          setTakingFloor(null);
+          return;
+        }
+
         setTakingFloor(null);
         setSpeakingNow(speaker);
         lastSpeakerRef.current = speaker;
-        // The floor is theirs — reveal their line now, in step with the audio.
+        // The floor is theirs, and their audio is in hand — reveal the line now, in step
+        // with the first word rather than several seconds ahead of it.
         opts.onStart?.();
 
         /*
@@ -778,27 +807,24 @@ export function usePanelVoices(
          * the floor would silence the queue but leave the current utterance playing over
          * the candidate, and their own microphone would transcribe it into their answer.
          */
-        if (neuralRef.current) {
-          const blob = await fetchUtterance(speaker, text, opts.tone);
-          if (blob && live()) {
-            // The persona tempo applies to neural audio too, via playbackRate. Without it
-            // the per-panelist pacing — the whole reason three voices were tellable apart
-            // before — would vanish the moment neural speech came on.
-            await playBlob(
-              blob,
-              (el) => {
-                audioRef.current = el;
-              },
-              persona.tempo,
-            );
-            audioRef.current = null;
-            // A neural utterance is one audio file, so there is no per-clause pause to
-            // hold and no question-handover to add here — the vendor's own delivery
-            // carries it. Only the next speaker's lead-in still applies.
-            heldQuestionRef.current = /\?\s*$/.test(text.trim());
-            if (live()) setSpeakingNow(null);
-            return;
-          }
+        if (blob) {
+          // The persona tempo applies to neural audio too, via playbackRate. Without it
+          // the per-panelist pacing — the whole reason three voices were tellable apart
+          // before — would vanish the moment neural speech came on.
+          await playBlob(
+            blob,
+            (el) => {
+              audioRef.current = el;
+            },
+            persona.tempo,
+          );
+          audioRef.current = null;
+          // A neural utterance is one audio file, so there is no per-clause pause to
+          // hold and no question-handover to add here — the vendor's own delivery
+          // carries it. Only the next speaker's lead-in still applies.
+          heldQuestionRef.current = /\?\s*$/.test(text.trim());
+          if (live()) setSpeakingNow(null);
+          return;
         }
 
         // Tone for browser speech. The server applies its own on the neural path above, so
@@ -850,10 +876,34 @@ export function usePanelVoices(
     [voiceMap, stanceOf],
   );
 
+  /**
+   * Start synthesising every line of a turn at once, before any of them is spoken.
+   *
+   * A panel turn arrives as two or three lines and used to be synthesised one at a time, in
+   * order, each one starting only after the previous had finished playing. At roughly three
+   * and a half seconds a line that is ten seconds of dead air inside what is meant to be a
+   * conversation — and dead air between two people talking is the most artificial thing a
+   * room can do.
+   *
+   * Called with the whole turn the moment it arrives, every line is in flight while the
+   * first is still speaking, so the second follows the first by its handover beat alone.
+   *
+   * Cheap to call and safe to over-call: requests are deduplicated by speaker, tone and
+   * exact text, and a failed prefetch is indistinguishable from one never made.
+   */
+  const prefetchTurn = useCallback(
+    (lines: { speaker: string; text: string; tone?: SpeechTone }[]) => {
+      if (!neuralRef.current) return;
+      for (const l of lines) prefetchUtterance(l.speaker, l.text, l.tone);
+    },
+    [],
+  );
+
   return {
     voiceMap,
     speakingNow,
     takingFloor,
+    prefetchTurn,
     speakAs,
     cancelAll,
     ready: voiceMap.size > 0,

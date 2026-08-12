@@ -252,14 +252,29 @@ export default function LiveSessionPage() {
         candidate_name: candidateName,
       });
 
-      setPanelPending(false);
       if (result.turns.length) {
+        /*
+         * EVERY LINE STARTS SYNTHESISING NOW, not when its turn comes to speak.
+         *
+         * Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
+         * with the playback between them. In parallel the second and third are ready before
+         * the first has finished, so what separates the speakers is the handover beat rather
+         * than the network.
+         */
+        panelVoices.prefetchTurn(result.turns);
         // Reveal each line AS ITS VOICE STARTS, not all at once — the same lesson the GD
         // round taught. Showing both lines immediately and then speaking them in sequence
         // means the candidate reads the second interviewer while the first is still talking.
         for (const line of result.turns) {
           await panelVoices.speakAs(line.speaker, line.text, {
-            onStart: () => setPanelLines((prev) => [...prev, line]),
+            // Fires when the audio is in hand, not when the request goes out — so the line
+            // appears with the voice. `panelPending` is cleared here rather than on arrival
+            // of the turn for the same reason: until somebody can actually be heard, the
+            // honest thing to show is that they are about to speak.
+            onStart: () => {
+              setPanelPending(false);
+              setPanelLines((prev) => [...prev, line]);
+            },
             // Tagged by the panel itself, per line. This is what makes a correction sound
             // like one — slower and lower — instead of being read out in the same voice as
             // the greeting, which was the giveaway that nobody was really in the room.
@@ -271,6 +286,7 @@ export default function LiveSessionPage() {
 
       // No panel — provider down, or it returned nothing usable. Fall back to the single
       // voice reading the question, which is exactly the old behaviour.
+      setPanelPending(false);
       if (tts.supported) tts.speak(questionText);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -80,11 +80,20 @@ export function PresenceMonitor() {
             A real interview is invigilated, and the two things an invigilator would actually
             say something about are somebody else in the room and the candidate leaving it.
             Both are sustained signals rather than per-frame ones — see usePresenceMonitor —
-            because a warning that fires on a passer-by is a warning nobody believes. */}
+            because a warning that fires on a passer-by is a warning nobody believes.
+
+            ABSOLUTELY POSITIONED, AND THAT IS A BUG FIX, NOT A STYLE CHOICE. These used to
+            be in normal flow inside this box, which is a fixed `aspect-video` container that
+            the <video> already fills at h-full — so each warning was laid out BELOW the
+            video, overflowed the container, and was clipped by the `overflow-hidden` on the
+            card. The detection could fire perfectly and the candidate would still see
+            nothing, which is indistinguishable from detection not working at all. Overlaying
+            the video is also simply what a proctoring alert should do. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 space-y-2 p-3">
         {active && metrics.multiplePeople && (
           <div
             role="alert"
-            className="mb-3 flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] leading-snug text-destructive"
+            className="flex items-start gap-2 rounded-xl border border-destructive/60 bg-destructive px-3 py-2 text-[11px] leading-snug text-destructive-foreground shadow-lg"
           >
             <Users className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             <span>
@@ -94,7 +103,7 @@ export function PresenceMonitor() {
           </div>
         )}
         {active && !metrics.multiplePeople && metrics.multiplePeopleEver && (
-          <div className="mb-3 flex items-start gap-2 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink">
+          <div className="flex items-start gap-2 rounded-xl border border-accent-amber/60 bg-accent-amber/95 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink shadow-lg backdrop-blur-sm">
             <Users className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             {/* Sticky on purpose: a flag that clears when the second person ducks out of
                 frame can be defeated by ducking out of frame. */}
@@ -104,7 +113,7 @@ export function PresenceMonitor() {
         {active && metrics.candidateAbsent && (
           <div
             role="alert"
-            className="mb-3 flex items-start gap-2 rounded-xl border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink"
+            className="flex items-start gap-2 rounded-xl border border-accent-amber/60 bg-accent-amber/95 px-3 py-2 text-[11px] leading-snug text-accent-amber-ink shadow-lg backdrop-blur-sm"
           >
             <UserX className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             <span>
@@ -113,10 +122,38 @@ export function PresenceMonitor() {
             </span>
           </div>
         )}
+        </div>
 
         {active && (
-          <div className="absolute left-3 top-3 flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent-coral" /> Live · on device
+          <div className="absolute left-3 top-3 z-10 flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5 rounded-full bg-black/50 px-2.5 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent-coral" /> Live · on device
+            </span>
+            {/*
+              THE LIVE COUNT, shown always rather than only when it is wrong.
+              Two reasons. A real proctored round tells you it can see you — silence about
+              what the camera thinks is what makes candidates distrust it. And when this said
+              nothing, "the camera is not detecting two people" was impossible to tell apart
+              from "the warning is not rendering": now the number is on screen, so the two
+              failures look different. It is the raw per-frame count, deliberately un-smoothed
+              — the WARNING is the sustained signal, this is the instrument reading.
+            */}
+            <span
+              className={cn(
+                'rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur-sm',
+                metrics.faceCount > 1
+                  ? 'bg-destructive text-destructive-foreground'
+                  : metrics.faceCount === 1
+                    ? 'bg-black/50 text-white'
+                    : 'bg-accent-amber text-accent-amber-ink',
+              )}
+            >
+              {metrics.faceCount === 1
+                ? '1 person'
+                : metrics.faceCount === 0
+                  ? 'nobody in frame'
+                  : `${metrics.faceCount} people`}
+            </span>
           </div>
         )}
         <button

@@ -94,6 +94,48 @@ export async function fetchTTSStatus(): Promise<TTSStatus | null> {
  * The client deliberately cannot choose a voice: that is what keeps Meera female, and on a
  * metered vendor it is also what stops a caller selecting an expensive model.
  */
+/*
+ * IN-FLIGHT AUDIO, KEYED BY EXACTLY WHAT WAS ASKED FOR.
+ *
+ * Synthesis is the slowest thing in the room: Fish takes around three and a half seconds for
+ * a sentence, and a panel turn is two or three sentences. Fetched one at a time, in order,
+ * that is ten seconds of a panel that is supposedly mid-conversation — and the candidate
+ * hears the gap as the software thinking, which is the single most artificial thing about it.
+ *
+ * So the caller can start every line of a turn at once, the moment the turn arrives, and by
+ * the time the first speaker finishes the second one's audio is already in memory. The map
+ * holds the PROMISE rather than the blob, so a line that is prefetched and then requested
+ * while still in flight joins the existing request instead of paying for a second one.
+ *
+ * Bounded, because these are audio blobs and an interview is long. Oldest out first; a line
+ * evicted before it plays simply re-fetches, which is the old behaviour rather than a fault.
+ */
+const _inflight = new Map<string, Promise<Blob | null>>();
+const _MAX_INFLIGHT = 24;
+
+function _key(speaker: string, text: string, tone?: SpeechTone): string {
+  return `${speaker}|${tone ?? 'neutral'}|${text.trim()}`;
+}
+
+/**
+ * Start fetching a line's audio without waiting for it.
+ *
+ * Call this for every line of a turn as soon as the turn arrives. Errors are swallowed here
+ * exactly as they are in fetchUtterance — a prefetch that fails must be indistinguishable
+ * from one that was never made, or a warm-up would be able to break a round.
+ */
+export function prefetchUtterance(speaker: string, text: string, tone?: SpeechTone): void {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const k = _key(speaker, trimmed, tone);
+  if (_inflight.has(k)) return;
+  if (_inflight.size >= _MAX_INFLIGHT) {
+    const oldest = _inflight.keys().next().value;
+    if (oldest !== undefined) _inflight.delete(oldest);
+  }
+  _inflight.set(k, _fetchNow(speaker, trimmed, tone));
+}
+
 export async function fetchUtterance(
   speaker: string,
   text: string,
@@ -101,6 +143,23 @@ export async function fetchUtterance(
 ): Promise<Blob | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
+  const k = _key(speaker, trimmed, tone);
+  const warm = _inflight.get(k);
+  if (warm) {
+    // Consumed once. Keeping it would hold every line of the interview in memory for the
+    // sake of a repeat that does not happen — the server-side cache already covers the case
+    // where the same sentence is genuinely said twice.
+    _inflight.delete(k);
+    return warm;
+  }
+  return _fetchNow(speaker, trimmed, tone);
+}
+
+async function _fetchNow(
+  speaker: string,
+  trimmed: string,
+  tone?: SpeechTone,
+): Promise<Blob | null> {
   try {
     const res = await getBrowserApiClient().post(
       '/api/v1/tts/speak',
