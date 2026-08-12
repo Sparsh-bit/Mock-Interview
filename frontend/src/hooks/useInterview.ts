@@ -117,7 +117,18 @@ export function useInterview() {
         content,
         ...(delivery ? { delivery } : {}),
       });
-      return response.data as { status: string; questions_answered: number };
+      return response.data as {
+        status: string;
+        questions_answered: number;
+        /**
+         * The candidate declined rather than answered badly.
+         *
+         * Decided SERVER-side — the rule is subtle enough to need its own module and forty
+         * tests (backend/app/services/interview/dont_know.py), and a client-side copy would
+         * drift and start offering an easier topic in the middle of a correct answer.
+         */
+        declined?: boolean;
+      };
     },
   });
 

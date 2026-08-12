@@ -63,6 +63,22 @@ interface CodingWorkspaceProps {
    * button — Run and Review are the whole point there.
    */
   hideSubmit?: boolean;
+  /**
+   * Told when the candidate switches language.
+   *
+   * The panel's code review needs to know which language it is reading — what counts as a
+   * mistake in Java is not what counts in Python — and the selector lives in here.
+   */
+  onLanguageChange?: (language: CodeLanguage) => void;
+  /**
+   * A permanent compiler is not always the answer channel.
+   *
+   * The redesign puts this on screen for EVERY question, so on a theory question it is a
+   * scratchpad — somewhere to sketch what you are describing out loud, exactly as you would
+   * be given a whiteboard. This is the one-line label that says which it is right now, so
+   * the candidate is never guessing whether typing here counts as answering.
+   */
+  roleLabel?: string;
 }
 
 export function CodingWorkspace({
@@ -73,6 +89,8 @@ export function CodingWorkspace({
   problemDescription,
   difficulty,
   hideSubmit = false,
+  onLanguageChange,
+  roleLabel,
 }: CodingWorkspaceProps) {
   const [language, setLanguage] = useState<CodeLanguage>('java');
   const [code, setCode] = useState<string>(STARTERS.java);
@@ -95,12 +113,21 @@ export function CodingWorkspace({
       Object.values(STARTERS).includes(current) ? STARTERS[lang] : current
     );
     setLanguage(lang);
+    onLanguageChange?.(lang);
   };
 
   const result = runCode.data;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* What this editor is FOR right now.
+          It is on screen for every question, so on a theory question it is a scratchpad and
+          on a coding question it is the answer. Saying which, in one line, is what stops a
+          candidate wondering whether typing here counts — the alternative is a permanent
+          compiler that silently means two different things. */}
+      {roleLabel && (
+        <p className="text-[11px] leading-snug text-muted-foreground">{roleLabel}</p>
+      )}
       {/* Language tabs */}
       <div className="flex items-center gap-1 rounded-full bg-secondary p-1 w-fit">
         {LANGUAGES.map((l) => (

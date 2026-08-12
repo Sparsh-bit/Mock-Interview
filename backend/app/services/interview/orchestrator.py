@@ -25,6 +25,7 @@ from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
+from app.services.interview.dont_know import said_dont_know
 from app.services.interview.research_lookup import find_research, render_research, slugify
 
 
@@ -1130,7 +1131,17 @@ class InterviewOrchestrator:
             .limit(1)
         )
         if not last_score:
-            return "medium", []
+            # NOTHING SCORED YET, so the only evidence available is what the candidate said
+            # about themselves when the panel asked. This is the one and only place the
+            # self-rating touches question selection.
+            #
+            # It sets the STARTING POINT and nothing more. From the first scored answer
+            # onwards the adaptive signal below takes over completely, which is the property
+            # that makes handing the candidate this dial safe: an overclaim buys two hard
+            # questions and is then corrected by evidence, and an underclaim buys two easy
+            # ones and is corrected the same way. The claim is also recorded on the session,
+            # so the report knows what was promised — see set_self_rating in api/v1/interview.
+            return await self._opening_signals_from_self_rating(session_id)
 
         raw = last_score.raw_evaluation or {}
         adjustment = raw.get("suggested_difficulty_adjustment", "maintain")
@@ -1159,6 +1170,39 @@ class InterviewOrchestrator:
         if not focus:
             focus = list(raw.get("mentioned_concepts") or [])
         return target_difficulty, focus
+
+    async def _opening_signals_from_self_rating(
+        self, session_id: uuid.UUID
+    ) -> tuple[str, list[str]]:
+        """
+        Where to start, given only what the candidate claimed about themselves.
+
+        Bands rather than a curve, because the difficulty axis has three values and pretending
+        a 10-point self-assessment resolves more finely than that would be false precision.
+
+        Defaults to ("medium", []) — exactly the old behaviour — whenever there is no rating,
+        so a session that never ran the skill_check stage is completely unaffected.
+        """
+        session = await self.db.get(InterviewSession, session_id)
+        rating = ((session.session_metadata or {}) if session else {}).get("self_rating") or {}
+        java = rating.get("java")
+        if not isinstance(java, int):
+            return "medium", []
+
+        if java <= 4:
+            target = "easy"
+        elif java <= 7:
+            target = "medium"
+        else:
+            target = "hard"
+
+        # Their claimed strengths become the opening focus concepts, which is what makes
+        # "the skills the interviewer has to ask" actually steer the questions rather than
+        # just being recorded. They flow into _rank_question's keyword overlap exactly as
+        # AI-derived concepts do, so a candidate who says "collections and multithreading"
+        # gets asked about collections and multithreading.
+        focus = [str(x) for x in (rating.get("strengths") or []) if str(x).strip()][:8]
+        return target, focus
 
     @staticmethod
     def _rank_question(
@@ -1393,7 +1437,22 @@ class InterviewOrchestrator:
         )
         await self.db.commit()
 
-        return {"status": "recorded", "questions_answered": answered or 0}
+        return {
+            "status": "recorded",
+            "questions_answered": answered or 0,
+            # DID THEY DECLINE, rather than answer badly?
+            #
+            # Decided here rather than in the browser, and that is not incidental. The rule
+            # is subtle enough to need its own module and forty tests (see dont_know.py),
+            # and a client-side copy would drift from it the first time either changed —
+            # producing a panel that offers somebody an easier topic in the middle of a
+            # correct answer. It also keeps the behaviour identical for any future client.
+            #
+            # The caller uses this to run the panel's `pivot` stage. Nothing else depends on
+            # it: the answer is recorded and scored exactly as it always was, because
+            # "I don't know" IS an answer to a question and is graded as one.
+            "declined": said_dont_know(content),
+        }
 
     async def complete_session(self, session_id: uuid.UUID):
         session = await self.db.get(InterviewSession, session_id)

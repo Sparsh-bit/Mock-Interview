@@ -107,7 +107,13 @@ def _render_panel() -> str:
 class PanelTurnRequest(BaseModel):
     session_id: uuid.UUID
     #: Where the interview is. Drives which behaviour the prompt follows.
-    stage: str = Field(default="mid", pattern="^(opening|mid|wrapping|candidate_questions|answering_candidate)$")
+    stage: str = Field(
+        default="mid",
+        pattern=(
+            "^(opening|skill_check|mid|pivot|code_review|wrapping|candidate_questions"
+            "|answering_candidate)$"
+        ),
+    )
     #: The question the orchestrator chose. Empty for stages that do not ask one.
     question: str = Field(default="", max_length=2000)
     # NOTE: the last answer and the concepts a correct answer covers are NOT accepted from
@@ -120,11 +126,20 @@ class PanelTurnRequest(BaseModel):
     #: What the candidate asked, for the answering_candidate stage.
     candidate_question: str = Field(default="", max_length=1000)
     candidate_name: str = Field(default="", max_length=80)
+    #: For code_review: which language the compiler was set to. The code itself is NOT sent —
+    #: it is the last answer, read from the database like everything else here.
+    language: str = Field(default="", max_length=20)
 
 
 class PanelTurnResponse(BaseModel):
     turns: list[dict]
     asked_question: bool
+    #: For the pivot stage: the topic the panel offered to move to.
+    #:
+    #: Returned rather than sent, because the SERVER chooses it — it is the only side that
+    #: knows what this session has already covered, and a client-chosen pivot could offer a
+    #: candidate the topic they just failed.
+    pivot_topic: str = ""
 
 
 async def _last_exchange(
@@ -180,6 +195,74 @@ async def _last_exchange(
     return (content or ""), "\n".join(expected_parts)
 
 
+async def _pivot_topic(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID) -> str:
+    """
+    A topic to offer a candidate who just said they do not know this one.
+
+    THE RULES THAT MATTER, in order of how badly getting them wrong would hurt:
+
+    1. NOT A TOPIC THEY HAVE ALREADY BEEN ASKED. Offering somebody the subject they failed
+       two questions ago, as a lifeline, is worse than not offering one.
+    2. A topic the bank can actually source questions for. A pivot to something with no
+       questions behind it is a dead end mid-interview — so this only ever returns names
+       that appear in java_fundamentals, never anything invented.
+    3. Foundational first. The point of the pivot is to find ground the candidate can stand
+       on, so it walks an explicitly easy-to-hard order rather than picking at random.
+
+    Returns "" when everything is exhausted, and the caller then simply does not pivot —
+    which is the honest outcome, not a failure.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.data import java_fundamentals  # noqa: PLC0415
+    from app.models.question import Question  # noqa: PLC0415
+    from app.models.session import Answer, InterviewSession  # noqa: PLC0415
+
+    owns = await db.scalar(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id, InterviewSession.user_id == user_id
+        )
+    )
+    if not owns:
+        return ""
+
+    rows = (
+        await db.execute(
+            select(Question.topic_id, Question.content)
+            .join(Answer, Answer.question_id == Question.id)
+            .where(Answer.session_id == session_id)
+        )
+    ).all()
+    # Matched on the question TEXT rather than the topic row, because bank questions and
+    # generated ones do not share a topic table consistently — and a pivot that repeats a
+    # subject because two ids differed would be the exact failure rule 1 is about.
+    seen_text = " ".join((r[1] or "") for r in rows).lower()
+
+    for topic in _PIVOT_ORDER:
+        if topic.lower() in seen_text:
+            continue
+        if topic in java_fundamentals.ALL_TOPICS:
+            return topic
+    return ""
+
+
+#: Easiest first. A candidate who has just admitted they do not know something is not helped
+#: by being offered Hibernate next; they are helped by being offered OOP, which every CS
+#: student in the country has covered. The order is the pedagogy.
+_PIVOT_ORDER: list[str] = [
+    "OOP & class design",
+    "Strings & the String pool",
+    "Collections framework",
+    "Exception handling",
+    "JVM, JDK & JRE",
+    "Memory: stack & heap",
+    "Java 8 & lambdas",
+    "Multithreading",
+    "SOLID principles",
+    "Spring Boot",
+]
+
+
 @router.get("/interviewers", summary="Who is on the panel")
 async def get_interviewers(current_user: CurrentUser) -> list[Interviewer]:
     return INTERVIEWERS
@@ -211,6 +294,13 @@ async def panel_turn(
         db, request.session_id, current_user.user_id
     )
 
+    # Chosen server-side, and only for the stage that uses it — see _pivot_topic for why the
+    # client is not allowed to pick. An empty string means there is nothing left to offer,
+    # and the prompt is told to close the topic out rather than invent one.
+    pivot_topic = ""
+    if request.stage == "pivot":
+        pivot_topic = await _pivot_topic(db, request.session_id, current_user.user_id)
+
     brief = "\n".join(
         [
             "## This moment",
@@ -230,6 +320,18 @@ async def panel_turn(
             last_expected or "(not available — do not invent a correction)",
             "",
             f"### What the candidate just asked you\n{request.candidate_question or '(nothing)'}",
+            "",
+            f"### Topic to offer instead (pivot stage only)\n{pivot_topic or '(none available)'}",
+            "",
+            (
+                "### The code they submitted (code_review stage only)\n"
+                + (
+                    f"Language: {request.language or 'unknown'}. The code is what they last "
+                    "said, above."
+                    if request.stage == "code_review"
+                    else "(not a code review)"
+                )
+            ),
             "",
             "Write the panel's dialogue for this moment now, as JSON.",
         ]
@@ -257,7 +359,7 @@ async def panel_turn(
         # and puts it to the candidate the old way — a dialogue failure must never cost
         # somebody their interview.
         logger.warning("panel_turn_unavailable", session_id=str(request.session_id))
-        return PanelTurnResponse(turns=[], asked_question=False)
+        return PanelTurnResponse(turns=[], asked_question=False, pivot_topic=pivot_topic)
 
     # Only real panel members may speak. The model must never be able to put words in the
     # candidate's mouth — the same guard the GD panel carries, for the same reason.
@@ -275,4 +377,8 @@ async def panel_turn(
         if c.text.strip() and c.speaker in INTERVIEWER_NAMES
     ][:4]
 
-    return PanelTurnResponse(turns=valid, asked_question=turn.asked_question and bool(valid))
+    return PanelTurnResponse(
+        turns=valid,
+        asked_question=turn.asked_question and bool(valid),
+        pivot_topic=pivot_topic,
+    )

@@ -13,7 +13,24 @@ import { cn } from '@/lib/utils';
  * and speaking indicators. Nothing is recorded or uploaded — analysis is
  * in-browser and discarded when stopped.
  */
-export function PresenceMonitor() {
+export interface PresenceMonitorProps {
+  /**
+   * Mirrors the proctoring flags out to the page.
+   *
+   * NEEDED BECAUSE OF THE PHONE. The three-pane layout hides this whole component behind a
+   * tab below lg, and a second-person warning that only renders inside a hidden pane is a
+   * warning nobody sees — which is worse than the bug it was just fixed from, because it
+   * would look like it was working. The page uses this to badge the tab and to show a
+   * compact banner wherever the candidate actually is.
+   */
+  onAlert?: (alert: {
+    multiplePeople: boolean;
+    multiplePeopleEver: boolean;
+    candidateAbsent: boolean;
+  }) => void;
+}
+
+export function PresenceMonitor({ onAlert }: PresenceMonitorProps = {}) {
   /*
    * ON BY DEFAULT, for the whole interview.
    *
@@ -37,6 +54,14 @@ export function PresenceMonitor() {
     if (consented) start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [consented]);
+
+  // Mirrored out on change only. The metrics object is rebuilt every animation frame, so
+  // depending on it directly would call the parent sixty times a second and re-render the
+  // whole interview page with it; the three booleans change a handful of times an hour.
+  const { multiplePeople, multiplePeopleEver, candidateAbsent } = metrics;
+  useEffect(() => {
+    onAlert?.({ multiplePeople, multiplePeopleEver, candidateAbsent });
+  }, [multiplePeople, multiplePeopleEver, candidateAbsent, onAlert]);
 
   const enable = () => setConsented(true);
 

@@ -52,7 +52,10 @@ export interface PanelLine {
  */
 export type PanelStage =
   | 'opening'
+  | 'skill_check'
   | 'mid'
+  | 'pivot'
+  | 'code_review'
   | 'wrapping'
   | 'candidate_questions'
   | 'answering_candidate';
@@ -75,12 +78,23 @@ export interface PanelTurnArgs {
   /** What the candidate asked, for the answering_candidate stage. */
   candidate_question?: string;
   candidate_name?: string;
+  /** For code_review: which language the editor was set to. The code itself is read
+   *  server-side from the submitted answer, never sent from here. */
+  language?: string;
 }
 
 export interface PanelTurnResult {
   turns: PanelLine[];
   /** True when one of these turns actually put the supplied question to the candidate. */
   asked_question: boolean;
+  /**
+   * For the pivot stage: the topic the panel offered instead.
+   *
+   * Chosen by the SERVER. It is the only side that knows what this session has already
+   * covered, and a client-chosen pivot could hand a candidate back the very topic they just
+   * declined — which would be worse than not offering one.
+   */
+  pivot_topic?: string;
 }
 
 /**
@@ -112,10 +126,53 @@ export function useInterviewPanel() {
       } catch {
         // Empty, not an error. The caller shows the question on its own and the interview
         // continues — see the note at the top of this file.
-        return { turns: [], asked_question: false };
+        return { turns: [], asked_question: false, pivot_topic: '' };
       }
     },
   });
 
   return { turn };
+}
+
+/**
+ * Record the candidate's own estimate of their Java level.
+ *
+ * The rating moves the questions they get AND the expectation the report judges them
+ * against — see set_self_rating in backend/app/api/v1/interview.py for why it has to move
+ * both, or claiming 2/10 every time would be the optimal play.
+ */
+export function useSelfRating(sessionId: string) {
+  return useMutation({
+    mutationFn: async (args: { java_rating: number; strengths: string[] }) => {
+      const res = await getBrowserApiClient().post(
+        `/api/v1/interview/${sessionId}/self-rating`,
+        args,
+      );
+      return res.data as { status: string };
+    },
+  });
+}
+
+/**
+ * Record that the candidate declined a topic and was offered another.
+ *
+ * The anti-farming half of the pivot. Without this, "I don't know" is a free instruction to
+ * serve easier questions; with it, every pivot is on the session and the report counts them.
+ * Fire-and-forget by design — a failure to record must not stall the interview, and one
+ * unrecorded pivot is a far smaller problem than a candidate stuck on a spinner.
+ */
+export function useRecordPivot(sessionId: string) {
+  return useMutation({
+    mutationFn: async (args: {
+      declined_question: string;
+      offered_topic: string;
+      accepted: boolean;
+    }) => {
+      try {
+        await getBrowserApiClient().post(`/api/v1/interview/${sessionId}/pivot`, args);
+      } catch {
+        // Deliberately swallowed — see above.
+      }
+    },
+  });
 }

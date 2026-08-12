@@ -2,9 +2,9 @@
 
 import { useInterview } from '@/hooks/useInterview';
 import { useParams } from 'next/navigation';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Loader2, Mic, MicOff, RefreshCw, Send, Sparkles, StopCircle, Volume2, WifiOff } from 'lucide-react';
+import { AlertTriangle, Code2, MessageSquare, Mic, MicOff, RefreshCw, Send, Sparkles, StopCircle, Video, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,16 @@ import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import type { CodeLanguage } from '@/hooks/useCode';
 import { useSpeechRecognition, useSpeechSynthesis, usePanelVoices } from '@/hooks/useSpeech';
 import { useCandidateName } from '@/hooks/useCandidateName';
-import { useInterviewPanel, useInterviewers, type PanelLine } from '@/hooks/useInterviewPanel';
+import {
+  useInterviewPanel,
+  useInterviewers,
+  useRecordPivot,
+  useSelfRating,
+  type PanelLine,
+  type PanelStage,
+} from '@/hooks/useInterviewPanel';
+import { PanelThread } from '@/components/interview/PanelThread';
+import { parseSelfRating } from '@/lib/interview/self-rating';
 import { countUnprofessional, summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -103,6 +112,57 @@ export default function LiveSessionPage() {
   //: The question we have already run the panel for, so a re-render does not buy a second
   //: turn for the same question.
   const panelForRef = useRef<string | null>(null);
+
+  /*
+   * WHERE THE INTERVIEW IS. The conversational spine of the redesign.
+   *
+   * It used to be implicit: there was a question, you answered it, there was another
+   * question. That is a questionnaire. A real panel opens by asking what you are good at,
+   * moves you off a topic you cannot do, reads your code back to you, and at the end asks
+   * whether YOU have anything to ask THEM — and none of those fit "current question".
+   *
+   *   skill_check  the opening exchange: rate yourself, name your strong areas
+   *   asking       normal flow — question, answer, correction
+   *   pivot        they declined; the panel has offered another topic and is waiting
+   *   reviewing    they submitted code and the panel is reading it
+   *   closing      wrap-up, then "any questions for us?", then the answer to it
+   *
+   * EVERY ONE OF THESE HAS AN ESCAPE. A candidate must never be unable to reach their
+   * report because a closing turn failed or the provider went down mid-sentence — the End
+   * Interview control in the header is always live, and every phase below falls through to
+   * the next on any error rather than waiting.
+   */
+  type Phase = 'skill_check' | 'asking' | 'pivot' | 'reviewing' | 'closing' | 'done';
+  const [phase, setPhase] = useState<Phase>('skill_check');
+  //: Which pane is showing on a phone. Three columns do not fit on 375px and this product's
+  //: users are overwhelmingly phone-first, so below lg they become tabs rather than a stack —
+  //: stacked, the compiler would sit two screens below the question it belongs to.
+  const [mobilePane, setMobilePane] = useState<'talk' | 'code' | 'you'>('talk');
+  //: The topic the panel offered after a decline, so a "yes" can be acted on.
+  const [pivotOffer, setPivotOffer] = useState<{ topic: string; declined: string } | null>(null);
+  //: Which language the compiler is set to. Lifted out of CodingWorkspace so a code review
+  //: can say which language it is reading — "this is Java" changes what counts as a mistake.
+  const [codeLanguage, setCodeLanguage] = useState<CodeLanguage>('java');
+  /*
+   * The camera's verdict, mirrored up out of PresenceMonitor.
+   *
+   * Below lg the video is behind a tab, so a warning rendered inside it is a warning nobody
+   * sees — which is worse than not detecting at all, because it looks like it is working.
+   * This badges the tab and drives the banner below, so the alert reaches the candidate
+   * wherever they happen to be looking.
+   */
+  const [presence, setPresence] = useState({
+    multiplePeople: false,
+    multiplePeopleEver: false,
+    candidateAbsent: false,
+  });
+  //: Set once the closing sequence has run, so it cannot run twice.
+  const closedRef = useRef(false);
+  const [closingQuestion, setClosingQuestion] = useState('');
+  const [answeringClosing, setAnsweringClosing] = useState(false);
+  const selfRating = useSelfRating(sessionId);
+  const recordPivot = useRecordPivot(sessionId);
+
   // Track how long the candidate actually spoke this answer, for pace/delivery.
   const speakStartRef = useRef<number | null>(null);
   const speakSecondsRef = useRef(0);
@@ -194,6 +254,24 @@ export default function LiveSessionPage() {
 
   useEffect(() => {
     if (!handsFree || useTyping || preparing) return;
+    /*
+     * ONLY WHILE A QUESTION IS ACTUALLY OPEN.
+     *
+     * The redesign put four more panel turns between questions — the skill check, the
+     * pivot, the code review and the close — and every one of them is the panel talking
+     * for several seconds. Without this gate the mic arms during a code review and
+     * transcribes Anil reading the candidate's own code back to them straight into the
+     * next answer.
+     *
+     * `pivot` and `closing` also have their own on-screen controls (two buttons, a text
+     * box), which is deliberate: a spoken "yes" is indistinguishable from the start of an
+     * answer to a recogniser, so those moments are not voice moments at all.
+     *
+     * `skill_check` IS a voice moment and is allowed through — the panel asks the rating out
+     * loud and the candidate is supposed to say it back. parseSelfRating reads the number
+     * out of the transcript; the buttons on screen are the fallback for when it cannot.
+     */
+    if (phase !== 'asking' && phase !== 'skill_check') return;
     if (!question?.id || !stt.supported) return;
     // Wait for the interviewer to finish. Opening the mic while TTS is still
     // playing means the question gets transcribed into the answer.
@@ -212,7 +290,7 @@ export default function LiveSessionPage() {
     }, 550);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handsFree, useTyping, preparing, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
+  }, [handsFree, useTyping, preparing, phase, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
 
   /**
    * END OF ANSWER. Sustained silence after they have actually said something.
@@ -232,69 +310,166 @@ export default function LiveSessionPage() {
     // `answer` in the deps is the point — every new word restarts the timer.
   }, [handsFree, stt.listening, answer]);
 
-  // Read each new question aloud (voice-first feel) unless typing. Coding
-  // questions are read too — a real interviewer states the problem out loud,
-  // and they were previously the one type left silent.
+  /*
+   * ONE PLACE THAT SPEAKS. Fetch a turn, warm every line's audio at once, reveal each line
+   * as its own voice starts.
+   *
+   * Five callers now — the opening, the skill check, the pivot, the code review and the
+   * close. Five copies of the prefetch-then-speak dance would be five places for the
+   * ordering to drift back to text-before-voice, which is the bug this app has had twice.
+   */
+  const speakTurn = useCallback(
+    async (args: {
+      stage: PanelStage;
+      question?: string;
+      candidate_question?: string;
+      language?: string;
+      reset?: boolean;
+    }): Promise<{ spoke: boolean; pivotTopic: string }> => {
+      if (args.reset !== false) setPanelLines([]);
+      setPanelPending(true);
+      const result = await panelTurn.mutateAsync({
+        session_id: sessionId,
+        stage: args.stage,
+        question: args.question ?? '',
+        candidate_question: args.candidate_question ?? '',
+        language: args.language ?? '',
+        candidate_name: candidateName,
+      });
+      setPanelPending(false);
+      if (!result.turns.length) return { spoke: false, pivotTopic: result.pivot_topic ?? '' };
+
+      // Every line starts synthesising NOW rather than when its turn comes to speak.
+      // Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
+      // with the playback between them.
+      panelVoices.prefetchTurn(result.turns);
+      for (const line of result.turns) {
+        await panelVoices.speakAs(line.speaker, line.text, {
+          // Fires when the audio is in hand, not when the request goes out — so the line
+          // appears with the voice rather than seconds ahead of it.
+          onStart: () => {
+            setPanelPending(false);
+            setPanelLines((prev) => [...prev, line]);
+          },
+          tone: line.tone,
+        });
+      }
+      return { spoke: true, pivotTopic: result.pivot_topic ?? '' };
+    },
+    // panelTurn and panelVoices are stable enough for this to be safe, and listing them
+    // would re-create the callback on every transcribed word.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionId, candidateName],
+  );
+
+  /*
+   * THE OPENING EXCHANGE: "out of ten, how would you rate yourself in Java?"
+   *
+   * Asked out loud rather than collected on the setup form, because that is where a real
+   * panel asks it and because the answer is meant to shape the room the candidate is
+   * already in. It runs once, before the first question, and it is entirely skippable —
+   * if the panel cannot speak, or the candidate says something with no number in it, the
+   * interview proceeds exactly as it did before this feature existed.
+   */
+  const skillAskedRef = useRef(false);
   useEffect(() => {
+    if (phase !== 'skill_check' || skillAskedRef.current) return;
+    if (isLoading || !question) return;
+    skillAskedRef.current = true;
+    void (async () => {
+      const { spoke } = await speakTurn({ stage: 'skill_check' });
+      // No panel, no skill check. Falling through to the questions is right: the rating is
+      // an enhancement, and a candidate staring at a silent screen waiting to be asked
+      // something is the worst possible failure mode for it.
+      if (!spoke) setPhase('asking');
+    })();
+  }, [phase, isLoading, question, speakTurn]);
+
+  /*
+   * THE QUESTION ITSELF. Unchanged in what it does — the orchestrator still chooses which
+   * question, the panel still only decides who says it and how — but it now waits for the
+   * skill check and stands down during a pivot or a code review, because those are the
+   * panel talking about the question the candidate has already been given.
+   */
+  useEffect(() => {
+    if (phase !== 'asking') return;
     if (!questionText || !question?.id || useTyping) return;
     if (panelForRef.current === question.id) return;
     panelForRef.current = question.id;
-    setPanelLines([]);
-    setPanelPending(true);
 
     void (async () => {
-      const result = await panelTurn.mutateAsync({
-        session_id: sessionId,
+      const { spoke } = await speakTurn({
         // The first question is a greeting and introductions; everything after is normal
         // flow, where a wrong previous answer gets corrected before the next question.
         stage: answered === 0 ? 'opening' : 'mid',
         question: questionText,
-        candidate_name: candidateName,
       });
-
-      if (result.turns.length) {
-        /*
-         * EVERY LINE STARTS SYNTHESISING NOW, not when its turn comes to speak.
-         *
-         * Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
-         * with the playback between them. In parallel the second and third are ready before
-         * the first has finished, so what separates the speakers is the handover beat rather
-         * than the network.
-         */
-        panelVoices.prefetchTurn(result.turns);
-        // Reveal each line AS ITS VOICE STARTS, not all at once — the same lesson the GD
-        // round taught. Showing both lines immediately and then speaking them in sequence
-        // means the candidate reads the second interviewer while the first is still talking.
-        for (const line of result.turns) {
-          await panelVoices.speakAs(line.speaker, line.text, {
-            // Fires when the audio is in hand, not when the request goes out — so the line
-            // appears with the voice. `panelPending` is cleared here rather than on arrival
-            // of the turn for the same reason: until somebody can actually be heard, the
-            // honest thing to show is that they are about to speak.
-            onStart: () => {
-              setPanelPending(false);
-              setPanelLines((prev) => [...prev, line]);
-            },
-            // Tagged by the panel itself, per line. This is what makes a correction sound
-            // like one — slower and lower — instead of being read out in the same voice as
-            // the greeting, which was the giveaway that nobody was really in the room.
-            tone: line.tone,
-          });
-        }
-        return;
-      }
-
       // No panel — provider down, or it returned nothing usable. Fall back to the single
       // voice reading the question, which is exactly the old behaviour.
-      setPanelPending(false);
-      if (tts.supported) tts.speak(questionText);
+      if (!spoke && tts.supported) tts.speak(questionText);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionText, question?.id, useTyping]);
+  }, [phase, questionText, question?.id, useTyping]);
+
+  /*
+   * THE CLOSE. Wrap-up, then "do you have any questions for us?", then an actual answer to
+   * whatever they ask.
+   *
+   * The stages have existed server-side since the panel was built and nothing ever
+   * triggered them, so the interview simply stopped. It runs when the orchestrator has no
+   * more questions, and EVERY step falls through on failure — the report is reachable from
+   * the header at all times, and a closing turn that cannot be generated must not be able
+   * to strand somebody one click from their result.
+   */
+  useEffect(() => {
+    if (question !== null || preparing || closedRef.current) return;
+    // Wait for the skill check ONLY if one is actually going to happen. With no question
+    // there is nothing to wait for, and blocking unconditionally would strand a session
+    // that had no questions at all on a screen with no way forward but End Interview.
+    if (phase === 'skill_check' && question) return;
+    closedRef.current = true;
+    setPhase('closing');
+    void (async () => {
+      // Two turns, in order: Anil says he is done and asks Priya whether she has anything
+      // else, then the panel asks the candidate whether they have questions. Appended
+      // rather than replacing, so the candidate can still see what was just said to them.
+      await speakTurn({ stage: 'wrapping' });
+      await speakTurn({ stage: 'candidate_questions', reset: false });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question, preparing, phase]);
 
   useEffect(() => {
     if (stt.transcript) setAnswer(stt.transcript);
   }, [stt.transcript]);
+
+  /*
+   * THE SPOKEN RATING. "Out of ten, how would you rate yourself in Java?" — and they say it.
+   *
+   * Read from the transcript rather than collected on a form, because the panel asked it out
+   * loud and a slider appearing mid-conversation to catch an answer somebody just gave is
+   * exactly the seam this redesign exists to remove.
+   *
+   * parseSelfRating returns null rather than guessing, and that is the important half: a
+   * wrong rating silently changes which questions the candidate is asked and what their
+   * report judges them against, with nothing on screen to say so. When it cannot find a
+   * number the buttons in the panel stay up and the candidate taps one, which costs one tap
+   * and is honest.
+   */
+  useEffect(() => {
+    if (phase !== 'skill_check' || !stt.transcript.trim()) return;
+    // Not while they are still talking — "six" is a complete answer and so is the "six" at
+    // the start of "six... no, seven", and acting on the first one would take the wrong
+    // number. The mic closing on its own silence is the signal that they have finished.
+    if (stt.listening) return;
+    const parsed = parseSelfRating(stt.transcript);
+    if (!parsed) return;
+    selfRating.mutate({ java_rating: parsed.rating, strengths: parsed.strengths });
+    setAnswer('');
+    stt.reset();
+    setPhase('asking');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, stt.transcript, stt.listening]);
 
   const closeMic = () => {
     stt.stop();
@@ -333,6 +508,11 @@ export default function LiveSessionPage() {
   // per-question score is shown (all scoring appears at the end in the report).
   const submitContent = (content: string) => {
     if (!content.trim() || !question) return;
+    // Guarded here as well as in the UI. This is the one function that files an answer
+    // against a question id, and the UI gate above is a rendering decision that a future
+    // layout change could quietly drop — filing the candidate's self-rating as their answer
+    // to question one is not a mistake worth being one refactor away from.
+    if (phase !== 'asking') return;
     stt.stop();
     tts.cancel();
     if (speakStartRef.current) {
@@ -364,6 +544,9 @@ export default function LiveSessionPage() {
           pauses: stt.pauses,
         };
 
+    const declinedQuestion = questionText ?? '';
+    const wasCoding = isCoding;
+
     submitAnswer.mutate(
       { sessionId, questionId: question.id, content, delivery },
       {
@@ -372,6 +555,65 @@ export default function LiveSessionPage() {
           setAnswer('');
           stt.reset();
           speakSecondsRef.current = 0;
+
+          /*
+           * THEY SAID THEY DID NOT KNOW. Offer them somewhere else to stand.
+           *
+           * `declined` is decided SERVER-side (dont_know.py, forty tests) because the rule
+           * is subtle: "I don't know the exact syntax, but you'd use a ConcurrentHashMap
+           * and compute() is atomic" is a good answer that opens with the phrase, and
+           * interrupting it to offer an easier topic would land on exactly the careful
+           * students who hedge before explaining.
+           *
+           * The answer is still recorded and still scored — declining IS an answer to the
+           * question and is graded as one. The pivot is recorded too, which is what stops
+           * "I don't know" being a free instruction to serve easier questions.
+           */
+          if (res.declined) {
+            void (async () => {
+              // Appended: the candidate should still see the question they just declined
+              // above the offer to move on. Replacing it would make "do you know about X?"
+              // arrive with no visible reason.
+              const { pivotTopic } = await speakTurn({ stage: 'pivot', reset: false });
+              if (pivotTopic) {
+                setPivotOffer({ topic: pivotTopic, declined: declinedQuestion });
+                setPhase('pivot');
+                recordPivot.mutate({
+                  declined_question: declinedQuestion,
+                  offered_topic: pivotTopic,
+                  // Recorded as offered, not accepted. Whether they take it is a second
+                  // event, and pretending they did would overstate what happened.
+                  accepted: false,
+                });
+              } else {
+                // Nothing left to offer. Moving on is the honest outcome — inventing a
+                // topic the bank cannot source would be a dead end mid-interview.
+                refetch();
+              }
+            })();
+            return;
+          }
+
+          /*
+           * THEY WROTE CODE. The panel reads it back and says what is wrong with it.
+           *
+           * The code is not sent from here — it is the answer that was just submitted, and
+           * the server reads it back out of the database like every other thing the panel
+           * grounds itself in. That keeps the answer key server-side and means a review
+           * cannot be produced against code the candidate did not actually submit.
+           */
+          if (wasCoding) {
+            void (async () => {
+              setPhase('reviewing');
+              // Appended for the same reason: a review reads as a review only when the
+              // problem it is reviewing against is still on screen.
+              await speakTurn({ stage: 'code_review', language: codeLanguage, reset: false });
+              setPhase('asking');
+              refetch();
+            })();
+            return;
+          }
+
           refetch();
         },
         onError: (err: Error) => {
@@ -417,8 +659,16 @@ export default function LiveSessionPage() {
     );
   }
 
-  // ─── Interview complete ───────────────────────────────────────────────────
-  if (question === null && !preparing) {
+  /*
+   * ─── Interview complete ───────────────────────────────────────────────────
+   *
+   * `phase === 'done'`, NOT `question === null`. That distinction is the whole closing
+   * sequence: the orchestrator running out of questions used to be the end of the
+   * interview, and now it is the beginning of the end — the panel wraps up, asks whether
+   * the candidate has anything to ask THEM, and answers it. Gating on the absence of a
+   * question would replace that entire conversation with this card the instant it started.
+   */
+  if (phase === 'done') {
     return (
       <div className="hero-wash flex min-h-screen items-center justify-center bg-background p-6">
         <motion.div
@@ -465,147 +715,276 @@ export default function LiveSessionPage() {
             </span>
           )}
         </div>
+        {/* ALWAYS LIVE, at every phase.
+            The closing sequence adds three panel turns between the last answer and the
+            report, and any of them can fail or hang on a bad connection. A candidate must
+            never be unable to reach their own result because a piece of dialogue would not
+            generate — so this bypasses every phase and goes straight to the report. */}
         <button
-          onClick={() => completeSession.mutate(sessionId)}
+          onClick={() => {
+            panelVoices.cancelAll();
+            completeSession.mutate(sessionId);
+          }}
           className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
         >
           <StopCircle className="h-4 w-4" /> End Interview
         </button>
       </header>
+      {/* The proctoring alert, wherever the candidate is looking.
+          Duplicated from inside the video pane on purpose: below lg that pane is behind a
+          tab, and an invigilation warning the candidate never sees is not invigilation. */}
+      {presence.multiplePeople && mobilePane !== 'you' && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-destructive/40 bg-destructive px-4 py-2 text-xs font-medium text-destructive-foreground lg:hidden"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          Another person is in frame. In a real interview this ends the round.
+        </div>
+      )}
 
-      {/* Main workspace */}
+      {/* Mobile pane switcher.
+          Three columns do not fit on 375px and this product's users are overwhelmingly
+          phone-first. Stacking them would be worse than tabs: the compiler would sit two
+          screens below the question it belongs to, and the video below that, so a candidate
+          would be scrolling during an interview. Tabs keep each pane full-height and one
+          thumb away. Above lg they disappear and all three are simply on screen. */}
+      <div className="flex items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden">
+        {([
+          { id: 'talk', label: 'Interview', icon: MessageSquare },
+          { id: 'code', label: 'Compiler', icon: Code2 },
+          { id: 'you', label: 'You', icon: Video },
+        ] as const).map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setMobilePane(t.id)}
+              className={cn(
+                'flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors',
+                mobilePane === t.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+              {/* The camera is the one pane you might genuinely need to look at while
+                  reading another, so it carries its warning across to the tab. */}
+              {t.id === 'you' && presence.multiplePeopleEver && (
+                <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* THE THREE PANES.
+          Conversation left, compiler middle, video right — the shape of a real technical
+          screen, where the person you are talking to is beside your editor rather than
+          replaced by it. The middle column is the widest because it is the one being typed
+          in; the right is the narrowest because a webcam tile does not need more. */}
       <motion.main
         initial="hidden"
         animate="visible"
-        variants={staggerContainer(0.1)}
-        className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-4 p-4 sm:gap-6 sm:p-6 md:flex-row"
+        variants={staggerContainer(0.08)}
+        className="mx-auto grid w-full max-w-[1800px] flex-1 gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)_minmax(280px,0.85fr)] lg:gap-5 lg:p-5"
       >
-        {/* Left: Question Area */}
-        <motion.div variants={fadeUp} className="flex flex-1 flex-col gap-6">
-          <div className="glass flex h-full flex-col rounded-2xl border-border/50 p-5 sm:p-8">
+        {/* ── LEFT: the conversation ──────────────────────────────────────── */}
+        <motion.div
+          variants={fadeUp}
+          className={cn(
+            'glass flex min-h-0 flex-col rounded-2xl border-border/50 p-4 sm:p-5',
+            mobilePane === 'talk' ? 'flex' : 'hidden lg:flex',
+          )}
+        >
+          <div className="mb-4 flex flex-shrink-0 items-center gap-2">
+            <Badge variant="primary">
+              {phase === 'skill_check'
+                ? 'Getting started'
+                : phase === 'closing'
+                  ? 'Wrapping up'
+                  : phase === 'reviewing'
+                    ? 'Code review'
+                    : 'Interview'}
+            </Badge>
+            {question?.difficulty && phase === 'asking' && (
+              <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
+            )}
+            {answered > 0 && (
+              <span className="ml-auto text-[11px] text-muted-foreground">
+                {answered} answered
+              </span>
+            )}
+          </div>
+
+          {/* The thread scrolls; the answer controls below it do not. During an interview the
+              thing you must always be able to reach is the microphone, and a mic button that
+              scrolls off after a long code review is a mic button that is not there. */}
+          <div className="mb-4 min-h-0 flex-1 overflow-y-auto pr-1">
             <AnimatePresence mode="wait">
-              {preparing ? (
+              {preparing && !panelLines.length ? (
                 <GeneratingQuestion key="gen" label="Thinking about your next question…" />
               ) : (
                 <motion.div
-                  key={question?.id}
-                  initial={{ opacity: 0, y: 12 }}
+                  key={`${phase}-${question?.id ?? 'none'}`}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -8 }}
-                  transition={{ duration: 0.35 }}
+                  transition={{ duration: 0.3 }}
                 >
-                  <div className="mb-5 flex items-center gap-2">
-                    <Badge variant="primary">Question</Badge>
-                    {question?.difficulty && (
-                      <span className={`badge-${question.difficulty}`}>{question.difficulty}</span>
-                    )}
-                  </div>
+                  <PanelThread
+                    lines={panelLines}
+                    speakingNow={panelVoices.speakingNow}
+                    takingFloor={panelVoices.takingFloor}
+                    interviewers={interviewers}
+                    fallbackQuestion={phase === 'asking' ? question?.content : null}
+                    pending={panelPending}
+                  />
 
-                  {panelLines.length > 0 ? (
-                    /* The panel talking. Each line is attributed, and the one being spoken
-                       is ringed so the text and the voice are visibly the same person. */
-                    <div className="space-y-3">
-                      {panelLines.map((line, i) => {
-                        const speaking =
-                          panelVoices.speakingNow === line.speaker && i === panelLines.length - 1;
-                        return (
-                          <motion.div
-                            key={`${line.speaker}-${i}`}
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.25 }}
-                            className={cn(
-                              'rounded-xl border px-4 py-3 transition-shadow',
-                              speaking
-                                ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/30'
-                                : 'border-border/50 bg-surface/40',
-                            )}
+                  {/* The pivot, made explicit.
+                      The panel has just asked "do you know about X?" out loud, and the
+                      candidate answers out loud. But a spoken "yes" is indistinguishable
+                      from the start of an answer to a recogniser, so the two buttons are
+                      the unambiguous path — and they are the ONLY thing on screen at that
+                      moment, so there is nothing to misread. */}
+                  {phase === 'pivot' && pivotOffer && (
+                    <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+                      <p className="mb-3 text-sm">
+                        Do you know about{' '}
+                        <span className="font-semibold">{pivotOffer.topic}</span>?
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            recordPivot.mutate({
+                              declined_question: pivotOffer.declined,
+                              offered_topic: pivotOffer.topic,
+                              accepted: true,
+                            });
+                            setPivotOffer(null);
+                            setPhase('asking');
+                            refetch();
+                          }}
+                        >
+                          Yes, ask me
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setPivotOffer(null);
+                            setPhase('asking');
+                            refetch();
+                          }}
+                        >
+                          Not that either
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* THE LAST EXCHANGE. "Do you have any questions for us?"
+                      The one part of an interview candidates actually remember, and the
+                      one this app used to skip entirely — the stages existed server-side
+                      and nothing ever called them, so the interview just stopped.
+
+                      Typed rather than spoken, and deliberately: this is the moment the
+                      microphone is least reliable, because the candidate has stopped
+                      performing and is thinking about what to ask. A mistranscribed
+                      question here gets a confident answer to something they did not ask. */}
+                  {phase === 'closing' && !panelPending && !panelVoices.speakingNow && (
+                    <div className="mt-4 rounded-xl border border-border/60 bg-surface/40 p-4">
+                      <textarea
+                        value={closingQuestion}
+                        onChange={(e) => setClosingQuestion(e.target.value)}
+                        placeholder="Ask them anything — about the role, the process, or how you did."
+                        rows={2}
+                        className="mb-3 w-full resize-none rounded-lg border border-border/50 bg-surface-elevated p-3 text-sm leading-relaxed focus:border-primary/40 focus:outline-none"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={!closingQuestion.trim() || answeringClosing}
+                          loading={answeringClosing}
+                          onClick={() => {
+                            const asked = closingQuestion.trim();
+                            setClosingQuestion('');
+                            setAnsweringClosing(true);
+                            void (async () => {
+                              await speakTurn({
+                                stage: 'answering_candidate',
+                                candidate_question: asked,
+                                reset: false,
+                              });
+                              setAnsweringClosing(false);
+                            })();
+                          }}
+                        >
+                          Ask
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setPhase('done')}
+                        >
+                          Nothing from me — finish
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* The self-rating, when the number could not be heard.
+                      parseSelfRating returns null rather than guessing — a wrong rating
+                      silently changes which questions you get and what your report judges
+                      you against, which is far worse than one extra tap. */}
+                  {phase === 'skill_check' && !panelPending && !panelVoices.speakingNow && (
+                    <div className="mt-4 rounded-xl border border-border/60 bg-surface/40 p-4">
+                      <p className="mb-3 text-xs text-muted-foreground">
+                        Say it out loud, or pick a number — it decides how hard the questions
+                        start.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => {
+                              selfRating.mutate({ java_rating: n, strengths: [] });
+                              setPhase('asking');
+                            }}
+                            className="h-9 w-9 rounded-lg border border-border text-xs font-semibold transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
                           >
-                            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                              {line.speaker}
-                              {interviewers?.find((iv) => iv.name === line.speaker)?.role && (
-                                <span className="ml-2 font-normal normal-case tracking-normal opacity-70">
-                                  {interviewers.find((iv) => iv.name === line.speaker)?.role}
-                                </span>
-                              )}
-                            </p>
-                            <p className="text-base leading-relaxed sm:text-lg">{line.text}</p>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-                  ) : panelPending ? (
-                    /*
-                     * THE LAG YOU FELT. The bare question used to render the instant it
-                     * arrived, while the panel's voice was still two to four seconds behind
-                     * it — so you read the question, then heard it, and the room was always
-                     * a beat behind the screen.
-                     *
-                     * While the panel is being written we show that somebody is about to
-                     * speak instead of showing the words. Text and voice then land together,
-                     * which is what makes it feel like a room rather than a page with audio
-                     * bolted on. If the panel fails, the branch below still shows the
-                     * question — nobody is ever left with nothing.
-                     */
-                    <div className="flex items-center gap-2.5 py-2 text-sm text-muted-foreground">
-                      <span className="flex gap-1" aria-hidden>
-                        {[0, 0.18, 0.36].map((d) => (
-                          <motion.span
-                            key={d}
-                            className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60"
-                            animate={{ opacity: [0.25, 1, 0.25] }}
-                            transition={{ duration: 1.1, repeat: Infinity, delay: d }}
-                          />
+                            {n}
+                          </button>
                         ))}
-                      </span>
-                      The panel is talking…
+                      </div>
                     </div>
-                  ) : (
-                    <h1 className="text-lg font-semibold leading-relaxed tracking-[-0.01em] sm:text-2xl">
-                      {question?.content}
-                    </h1>
                   )}
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
 
-          {/* Optional live presence check (camera + mic, on-device only) */}
-          <PresenceMonitor />
-        </motion.div>
-
-        {/* Right: Answer Area */}
-        <motion.div
-          variants={fadeUp}
-          className="glass flex flex-1 flex-col rounded-2xl border-border/50 p-6"
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm font-semibold text-muted-foreground">
-              {isCoding ? 'Your Solution' : 'Your Answer'}
-            </span>
-            <div className="flex items-center gap-2">
-              {isCoding && <Badge variant="violet">Coding round</Badge>}
-              {/* No "Hear question" button and no voice-name strip.
-                  Both were from when a single synthetic voice read the question and the
-                  candidate might reasonably want to replay it or check which voice they had
-                  been given. The panel talks on its own, in two voices, and a button offering
-                  to re-read "the question" has nothing to point at — the question is now
-                  something Priya said, in her own words, in the middle of a conversation.
-                  Naming the browser voice was worse: it announced the machinery. */}
-            </div>
-          </div>
-
-          {isCoding ? (
-            <CodingWorkspace
-              disabled={preparing}
-              submitting={submitAnswer.isPending}
-              problemTitle="Coding question"
-              problemDescription={question?.content ?? ''}
-              difficulty={question?.difficulty ?? 'medium'}
-              onSubmit={({ language, code }: { language: CodeLanguage; code: string }) =>
-                submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
-              }
-            />
+          {/* ── The answer channel, pinned to the bottom of the conversation ── */}
+          <div className="flex-shrink-0 border-t border-border/50 pt-4">
+          {/*
+            ONLY WHEN A QUESTION IS ACTUALLY OPEN.
+            Without this gate, "seven out of ten" said during the skill check is filed as
+            the answer to question one — submitContent only checks that a `question` exists,
+            and during the opening exchange one already does. The pivot and the close have
+            their own controls in the thread above for the same reason: neither is a moment
+            when "Submit & Next" means anything.
+          */}
+          {phase !== 'asking' ? (
+            <p className="py-2 text-center text-xs text-muted-foreground">
+              {phase === 'skill_check'
+                ? 'Say your rating out loud, or tap a number above.'
+                : phase === 'pivot'
+                  ? 'Answer them above.'
+                  : phase === 'reviewing'
+                    ? 'They are reading your code…'
+                    : 'Ask them anything above, or finish up.'}
+            </p>
           ) : useTyping ? (
             /* Typing fallback */
             <>
@@ -804,6 +1183,64 @@ export default function LiveSessionPage() {
               </div>
             </div>
           )}
+          </div>
+        </motion.div>
+
+        {/* ── MIDDLE: the compiler, permanently ───────────────────────────────
+            On screen for EVERY question, not only the coding ones. That is the point of
+            the redesign: in a real technical screen the editor is simply there, and you
+            reach for it when you want to show something rather than being handed one when
+            the interviewer decides this is now a coding question. On a theory question it
+            is a scratchpad and says so; on a coding question it is the answer and says
+            that instead. */}
+        <motion.div
+          variants={fadeUp}
+          className={cn(
+            'glass min-h-0 overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5',
+            mobilePane === 'code' ? 'block' : 'hidden lg:block',
+          )}
+        >
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-muted-foreground">
+              {isCoding ? 'Your solution' : 'Compiler'}
+            </span>
+            {isCoding ? (
+              <Badge variant="violet">This is your answer</Badge>
+            ) : (
+              <span className="text-[11px] text-muted-foreground/70">Scratchpad</span>
+            )}
+          </div>
+          <CodingWorkspace
+            disabled={preparing}
+            submitting={submitAnswer.isPending}
+            problemTitle={isCoding ? 'Coding question' : 'Scratchpad'}
+            problemDescription={question?.content ?? ''}
+            difficulty={question?.difficulty ?? 'medium'}
+            onLanguageChange={setCodeLanguage}
+            roleLabel={
+              isCoding
+                ? 'Write your solution here and submit it. Anil and Priya will read it and tell you what they find.'
+                : 'Not the answer to this one — answer out loud. This is here to sketch on, the way you would use a whiteboard.'
+            }
+            // Submitting a scratchpad as an answer to a theory question would file code
+            // against a question that asked for an explanation, and it would be scored as
+            // one. Run and Review still work, which is what a scratchpad is for.
+            hideSubmit={!isCoding}
+            onSubmit={({ language, code }: { language: CodeLanguage; code: string }) =>
+              submitContent(`\`\`\`${language}\n${code}\n\`\`\``)
+            }
+          />
+        </motion.div>
+
+        {/* ── RIGHT: you ──────────────────────────────────────────────────── */}
+        <motion.div
+          variants={fadeUp}
+          className={cn(
+            'min-h-0 overflow-y-auto',
+            mobilePane === 'you' ? 'block' : 'hidden lg:block',
+          )}
+        >
+          <PresenceMonitor onAlert={setPresence} />
         </motion.div>
       </motion.main>
     </div>

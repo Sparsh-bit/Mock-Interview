@@ -204,6 +204,137 @@ async def approve_interview(
         raise HTTPException(status_code=404, detail="No plan found for this session.")
     return {"status": "active"}
 
+class SelfRatingRequest(BaseModel):
+    """
+    What the candidate said when the panel asked them to rate themselves.
+
+    Bounded 1-10 because that is how the panel asks it, and because an unbounded number is a
+    dial rather than an answer.
+    """
+
+    java_rating: int = Field(ge=1, le=10)
+    #: Areas they said they are strongest in, in their own words. Free text, capped, and only
+    #: ever used to STEER topic choice — never matched exactly, because "collections" and
+    #: "Collections framework" and "DSA collections" are the same claim.
+    strengths: list[str] = Field(default_factory=list, max_length=8)
+
+
+@router.post("/{session_id}/self-rating")
+async def set_self_rating(
+    session_id: uuid.UUID,
+    request: SelfRatingRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Record the candidate's own estimate of their Java level, and let it shape the interview.
+
+    WHY THIS IS NOT SIMPLY "EASIER IF THEY SAY 3".
+
+    A self-rating is a dial the candidate controls, and this product's entire credential
+    value rests on the score being hard to game. If a low rating bought easy questions AND
+    the score were computed the same way, the optimal play would be to claim 2/10 every time
+    — which would make the number meaningless within a week of anyone noticing.
+
+    So the rating moves TWO things in opposite directions, and that is the whole design:
+
+      * It moves the QUESTIONS. Claim 8 and you get the harder end of the bank; claim 3 and
+        you start on foundations. This is the part the candidate wants and it is real.
+      * It moves the EXPECTATION the answers are judged against, and it is recorded on the
+        session so the report says what was claimed. Clearing a foundation set after
+        claiming 3/10 is not the same achievement as clearing it after claiming 9/10, and
+        the report is required to know which happened.
+
+    The result is that honesty is the dominant strategy in both directions. Underclaiming
+    gets you questions you find easy and a report that says you were asked easy questions.
+    Overclaiming gets you questions you cannot answer and a harsher read when you miss them.
+    Neither is a shortcut, which is what makes the rating safe to hand the candidate.
+
+    Stored in session_metadata rather than its own column: it is per-session context that only
+    the plan and the report read, and it costs a migration to add a column for something no
+    query ever filters on.
+    """
+    await _verify_session_ownership(db, session_id, current_user)
+
+    session = (
+        await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    ).scalar_one()
+
+    meta = dict(session.session_metadata or {})
+    meta["self_rating"] = {
+        "java": request.java_rating,
+        "strengths": [s.strip()[:60] for s in request.strengths if s.strip()][:8],
+    }
+    # Reassigned rather than mutated in place: JSONB columns are not tracked for in-place
+    # mutation by SQLAlchemy, so `meta[...] = x` on the live dict would not be persisted.
+    session.session_metadata = meta
+    await db.commit()
+
+    logger.info(
+        "self_rating_recorded",
+        session_id=str(session_id),
+        java_rating=request.java_rating,
+        strengths=len(meta["self_rating"]["strengths"]),
+    )
+    return {"status": "recorded", "self_rating": meta["self_rating"]}
+
+
+class PivotRecordRequest(BaseModel):
+    """A topic the candidate declined, and the one the panel offered instead."""
+
+    declined_question: str = Field(default="", max_length=2000)
+    offered_topic: str = Field(default="", max_length=120)
+    accepted: bool = False
+
+
+@router.post("/{session_id}/pivot")
+async def record_pivot(
+    session_id: uuid.UUID,
+    request: PivotRecordRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Record that the candidate said they did not know something and was offered another topic.
+
+    THIS IS THE ANTI-FARMING HALF OF THE PIVOT and it is the reason the pivot is safe to
+    ship at all. Without it, "I don't know" would be a free instruction to serve easier
+    questions, and the optimal strategy for a candidate chasing a rating would be to decline
+    every hard question until the interview consisted only of foundations.
+
+    Recording it makes that self-defeating. Every pivot is on the session, so the report
+    counts them, and an interview with six pivots is visibly an interview where the candidate
+    could not engage with six topics — which is what it was. A candidate who honestly did not
+    know one thing has one pivot and it barely registers, which is also what it should be.
+
+    Deliberately NOT a score penalty applied here. The declined question is already an
+    unanswered question and is already scored as one; docking again would punish the same
+    event twice, and punishing somebody for saying "I don't know" honestly rather than
+    bluffing is exactly backwards for a product that detects bluffing.
+    """
+    await _verify_session_ownership(db, session_id, current_user)
+
+    session = (
+        await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    ).scalar_one()
+
+    meta = dict(session.session_metadata or {})
+    pivots = list(meta.get("pivots") or [])
+    pivots.append(
+        {
+            "declined": request.declined_question[:2000],
+            "offered": request.offered_topic[:120],
+            "accepted": request.accepted,
+        }
+    )
+    # Bounded. A stuck client looping this must not be able to grow one JSONB row without
+    # limit — the cap is far above any real interview's question count.
+    meta["pivots"] = pivots[:40]
+    session.session_metadata = meta
+    await db.commit()
+    return {"status": "recorded", "pivots": len(meta["pivots"])}
+
+
 @router.get("/{session_id}/next")
 async def get_next_question(
     session_id: uuid.UUID,

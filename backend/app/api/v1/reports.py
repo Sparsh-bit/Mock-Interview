@@ -579,6 +579,55 @@ async def generate_report(
         else "No delivery metrics were captured for this session."
     )
 
+    # ── What the candidate CLAIMED, and where they gave up ──────────────────────────────
+    #
+    # Both of these exist to stop a feature being gameable, and both are inert unless the
+    # report actually reads them — a fairness guard the grader never sees is decoration.
+    #
+    # THE SELF-RATING. The candidate is asked to rate their own Java out of ten and that
+    # moves the questions they get. If the score were then computed identically regardless,
+    # claiming 2/10 every time would be the optimal play. Naming the claim here is what
+    # closes that: clearing a foundation set after saying 3 is a different achievement from
+    # clearing it after saying 9, and the grader is told to treat it as one.
+    #
+    # THE PIVOTS. Saying "I don't know" moves the panel to another topic. Recording how often
+    # that happened is what stops it being a free instruction to serve easier questions.
+    # Deliberately framed as context, not as a penalty — the declined question is already
+    # scored as unanswered, and docking again would punish the same event twice. Punishing
+    # honesty over bluffing would also be precisely backwards in a product built to detect
+    # bluffing.
+    meta = session.session_metadata or {}
+    rating = meta.get("self_rating") or {}
+    claimed = rating.get("java")
+    if isinstance(claimed, int):
+        strengths = ", ".join(str(x) for x in (rating.get("strengths") or [])[:8])
+        self_assessment = (
+            f"Before the technical questions the candidate rated their own Java {claimed}/10"
+            + (f" and named these as their strongest areas: {strengths}." if strengths else ".")
+            + " Judge their answers AGAINST THAT CLAIM. A candidate who claimed 8 or more and"
+            " could not answer straightforward questions has misjudged themselves, and saying"
+            " so plainly is more useful to them than a polite score. A candidate who claimed"
+            " low and answered well should be told they underrate themselves. Do not simply"
+            " reward or punish the number — it is context for the gap between what they"
+            " believe and what they showed."
+        )
+    else:
+        self_assessment = "The candidate was not asked to rate themselves in this session."
+
+    pivots = meta.get("pivots") or []
+    if pivots:
+        offered = ", ".join(str(p.get("offered") or "?") for p in pivots[:8])
+        pivot_note = (
+            f"The candidate said they did not know the topic on {len(pivots)} occasion(s), and"
+            f" the panel moved them to another area ({offered}). Note this in the topic"
+            " breakdown as ground they could not engage with. Do NOT add a separate penalty"
+            " for it — those questions already count as unanswered, and admitting a gap"
+            " honestly is better behaviour than bluffing, which this report scores"
+            " separately."
+        )
+    else:
+        pivot_note = ""
+
     # Previous completed report for this candidate, for a progress comparison.
     prev = await db.scalar(
         select(Report)
@@ -604,7 +653,15 @@ async def generate_report(
         total_questions=str(len(transcript_rows)),
         session_duration_minutes=str(duration_minutes),
         delivery_summary=delivery_summary,
-        previous_performance=previous_performance,
+        previous_performance=(
+            # Appended rather than given their own template slots so the report prompt does
+            # not need new placeholders — a missing placeholder is a hard failure at render
+            # time, and this ships alongside a frontend change rather than ahead of it.
+            previous_performance
+            + "\n\n"
+            + self_assessment
+            + (("\n\n" + pivot_note) if pivot_note else "")
+        ),
     )
 
     # Tries primary then fallback provider; if all fail we degrade to a
