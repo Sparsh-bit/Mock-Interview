@@ -55,7 +55,7 @@ depends_on = None
 #:
 #: prep_progress  migration 009 — which subtopics a candidate has completed.
 #: ai_usage       migration 011 — per-user AI spend. Temporary; see
-#:                TEMPORARY-token-counter.md. Enabling RLS on a table that is
+#:                docs/TEMPORARY-token-counter.md. Enabling RLS on a table that is
 #:                scheduled for deletion is still worth doing: it exists now, it
 #:                is exposed now, and "we are going to delete it later" protects
 #:                nobody in the meantime.

@@ -9,6 +9,8 @@
 > is still the reasoning to revisit if speech ever needs to move again. Everything else in
 > it — the setup steps, the voice ids, the env var names — is out of date. Do not follow it.
 
+> Part of the [[index|InterviewOS documentation]].
+
 # Neural voices — ElevenLabs setup
 
 The code is written and wired. This is the part only you can do, plus the numbers you should

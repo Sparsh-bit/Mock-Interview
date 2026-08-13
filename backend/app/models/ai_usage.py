@@ -2,7 +2,7 @@
 TEMPORARY — per-call AI cost ledger. models/ai_usage.py
 
 Scheduled for deletion once credits and subscriptions land. See
-`TEMPORARY-token-counter.md` at the repo root for the removal checklist, and
+`docs/TEMPORARY-token-counter.md` at the repo root for the removal checklist, and
 migration 011 for why it exists and why it is not meant to survive.
 
 One row per billed provider call, written from the single seam every AI feature

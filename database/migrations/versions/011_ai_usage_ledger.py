@@ -16,7 +16,7 @@ IT IS SCHEDULED FOR DELETION. Once credits and subscriptions land, per-call
 accounting belongs to the billing system, which will need its own schema with
 guarantees this table deliberately does not have — idempotency keys, immutability,
 a reconciliation trail. Keeping this one alive alongside it would mean two
-disagreeing sources of truth for money. `TEMPORARY-token-counter.md` at the repo
+disagreeing sources of truth for money. `docs/TEMPORARY-token-counter.md` at the repo
 root lists every file to remove; this migration's downgrade drops the table
 cleanly and is tested.
 

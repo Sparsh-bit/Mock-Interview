@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # What the AI actually costs
 
 Answering the direct question: **the $2/day cap — that is one user doing what, how many
@@ -141,5 +143,5 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
    for. Every estimate above should become a measurement.
 
 Per-user quotas are also the natural shape of the credit/subscription system the
-`ai_usage` ledger is a placeholder for (see `TEMPORARY-token-counter.md`), so this is
+`ai_usage` ledger is a placeholder for (see [[TEMPORARY-token-counter]]), so this is
 groundwork rather than a detour.

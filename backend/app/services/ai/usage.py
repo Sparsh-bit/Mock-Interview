@@ -2,7 +2,7 @@
 TEMPORARY — recording what each AI feature costs. services/ai/usage.py
 
 Scheduled for deletion once credits and subscriptions land; see
-`TEMPORARY-token-counter.md` at the repo root.
+`docs/TEMPORARY-token-counter.md` at the repo root.
 
 ONE SEAM. Every AI-backed feature in the product already routes through
 `generate_structured`, and that function already receives the two things a

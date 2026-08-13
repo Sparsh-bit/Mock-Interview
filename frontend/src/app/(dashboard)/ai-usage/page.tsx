@@ -4,7 +4,7 @@
  * TEMPORARY — what each AI feature costs. /ai-usage
  *
  * Removed with the rest of the ledger once credits and subscriptions land; see
- * `TEMPORARY-token-counter.md` at the repo root.
+ * `docs/TEMPORARY-token-counter.md` at the repo root.
  *
  * It exists to answer one question with arithmetic instead of a guess: what does
  * a user cost, and which feature is spending the money. The per-user median and
@@ -171,7 +171,7 @@ export default function AIUsagePage() {
           Costs are estimated from provider-reported token counts and the price sheet in{' '}
           <code className="text-[11px]">anthropic_provider._PRICE_PER_MTOK</code> — a close
           upper bound, not an invoice. This whole feature is removed when billing lands;
-          see <code className="text-[11px]">TEMPORARY-token-counter.md</code>.
+          see <code className="text-[11px]">docs/TEMPORARY-token-counter.md</code>.
         </p>
       </Card>
 

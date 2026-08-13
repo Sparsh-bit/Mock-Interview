@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # The interview section
 
 What it looks like now, what the panel does, and the two places where a feature that sounds

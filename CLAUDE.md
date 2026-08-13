@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-InterviewOS is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `prompt.md` at the repo root — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
+InterviewOS is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `docs/prompt.md` — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
 
 This is an npm workspaces monorepo: `frontend` (Next.js) + `backend` (FastAPI/Python, managed with `uv`).
 
@@ -53,7 +53,7 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 - **`db/session.py`** / **`db/redis.py`** — async engine/session and Redis connection pooling. Redis backs caching, rate limiting, and the event bus.
 - **`events/`** — in-process async `EventBus` (`event_bus.py`) for decoupled domain events (e.g. audit logging without blocking the HTTP response path). Handlers registered in `handlers.py`.
 - **`services/ai/`** — AI provider abstraction. `base_provider.py` defines the interface; `glm_provider.py` is the current implementation (GLM via a NVIDIA NIM-compatible endpoint, configured through `AI_PROVIDER`/`GLM_*` env vars). `json_validator.py` + `response_parser.py` enforce that AI responses match required Pydantic shapes, retrying on malformed output. Swap providers by adding a new class conforming to `BaseAIProvider` and wiring it in `provider_factory.py` — don't special-case provider logic in callers.
-- **`services/interview/orchestrator.py`** — intended to be the interview state machine (`pending` → `active` → `completed`, adaptive question selection). Per `prompt.md`, this is currently a simplified sequential-question stub, not the full adaptive engine — check current state before assuming adaptive behavior is live.
+- **`services/interview/orchestrator.py`** — intended to be the interview state machine (`pending` → `active` → `completed`, adaptive question selection). Per `docs/prompt.md`, this is currently a simplified sequential-question stub, not the full adaptive engine — check current state before assuming adaptive behavior is live.
 - **`prompts/`** — AI prompt templates as Markdown (`interviewer.md`, `resume_analyzer.md`, `report_generator.md`, `coding_evaluator.md`, `hr_interviewer.md`), loaded via `prompt_loader.py`. Edit prompts here rather than inlining prompt strings in service code.
 - **`core/security.py`** — verifies Supabase-issued JWTs locally (no network round-trip to Supabase for auth checks).
 - **`knowledge/`** — YAML reference data that is hand-maintained and read at runtime: the campus-recruiter catalogue (`knowledge/companies/catalogue.yaml`) and the study-roadmap subtopics (`subtopics.yaml`).
@@ -71,11 +71,45 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 - State/data-fetching: TanStack Query wraps the `ApiClient`; don't introduce a second data-fetching layer (e.g. SWR) alongside it.
 - Styling: Tailwind CSS v3 + shadcn/ui conventions, dark-mode-first design system defined in `tailwind.config.ts` / `globals.css`. Framer Motion for animation-heavy surfaces (landing page, dashboard).
 - Frontend talks to the backend via `NEXT_PUBLIC_API_URL` (browser) / `INTERNAL_API_URL` (Next.js server-side rewrites in dev); both point at the FastAPI server on port 8000 locally. `next.config.ts` proxies `/api/v1/:path*` to the backend in dev, so client code can call same-origin paths.
-- `components/` is currently thin (only `layout/{Header,Sidebar}.tsx` and `providers.tsx`) — the shadcn/ui component library described in `prompt.md` is aspirational/in-progress, not fully built out yet.
+- `components/` is currently thin (only `layout/{Header,Sidebar}.tsx` and `providers.tsx`) — the shadcn/ui component library described in `docs/prompt.md` is aspirational/in-progress, not fully built out yet.
+
+## Documentation
+
+All product documentation lives in `docs/`, which is also an **Obsidian vault** (the vault
+root is the repo root). `docs/index.md` is the hub — every other note is reachable from it by
+wikilink, so the graph view is a usable map of the system rather than a field of unconnected
+dots. Wikilinks resolve by filename, not path, so `[[VOICES]]` keeps working if a note moves.
+
+- `docs/index.md` — start here
+- `docs/prompt.md` — product brief and phase-by-phase status
+- `docs/VOICES.md` — panel roster, voice ids, tone and pace
+- `docs/AI-COST-MODEL.md` — measured per-feature cost; the basis for plan pricing
+- `docs/DEPLOY.md` — the current deployment runbook
+
+`CLAUDE.md` stays at the repo root because tooling expects it there. Prompts in
+`backend/app/prompts/*.md` are product behaviour, not documentation — editing one changes what
+the AI says.
+
+## Billing and entitlement
+
+- **`services/billing/plans.py`** — the single source of truth for what each tier includes and
+  costs. The enforcement layer, paywall copy, pricing page and landing page all read it; never
+  write an allowance or price anywhere else.
+- **`services/billing/credits.py`** — the only place entitlement is decided. Endpoints call
+  `consume(db, user_id, feature)`, which takes `SELECT ... FOR UPDATE` on the user's plan row
+  to serialise concurrent starts, then appends to the `credit_events` ledger. It does **not**
+  commit: `get_db` commits on success and rolls back on error, so a failed AI call undoes the
+  charge. Never `db.commit()` between charging and doing the work.
+- Usage is a COUNT over the ledger within the current period, never a stored counter — so the
+  monthly reset is a query predicate rather than a cron job that can fail.
+- Free tier: 2 interviews, 1 GD, 5 communications, unlimited quizzes. Quizzes are never
+  charged on any tier.
+- `services/billing/razorpay.py` — signature verification and payment→plan mapping are pure
+  functions and fully tested; only `create_order` needs live keys.
 
 ## Working notes
 
-- `prompt.md` tracks phase-by-phase project status (what's built vs. stubbed vs. planned). Treat it as living project context, not just a README — check it when unsure whether a feature (e.g. adaptive questioning, voice mode, PDF reports, Stripe billing) is actually implemented or still a placeholder.
+- `docs/prompt.md` tracks phase-by-phase project status (what's built vs. stubbed vs. planned). Treat it as living project context, not just a README — check it when unsure whether a feature (e.g. adaptive questioning, voice mode, PDF reports, Stripe billing) is actually implemented or still a placeholder.
 - `.env.example` currently contains real-looking Supabase/DB and AI provider credentials rather than placeholders — treat these as sensitive; do not copy them into commits, logs, or new example files, and flag if asked to regenerate this file.
 - CI (`.github/workflows/ci.yml`) only runs lint + typecheck for both frontend and backend — it does not run the test suites and there is no deploy step. Don't assume passing CI means tests passed.
 

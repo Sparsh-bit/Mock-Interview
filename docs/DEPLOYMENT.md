@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # InterviewOS — Free Deployment Guide (no credit card required)
 
 This deploys the whole app for **$0**, with **no credit card** on any provider.

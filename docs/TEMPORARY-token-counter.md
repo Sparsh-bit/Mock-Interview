@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # TEMPORARY: the AI token & cost counter — how to remove it
 
 This feature exists to answer one question before a credit system is priced:

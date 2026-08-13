@@ -23,7 +23,7 @@ the target, the before and after. The table is append-only by design.
 
 THE COST COLUMN IS TEMPORARY DATA IN A PERMANENT PAGE. Per-user spend is read
 from `ai_usage`, which is scheduled for deletion once credits ship — see
-TEMPORARY-token-counter.md. The queries degrade to zero rather than failing when
+docs/TEMPORARY-token-counter.md. The queries degrade to zero rather than failing when
 that table is gone, so removing the ledger does not break this page; the column
 just needs repointing at whatever billing records instead.
 """

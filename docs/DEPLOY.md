@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # Deploying — environment variables and migrations
 
 Written to be platform-neutral. Currently deployed on **Render**; the Render-specific notes
@@ -38,7 +40,7 @@ quietly changes behaviour, and two of them are security or cost problems.
 |---|---|---|
 | `ENVIRONMENT` | `development` | **Security.** In development the app allows `localhost` CORS origins *and* a permissive `192.168.*` regex with `allow_credentials=True`, and permits `ALLOW_UNVERIFIED_JWT` to take effect. Set it to `production`. |
 | `REDIS_URL` | `redis://localhost:6379/0` | **Three silent degradations** — see below. There is no localhost Redis on a managed host. |
-| `AI_PROVIDER` | `glm` | The cost model, prompt caching and budgets in `AI-COST-MODEL.md` all describe Anthropic. Left at the default you are running a different model entirely. Set `anthropic`. |
+| `AI_PROVIDER` | `glm` | The cost model, prompt caching and budgets in [[AI-COST-MODEL]] all describe Anthropic. Left at the default you are running a different model entirely. Set `anthropic`. |
 | `AI_FALLBACK_PROVIDER` | `nvidia` | Set to whatever you actually want as the standby — this is what serves a user who has spent their daily allowance. |
 | `ANTHROPIC_API_KEY` | `""` | Required if `AI_PROVIDER=anthropic`. |
 | `CORS_ORIGINS` | `["http://localhost:3000", …]` | The frontend cannot call the API until this lists its real origin. |
@@ -232,7 +234,7 @@ Worth knowing before traffic arrives, rather than after:
   request. Moving it to a background task with polling is a real improvement and a real
   refactor.
 - **`AI_DAILY_BUDGET_USD` at $60 is a guess sized from the cost model, not from traffic.**
-  Re-derive it from the `ai_usage` ledger after a week; the SQL is in `AI-COST-MODEL.md`.
+  Re-derive it from the `ai_usage` ledger after a week; the SQL is in [[AI-COST-MODEL]].
 - **The vector cache only covers `gd_topic_prep` and `interview_plan`.** `model_answer`
   cannot be shared (its prompt reads the candidate's own answer) and `quiz_generation` should
   not be (it would serve returning candidates a quiz they have already answered). Both are

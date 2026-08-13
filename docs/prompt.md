@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # InterviewOS — Project Summary & Blueprint
 
 ## Product Vision & Main Idea

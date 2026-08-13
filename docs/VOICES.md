@@ -1,3 +1,5 @@
+> Part of the [[index|InterviewOS documentation]].
+
 # Voices
 
 What the panels sound like, which ids are set, and the one command that stops a voice being
@@ -81,7 +83,7 @@ Against the old roster it prints:
 
 Each panel line carries a `tone`, chosen by the model, because the model is the only thing
 that knows which of its own lines is the correction. Delivery is resolved **server-side**
-from a name — the browser never sends prosody numbers, since speed decides how many seconds
+from names — the browser never sends prosody numbers, since speed decides how many seconds
 of audio get billed.
 
 | tone | when | speed |
@@ -94,6 +96,49 @@ of audio get billed.
 
 Verified against the live API that this is real rather than a field Fish accepts and drops:
 identical text at speed 0.80 → 53.9KB, 1.00 → 47.2KB, 1.20 → 35.5KB.
+
+## Pace, which is per SPEAKER rather than per line
+
+Tone says how a *line* is delivered. `SPEAKER_PACE` in `services/tts/base.py` says how a
+*person* talks, and multiplies the tone's speed. The two are independent: Riya asking a
+question and Riya conceding a point are both still Riya.
+
+| speaker | pace | why |
+|---|---:|---|
+| **Riya** | 0.92 | reported as "annoying and disturbed" — see below |
+| everyone else | 1.00 | no entry needed; unlisted speakers use the tone speed unchanged |
+
+Riya is the only entry and the reason the mechanism exists. Her GD stance is the assertive
+one, so `personaFor` gave her the largest client-side tempo in the product (1.09), and that
+was applied as an `<audio>` **playbackRate on top of** a tone speed already reaching 1.08. An
+aside from her therefore played at roughly **1.18**.
+
+The distortion was the bigger half of that, not the speed. A playbackRate *resamples finished
+audio*; it does not re-synthesise it. Past about ±12% — a threshold `neural-tts.ts` documents
+in its own comment — that stops sounding brisk and starts sounding wrong, which is what
+"disturbed" was describing. Three things changed:
+
+- her pace moved into **synthesis**, here, where the vendor actually renders it slower
+- the assertive persona tempo dropped `1.09 → 1.02`, with assertiveness now carried by the
+  160ms floor-latch instead, which is the channel `persona.ts` already argues is the safest
+- the neural playbackRate is damped to 40% of its deviation and clamped to ±5%, so it hints
+  at tempo rather than resampling audibly. The **browser fallback keeps the full multiplier**,
+  because that path often has to put two panelists on one system voice and there tempo is
+  doing the real work of telling them apart
+
+Net: Riya went from ~1.04× to ~0.88× perceived, with the resampling component effectively
+gone. Measured on the live API at the same text — `asking` 93,621 → 104,070 bytes,
+`neutral` 96,129 → 99,055, `aside` 82,337 → 84,844. Longer audio is slower audio.
+
+Combined tone × pace is clamped to 0.80–1.15. Both multipliers are ours rather than a
+caller's, so that is not input validation — it is a guard against two individually reasonable
+edits multiplying into something unlistenable, and it bounds the bill, since duration is what
+these vendors charge for.
+
+The **resolved speed is part of the audio cache key**, as a number rather than as the
+speaker's name. Speed is what differs in the bytes; the name is only how it was chosen.
+Keying on the number lets Anil and the `interviewer` fallback — same voice id, same pace —
+correctly share one cache entry, while any future per-speaker pace splits them automatically.
 
 Tone is part of the audio cache key. Without that, the first delivery of a line would win
 for a fortnight, and a sentence spoken once in passing would be served back — flat — to

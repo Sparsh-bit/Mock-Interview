@@ -275,7 +275,7 @@ async def get_current_user(
 
     # TEMPORARY (token counter) — tag any AI spend during this request with the
     # user who caused it. Removed with the rest of the ledger; see
-    # TEMPORARY-token-counter.md.
+    # docs/TEMPORARY-token-counter.md.
     #
     # Set without a matching reset on purpose. Starlette runs each request in its
     # own asyncio task and contextvars are copied per task, so this value is
