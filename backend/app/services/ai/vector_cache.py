@@ -160,6 +160,17 @@ def _key_tokens(key: str) -> list[str]:
 #: prevent. It is already cached per-answer on answers.model_answer, which is the
 #: correct scope for it. Making it globally cacheable would mean rewriting the prompt
 #: to stop reading the candidate's answer at all — a product change, not a cache one.
+#: REMOVED FROM THIS LIST, and the reason is the same defect wearing a third hat:
+#: `interview_plan`. It was here as "company + program + focus", which was true of the key
+#: but not of the PROMPT — prompts/interview_plan.md interpolates `$resume`, and is told to
+#: include one or two questions that reference the candidate's own projects by name. A
+#: global cache would therefore serve candidate B a question about candidate A's internship.
+#: Nothing was actually leaking, because no caller ever wired this feature to the cache —
+#: which is worse than it sounds rather than better: an unwired entry on an allowlist is a
+#: standing invitation to wire it, and the next person to do so would have found a
+#: pre-approved feature name and no warning. The resume became a COMPULSORY field, so the
+#: window where this was merely theoretical is closed. The plan is still cached per-setup in
+#: Redis, which is the correct scope for something shaped by one person's CV.
 #: Also NOT on this list, for a different reason: `quiz_generation`. It is perfectly
 #: tenancy-safe — prompts/quiz_generator.md reads only track, topics, count, company and
 #: focus — but serving it from a shared cache would give every candidate on a topic the
@@ -176,9 +187,6 @@ CACHEABLE_FEATURES: frozenset[str] = frozenset(
         # converge hard on the same handful, and unlike a quiz there is no reason to want
         # a DIFFERENT framing of the same motion next time.
         "gd_topic_prep",
-        # Company + program + focus. Already cached in Redis; here it also survives a
-        # restart, which is the whole reason to duplicate it.
-        "interview_plan",
         # Study resources for a topic. The purest case on this list: the key is a syllabus
         # LABEL from the question bank, identical for everybody, and nothing about the
         # candidate reaches the prompt. It is also the one whose key space is bounded by

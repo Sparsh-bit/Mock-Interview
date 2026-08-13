@@ -1392,11 +1392,6 @@ def topic_block(role_title: str = "", program: str = "") -> str:
     return f"This is a **{profile['label']}** role. Cover these areas:\n{lines}"
 
 
-def scenarios_for(role_title: str = "", program: str = "") -> list[ScenarioQuestion]:
-    """The seed questions for a role's domain."""
-    return list(profile_for(role_title, program)["scenarios"])
-
-
 def is_technical(role_title: str = "", program: str = "") -> bool:
     """
     Does this role get asked engineering/CS content at all?

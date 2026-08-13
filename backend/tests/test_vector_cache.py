@@ -78,10 +78,33 @@ class TestTheTenancyAllowlist:
         others its key space is bounded by the syllabus rather than by the user count, so
         it saturates and stops costing anything at all.
         """
-        assert (
-            frozenset({"gd_topic_prep", "interview_plan", "study_resources"})
-            == CACHEABLE_FEATURES
+        assert frozenset({"gd_topic_prep", "study_resources"}) == CACHEABLE_FEATURES
+
+    def test_the_plan_is_not_globally_cacheable_because_it_reads_the_resume(self):
+        """
+        `interview_plan` used to be on the allowlist as "company + program + focus". That
+        described the KEY, not the prompt: interview_plan.md interpolates $resume and is told
+        to include questions referencing the candidate's own projects by name, so a global
+        cache would serve candidate B a question about candidate A's internship.
+
+        Nothing leaked, because no caller ever wired it — which is the worse failure, not the
+        better one. An unwired entry on a tenancy allowlist is a pre-approval waiting for
+        somebody to act on it, and the resume is now a compulsory field.
+
+        Asserted from the PROMPT rather than left as a comment, so the entry cannot come back
+        while the reason it was removed is still true. If the plan prompt ever stops reading
+        the resume, this test fails and the allowlist question can be reopened deliberately.
+        """
+        from pathlib import Path
+
+        prompt = (
+            Path(__file__).resolve().parents[1] / "app" / "prompts" / "interview_plan.md"
+        ).read_text()
+        assert "$resume" in prompt, (
+            "interview_plan.md no longer reads the resume — re-evaluate whether the plan is "
+            "globally cacheable, deliberately, rather than assuming either answer"
         )
+        assert "interview_plan" not in CACHEABLE_FEATURES
 
     def test_the_shared_resource_generation_takes_only_a_topic(self):
         """
