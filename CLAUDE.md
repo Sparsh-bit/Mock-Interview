@@ -110,7 +110,20 @@ the AI says.
 ## Working notes
 
 - `docs/prompt.md` tracks phase-by-phase project status (what's built vs. stubbed vs. planned). Treat it as living project context, not just a README — check it when unsure whether a feature (e.g. adaptive questioning, voice mode, PDF reports, Stripe billing) is actually implemented or still a placeholder.
-- `.env.example` currently contains real-looking Supabase/DB and AI provider credentials rather than placeholders — treat these as sensitive; do not copy them into commits, logs, or new example files, and flag if asked to regenerate this file.
+- `.env.example` holds **placeholders**, not real credentials — verified key by key
+  (`SUPABASE_SERVICE_KEY=your-service-role-key`, `GLM_API_KEY=your-zhipuai-api-key`,
+  `DATABASE_URL=…://user:password@host…`). An earlier version of this note claimed the opposite;
+  it was wrong. Real values live only in the untracked `.env` (git-ignored) and in the host's
+  environment. Keep it that way when editing the file.
+- **What the browser is allowed to see.** The only secret-shaped value in the client bundle is
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, which is designed to be public — it authorises nothing on its
+  own, because access is decided by Row Level Security on every table (pinned by
+  `test_rls_coverage.py`). Anything given a `NEXT_PUBLIC_` prefix is compiled into the bundle and
+  is public by definition, so never put a service key, JWT secret, AI provider key or Razorpay
+  secret behind that prefix. `frontend/src/lib/security-headers.test.ts` asserts this, along with
+  the response headers, and records what hardening can and cannot achieve — notably that no
+  configuration makes a web frontend un-inspectable, and that the real protection is keeping
+  prompts, banks, scoring and billing server-side.
 - CI (`.github/workflows/ci.yml`) only runs lint + typecheck for both frontend and backend — it does not run the test suites and there is no deploy step. Don't assume passing CI means tests passed.
 
 ## graphify

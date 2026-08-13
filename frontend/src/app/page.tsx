@@ -602,6 +602,17 @@ export default function LandingPage() {
             <span className="h-1.5 w-1.5 rounded-full bg-accent-indigo" />
             InterviewOS
           </span>
+          {/* A real address, and a mailto rather than plain text — on a phone, which is where
+              most of this traffic lands, plain text means copying an email by hand. Kept in
+              the footer's own type scale so it reads as contact detail rather than a CTA
+              competing with the buttons above. `normal-case` because an email address in
+              uppercase is not the same address. */}
+          <a
+            href="mailto:sparsh42005@gmail.com"
+            className="normal-case tracking-normal transition-colors hover:text-foreground"
+          >
+            sparsh42005@gmail.com
+          </a>
           <span>© 2026</span>
         </div>
       </footer>
