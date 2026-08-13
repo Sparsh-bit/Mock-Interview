@@ -855,40 +855,63 @@ export default function GDPage() {
                 ? `you have the floor — ${Math.max(0, MAX_FLOOR_HOLD_SEC - holdRef.current)}s`
                 : `panel speaks again in ${nextTurnIn}s`}
           </span>
-          {ignored > 0 && (
-            <span className="font-semibold text-accent-coral-ink">
-              {ignored} question{ignored === 1 ? '' : 's'} unanswered
-            </span>
-          )}
+          {/*
+            THE RED "N QUESTIONS UNANSWERED" COUNTER IS GONE.
+
+            It was a scold, and it ran during the one activity where being flustered is
+            the actual failure mode. A real panel does not keep a visible tally of how
+            many times you have failed to speak — it just moves on, which the panel here
+            already does: `ignored` still drives the prompt, so at 2+ the panelists call
+            out the silence in dialogue and carry on without you. That is the honest,
+            in-room version of the same pressure, and it does not need a red number.
+
+            The state is deliberately kept and still sent to the server. Only the badge
+            is removed.
+          */}
         </div>
         <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
           <div
             className={cn(
               'h-full rounded-full transition-[width] duration-1000 ease-linear',
-              awaiting ? 'bg-accent-coral' : 'bg-primary/60'
+              // Was coral while you were being waited on — the same alarm treatment as the
+              // banner above, on a bar that is only counting down to the next turn.
+              awaiting ? 'bg-primary' : 'bg-primary/60'
             )}
             style={{ width: `${(1 - nextTurnIn / PANEL_INTERVAL_SEC) * 100}%` }}
           />
         </div>
       </div>
 
-      {/* You've been put on the spot — answer or get talked over. */}
+      {/*
+        You have been addressed directly.
+
+        KEPT, BUT NO LONGER AN ALARM. The information is genuinely useful — in a real room
+        you can see that someone has turned to you, and a chat log throws that away — so
+        removing it would make the round harder to follow rather than calmer. What was
+        wrong was the treatment: coral border, coral fill, bold uppercase coral heading and
+        "silence costs you marks" reads as a warning siren for the ordinary event of being
+        asked a question.
+
+        Now it is the primary accent, sentence case, and the subtitle states the mechanic
+        instead of threatening with it. A professional interface tells you it is your turn;
+        it does not shout at you for not having spoken yet.
+      */}
       {awaiting && !panelTurn.isPending && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-accent-coral/30 bg-accent-coral/10 px-4 py-3"
+          className="rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3"
         >
-          <p className="text-xs font-bold uppercase tracking-wider text-accent-coral-ink">
-            They&apos;re asking you directly
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+            Over to you
           </p>
           {lastPanelLine && (
             <p className="mt-1 text-sm leading-snug text-foreground/85">
               <span className="font-semibold">{lastPanelLine.speaker}:</span> {lastPanelLine.text}
             </p>
           )}
-          <p className="mt-1.5 text-[11px] text-accent-coral-ink/80">
-            Answer before the panel moves on — silence costs you marks.
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            The panel carries on in a moment, as it would in the room.
           </p>
         </motion.div>
       )}

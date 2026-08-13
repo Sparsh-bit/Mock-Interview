@@ -239,6 +239,17 @@ def _is_personal_focus(focus: str) -> bool:
 # run different regardless). The same lookup seam can later be swapped for
 # pgvector semantic matching without touching callers.
 _MAX_PLAN_VARIANTS = 4
+
+#: How many questions the planner will GENERATE to fill a gap the bank cannot cover
+#: without repeating itself.
+#:
+#: Bounded because each one is an AI call sitting between the candidate pressing Start and
+#: the interview beginning. A candidate who has exhausted the 37-question bank — their
+#: fourth sitting — should wait a little longer for a fresh interview, not a lot. Four is
+#: about eight seconds on the current provider and covers a third of an interview, which is
+#: far more than the gap is in practice; a bank that leaves a bigger hole than this needs
+#: more questions rather than more generation.
+_MAX_GENERATED_TOP_UPS = 4
 _PLAN_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
 # Hard cap on how long we wait for the AI to build the plan before falling back
 # to a DB-backed plan, so plan creation returns within a predictable time.
@@ -512,6 +523,43 @@ class InterviewOrchestrator:
                 # The bank could not cover the gap either. Logged loudly rather
                 # than shrugged at, because the number shown to the candidate is
                 # len(planned_ids) and it will not match what the dashboard said.
+                #
+                # GENERATE THE REMAINDER RATHER THAN SERVE A REPEAT OR A SHORT INTERVIEW.
+                #
+                # This is the other half of making `seen_ids` a hard exclusion in
+                # _top_up_plan. The bank is 37 questions and an interview is 12, so a
+                # candidate exhausts it on their fourth sitting; before, the top-up filled
+                # the gap with questions they had already answered, which is the "same
+                # questions repeat every time" complaint. Now the bank simply returns short
+                # and the gap is generated fresh.
+                #
+                # Sequential rather than concurrent, and capped: each generation is an AI
+                # call on the path between pressing Start and the interview beginning, and
+                # a candidate who has exhausted the bank should wait a little longer, not a
+                # lot. Anything still missing after the cap falls through to the warning
+                # below, which is the honest outcome.
+                needed = _PLANNED_QUESTION_COUNT - len(planned_ids)
+                for i in range(min(needed, _MAX_GENERATED_TOP_UPS)):
+                    fresh = await self._generate_question(
+                        session,
+                        answered_ids=list(seen_ids),
+                        target_difficulty="medium",
+                        focus_concepts=[],
+                        question_number=len(planned_ids) + 1,
+                    )
+                    if fresh is None:
+                        # Provider down or output rejected. Stop rather than retry the same
+                        # failing call `needed` times over.
+                        break
+                    planned_ids.append(str(fresh.id))
+                    logger.info(
+                        "interview_plan_generated_replacement",
+                        session_id=str(session.id),
+                        n=i + 1,
+                        reason="bank exhausted for this candidate",
+                    )
+
+            if len(planned_ids) < _PLANNED_QUESTION_COUNT:
                 logger.warning(
                     "interview_plan_below_target",
                     session_id=str(session.id),
@@ -711,17 +759,31 @@ class InterviewOrchestrator:
         top-up can never pull in a question generated inside somebody else's
         interview.
 
-        Prefers, in order: questions this candidate has never answered, then
-        topics the plan does not already cover. So a retake pulls different
-        questions rather than the same easy ones, and a plan eight questions light
-        does not get four more on the topic it already spent half the interview on.
+        Among what is left it prefers topics the plan does not already cover, so a plan
+        eight questions light does not get four more on the topic it already spent half
+        the interview on.
 
-        Seen questions are a preference, not a hard exclusion — once the bank is
-        exhausted, repeating a question the candidate has practised is better than
-        serving a short interview. That fallback is logged, because it means the
-        bank needs more content.
+        SEEN QUESTIONS ARE NOW A HARD EXCLUSION, AND THAT IS A REVERSAL.
 
-        `exclude_topic_ids` IS A HARD EXCLUSION, unlike everything else here, and it is the
+        This used to read: "seen questions are a preference, not a hard exclusion — once
+        the bank is exhausted, repeating a question the candidate has practised is better
+        than serving a short interview." That trade was wrong, and the arithmetic says why.
+        The bank holds 37 questions and an interview is 12, so a candidate exhausts it on
+        their fourth sitting — after which EVERY top-up was a repeat. The reported symptom
+        was "most of the time the same questions are getting repeated", which is exactly
+        what that sentence chose.
+
+        The trade only made sense while a short interview was the alternative. It is not:
+        the caller now generates fresh questions for whatever this leaves unfilled, so the
+        real choice is between a repeat and a new question, and a new question wins every
+        time. Repeating one a candidate has already answered teaches them nothing and is
+        the single most visible way this product can look broken.
+
+        Returning short is therefore correct here rather than a failure, and it is logged
+        so the gap is visible — a bank that cannot cover a first-time candidate is a
+        content problem, not a scheduling one.
+
+        `exclude_topic_ids` is a hard exclusion for the same reason, and it is the
         one that matters for how the interview feels. Those are topics the candidate has
         already said out loud that they do not know. Handing them back a question on one is
         the single most obviously robotic thing this product can do — it proves nobody was
@@ -749,12 +811,19 @@ class InterviewOrchestrator:
             )
 
         declined_topics = exclude_topic_ids or set()
+        already_answered = seen_ids or set()
 
         def _eligible(qs: list[Question]) -> list[Question]:
-            # The declined-topic filter is applied at the same moment as the already-chosen
-            # one, so it survives the seed-and-retry below. Filtering afterwards would let a
-            # freshly seeded question on a declined topic straight back in.
-            return [q for q in qs if q.id not in chosen and q.topic_id not in declined_topics]
+            # All three filters are applied at the same moment as the already-chosen one, so
+            # they survive the seed-and-retry below. Filtering afterwards would let a freshly
+            # seeded question the candidate has already answered straight back in.
+            return [
+                q
+                for q in qs
+                if q.id not in chosen
+                and q.topic_id not in declined_topics
+                and q.id not in already_answered
+            ]
 
         pool = _eligible(await _bank())
         if not pool:
@@ -776,29 +845,33 @@ class InterviewOrchestrator:
             }
 
         rank = {"easy": 0, "medium": 1, "hard": 2}
-        seen_ids = seen_ids or set()
 
         def _bucket(q: Question) -> int:
-            # 0 best: never answered, and a topic this plan has not used.
-            # 1: never answered, topic already used.
-            # 2: answered before, new topic.  3 worst: answered before, seen topic.
-            return (2 if q.id in seen_ids else 0) + (1 if q.topic_id in used_topics else 0)
+            # Only two buckets now. Everything reaching here is unanswered by this
+            # candidate — `_eligible` removed the rest — so the old 0-3 scale, half of which
+            # existed to rank repeats against each other, collapses to "new topic" vs
+            # "topic this plan already uses".
+            return 1 if q.topic_id in used_topics else 0
 
-        groups: dict[int, list[Question]] = {0: [], 1: [], 2: [], 3: []}
+        groups: dict[int, list[Question]] = {0: [], 1: []}
         for q in pool:
             groups[_bucket(q)].append(q)
         for group in groups.values():
             random.shuffle(group)
             group.sort(key=lambda q: rank.get(getattr(q.difficulty, "value", q.difficulty), 1))
 
-        ordered = groups[0] + groups[1] + groups[2] + groups[3]
+        ordered = groups[0] + groups[1]
         picked = ordered[:need]
-        repeats = sum(1 for q in picked if q.id in seen_ids)
-        if repeats:
+        short_by = need - len(picked)
+        if short_by:
+            # The bank cannot cover this candidate without repeating itself. Returning short
+            # is the correct outcome — the caller generates the remainder — but it is logged
+            # because the honest fix is more curated questions, not more generation.
             logger.info(
-                "interview_plan_reused_seen_questions",
-                count=repeats,
-                hint="the bank is exhausted for this candidate; add more questions",
+                "interview_plan_bank_exhausted_for_candidate",
+                short_by=short_by,
+                already_answered=len(already_answered),
+                hint="bank has no unseen questions left for this candidate; generating instead",
             )
         return planned_ids + [str(q.id) for q in picked]
 

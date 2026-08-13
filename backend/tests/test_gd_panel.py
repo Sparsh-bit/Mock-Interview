@@ -107,3 +107,79 @@ class TestPanelIntegrity:
         assert _candidate_name("  priya  ") == "priya"
         assert _candidate_name("") == "the candidate"
         assert _candidate_name("123") == "the candidate"
+
+
+class TestTheNameIsNotSaidEveryTurn:
+    """
+    "does not take the name of the user in every argument".
+
+    THE MODEL CANNOT DECIDE THIS AND MUST NOT BE ASKED TO. Every GD turn is a separate
+    stateless call with no memory of the previous one, so a prompt rule like "use their
+    name when you bring them in, then leave it alone" is unfollowable — there is no way for
+    the model to know whether the last turn used it. gd_panel.md carried exactly that rule
+    and the panel still said the name constantly, which is the same failure the interview
+    panel already had and already fixed server-side (_should_use_name in api/v1/panel.py).
+
+    A GD round is 26 turns against an interview's dozen, so the same one-in-three rhythm
+    would still say their name seven times in eight minutes. Hence one in four.
+    """
+
+    def _req(self, **over):
+        from app.api.v1.gd import GDTurnRequest
+
+        base = {"topic": "Remote work", "history": [], "phase": "discussion"}
+        base.update(over)
+        return GDTurnRequest(**base)
+
+    def _turn(self, n: int, **over):
+        from app.api.v1.gd import Turn
+
+        history = [Turn(speaker="Riya", text=f"point {i}") for i in range(n)]
+        return self._req(history=history, **over)
+
+    def test_the_opening_always_uses_it(self):
+        from app.api.v1.gd import _should_use_name
+
+        assert _should_use_name(self._req(phase="opening"))
+        # An empty transcript is an opening whatever the phase says.
+        assert _should_use_name(self._req(phase="discussion", history=[]))
+
+    def test_it_is_not_used_on_most_turns(self):
+        from app.api.v1.gd import _should_use_name
+
+        used = sum(1 for n in range(1, 27) if _should_use_name(self._turn(n)))
+        # 26 turns is a full round. Anything approaching half is the reported complaint.
+        assert used <= 8, f"the panel would say their name {used} times in one round"
+        assert used >= 4, "never using it is its own failure — nobody brings them in"
+
+    def test_being_put_on_the_spot_always_uses_it(self):
+        # Turning to somebody by name IS how a person does this, so the rhythm yields here.
+        from app.api.v1.gd import _should_use_name
+
+        assert _should_use_name(self._turn(7, awaiting_candidate=True))
+        assert _should_use_name(self._turn(7, ignored_questions=2))
+
+    def test_the_instruction_is_explicit_in_both_directions(self):
+        from app.api.v1.gd import _name_instruction
+
+        yes = _name_instruction(self._req(phase="opening"))
+        no = _name_instruction(self._turn(7))
+        assert yes.startswith("YES")
+        assert no.startswith("NO")
+        # Naming other panelists must stay encouraged — it is how a listener follows who is
+        # answering whom, and a blanket "no names" would flatten the round.
+        assert "OTHER PANELISTS" in no
+
+    def test_the_brief_carries_the_decision(self):
+        from app.api.v1.gd import _round_brief
+
+        assert "Using their name this turn" in _round_brief(self._turn(7))
+
+    def test_the_prompt_defers_to_the_server(self):
+        import pathlib
+
+        prompt = (
+            pathlib.Path(__import__("app").__file__).parent / "prompts/gd_panel.md"
+        ).read_text()
+        assert "Using their name this turn" in prompt
+        assert "INSTRUCTION, not a" in prompt

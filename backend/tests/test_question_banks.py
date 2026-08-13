@@ -383,9 +383,31 @@ class TestRetakesGetDifferentQuestions:
         assert "$already_asked" in prompt
         assert "Do not repeat any of these" in prompt
 
-    def test_the_bank_topup_prefers_unseen_questions(self):
+    def test_the_bank_topup_REFUSES_seen_questions_rather_than_deprioritising_them(self):
+        """
+        A preference was not enough, and the arithmetic is why: the bank holds 37 questions
+        and an interview is 12, so a candidate exhausts it on their fourth sitting. After
+        that every top-up was a repeat — ranked last, but still served, because the code
+        chose "a repeat beats a short interview".
+
+        That trade is only correct while a short interview is the alternative. It is not:
+        create_plan now GENERATES the remainder, so the real choice is between a repeat and
+        a fresh question. Asserted on the filter rather than on the ranking, because the
+        ranking is exactly what was there before and was not enough.
+        """
         src = __import__("inspect").getsource(orch.InterviewOrchestrator._top_up_plan)
-        assert "seen_ids" in src
+        assert "already_answered" in src
+        assert "q.id not in already_answered" in src, (
+            "seen questions must be filtered out of the eligible pool, not merely ranked "
+            "below the unseen ones"
+        )
+
+    def test_the_gap_the_bank_cannot_cover_is_generated_not_repeated(self):
+        # The other half. Without this, making the filter hard would trade repeated
+        # questions for short interviews, which is a different bug rather than a fix.
+        src = __import__("inspect").getsource(orch.InterviewOrchestrator.create_plan)
+        assert "_generate_question" in src
+        assert "_MAX_GENERATED_TOP_UPS" in src, "unbounded generation on the start path"
 
     def test_the_fallback_plan_prefers_unseen_questions(self):
         """
@@ -405,13 +427,32 @@ class TestRetakesGetDifferentQuestions:
         assert "is_retake" in src
         assert "not is_retake" in src
 
-    def test_repeating_a_seen_question_is_logged(self):
+    def test_exhausting_the_bank_for_a_candidate_is_logged(self):
         """
-        Falling back to a question they have already practised means the bank is
-        exhausted for this candidate — actionable, so it must be visible.
+        The bank running out of unseen questions for somebody is actionable — it means the
+        curated set needs more content — so it must be visible rather than silently papered
+        over by generation.
         """
         src = __import__("inspect").getsource(orch.InterviewOrchestrator._top_up_plan)
-        assert "interview_plan_reused_seen_questions" in src
+        assert "interview_plan_bank_exhausted_for_candidate" in src
+
+    def test_the_bank_is_measured_against_the_interview_length(self):
+        """
+        The number that made this a bug rather than an edge case, asserted so it cannot
+        drift quietly. If the bank ever grows past a few interviews' worth, the generated
+        top-up stops firing on its own and this test is the reminder that the constant
+        above it was chosen against these figures.
+        """
+        from app.core.config import settings
+        from app.data.java_fundamentals import JAVA_QUESTION_BANK
+
+        per_interview = settings.INTERVIEW_QUESTION_COUNT
+        sittings_before_exhaustion = len(JAVA_QUESTION_BANK) / per_interview
+        assert sittings_before_exhaustion < 5, (
+            f"{len(JAVA_QUESTION_BANK)} bank questions at {per_interview} per interview is "
+            f"{sittings_before_exhaustion:.1f} sittings — this is why the top-up must "
+            "generate rather than repeat"
+        )
 
 
 class TestReportCompleteness:

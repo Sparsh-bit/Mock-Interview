@@ -282,6 +282,9 @@ def _round_brief(request: GDTurnRequest) -> str:
             "",
             f"### The candidate's name\n{_candidate_name(request.candidate_name)}",
             "",
+            "### Using their name this turn",
+            _name_instruction(request),
+            "",
             f"### Topic\n{request.topic}",
             "",
             "### Discussion so far",
@@ -295,6 +298,61 @@ def _round_brief(request: GDTurnRequest) -> str:
             "",
             "Give the next panelist contribution(s) now, as JSON.",
         ]
+    )
+
+
+#: Roughly one turn in this many may address the candidate by name.
+#:
+#: Four, against the interview panel's three, because a GD round is 26 turns to an
+#: interview's dozen — the same ratio would say their name six or seven times in eight
+#: minutes, which is what the complaint was about.
+_NAME_EVERY_N_TURNS = 4
+
+
+def _should_use_name(request: GDTurnRequest) -> bool:
+    """
+    May the panel say the candidate's name in THIS turn?
+
+    DECIDED HERE BECAUSE THE MODEL CANNOT DECIDE IT — the same reasoning as
+    `_should_use_name` in api/v1/panel.py, and it applies harder here. Every turn is a
+    separate stateless call with no memory of the previous one, so gd_panel.md's rules 6
+    and 7 ("use their name when you bring them in, then leave it alone", "a panel that says
+    the candidate's name in every contribution is not a panel") are literally unfollowable:
+    the model has no way to know whether the last turn used it. Told to be sparing, it
+    reaches for a name every time, and across 26 turns that is a round where three people
+    say your name to you every twenty seconds.
+
+    So the decision is made server-side and handed over as a flat yes or no.
+
+    `len(history)` is the clock. GD keeps no server-side round — the transcript arrives in
+    the request — which makes the turn number the one piece of state available, and it is
+    exactly the right one.
+
+    The moments a real person uses your name: bringing you in at the start, and when
+    someone deliberately turns to you after you have been quiet. Both are covered — the
+    opening phase, and any turn where the panel is waiting on you — plus roughly one turn
+    in four otherwise, so it stays a thing that happens rather than a tic.
+    """
+    if request.phase == "opening" or not request.history:
+        return True
+    # They have been put on the spot: naming them is how a person does that.
+    if request.awaiting_candidate or request.ignored_questions >= 2:
+        return True
+    return len(request.history) % _NAME_EVERY_N_TURNS == 0
+
+
+def _name_instruction(request: GDTurnRequest) -> str:
+    if _should_use_name(request):
+        return (
+            "YES — one panelist may address the candidate by name in this turn, once. "
+            "Not more than once, and not by more than one speaker."
+        )
+    return (
+        "NO. Do NOT use the candidate's name anywhere in this turn. They were addressed by "
+        "name recently, and a panel that repeats it every turn is the single most "
+        "artificial thing this round does. Address them as 'you', or argue with another "
+        "panelist by name instead — naming OTHER PANELISTS stays encouraged, because that "
+        "is how a listener tracks who is answering whom."
     )
 
 
