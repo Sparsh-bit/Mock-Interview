@@ -506,7 +506,49 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── 07 · Close ───────────────────────────────────────────────────────
+      {/* ── 07 · What it costs ───────────────────────────────────────────────
+          BEFORE the close, not after it. A visitor who has read this far has decided the
+          product might be for them and the very next question is the price — sending them
+          hunting for it after the final call to action is how you lose the ones who were
+          nearly convinced.
+
+          Deliberately not a three-column pricing table. That is a decision surface, and the
+          decision here is only "is this free to try", which it is. The full comparison lives
+          on /pricing for people who have already answered that one. */}
+      <section className="border-y border-border bg-secondary/40">
+        <div className="mx-auto max-w-6xl px-6 py-20 sm:px-10">
+          <SectionMark n="07" label="What it costs" />
+          <WipeUp delay={0.1}>
+            <h2 className="mt-8 max-w-3xl text-[clamp(1.6rem,3.4vw,2.4rem)] font-medium leading-[1.12] tracking-[-0.03em]">
+              Start free. Two full interviews, a group discussion, and
+              <span className="text-accent-indigo-ink"> unlimited quizzes — no card.</span>
+            </h2>
+          </WipeUp>
+          <WipeUp delay={0.18}>
+            <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground">
+              Two interviews is enough to get a full hire/no-hire report, act on it, and see
+              the second round improve. That is the whole argument for this — so it is the
+              part you get without paying. Quizzes stay free forever, on every plan.
+            </p>
+          </WipeUp>
+          <WipeUp delay={0.24}>
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <Link href="/register" className={CTA}>
+                Start free
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+              <Link
+                href="/pricing"
+                className="text-sm font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+              >
+                Compare plans — from ₹299/month
+              </Link>
+            </div>
+          </WipeUp>
+        </div>
+      </section>
+
+      {/* ── 08 · Close ───────────────────────────────────────────────────────
           The one parallax on the site, on the last image. Parallax everywhere is
           a tell; parallax exactly once, at the end, reads as an ending. */}
       <section className="relative">

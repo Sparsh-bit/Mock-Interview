@@ -19,6 +19,7 @@ import {
   User,
   Coins,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -55,13 +56,14 @@ export const NAV_ITEMS = [
     group: 'Account',
     items: [
       { href: '/profile', icon: User, label: 'Profile' },
+      { href: '/pricing', icon: Sparkles, label: 'Plans' },
       { href: '/settings', icon: Settings, label: 'Settings' },
     ],
   },
 ];
 
 // Admin-only. `Users` is permanent; `AI cost` goes when the temporary ledger
-// does — see TEMPORARY-token-counter.md.
+// does — see docs/TEMPORARY-token-counter.md.
 export const ADMIN_NAV_ITEMS = [
   { href: '/admin', icon: ShieldCheck, label: 'Users' },
   { href: '/ai-usage', icon: Coins, label: 'AI cost' },

@@ -20,6 +20,8 @@ import { summarizeDelivery } from '@/lib/speech/delivery';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
+import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
+import { CreditMeter } from '@/components/billing/CreditMeter';
 
 export const runtime = 'edge';
 
@@ -62,6 +64,9 @@ export default function CommunicationPage() {
   const [passageIdx, setPassageIdx] = useState(0);
   const [answer, setAnswer] = useState('');
   const [result, setResult] = useState<CommunicationResult | null>(null);
+  //: Set from the server's 402, never from a cached balance — see the note in the
+  //: interview setup page for why the request is always attempted first.
+  const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
   // Cross-question follow-up (speaking mode): the AI probes the candidate's
   // answer; their follow-up appends to the same transcript so delivery analysis
   // naturally covers both answers.
@@ -182,7 +187,17 @@ export default function CommunicationPage() {
       },
       {
         onSuccess: setResult,
-        onError: (err: Error) => toast.error(err.message || 'Could not evaluate your answer.'),
+        onError: (err: Error) => {
+          // The allowance is spent. Shown as a panel rather than a toast: this is not a
+          // transient failure to dismiss, and the candidate has just spoken a whole answer —
+          // they are owed an explanation and a next step, not a message that fades.
+          const blocked = paywallFromError(err);
+          if (blocked) {
+            setPaywall(blocked);
+            return;
+          }
+          toast.error(err.message || 'Could not evaluate your answer.');
+        },
       }
     );
   };
@@ -281,9 +296,34 @@ export default function CommunicationPage() {
     );
   }
 
+  // ─── Blocked: the communication allowance is spent ────────────────────────
+  //
+  // The answer is deliberately NOT cleared. They spoke it, and if they upgrade in another tab
+  // and come back, throwing away a transcript they cannot easily reproduce would be its own
+  // small betrayal.
+  if (paywall) {
+    return (
+      <div className="mx-auto mt-10 max-w-2xl space-y-6">
+        <Paywall info={paywall} />
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => setPaywall(null)}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Back to your answer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ─── Answer / reading view ──────────────────────────────────────────────────
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-3xl space-y-6">
+      <motion.div variants={fadeUp}>
+        <CreditMeter />
+      </motion.div>
       <motion.div variants={fadeUp}>
           <PageHeader
             eyebrow="Practice"

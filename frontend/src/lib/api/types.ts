@@ -23,6 +23,13 @@ export type ApiErrorCode =
   | 'ABORTED'          // External AbortSignal cancelled the request
   | 'PARSE_ERROR'      // Response body could not be parsed as expected type
   | 'UNAUTHORIZED'     // HTTP 401
+  // HTTP 402 — the user's plan allowance for this feature is spent.
+  //
+  // Deliberately NOT folded into FORBIDDEN. 403 means "you may not do this", which is
+  // permanent and offers the user nothing; 402 means "you may do this once you pay", which
+  // is a prompt with an action attached. The client routes them to completely different
+  // places — a dead end versus the upgrade sheet — so collapsing them shows the wrong one.
+  | 'CREDITS_EXHAUSTED'
   | 'FORBIDDEN'        // HTTP 403
   | 'NOT_FOUND'        // HTTP 404
   | 'VALIDATION_ERROR' // HTTP 422

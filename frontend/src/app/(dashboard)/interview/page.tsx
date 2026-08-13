@@ -7,6 +7,8 @@ import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
+import { CreditMeter } from '@/components/billing/CreditMeter';
 
 export const runtime = 'edge';
 export default function InterviewSetupPage() {
@@ -67,11 +69,38 @@ function InterviewSetup() {
 
   const plan = createPlan.data;
 
+  /*
+   * THE PAYWALL IS DRIVEN BY THE SERVER'S 402, NOT BY THE CACHED BALANCE.
+   *
+   * The credit meter is right there on this page and it would be easy to check it before
+   * enabling the button. That would be wrong in both directions: a stale cache blocks a user
+   * the server would have allowed, and — the one that actually costs money — it fails to
+   * block one the server refused, so they watch a spinner and get a toast instead of an
+   * offer.
+   *
+   * So the request is always attempted, and this holds whatever the server said about why it
+   * refused. `paywallFromError` returns null for every other kind of failure, which keeps a
+   * network blip on the toast path where it belongs.
+   */
+  const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
+
   const handleGenerate = () => {
     if (!selectedTrackId) return;
+    setPaywall(null);
     createPlan.mutate(
       { trackId: selectedTrackId, company, program, prompt, resumeText },
-      { onError: (err: Error) => toast.error(err.message || 'Could not build your interview plan.') }
+      {
+        onError: (err: Error) => {
+          const blocked = paywallFromError(err);
+          if (blocked) {
+            // Not a toast. Running out of interviews is not a transient error to be
+            // dismissed — it needs an explanation and a next step that stay on screen.
+            setPaywall(blocked);
+            return;
+          }
+          toast.error(err.message || 'Could not build your interview plan.');
+        },
+      }
     );
   };
 
@@ -147,9 +176,34 @@ function InterviewSetup() {
     );
   }
 
+  // ─── Blocked: the allowance for interviews is spent ───────────────────────
+  //
+  // Rendered INSTEAD of the setup form, not above it. Leaving a form on screen that cannot
+  // succeed invites somebody to fill it in again and press the button a second time.
+  if (paywall) {
+    return (
+      <div className="mx-auto mt-10 max-w-2xl space-y-6">
+        <Paywall info={paywall} />
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => setPaywall(null)}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Back to setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ─── Step 1: Setup ────────────────────────────────────────────────────────
   return (
     <div className="mx-auto mt-10 max-w-3xl space-y-6">
+      {/* The count, before anything is filled in. A candidate who spends five minutes on the
+          setup form and only then learns they have no interviews left has lost the one thing
+          they came with. */}
+      <CreditMeter />
       <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
         <div className="mb-8">
           <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Start a New Mock Interview</h1>

@@ -2,7 +2,7 @@
 TEMPORARY — AI cost breakdown. api/v1/ai_usage.py
 
 Scheduled for deletion once credits and subscriptions land; see
-`TEMPORARY-token-counter.md` at the repo root.
+`docs/TEMPORARY-token-counter.md` at the repo root.
 
 Answers the questions you need answered before pricing a credit:
 
@@ -62,6 +62,11 @@ FEATURE_LABELS: dict[str, str] = {
     "communication_evaluation": "Communication round scoring",
     "communication_cross_question": "Communication round follow-up",
     "interview_panel_turn": "Interview panel — what the two interviewers say around a question",
+    # Distinct from `code_analysis`, which is the same evaluator reached from /code/analyse
+    # for the practice page. Kept apart on purpose: this one fires inside a live interview,
+    # once per coding submission, so it scales with interviews rather than with practice runs
+    # and needs to be visible separately when the credit costing is set.
+    "panel_code_review": "Interview panel — grading the code before the panel reviews it",
     "gd_panel_turn": "Group discussion — one AI panellist's turn",
     "gd_topic_prep": "Group discussion — turning a candidate's own topic into a motion",
     "gd_evaluation": "Group discussion scoring",

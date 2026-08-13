@@ -22,6 +22,7 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.services.activity import log_activity
+from app.services.billing.credits import consume
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -216,6 +217,20 @@ async def evaluate_communication(
     db: AsyncSession = Depends(get_db),
 ):
     """Score a spoken answer's delivery via the communication_evaluator prompt."""
+    # THE EVALUATION IS THE UNIT, not the drill.
+    #
+    # "5 communications" means five scored drills. Reading a passage aloud and never asking
+    # for a score costs nothing to serve and produces nothing worth charging for; this call
+    # is both the expensive half and the half the candidate came for.
+    #
+    # Charged before the generation, like /interview/plan, so an exhausted user is refused
+    # before we pay a vendor to tell them no.
+    #
+    # Deliberately NOT committed here. `get_db` commits on success and rolls back on any
+    # exception, so an uncommitted charge is undone by a failed generation. Committing at
+    # this point would bank it first and hand the candidate a spent drill and no score.
+    await consume(db, current_user.user_id, "communication", detail={"mode": request.mode})
+
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
     from app.services.ai.base_provider import CostTier  # noqa: PLC0415
     from app.services.ai.generate import generate_structured  # noqa: PLC0415

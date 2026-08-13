@@ -24,6 +24,7 @@ import {
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
+import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 
 export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
@@ -241,6 +242,8 @@ export default function GDPage() {
 
   const [phase, setPhase] = useState<Phase>('setup');
   const [topicIdx, setTopicIdx] = useState(0);
+  //: From the server's 402 on the first turn of a round. See the onError below.
+  const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
   const [customTopic, setCustomTopic] = useState('');
   //: The AI-prepared version of a custom topic — a discussable motion plus the
   //: arguments for each side, which the candidate reads before the round starts.
@@ -421,7 +424,17 @@ export default function GDPage() {
             setAwaiting(data.addressed_candidate);
             if (nextIgnored >= 2) setIgnored(0); // panel moved on — stop nagging
           },
-          onError: (e: Error) => toast.error(e.message || 'Panel could not respond.'),
+          onError: (e: Error) => {
+            // Only the FIRST turn of a round is charged, so a 402 here means the round never
+            // began — there is no discussion in progress to interrupt, and showing the offer
+            // in place of the room is correct rather than jarring.
+            const blocked = paywallFromError(e);
+            if (blocked) {
+              setPaywall(blocked);
+              return;
+            }
+            toast.error(e.message || 'Panel could not respond.');
+          },
           onSettled: () => { firingRef.current = false; },
         }
       );
@@ -556,6 +569,31 @@ export default function GDPage() {
   const lastSpokenIdx = panelVoices.speakingNow
     ? history.reduce((acc, t, i) => (t.speaker === panelVoices.speakingNow ? i : acc), -1)
     : -1;
+
+  // ─── Blocked: the group-discussion allowance is spent ─────────────────────
+  //
+  // Checked before every other phase branch. Only the first turn of a round is charged, so
+  // a 402 means the round never started — there is no discussion in progress that this could
+  // be interrupting.
+  if (paywall) {
+    return (
+      <div className="mx-auto mt-10 max-w-2xl space-y-6">
+        <Paywall info={paywall} />
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setPaywall(null);
+              setPhase('setup');
+            }}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Back to topics
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ─── Setup ──────────────────────────────────────────────────────────────
   if (phase === 'setup') {

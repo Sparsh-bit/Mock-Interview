@@ -53,6 +53,28 @@ export class ApiError extends Error {
   /** HTTP 403 — authenticated but not authorized */
   get isForbidden(): boolean { return this.status === 403; }
 
+  /**
+   * HTTP 402 — the plan allowance for this feature is spent.
+   *
+   * Distinct from `isForbidden` on purpose: this one has an offer attached. `details` carries
+   * `{ feature, plan_id, used, allowance }` so the paywall can name what ran out without
+   * parsing the message.
+   */
+  get isCreditsExhausted(): boolean { return this.status === 402; }
+
+  /** The shape the server sends with a 402, or null for any other error. */
+  get creditDetails(): { feature: string; plan_id: string; used: number; allowance: number } | null {
+    if (!this.isCreditsExhausted) return null;
+    const d = this.details as Record<string, unknown> | null | undefined;
+    if (!d || typeof d.feature !== 'string') return null;
+    return {
+      feature: d.feature,
+      plan_id: typeof d.plan_id === 'string' ? d.plan_id : 'free',
+      used: typeof d.used === 'number' ? d.used : 0,
+      allowance: typeof d.allowance === 'number' ? d.allowance : 0,
+    };
+  }
+
   /** HTTP 404 */
   get isNotFound(): boolean { return this.status === 404; }
 
@@ -157,6 +179,7 @@ export async function normalizeError(
 
 function statusToCode(status: number): ApiErrorCode {
   if (status === 401) return 'UNAUTHORIZED';
+  if (status === 402) return 'CREDITS_EXHAUSTED';
   if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'NOT_FOUND';
   if (status === 422) return 'VALIDATION_ERROR';

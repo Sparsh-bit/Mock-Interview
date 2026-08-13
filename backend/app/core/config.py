@@ -205,7 +205,7 @@ class Settings(BaseSettings):
             "run) could starve everybody until midnight UTC. 60 is roughly 400 GD rounds "
             "or 260 interviews a day; raise it as traffic grows and keep the per-user cap "
             "as the thing that actually rations. 0 disables it (not recommended). See "
-            "AI-COST-MODEL.md for the per-feature arithmetic."
+            "docs/AI-COST-MODEL.md for the per-feature arithmetic."
         ),
     )
     AI_USER_DAILY_BUDGET_USD: float = Field(
@@ -219,12 +219,12 @@ class Settings(BaseSettings):
             "breaker. 1.20 is about three full mock interviews or eight group discussions "
             "in a day, which is more practice than anyone does honestly and cheap enough "
             "to carry a thousand users. 0 disables per-user metering. This is the seam the "
-            "credit/subscription system will replace — see TEMPORARY-token-counter.md."
+            "credit/subscription system will replace — see docs/TEMPORARY-token-counter.md."
         ),
     )
     # ── TEMPORARY: token counter ─────────────────────────────────────────
     # Removed with the rest of the ledger once credits and subscriptions land.
-    # See TEMPORARY-token-counter.md at the repo root.
+    # See docs/TEMPORARY-token-counter.md.
     AI_USAGE_LEDGER_ENABLED: bool = Field(
         default=True,
         description=(
@@ -298,7 +298,7 @@ class Settings(BaseSettings):
     # OFF by default, and that is a cost decision rather than caution. TTS is priced per
     # CHARACTER, and on ElevenLabs' Creator tier a single GD round of neural speech costs
     # about twelve times every AI call in that round combined — see the table in
-    # services/tts/base.py and AI-COST-MODEL.md. The browser's speechSynthesis is free and
+    # services/tts/base.py and docs/AI-COST-MODEL.md. The browser's speechSynthesis is free and
     # already works; this is a paid upgrade to how it sounds, so it has to be switched on
     # deliberately by somebody who has looked at the numbers.
     TTS_ENABLED: bool = False
@@ -385,6 +385,35 @@ class Settings(BaseSettings):
             "Synthesis requests per user per hour. A GD round is up to ~40 utterances and an "
             "interview ~16, so this covers several rounds while stopping a loop from spending "
             "a month's character allowance in an afternoon."
+        ),
+    )
+
+    # ── Payments (Razorpay) ───────────────────────────────────────────────
+    #
+    # All three default to empty, and that is deliberate: a deployment with no keys must run
+    # normally with the free tier working and only the checkout route refusing. Making these
+    # required would mean nobody can run the app locally without a payments account, and
+    # giving them fake defaults would mean an unpayable checkout reaching production looking
+    # like a working one.
+    RAZORPAY_KEY_ID: str = Field(
+        default="",
+        description=(
+            "Razorpay public key id. This one is MEANT to reach the browser — the checkout "
+            "widget needs it. Empty disables the purchase route with a 503."
+        ),
+    )
+    RAZORPAY_KEY_SECRET: str = Field(
+        default="",
+        description="Razorpay secret. Server-side only — never returned by any endpoint.",
+    )
+    RAZORPAY_WEBHOOK_SECRET: str = Field(
+        default="",
+        description=(
+            "Secret Razorpay signs webhook bodies with. SEPARATE from the API secret and set "
+            "independently in their dashboard; using the wrong one makes every webhook fail "
+            "verification, which presents as payments succeeding and plans never upgrading. "
+            "Empty means the webhook rejects everything, which is the correct closed default "
+            "for a public URL."
         ),
     )
 

@@ -12,6 +12,7 @@ from app.api.v1 import (
     ai_usage,  # TEMPORARY — token counter
     analysis,
     auth,
+    billing,
     code,
     communication,
     companies,
@@ -33,6 +34,10 @@ v1_router = APIRouter()
 # No auth required
 v1_router.include_router(health.router, prefix="/health", tags=["Health"])
 v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+# Billing: /plans is public (a pricing page behind a login loses the sale) and
+# /webhook is authenticated by Razorpay's HMAC rather than by a user token. The
+# remaining routes take CurrentUser individually.
+v1_router.include_router(billing.router, tags=["Billing"])
 
 # Auth required
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])
@@ -55,5 +60,5 @@ v1_router.include_router(resume.router, prefix="/resume", tags=["Resume"])
 v1_router.include_router(admin.router, tags=["Admin"])
 
 # TEMPORARY — per-feature AI cost breakdown, admin only. Removed with the rest
-# of the ledger once credits ship; see TEMPORARY-token-counter.md.
+# of the ledger once credits ship; see docs/TEMPORARY-token-counter.md.
 v1_router.include_router(ai_usage.router, tags=["AI usage (temporary)"])

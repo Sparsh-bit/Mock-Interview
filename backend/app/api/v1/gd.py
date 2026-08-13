@@ -25,6 +25,7 @@ from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.services.activity import log_activity
 from app.services.ai import vector_cache
+from app.services.billing.credits import consume
 from app.services.progress.rating import Tier
 from app.services.progress.recorder import record_round
 
@@ -524,7 +525,11 @@ async def gd_prepare(
 
 
 @router.post("/turn", response_model=GDTurnResponse, dependencies=[Depends(_gd_rate_limit)])
-async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
+async def gd_turn(
+    request: GDTurnRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
     """Generate the next 1-2 AI-panelist contributions."""
     from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
@@ -532,6 +537,31 @@ async def gd_turn(request: GDTurnRequest, current_user: CurrentUser):
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import GDPanelTurn  # noqa: PLC0415
+
+    # ONE CHARGE PER ROUND, TAKEN ON THE FIRST TURN.
+    #
+    # A round is 26 turns, so metering per turn would mean "1 group discussion" bought a
+    # twenty-sixth of one. An empty history is what a round start looks like: every
+    # subsequent turn carries the transcript so far.
+    #
+    # GD IS STATELESS — there is no server-side round to key on — so this is honestly
+    # gameable: a client that keeps replaying an empty history pays once. It also gets a
+    # panel that opens the discussion from scratch every time, which is not a usable round,
+    # and `_gd_rate_limit` already caps turns per hour. Given that, a server-side round
+    # object is not worth the restructuring today; if GD ever gains one, move this onto it.
+    #
+    # NOT COMMITTED HERE, and that is the fix rather than an omission. `get_db` commits on
+    # success and rolls back on any exception, so leaving the charge uncommitted means a
+    # failed generation below takes it with it. Committing here would bank the charge BEFORE
+    # the AI call — so a vendor outage would spend somebody's only free group discussion and
+    # give them nothing, which is the exact failure this ordering exists to prevent.
+    if not request.history:
+        await consume(
+            db,
+            current_user.user_id,
+            "gd",
+            detail={"topic": request.topic[:200]},
+        )
 
     builder = PromptBuilder(get_prompt_loader())
     messages = builder.chat_static(

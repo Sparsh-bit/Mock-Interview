@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { DataError } from '@/components/ui/data-error';
 import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader } from '@/components/ui/page-header';
+import { CreditMeter } from '@/components/billing/CreditMeter';
 
 export const runtime = 'edge';
 
@@ -187,8 +188,12 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
 
-        {/* Tracks — right 1/3 */}
-        <motion.div variants={fadeUp}>
+        {/* Allowance, then tracks — right 1/3.
+            ABOVE the tracks on purpose: every track link goes to the interview setup, and
+            knowing there is one interview left is information you want before you click one,
+            not after. Renders nothing while loading, so it never flashes a zero. */}
+        <motion.div variants={fadeUp} className="space-y-4">
+          <CreditMeter />
           <Card className="p-5">
             <h2 className="mb-4 text-sm font-semibold">Available Tracks</h2>
             {tracksLoading ? (

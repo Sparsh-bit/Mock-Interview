@@ -12,6 +12,7 @@ from app.core.security import CurrentUser
 from app.db.redis import CacheKeys
 from app.db.session import get_db
 from app.models.session import InterviewSession
+from app.services.billing.credits import consume
 from app.services.interview.orchestrator import InterviewOrchestrator
 
 logger = structlog.get_logger(__name__)
@@ -99,6 +100,15 @@ async def start_interview_session(
 ):
     orchestrator = InterviewOrchestrator(db)
     session = await orchestrator.start_session(current_user.user_id, request.track_id)
+    # Charged in the SAME transaction as the session that was created, so a failure after
+    # this point rolls the charge back with it. `get_db` owns the commit — it commits on
+    # success and rolls back on any exception — which is what makes this atomic rather than
+    # merely careful.
+    #
+    # Both this and /plan charge, and that is correct rather than a double charge: create_plan
+    # builds its own session, so these are two independent ways to begin one interview, not
+    # two steps of the same one.
+    await consume(db, current_user.user_id, "interview", session_id=session.id)
     return {"session_id": session.id, "status": session.status}
 
 @router.post(
@@ -112,6 +122,18 @@ async def plan_interview(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a company/program-tailored interview plan for the candidate to review."""
+    # CHARGED BEFORE THE GENERATION, NOT AFTER.
+    #
+    # This endpoint is the single most expensive call in the product — the plan is ~$0.065 and
+    # it is the gateway to the report, which is another ~$0.135. Charging afterwards would
+    # mean an exhausted user still pays us for the generation before being told no, which is
+    # the one ordering that costs money to refuse.
+    #
+    # Safe to charge first because create_plan runs in this same transaction: if generation
+    # fails, the rollback takes the charge with it and the candidate is not billed for an
+    # interview they never got.
+    await consume(db, current_user.user_id, "interview")
+
     resume_context = await _resolve_resume_context(db, current_user.user_id, request.resume_text)
 
     orchestrator = InterviewOrchestrator(db)
