@@ -148,3 +148,140 @@ class CreditEvent(Base, UUIDPrimaryKeyMixin):
         # sits between a candidate pressing Start and the interview beginning.
         Index("ix_credit_events_user_feature", "user_id", "feature"),
     )
+
+
+class Offer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    A promo code, a festival offer, or a private 100%-off code for friends.
+
+    ONE TABLE FOR ALL THREE, because they differ only in their fields. A Diwali offer is a
+    public code with an end date; a friends code is a private one with `enabled` flipped by
+    hand; a ₹1 launch offer is a fixed-price code. Modelling them separately would mean three
+    redemption paths and three places for the single-use rule to be wrong.
+
+    ONE REDEMPTION PER ACCOUNT, ALWAYS, AND THE DATABASE ENFORCES IT. `offer_redemptions`
+    carries a unique constraint on (offer_id, user_id), so two requests racing to redeem the
+    same code for the same account cannot both succeed however they interleave — the second
+    INSERT fails. A read-then-write check in application code has a window between the read
+    and the write, and on something attached to money that window WILL be found.
+
+    There is deliberately no `per_user_limit` column. It was drafted and removed: a value
+    above 1 would contradict the unique constraint that makes the rule true, so the field
+    would have been a setting that either did nothing or corrupted the guarantee depending on
+    which code path read it. A code that can be used twice is a different feature and would
+    need a different key; until it is asked for, once per account is the whole rule and there
+    is exactly one thing enforcing it.
+
+    `enabled` is the kill switch and it is checked at redemption time, so turning a code off
+    stops it working for everybody immediately — including anybody mid-checkout who has
+    already been quoted a discounted price. That is deliberate: a code that keeps working
+    after it is switched off is not a code that can be given to friends.
+    """
+
+    __tablename__ = "offers"
+
+    #: Typed by a human, matched case-insensitively. Stored uppercase so the index is exact
+    #: and "diwali25", "Diwali25" and "DIWALI25" cannot become three different offers.
+    code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True, index=True)
+
+    #: What the candidate sees. Public offers render this on the store; private ones never
+    #: appear anywhere, so it is only for the admin list.
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    #: "percent" | "fixed" | "free".
+    #:
+    #: `free` is not `percent` with value 100. A 100% discount produces a zero-rupee order,
+    #: and Razorpay has a ₹1 minimum — so `free` skips the payment gateway entirely and
+    #: grants the item directly, which is a materially different code path that must be
+    #: chosen explicitly rather than fallen into by arithmetic.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: Percent (1-100) for "percent"; the final price in PAISE for "fixed"; ignored for
+    #: "free". Paise for the same reason prices are: a rupee figure as a float is a rounding
+    #: bug waiting for the first ₹49.50.
+    value: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: Item ids this applies to. Empty list means every item.
+    applies_to: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    #: THE KILL SWITCH. Checked on every redemption, so switching it off is immediate.
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    #: Whether the store lists it. False keeps a code entirely out of every public response —
+    #: the friends code must not be discoverable by reading the offers endpoint.
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    #: The window. Both nullable: an offer with no start is live now, one with no end runs
+    #: until it is switched off.
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Total redemptions allowed across all users. NULL is unlimited.
+    max_redemptions: Mapped[int | None] = mapped_column(Integer)
+
+    #: Whether redeeming this code requires passing a captcha.
+    #:
+    #: Per-offer rather than global: a ₹1 public launch offer is worth farming with scripts
+    #: and needs one, while a private code shared with four friends does not — and a captcha
+    #: on everything trains people to click through it.
+    requires_captcha: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    #: Who created it, for the audit trail. SET NULL so removing an admin does not delete
+    #: the record of an offer they made.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        # The store lists public, enabled offers and orders them by window. One index rather
+        # than a scan on a table that is read on every visit to the pricing page.
+        Index("ix_offers_public_enabled", "is_public", "enabled", "ends_at"),
+    )
+
+
+class OfferRedemption(Base, UUIDPrimaryKeyMixin):
+    """
+    One account, one use of one code. Append-only.
+
+    THE UNIQUE CONSTRAINT IS THE FEATURE. `per_user_limit` is almost always 1, and this is
+    what makes that true under concurrency: two tabs, a double-click, or a retry storm cannot
+    all redeem the same code for the same account, because the second INSERT violates the
+    constraint and the transaction rolls back.
+
+    Written in the SAME transaction as the grant it pays for. If the grant fails the
+    redemption unwinds with it, so a code is never burned for something the candidate did not
+    receive — the same rule `credits.consume` follows for the same reason.
+
+    Not TimestampMixin: `updated_at` on an append-only row can only ever lie.
+    """
+
+    __tablename__ = "offer_redemptions"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    offer_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: What they bought with it, and what it saved them. Kept for the audit trail: "why is
+    #: this account's revenue lower than its usage" has to be answerable.
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    charged_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: The Razorpay payment this rode on, or NULL for a free grant that never touched the
+    #: gateway. Nullable precisely because `free` codes skip payment entirely.
+    payment_ref: Mapped[str | None] = mapped_column(String(128), index=True)
+
+    __table_args__ = (
+        # THE RULE, in the only place that can actually hold it. One row per (offer, user),
+        # so a double-clicked Apply, two tabs, or a retry storm cannot redeem the same code
+        # twice for one account — the second INSERT simply fails.
+        Index("uq_offer_redemption_user", "offer_id", "user_id", unique=True),
+    )

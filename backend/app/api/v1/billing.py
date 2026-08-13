@@ -32,8 +32,8 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.models.billing import CreditEvent, UserPlan
-from app.services.billing import razorpay
-from app.services.billing.credits import KIND_PURCHASE, get_balance, grant
+from app.services.billing import captcha, offers, razorpay
+from app.services.billing.credits import KIND_GRANT, KIND_PURCHASE, get_balance, grant
 from app.services.billing.plans import ITEMS, get_item
 
 logger = structlog.get_logger(__name__)
@@ -87,6 +87,11 @@ class BalanceOut(BaseModel):
 
 class CheckoutRequest(BaseModel):
     item_id: str = Field(min_length=1, max_length=32)
+    #: A promo code, optional. The browser sends the CODE and never a price — the server
+    #: resolves the offer and computes the charge.
+    code: str = Field(default="", max_length=40)
+    #: Cloudflare Turnstile token, required only by offers that ask for one.
+    captcha_token: str = Field(default="", max_length=4096)
 
 
 class AppealRequest(BaseModel):
@@ -150,7 +155,12 @@ async def my_balance(
     dependencies=[Depends(_checkout_rate_limit)],
     summary="Open a Razorpay order for one item",
 )
-async def checkout(request: CheckoutRequest, current_user: CurrentUser):
+async def checkout(
+    request: CheckoutRequest,
+    http_request: Request,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
     """
     Start a purchase. Returns what the browser checkout widget needs.
 
@@ -162,7 +172,71 @@ async def checkout(request: CheckoutRequest, current_user: CurrentUser):
     item = get_item(request.item_id)
     if item is None:
         raise NotFoundError("Item", request.item_id)
-    return await razorpay.create_order(item, str(current_user.user_id))
+
+    quoted = await offers.quote(
+        db, item=item, code=request.code, user_id=current_user.user_id
+    )
+
+    # The captcha gate, if this offer asks for one. Before anything is granted or ordered,
+    # because its whole purpose is to cost a script something up front.
+    if quoted.offer is not None and quoted.offer.requires_captcha:
+        await captcha.verify(
+            request.captcha_token,
+            remote_ip=http_request.client.host if http_request.client else None,
+        )
+
+    if quoted.is_free:
+            # A 100%-OFF CODE NEVER TOUCHES THE PAYMENT GATEWAY.
+        #
+        # Razorpay has a one-rupee minimum, so a free item cannot be expressed as an order
+        # at all. The redemption and the grant go in one transaction — `get_db` commits on
+        # success and rolls back on any error — so the code cannot be burned without the
+        # item arriving, and the item cannot arrive without the code being burned.
+        #
+        # `redeem` runs FIRST. If it raises (already used, switched off, expired, fully
+        # claimed) nothing is granted, which is the direction this has to fail in.
+        await offers.redeem(
+            db, quoted=quoted, user_id=current_user.user_id, payment_ref=None
+        )
+        await grant(
+            db,
+            current_user.user_id,
+            item.feature,
+            item.quantity,
+            kind=KIND_GRANT,
+            detail={
+                "item_id": item.id,
+                "offer": quoted.offer.code if quoted.offer else "",
+                "original_paise": quoted.original_paise,
+                "charged_paise": 0,
+            },
+        )
+        logger.info(
+            "offer_free_grant",
+            user_id=str(current_user.user_id),
+            item=item.id,
+            offer=quoted.offer.code if quoted.offer else "",
+        )
+        return {
+            "order_id": None,
+            "amount_paise": 0,
+            "currency": "INR",
+            "item_id": item.id,
+            "key_id": None,
+            "granted": True,
+            "code": quoted.offer.code if quoted.offer else "",
+        }
+
+    order = await razorpay.create_order(
+        item,
+        str(current_user.user_id),
+        charged_paise=quoted.charged_paise,
+        offer_code=quoted.offer.code if quoted.offer else "",
+    )
+    order["granted"] = False
+    order["original_paise"] = quoted.original_paise
+    order["code"] = quoted.offer.code if quoted.offer else ""
+    return order
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK, summary="Razorpay payment callback")
@@ -216,6 +290,62 @@ async def razorpay_webhook(
     except ValueError:
         logger.warning("razorpay_webhook_bad_user_id", payment_id=outcome.payment_id)
         return {"status": "ignored"}
+
+    # ── THE DEFERRED AMOUNT CHECK ────────────────────────────────────────────────────────
+    #
+    # `items_from_payment` cannot check a discounted amount, because the expected price lives
+    # in an offer row and that function is deliberately pure. It hands the decision here with
+    # `amount_verified=False`, and this is the only place that can honour it.
+    #
+    # THIS IS LOAD-BEARING. Without it, `offer_code` is a client-influenced note that
+    # switches off the one guard protecting every purchase — put any string in it and a ₹1
+    # payment buys five interviews. So the offer is re-read from the database, the discount
+    # is recomputed from scratch, and a payment short of that is refused.
+    #
+    # Refused with a 200, not an error: the money is Razorpay's to refund and retrying the
+    # webhook forever will not change the amount. It is logged at error level because a
+    # payment arriving under its own offer's price means either a bug or somebody probing.
+    if not outcome.amount_verified:
+        offer = await offers.find_code(db, outcome.offer_code)
+        if offer is None:
+            logger.error(
+                "razorpay_payment_unknown_offer",
+                payment_id=outcome.payment_id,
+                offer_code=outcome.offer_code,
+            )
+            return {"status": "rejected"}
+        expected = offers.charge_for(offer, outcome.item)
+        if outcome.amount_paise < expected:
+            logger.error(
+                "razorpay_amount_below_discounted_price",
+                payment_id=outcome.payment_id,
+                item_id=outcome.item.id,
+                offer_code=outcome.offer_code,
+                paid=outcome.amount_paise,
+                expected=expected,
+            )
+            return {"status": "rejected"}
+
+        # Burned in the same transaction as the grant below, so a code cannot be spent on an
+        # item that fails to arrive. A code already used by this account raises here and the
+        # whole delivery unwinds — Razorpay retries, hits the replay guard above, and stops.
+        try:
+            await offers.redeem_verified(
+                db,
+                offer=offer,
+                item=outcome.item,
+                user_id=user_uuid,
+                charged_paise=outcome.amount_paise,
+                payment_ref=outcome.payment_id,
+            )
+        except offers.OfferError as exc:
+            logger.error(
+                "razorpay_offer_redeem_failed",
+                payment_id=outcome.payment_id,
+                offer_code=outcome.offer_code,
+                reason=str(exc),
+            )
+            return {"status": "rejected"}
 
     await grant(
         db,

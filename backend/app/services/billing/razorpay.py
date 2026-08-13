@@ -54,6 +54,13 @@ logger = structlog.get_logger(__name__)
 _PAYMENT_ENTITY = "payment"
 _NOTES_ITEM_KEY = "item_id"
 _NOTES_USER_KEY = "user_id"
+#: The promo code an order was opened under, carried through the gateway so the webhook can
+#: re-derive what should have been paid. It names an offer; it never names a price.
+_NOTES_OFFER_KEY = "offer_code"
+
+#: Razorpay will not accept an order below one rupee. Anything discounted under this is a
+#: free grant that must never reach the gateway — see offers.quote.
+_MIN_ORDER_PAISE = 100
 
 
 class PaymentNotConfiguredError(AppError):
@@ -118,6 +125,17 @@ class PaymentOutcome:
     user_id: str
     item: Item
     amount_paise: int
+    #: The promo code claimed in the order's notes, or "".
+    #:
+    #: Present means the amount check below was DEFERRED, because the expected price depends
+    #: on an offer row this pure function cannot read. The caller is obliged to re-derive it
+    #: and reject a short payment — see `amount_verified`.
+    offer_code: str = ""
+    #: False when an offer was claimed and the caller must still check the amount itself.
+    #:
+    #: A flag rather than an honour system: the webhook asserts on it before granting, so
+    #: forgetting the check fails loudly in tests instead of quietly giving product away.
+    amount_verified: bool = True
 
 
 def items_from_payment(payload: dict) -> PaymentOutcome | None:
@@ -146,6 +164,7 @@ def items_from_payment(payload: dict) -> PaymentOutcome | None:
     notes = payment.get("notes") or {}
     user_id = str(notes.get(_NOTES_USER_KEY) or "").strip()
     item_id = str(notes.get(_NOTES_ITEM_KEY) or "").strip()
+    offer_code = str(notes.get(_NOTES_OFFER_KEY) or "").strip().upper()
     payment_id = str(payment.get("id") or "").strip()
     order_id = str(payment.get("order_id") or "").strip()
     amount = int(payment.get("amount") or 0)
@@ -162,7 +181,7 @@ def items_from_payment(payload: dict) -> PaymentOutcome | None:
         logger.warning("razorpay_payment_unknown_item", payment_id=payment_id, item_id=item_id)
         return None
 
-    if amount < item.price_paise:
+    if not offer_code and amount < item.price_paise:
         # Underpaid. See the note above — the notes are an intention, the amount is the fact.
         logger.warning(
             "razorpay_amount_below_item_price",
@@ -173,12 +192,20 @@ def items_from_payment(payload: dict) -> PaymentOutcome | None:
         )
         return None
 
+    # A DISCOUNTED PAYMENT IS LEGITIMATELY BELOW THE LIST PRICE, so the check above cannot
+    # apply — but it must not simply be skipped either, or `offer_code` becomes a
+    # client-supplied field that disables the one guard protecting every purchase. The
+    # expected price lives in an offer row, which this function deliberately cannot read
+    # (being pure is what makes the rest of it testable without a database), so the decision
+    # is handed to the caller along with an explicit flag saying it is still owed.
     return PaymentOutcome(
         payment_id=payment_id,
         order_id=order_id,
         user_id=user_id,
         item=item,
         amount_paise=amount,
+        offer_code=offer_code,
+        amount_verified=not offer_code,
     )
 
 
@@ -187,7 +214,13 @@ def purchasable_items() -> tuple[Item, ...]:
     return ITEMS
 
 
-async def create_order(item: Item, user_id: str) -> dict:
+async def create_order(
+    item: Item,
+    user_id: str,
+    *,
+    charged_paise: int | None = None,
+    offer_code: str = "",
+) -> dict:
     """
     Open an order at Razorpay for `item`, returning what the browser checkout needs.
 
@@ -199,12 +232,31 @@ async def create_order(item: Item, user_id: str) -> dict:
     `notes` carries the user and item back to us through the webhook. It is not trusted on
     the way back: `items_from_payment` re-checks the amount against the item's real price.
     """
+    # THE AMOUNT IS CHECKED BEFORE THE CREDENTIALS, deliberately.
+    #
+    # A zero-rupee order is a programming error — the free path in checkout should have
+    # granted it directly and never come here — and it is an error whether or not payments
+    # are configured. Checking credentials first would hide it behind "payments are not
+    # configured" on every development machine, which is precisely where you want to find it.
+    amount_paise = item.price_paise if charged_paise is None else int(charged_paise)
+    if amount_paise < _MIN_ORDER_PAISE:
+        raise ValueError(
+            f"order amount {amount_paise} is below Razorpay's minimum; "
+            "a fully-discounted item must be granted directly, not ordered"
+        )
+
     from app.core.config import settings  # noqa: PLC0415
 
     key_id = getattr(settings, "RAZORPAY_KEY_ID", "") or ""
     key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "") or ""
     if not key_id or not key_secret:
         raise PaymentNotConfiguredError
+
+    notes: dict[str, str] = {_NOTES_ITEM_KEY: item.id, _NOTES_USER_KEY: user_id}
+    if offer_code:
+        # Carried so the webhook can re-derive what SHOULD have been paid. Not trusted on
+        # the way back — it names which offer to look up, and the offer decides the price.
+        notes[_NOTES_OFFER_KEY] = offer_code.upper()
 
     import httpx  # noqa: PLC0415
 
@@ -215,9 +267,13 @@ async def create_order(item: Item, user_id: str) -> dict:
             json={
                 # THE AMOUNT COMES FROM THE RESOLVED ITEM, never from the request. The
                 # caller looked the item up by id; the browser never names a price.
-                "amount": item.price_paise,
+                # THE AMOUNT STILL COMES FROM THE SERVER. `charged_paise` is computed by
+                # services/billing/offers.quote from the item and the offer row — the browser
+                # sends a code, never a figure, so this is no more client-controlled than the
+                # list price was.
+                "amount": amount_paise,
                 "currency": "INR",
-                "notes": {_NOTES_ITEM_KEY: item.id, _NOTES_USER_KEY: user_id},
+                "notes": notes,
             },
         )
     if resp.status_code >= 400:
@@ -231,7 +287,7 @@ async def create_order(item: Item, user_id: str) -> dict:
     order = resp.json()
     return {
         "order_id": order.get("id"),
-        "amount_paise": item.price_paise,
+        "amount_paise": amount_paise,
         "currency": "INR",
         "item_id": item.id,
         # The PUBLIC key id — this is meant to reach the browser. The secret never does.

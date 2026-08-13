@@ -406,6 +406,20 @@ class Settings(BaseSettings):
         default="",
         description="Razorpay secret. Server-side only — never returned by any endpoint.",
     )
+    # ── Captcha (Cloudflare Turnstile) ───────────────────────────────────────────────
+    #
+    # Only consulted by offers that set `requires_captcha`. Unset means those offers REFUSE
+    # rather than waive the requirement — see services/billing/captcha.py. Everything else in
+    # the app is unaffected, so a deployment with no Turnstile account works normally as long
+    # as no offer asks for one.
+    TURNSTILE_SECRET_KEY: str = Field(
+        default="",
+        description=(
+            "Cloudflare Turnstile secret. Server-side only. The matching SITE key is public "
+            "by design and belongs in the frontend as NEXT_PUBLIC_TURNSTILE_SITE_KEY."
+        ),
+    )
+
     RAZORPAY_WEBHOOK_SECRET: str = Field(
         default="",
         description=(

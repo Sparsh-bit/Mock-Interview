@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    admin_offers,
     ai_usage,  # TEMPORARY — token counter
     analysis,
     auth,
@@ -38,6 +39,9 @@ v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 # /webhook is authenticated by Razorpay's HMAC rather than by a user token. The
 # remaining routes take CurrentUser individually.
 v1_router.include_router(billing.router, tags=["Billing"])
+# Prefixed inside the module, so it lands under /admin/offers alongside the rest of the
+# admin surface rather than under a second top-level path.
+v1_router.include_router(admin_offers.router, tags=["Admin — Offers"])
 
 # Auth required
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])
