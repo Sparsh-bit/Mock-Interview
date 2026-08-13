@@ -101,37 +101,53 @@ class TestCostEstimation:
 
 class TestTheAudioCacheIsExactNotSemantic:
     def test_identical_text_shares_a_key(self):
-        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking")
-        b = _cache_key("elevenlabs", "v1", "  What is a HashMap?  ", "asking")
+        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking", 1.0)
+        b = _cache_key("elevenlabs", "v1", "  What is a HashMap?  ", "asking", 1.0)
         assert a == b
 
     def test_different_text_does_not(self):
         # Audio must be byte-identical to what is on screen. A near-match — which the
         # SEMANTIC cache would happily serve for generations — would play the candidate a
         # different sentence from the one they are reading.
-        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking")
-        b = _cache_key("elevenlabs", "v1", "What is a Hashtable?", "asking")
+        a = _cache_key("elevenlabs", "v1", "What is a HashMap?", "asking", 1.0)
+        b = _cache_key("elevenlabs", "v1", "What is a Hashtable?", "asking", 1.0)
         assert a != b
 
     def test_the_voice_is_part_of_the_key(self):
         # Same words in a different voice is different audio. Without this, Riya's cached
         # line would be served in Arjun's turn.
-        assert _cache_key("elevenlabs", "v_riya", "Yes.", "neutral") != _cache_key(
-            "elevenlabs", "v_arjun", "Yes.", "neutral"
+        assert _cache_key("elevenlabs", "v_riya", "Yes.", "neutral", 1.0) != _cache_key(
+            "elevenlabs", "v_arjun", "Yes.", "neutral", 1.0
         )
 
     def test_the_provider_is_part_of_the_key(self):
         # Switching vendor must not serve the old vendor's audio.
-        assert _cache_key("elevenlabs", "v1", "Yes.", "neutral") != _cache_key(
-            "azure", "v1", "Yes.", "neutral"
+        assert _cache_key("elevenlabs", "v1", "Yes.", "neutral", 1.0) != _cache_key(
+            "azure", "v1", "Yes.", "neutral", 1.0
         )
 
     def test_the_tone_is_part_of_the_key(self):
         # Otherwise the first delivery of a line wins for a fortnight. A sentence spoken
         # once in passing would be served back — flat — to every candidate who later got
         # that question wrong, which is precisely the thing tone exists to prevent.
-        assert _cache_key("fish", "v1", "That is not quite right.", "correcting") != _cache_key(
-            "fish", "v1", "That is not quite right.", "neutral"
+        assert _cache_key(
+            "fish", "v1", "That is not quite right.", "correcting", 0.88
+        ) != _cache_key("fish", "v1", "That is not quite right.", "neutral", 1.0)
+
+    def test_the_resolved_speed_is_part_of_the_key(self):
+        # A speaker with their own pace produces different bytes for the same words in the
+        # same tone. Leaving speed out would serve the slowed panelist's audio to everyone
+        # else on that voice, and vice versa — the same class of bug as omitting tone.
+        assert _cache_key("fish", "v1", "Go on.", "neutral", 0.92) != _cache_key(
+            "fish", "v1", "Go on.", "neutral", 1.0
+        )
+
+    def test_two_speakers_at_the_same_pace_still_share_one_entry(self):
+        # The reason speed is in the key as a NUMBER rather than as the speaker's name.
+        # Anil and the `interviewer` fallback share a voice id and a pace, so they must
+        # share the cached audio rather than paying the vendor twice for identical bytes.
+        assert _cache_key("fish", "v_anil", "Welcome.", "neutral", 1.0) == _cache_key(
+            "fish", "v_anil", "Welcome.", "neutral", 1.0
         )
 
 
@@ -273,3 +289,55 @@ class TestToneIsAllowlistedServerSide:
             httpx.AsyncClient = original  # type: ignore[misc]
 
         assert sent["prosody"] == TONE_PROSODY["correcting"]
+
+
+class TestPerSpeakerPace:
+    """
+    A named speaker can talk slower or faster than their tone alone would.
+
+    This exists because of a real report: the assertive GD panelist was "annoying and
+    disturbed" to listen to. She was not merely quick — she was the product of three
+    multipliers stacked on one another, the last of which was a browser playbackRate that
+    RESAMPLES finished audio rather than synthesising it differently. Resampling is what
+    made it sound wrong rather than fast. Pace belongs here, where the vendor applies it
+    during synthesis.
+    """
+
+    def test_an_unlisted_speaker_speaks_at_the_tone_speed(self):
+        from app.services.tts.base import TONE_PROSODY, prosody_for
+
+        assert prosody_for("asking", "Nobody") == TONE_PROSODY["asking"]
+        # Omitted entirely is the same as unknown — every existing caller relies on this.
+        assert prosody_for("asking") == TONE_PROSODY["asking"]
+
+    def test_a_listed_speaker_is_slowed_relative_to_their_tone(self):
+        from app.services.tts.base import TONE_PROSODY, prosody_for
+
+        for tone in TONE_PROSODY:
+            assert prosody_for(tone, "Riya")["speed"] < TONE_PROSODY[tone]["speed"], tone
+
+    def test_pace_does_not_invert_the_tone_ordering(self):
+        # Slowing a speaker must not flatten how their own lines differ from each other. A
+        # correction from Riya still has to be slower than her asides, or the pace fix would
+        # have cost the tone work it sits on top of.
+        from app.services.tts.base import prosody_for
+
+        assert (
+            prosody_for("correcting", "Riya")["speed"]
+            < prosody_for("asking", "Riya")["speed"]
+            < prosody_for("aside", "Riya")["speed"]
+        )
+
+    def test_the_combined_speed_stays_within_listenable_bounds(self):
+        # The guard against two individually reasonable edits multiplying into something
+        # unlistenable — and against a runaway speed inflating billed audio duration.
+        from app.services.tts.base import SPEAKER_PACE, TONE_PROSODY, prosody_for
+
+        for tone in TONE_PROSODY:
+            for speaker in SPEAKER_PACE:
+                assert 0.80 <= prosody_for(tone, speaker)["speed"] <= 1.15
+
+    def test_volume_is_untouched_by_pace(self):
+        from app.services.tts.base import prosody_for
+
+        assert prosody_for("asking", "Riya")["volume"] == 0.0

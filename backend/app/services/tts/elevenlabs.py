@@ -99,7 +99,7 @@ class ElevenLabsProvider:
         return characters * self._credits_per_char * self._usd_per_credit
 
     async def synthesize(
-        self, text: str, *, voice_id: str, tone: str | None = None
+        self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None
     ) -> SynthesisResult:
         # Accepted and ignored. ElevenLabs has no per-request speed control on the v1
         # endpoint — delivery comes from the voice settings on the voice itself — so rather

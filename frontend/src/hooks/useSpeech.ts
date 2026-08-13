@@ -783,10 +783,19 @@ export function usePanelVoices(
          * saying "double equals" would be quoted back at the candidate in a follow-up and
          * printed in their report as though somebody had typed it.
          */
+        /*
+         * Still needed HERE for the browser fallback below, which does its own chunking and
+         * therefore needs the spoken string in hand.
+         *
+         * The NEURAL call no longer gets it, and that is the fix rather than an oversight:
+         * neural-tts.ts now normalises at its own boundary, so it must be handed the line as
+         * written. Passing `spoken` here again would key the fetch on doubly-converted text
+         * and reintroduce exactly the prefetch miss that change removes — see _spoken.
+         */
         const spoken = toSpokenForm(text);
 
         const audioPromise = neuralRef.current
-          ? fetchUtterance(speaker, spoken, opts.tone)
+          ? fetchUtterance(speaker, text, opts.tone)
           : null;
 
         setTakingFloor(speaker);

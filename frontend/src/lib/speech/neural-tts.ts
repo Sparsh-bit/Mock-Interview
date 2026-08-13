@@ -29,6 +29,7 @@
  */
 
 import { getBrowserApiClient } from '@/lib/api';
+import { toSpokenForm } from '@/lib/speech/speakable';
 
 /**
  * How a line is delivered. Mirrors TONE_PROSODY in backend/app/services/tts/base.py.
@@ -113,8 +114,33 @@ export async function fetchTTSStatus(): Promise<TTSStatus | null> {
 const _inflight = new Map<string, Promise<Blob | null>>();
 const _MAX_INFLIGHT = 24;
 
-function _key(speaker: string, text: string, tone?: SpeechTone): string {
-  return `${speaker}|${tone ?? 'neutral'}|${text.trim()}`;
+/**
+ * THE WRITTEN LINE IS TURNED INTO THE SPOKEN ONE *HERE*, AND ONLY HERE.
+ *
+ * This module used to take whatever text the caller handed it, and the two callers handed it
+ * different things. `speakAs` sent `toSpokenForm(text)`, because that is what should reach the
+ * vendor; `prefetchTurn` sent the raw `text`, because that is what it had. Both then keyed the
+ * in-flight map on the string they happened to pass.
+ *
+ * So the keys never matched — for any line containing an operator or a spelled-out acronym,
+ * which in a Java interview is most of them. Every consequence of that was invisible and bad:
+ *
+ *   - the prefetch was a guaranteed miss, so the feature bought nothing at all
+ *   - the real fetch started COLD, on the critical path, and the candidate waited the full
+ *     ~3.5s Fish takes per line — the exact gap prefetching was written to remove
+ *   - and the wasted prefetch still completed, so every line was synthesised TWICE and
+ *     billed twice against a metered vendor and the daily budget
+ *
+ * Normalising at this boundary rather than in the callers is what makes that unfixable-by-
+ * accident: there is now no text a caller can pass that produces a key different from the one
+ * the fetch uses, because the caller's string is no longer what either is derived from.
+ */
+function _spoken(text: string): string {
+  return toSpokenForm(text).trim();
+}
+
+function _key(speaker: string, spokenText: string, tone?: SpeechTone): string {
+  return `${speaker}|${tone ?? 'neutral'}|${spokenText}`;
 }
 
 /**
@@ -123,27 +149,30 @@ function _key(speaker: string, text: string, tone?: SpeechTone): string {
  * Call this for every line of a turn as soon as the turn arrives. Errors are swallowed here
  * exactly as they are in fetchUtterance — a prefetch that fails must be indistinguishable
  * from one that was never made, or a warm-up would be able to break a round.
+ *
+ * Pass the line AS WRITTEN. Converting it for the ear is this module's job — see _spoken.
  */
 export function prefetchUtterance(speaker: string, text: string, tone?: SpeechTone): void {
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  const k = _key(speaker, trimmed, tone);
+  const spoken = _spoken(text);
+  if (!spoken) return;
+  const k = _key(speaker, spoken, tone);
   if (_inflight.has(k)) return;
   if (_inflight.size >= _MAX_INFLIGHT) {
     const oldest = _inflight.keys().next().value;
     if (oldest !== undefined) _inflight.delete(oldest);
   }
-  _inflight.set(k, _fetchNow(speaker, trimmed, tone));
+  _inflight.set(k, _fetchNow(speaker, spoken, tone));
 }
 
+/** Pass the line AS WRITTEN, exactly as for prefetchUtterance. */
 export async function fetchUtterance(
   speaker: string,
   text: string,
   tone?: SpeechTone,
 ): Promise<Blob | null> {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const k = _key(speaker, trimmed, tone);
+  const spoken = _spoken(text);
+  if (!spoken) return null;
+  const k = _key(speaker, spoken, tone);
   const warm = _inflight.get(k);
   if (warm) {
     // Consumed once. Keeping it would hold every line of the interview in memory for the
@@ -152,12 +181,13 @@ export async function fetchUtterance(
     _inflight.delete(k);
     return warm;
   }
-  return _fetchNow(speaker, trimmed, tone);
+  return _fetchNow(speaker, spoken, tone);
 }
 
 async function _fetchNow(
   speaker: string,
-  trimmed: string,
+  /** Already through _spoken — this is the string that goes to the vendor verbatim. */
+  spoken: string,
   tone?: SpeechTone,
 ): Promise<Blob | null> {
   try {
@@ -166,7 +196,7 @@ async function _fetchNow(
       // A tone NAME, never prosody numbers — the server owns the mapping. Same reasoning as
       // the speaker name above: this is metered output, and the dial that decides how long
       // an utterance is does not belong in a bundle anyone can edit.
-      { speaker, text: trimmed, tone },
+      { speaker, text: spoken, tone },
       // Longer than the server's own 12s vendor timeout so the server is always the one to
       // give up first — then the failure carries a reason instead of being a bare abort.
       //
@@ -199,15 +229,26 @@ export function playBlob(
   /**
    * Playback rate, from the speaker's persona tempo.
    *
-   * WHY THIS MATTERS. persona.ts gives each panelist a stable speaking tempo — the assertive
-   * one 9% faster, the synthesiser 8% slower — and that was the main thing separating three
-   * voices when they had to share one. Neural audio arrives as a finished file, so without
-   * this the tempo differentiation is silently LOST the moment neural speech switches on, and
-   * the panel gets less distinguishable rather than more.
+   * WHY THIS EXISTS. persona.ts gives each panelist a stable speaking tempo, and that was the
+   * main thing separating three voices back when they had to share one. Neural audio arrives
+   * as a finished file, so without this the tempo differentiation would be silently LOST the
+   * moment neural speech switched on.
    *
-   * playbackRate keeps it. Clamped tight because a media element resamples rather than
-   * pitch-shifting: past roughly ±12% the voice starts sounding sped-up rather than brisk,
-   * which is worse than uniform.
+   * WHY IT IS NOW APPLIED AT A FRACTION OF ITS STRENGTH. On the neural path this multiplier
+   * is the SECOND speed adjustment the audio receives — the server has already applied the
+   * tone's own speed through the vendor's prosody field, which is real synthesis rather than
+   * resampling. Stacking a media-element playbackRate on top of that is what pushed the
+   * assertive panelist to roughly 1.18 and produced the reported "disturbed" voice: a
+   * resampled 18% is audibly wrong in a way that a synthesised 18% is not.
+   *
+   * The two paths also do not need the same amount of help. Neural voices are separate voices
+   * — different timbre, different speaker entirely — so they are already tellable apart and
+   * tempo only has to hint. The BROWSER fallback frequently has to put two panelists on one
+   * system voice, and there tempo is doing the real work; that path keeps the full multiplier,
+   * applied in useSpeech.ts.
+   *
+   * So the deviation from 1.0 is damped to 40% here, then clamped to ±5% — inside the range
+   * where resampling stays inaudible, rather than at the ±12% edge where it stops being.
    */
   rate = 1,
 ): Promise<void> {
@@ -226,7 +267,7 @@ export function playBlob(
       resolve();
     };
 
-    audio.playbackRate = Math.min(1.12, Math.max(0.88, rate));
+    audio.playbackRate = Math.min(1.05, Math.max(0.95, 1 + (rate - 1) * 0.4));
 
     // Generous: it must never cut off real speech. An utterance is a couple of sentences, so
     // 30s is far past any legitimate length and still bounded.

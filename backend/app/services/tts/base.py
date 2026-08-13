@@ -81,9 +81,50 @@ TONE_PROSODY: dict[str, dict[str, float]] = {
 }
 
 
-def prosody_for(tone: str | None) -> dict[str, float]:
-    """Tone name → prosody. Unknown or missing names fall back to neutral, never raise."""
-    return TONE_PROSODY.get(tone or "neutral", TONE_PROSODY["neutral"])
+#: How fast a NAMED SPEAKER talks, as a multiplier on their tone's speed.
+#:
+#: Tone says how a LINE is delivered; this says how a PERSON talks, and the two are
+#: independent — Riya asking a question and Riya conceding a point are both still Riya.
+#: Without this the only per-speaker pacing available was the browser's playbackRate, which
+#: resamples the finished audio instead of synthesising it differently. Resampling is what
+#: made the assertive panelist sound wrong rather than merely quick: reported as a voice that
+#: was "annoying and disturbed", not as one that was fast.
+#:
+#: Riya is the one entry below 1.0 and she is the reason this exists. Her stance is the
+#: assertive one, so she carried the largest client-side tempo in the product, stacked on top
+#: of a tone speed that already reached 1.08. Slowing her HERE spends a few more billed
+#: seconds of audio and gets a voice that sounds like a person talking briskly, which is what
+#: was actually wanted.
+#:
+#: Anything not listed speaks at its tone's speed unchanged, so a new panelist needs no entry
+#: and a renamed one degrades to neutral pacing rather than to an error.
+SPEAKER_PACE: dict[str, float] = {
+    "Riya": 0.92,
+}
+
+#: Floor and ceiling on the combined tone x speaker speed.
+#:
+#: Both multipliers are ours rather than a caller's, so this is not a validation boundary — it
+#: is a guard against a future pair of edits that individually look reasonable and multiply
+#: into something unlistenable. It also bounds the bill: speed is inversely proportional to
+#: audio duration, and duration is what these vendors charge for.
+_MIN_SPEED, _MAX_SPEED = 0.80, 1.15
+
+
+def prosody_for(tone: str | None, speaker: str | None = None) -> dict[str, float]:
+    """
+    Tone name (and optionally who is speaking) → prosody.
+
+    Unknown or missing names — either argument — fall back to neutral pacing rather than
+    raising. A tone or a speaker this deploy does not recognise must never be the thing that
+    costs somebody their interview; flat delivery is a far better failure than silence.
+    """
+    base = TONE_PROSODY.get(tone or "neutral", TONE_PROSODY["neutral"])
+    pace = SPEAKER_PACE.get(speaker or "", 1.0)
+    if pace == 1.0:
+        return base
+    speed = min(_MAX_SPEED, max(_MIN_SPEED, base["speed"] * pace))
+    return {**base, "speed": round(speed, 3)}
 
 
 class TTSError(Exception):
@@ -127,14 +168,19 @@ class TTSProvider(Protocol):
     def provider_name(self) -> str: ...
 
     async def synthesize(
-        self, text: str, *, voice_id: str, tone: str | None = None
+        self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None
     ) -> SynthesisResult:
         """
-        Speak `text` in `voice_id`, delivered as `tone`.
+        Speak `text` in `voice_id`, delivered as `tone`, at `speaker`'s own pace.
 
         `tone` is a name from TONE_PROSODY, not numbers — see the note there. A provider
         with no prosody control is free to ignore it; the delivery is then flat, which is
         worse but not broken.
+
+        `speaker` is the panelist's NAME, and it is optional for the same reason: it only
+        selects a pace from SPEAKER_PACE, and an unknown or omitted one means "speak at the
+        tone's own speed". Passing a name rather than a number keeps the rule that the
+        browser never sends prosody — speed decides how many seconds of audio get billed.
 
         Raises TTSError on any failure, including a timeout — callers are required to
         degrade to browser speech rather than surface an error, so there is no partial

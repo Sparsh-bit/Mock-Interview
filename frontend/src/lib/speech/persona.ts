@@ -49,12 +49,29 @@ export interface SpeakerPersona {
 export const DEFAULT_PERSONA: SpeakerPersona = { tempo: 1.0, leadInMs: 300 };
 
 const TRAITS: Array<{ match: RegExp; persona: SpeakerPersona }> = [
-  // Assertive/dominant: fastest, and takes the floor the moment it is free.
-  // Tested first because a stance can read as both assertive and argumentative,
-  // and dominance is the stronger signal.
+  /*
+   * Assertive/dominant: takes the floor the moment it is free.
+   * Tested first because a stance can read as both assertive and argumentative,
+   * and dominance is the stronger signal.
+   *
+   * TEMPO WAS 1.09 AND IT WAS TOO FAST TO LISTEN TO. This is Riya's stance, and she was
+   * reported as unpleasant to hear — not merely brisk.
+   *
+   * 1.09 was not the whole of it either; it was the top of a stack. The server already
+   * applies its own speed per tone (`aside` is 1.08 in TONE_PROSODY), and on the neural
+   * path this multiplier was then applied AGAIN as an <audio> playbackRate. An aside from
+   * the assertive panelist therefore came out near 1.18 — well past the ~12% at which
+   * neural-tts.ts's own comment says a resampled voice stops sounding brisk and starts
+   * sounding sped-up. That is the "annoying and disturbed" quality: not the voice, the
+   * arithmetic on top of it.
+   *
+   * Assertiveness now rides almost entirely on the 160ms latch, which is the channel this
+   * file already argues carries the most character for the least risk. A small positive
+   * tempo is kept so she is still marginally the quickest, which is true to the stance.
+   */
   {
     match: /assertive|dominat|opens strong|pushy|aggressive/i,
-    persona: { tempo: 1.09, leadInMs: 160 },
+    persona: { tempo: 1.02, leadInMs: 160 },
   },
   // The contrarian latches on almost before you have finished. Held at his
   // voice's own baseline tempo rather than nudged just below the assertive

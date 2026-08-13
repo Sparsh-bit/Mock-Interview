@@ -87,7 +87,7 @@ class FishAudioProvider:
         return characters * _USD_PER_CHAR
 
     async def synthesize(
-        self, text: str, *, voice_id: str, tone: str | None = None
+        self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None
     ) -> SynthesisResult:
         clean = (text or "").strip()
         if not clean:
@@ -118,9 +118,10 @@ class FishAudioProvider:
                         # Delivery. Verified against the live API on identical text that
                         # speed genuinely changes the audio length rather than being
                         # silently accepted and dropped: 0.80 gave 53.9KB, 1.00 gave
-                        # 47.2KB, 1.20 gave 35.5KB. Resolved from a name server-side, so
-                        # the browser cannot ask for speed 0.1 and bill a minute of audio.
-                        "prosody": prosody_for(tone),
+                        # 47.2KB, 1.20 gave 35.5KB. Resolved from NAMES server-side — the
+                        # line's tone and the panelist speaking it — so the browser cannot
+                        # ask for speed 0.1 and bill a minute of audio.
+                        "prosody": prosody_for(tone, speaker),
                     },
                 )
         except httpx.HTTPError as exc:

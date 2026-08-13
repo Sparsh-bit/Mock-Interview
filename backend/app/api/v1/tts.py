@@ -35,7 +35,12 @@ from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys, cache_get_bytes, cache_set_bytes
-from app.services.tts.base import TONE_PROSODY, TTSBudgetExceededError, TTSError
+from app.services.tts.base import (
+    TONE_PROSODY,
+    TTSBudgetExceededError,
+    TTSError,
+    prosody_for,
+)
 from app.services.tts.factory import get_tts_provider, panel_voice_id
 from app.services.tts.spend import record_tts_spend, tts_spend_today
 
@@ -72,7 +77,7 @@ class SpeakRequest(BaseModel):
     tone: str | None = Field(default=None, max_length=32)
 
 
-def _cache_key(provider: str, voice_id: str, text: str, tone: str) -> str:
+def _cache_key(provider: str, voice_id: str, text: str, tone: str, speed: float) -> str:
     """
     Exact-match key. Deliberately NOT the semantic cache used for generations.
 
@@ -85,9 +90,17 @@ def _cache_key(provider: str, voice_id: str, text: str, tone: str) -> str:
     would mean the first delivery of a line wins for a fortnight — so a correction spoken
     once in a neutral context would be served back, flat, to every candidate who got it
     wrong afterwards. That is the bug the tone work exists to fix, cached.
+
+    SO IS THE RESOLVED SPEED, and it is in the key as a NUMBER rather than as the speaker's
+    name on purpose. Speed is what actually differs in the bytes; the name is only how it was
+    chosen. Keying on the number means two speakers who happen to share a voice id and a pace
+    — Anil and the `interviewer` fallback do exactly that — correctly share one cache entry
+    instead of synthesising the same audio twice, while any future per-speaker pace splits
+    them automatically. Keying on the name would lose the sharing; keying on neither would
+    serve one speaker's pace to the other, which is the bug this argument exists to prevent.
     """
     digest = hashlib.sha256(
-        f"{provider}|{voice_id}|{tone}|{text.strip()}".encode()
+        f"{provider}|{voice_id}|{tone}|{speed}|{text.strip()}".encode()
     ).hexdigest()
     return CacheKeys.tts_audio(digest)
 
@@ -121,7 +134,11 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
     tone = request.tone if request.tone in TONE_PROSODY else "neutral"
-    key = _cache_key(provider.provider_name, voice_id, text, tone)
+    # Resolved here as well as inside the provider so the cache key reflects the delivery
+    # that will actually be synthesised. prosody_for is pure and total — it falls back to
+    # neutral for an unknown tone or speaker rather than raising — so this cannot fail.
+    speed = prosody_for(tone, request.speaker)["speed"]
+    key = _cache_key(provider.provider_name, voice_id, text, tone, speed)
 
     # Cache first, and before the budget check — a hit costs nothing, so a spent budget must
     # not stop it being served. This is what makes the fixed question bank nearly free.
@@ -147,7 +164,9 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
         )
 
     try:
-        result = await provider.synthesize(text, voice_id=voice_id, tone=tone)
+        result = await provider.synthesize(
+            text, voice_id=voice_id, tone=tone, speaker=request.speaker
+        )
     except TTSBudgetExceededError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
     except TTSError as exc:
