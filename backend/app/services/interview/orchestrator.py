@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.core.exceptions import AIProviderUnavailableError
@@ -613,11 +614,94 @@ class InterviewOrchestrator:
         ).all()
         return {r[0] for r in rows}, [r[1] for r in rows if r[1]]
 
+    async def _drop_declined_topic(
+        self, session: InterviewSession, question: Question, meta: dict
+    ) -> int:
+        """
+        The candidate said they do not know this topic. Take it out of the rest of the plan.
+
+        THIS IS THE HALF THAT WAS MISSING, and its absence is what "the AI runs on a roadmap"
+        was describing. A decline already did three things: it was detected server-side by
+        dont_know.py, the panel pivoted and offered another topic, and the pivot was recorded
+        so declining could not be farmed for easier questions. What none of that did was
+        change WHICH QUESTIONS COME NEXT. The plan is built up front and walked in order, so a
+        candidate who said "sorry, I have not studied multithreading" was asked about
+        multithreading again two questions later, and again after that. Every part of the
+        pivot worked except the part that would have made it mean anything.
+
+        A real interviewer does not need to be told twice. They drop the topic and spend the
+        time somewhere the candidate can actually show you something — which is also the
+        fairer interview, because minutes spent re-confirming a known gap are minutes not
+        spent finding a strength.
+
+        SCOPED TO THE TOPIC, NOT THE DIFFICULTY. Declining one hard question about collections
+        does not mean collections is off the table — but this cannot tell those apart from the
+        answer text, and the safe direction is the one the candidate stated. They said they do
+        not know it; believe them. The report still counts the pivot, so this cannot be used to
+        shrink the interview for free.
+
+        NEVER EMPTIES THE PLAN. Pruning down to nothing would end the interview at the moment
+        the candidate admitted a gap, which reads as a punishment for honesty. The caller tops
+        the plan back up from other topics instead, so the interview stays its advertised
+        length and simply goes somewhere else — the pivot the panel just promised out loud.
+
+        Returns how many questions were dropped, for the caller to log. Mutates `meta`; the
+        caller owns the commit, since it is already writing the session in the same
+        transaction and two commits here would be a partial update on failure.
+        """
+        topic_id = question.topic_id
+        if topic_id is None:
+            return 0
+
+        planned: list[str] = list(meta.get("planned_question_ids") or [])
+        if not planned:
+            return 0
+
+        answered = {
+            str(a)
+            for a in (
+                await self.db.scalars(
+                    select(Answer.question_id).where(Answer.session_id == session.id)
+                )
+            ).all()
+        }
+
+        # Only unanswered ones are candidates for removal — an answered question stays in the
+        # plan because the plan is also the record of what was asked.
+        unanswered = [q for q in planned if q not in answered]
+        if len(unanswered) <= 1:
+            # One question left is the last question. Dropping it ends the interview on a
+            # decline, which is exactly the abrupt finish this must not cause.
+            return 0
+
+        same_topic = {
+            str(q)
+            for q in (
+                await self.db.scalars(
+                    select(Question.id).where(
+                        Question.id.in_([uuid.UUID(q) for q in unanswered]),
+                        Question.topic_id == topic_id,
+                    )
+                )
+            ).all()
+        }
+        if not same_topic:
+            return 0
+
+        meta["planned_question_ids"] = [q for q in planned if q not in same_topic]
+        # Remembered so the top-up cannot immediately put the topic back, and so a later
+        # decline on a second topic accumulates rather than replaces.
+        declined = {str(t) for t in (meta.get("declined_topic_ids") or [])}
+        declined.add(str(topic_id))
+        meta["declined_topic_ids"] = sorted(declined)
+        return len(same_topic)
+
     async def _top_up_plan(
         self,
         track_id: uuid.UUID,
         planned_ids: list[str],
         seen_ids: set[uuid.UUID] | None = None,
+        exclude_topic_ids: set[uuid.UUID] | None = None,
     ) -> list[str]:
         """
         Fill a short plan out to _PLANNED_QUESTION_COUNT from the shared bank.
@@ -636,6 +720,14 @@ class InterviewOrchestrator:
         exhausted, repeating a question the candidate has practised is better than
         serving a short interview. That fallback is logged, because it means the
         bank needs more content.
+
+        `exclude_topic_ids` IS A HARD EXCLUSION, unlike everything else here, and it is the
+        one that matters for how the interview feels. Those are topics the candidate has
+        already said out loud that they do not know. Handing them back a question on one is
+        the single most obviously robotic thing this product can do — it proves nobody was
+        listening — so unlike `seen_ids` it is never relaxed, not even when the bank runs dry.
+        A short interview is a much smaller failure than asking somebody about threads
+        thirty seconds after they told you they have not studied threads.
         """
         need = _PLANNED_QUESTION_COUNT - len(planned_ids)
         if need <= 0:
@@ -656,10 +748,18 @@ class InterviewOrchestrator:
                 )
             )
 
-        pool = [q for q in await _bank() if q.id not in chosen]
+        declined_topics = exclude_topic_ids or set()
+
+        def _eligible(qs: list[Question]) -> list[Question]:
+            # The declined-topic filter is applied at the same moment as the already-chosen
+            # one, so it survives the seed-and-retry below. Filtering afterwards would let a
+            # freshly seeded question on a declined topic straight back in.
+            return [q for q in qs if q.id not in chosen and q.topic_id not in declined_topics]
+
+        pool = _eligible(await _bank())
         if not pool:
             await self._ensure_seed_questions(track_id, [])
-            pool = [q for q in await _bank() if q.id not in chosen]
+            pool = _eligible(await _bank())
         if not pool:
             return planned_ids
 
@@ -1547,6 +1647,47 @@ class InterviewOrchestrator:
             session.session_metadata = meta
 
         await self.db.flush()
+
+        # THEY DECLINED THE TOPIC — so stop asking about it.
+        #
+        # After the flush, because the decline is judged on an answer that must already be
+        # persisted: _drop_declined_topic reads back which planned questions are unanswered,
+        # and this one has to count as answered or it would be pruned as though it were still
+        # to come.
+        #
+        # Guarded on there being a plan at all. The adaptive path picks each question from
+        # live signals and has no roadmap to prune; it is _adaptive_signals' job to steer
+        # there, and pruning a plan that does not exist would be a silent no-op wearing the
+        # costume of a feature.
+        declined = said_dont_know(content)
+        if declined and (session.session_metadata or {}).get("planned_question_ids") is not None:
+            meta = dict(session.session_metadata or {})
+            dropped = await self._drop_declined_topic(session, question, meta)
+            if dropped:
+                # Topped back up from OTHER topics so the interview keeps its advertised
+                # length. Without this, honesty would visibly shorten the interview — which
+                # is both unfair and an incentive to bluff, the exact behaviour this product
+                # exists to detect.
+                meta["planned_question_ids"] = await self._top_up_plan(
+                    session.track_id,
+                    list(meta.get("planned_question_ids") or []),
+                    exclude_topic_ids={
+                        uuid.UUID(t) for t in (meta.get("declined_topic_ids") or [])
+                    },
+                )
+                session.session_metadata = meta
+                # SQLAlchemy does not track in-place mutation of a JSONB dict, so the
+                # reassignment above is what marks it dirty. Flagging it explicitly as well,
+                # because the reassignment is easy to "tidy away" in a later refactor and the
+                # failure would be a silent no-write.
+                flag_modified(session, "session_metadata")
+                logger.info(
+                    "interview_dropped_declined_topic",
+                    session_id=str(session_id),
+                    topic_id=str(question.topic_id),
+                    questions_dropped=dropped,
+                )
+
         answered = await self.db.scalar(
             select(func.count()).select_from(Answer).where(Answer.session_id == session_id)
         )
@@ -1563,10 +1704,15 @@ class InterviewOrchestrator:
             # producing a panel that offers somebody an easier topic in the middle of a
             # correct answer. It also keeps the behaviour identical for any future client.
             #
-            # The caller uses this to run the panel's `pivot` stage. Nothing else depends on
-            # it: the answer is recorded and scored exactly as it always was, because
+            # The caller uses this to run the panel's `pivot` stage, and the same value has
+            # already been used above to prune the declined topic out of the rest of the plan.
+            # One evaluation, reused: dont_know.py is deliberately subtle, and calling it
+            # twice on the same text is an invitation for the spoken pivot and the pruning to
+            # disagree about whether the candidate declined at all.
+            #
+            # The answer is still recorded and scored exactly as it always was, because
             # "I don't know" IS an answer to a question and is graded as one.
-            "declined": said_dont_know(content),
+            "declined": declined,
         }
 
     async def complete_session(self, session_id: uuid.UUID):

@@ -101,17 +101,46 @@ class TestThePromptForbidsLecturing:
 
 class TestTheBudgetDoesNotFitALecture:
     def test_max_tokens_is_low_enough_to_matter(self):
-        # The prompt asks for brevity and the ceiling enforces it. At 500 there was room for
-        # roughly 375 words — four paragraphs — so the instruction was the only thing
-        # standing between the candidate and a lecture, and it lost.
+        """
+        The SPOKEN turn's ceiling. The prompt asks for brevity and this enforces it — at 500
+        there was room for roughly 375 words, four paragraphs, so the instruction was the only
+        thing between the candidate and a lecture, and it lost.
+
+        ANCHORED TO THE InterviewPanelTurn CALL rather than to the first `max_tokens=` in the
+        file, which is what it used to match. panel.py now makes a second generation — the
+        graded code verdict — and that one legitimately needs a far larger budget, because it
+        returns a big structured evaluation rather than four spoken lines. A bare search found
+        whichever call appeared first and started reporting the evaluator's budget as though
+        the panel had been allowed to start lecturing again.
+
+        The property being protected is specifically "what the panel SAYS is short". Matching
+        on the call that produces speech is what makes that true, rather than nearly true.
+        """
         source = _PANEL.read_text()
-        match = re.search(r"max_tokens=(\d+)", source)
+        call = re.search(r"generate_structured\(\s*InterviewPanelTurn\b(.*?)\n\s*\)", source, re.S)
+        assert call, "the panel turn no longer generates an InterviewPanelTurn"
+        match = re.search(r"max_tokens=(\d+)", call.group(1))
         assert match, "the panel turn no longer sets max_tokens"
         budget = int(match.group(1))
         assert budget <= 360, f"max_tokens={budget} leaves room for a paragraph again"
         # And not so low that a legitimate four-line turn plus JSON scaffolding gets cut off
         # mid-body — which fails validation, costs a retry, and can end with no panel at all.
         assert budget >= 260, f"max_tokens={budget} risks truncating a normal turn"
+
+    def test_the_code_verdict_is_not_billed_as_a_spoken_turn(self):
+        """
+        The verdict generation is a separate call with a separate budget, and it must stay
+        separate. Folding the evaluation into the spoken turn would either truncate the
+        evaluation or re-open the ceiling on the speech — the two cannot share one budget.
+        """
+        source = _PANEL.read_text()
+        verdict = re.search(r"generate_structured\(\s*CodingEvaluation\b(.*?)\n\s*\)", source, re.S)
+        assert verdict, "the code verdict no longer generates a CodingEvaluation"
+        assert re.search(r"max_tokens=(\d+)", verdict.group(1)), "the verdict sets no ceiling"
+        # It is graded against a schema the candidate never hears, so it is allowed to be
+        # large — but it is on the path between submit and the panel speaking, so it is not
+        # allowed to be unbounded.
+        assert int(re.search(r"max_tokens=(\d+)", verdict.group(1)).group(1)) <= 2000
 
 
 class TestTheStagesStillExist:

@@ -21,6 +21,7 @@ put it to the candidate the old way.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import structlog
@@ -37,6 +38,15 @@ from app.services.tts.base import TONE_PROSODY
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/panel", tags=["Interview Panel"])
+
+#: How long the code verdict may take before the panel speaks without one.
+#:
+#: Much tighter than /code/analyse's 45s, and for a different reason than cost. That endpoint
+#: renders a review the candidate is sitting and reading; this one sits between them hitting
+#: submit and anybody in the room saying anything. Silence is the failure mode here, so the
+#: budget is set to what a pause between "okay, let me look" and the response can absorb.
+#: Past that, an ungrounded review now beats a grounded one later.
+_CODE_VERDICT_BUDGET_SECONDS = 18.0
 
 
 class Interviewer(BaseModel):
@@ -193,6 +203,171 @@ async def _last_exchange(
     if ideal:
         expected_parts.append(str(ideal))
     return (content or ""), "\n".join(expected_parts)
+
+
+#: Bug severity, worst first. Used to pick the ONE bug a spoken review mentions.
+_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "style": 3}
+
+
+def summarise_code_verdict(evaluation: object) -> str:
+    """
+    A full CodingEvaluation, reduced to something a panelist can say in one breath.
+
+    Separate from `_code_verdict` and public so it can be tested without a database or a
+    model, because this is where the judgement lives — the rest of that function is a scoped
+    read and an AI call.
+
+    THE PANEL HAS A 320-TOKEN OUTPUT BUDGET AND IS MEANT TO SAY TWO SENTENCES. A CodingEvaluation
+    carries four scores, every bug, every missed edge case, strengths, improvements and
+    follow-ups. Handing all of that to a model that is trying to sound like a person in a room
+    is how the panel started lecturing, which is a regression this codebase has already had to
+    fix once. So this keeps only what one spoken correction can stand on: whether it is right,
+    what the worst thing wrong with it is, and whether the approach was good enough.
+    """
+    from app.services.ai.schemas import CodingEvaluation  # noqa: PLC0415
+
+    if not isinstance(evaluation, CodingEvaluation):
+        return ""
+
+    parts = [
+        f"Correctness: {evaluation.correctness_level.replace('_', ' ')} "
+        f"({evaluation.correctness_score:.0f}/10).",
+        f"Approach: {evaluation.approach.replace('_', ' ')}"
+        + ("" if evaluation.is_brute_force_sound else " (and it does not hold up)")
+        + ".",
+        evaluation.summary.strip(),
+    ]
+    if evaluation.bugs:
+        # THE MOST SERIOUS BUG, not the first one the model happened to list. Order in that
+        # list is not meaningful, and a spoken review gets exactly ONE — leading with a style
+        # nit while a critical defect goes unmentioned is how a review sounds thorough and is
+        # useless. A list read aloud is a document, not a correction.
+        worst = min(evaluation.bugs, key=lambda b: _SEVERITY_ORDER.get(b.severity, 9))
+        parts.append(f"Main bug ({worst.severity}): {worst.description}")
+    if evaluation.edge_cases_missed:
+        parts.append(f"Edge case missed: {evaluation.edge_cases_missed[0]}")
+    if evaluation.time_complexity and evaluation.optimal_time_complexity:
+        if evaluation.time_complexity != evaluation.optimal_time_complexity:
+            parts.append(
+                f"Complexity: theirs is {evaluation.time_complexity}, "
+                f"optimal is {evaluation.optimal_time_complexity}."
+            )
+        else:
+            parts.append(f"Complexity {evaluation.time_complexity} — optimal.")
+
+    return " ".join(p for p in parts if p)
+
+
+async def _code_verdict(
+    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID, language: str
+) -> str:
+    """
+    An actual graded verdict on the code the candidate just submitted, for the panel to
+    speak from.
+
+    WHY THIS EXISTS. The `code_review` stage already put the submission in front of the model
+    and asked it to write dialogue about it. That is not the same thing as reviewing it, and
+    the difference was audible: the panel said something plausible about the code without ever
+    establishing whether it WORKS. Reported as the interviewer "not analysing the solution",
+    which was accurate — a coding round where nobody checks the answer is theatre.
+
+    Meanwhile the product already had a real evaluator. `coding_evaluator.md` and the
+    `CodingEvaluation` schema grade correctness on a four-point scale, name the specific bugs,
+    compare the complexity reached against the optimal one, and judge whether a brute force is
+    a legitimate pass. It was reachable only from `/code/analyse`, which the interview never
+    called. This routes the interview through it.
+
+    GROUNDED THE SAME WAY A CORRECTION IS. Nothing here is accepted from the client except the
+    language the editor was set to: the code and the problem are read back out of the database
+    under the same user-scoped ownership check as `_last_exchange`, so a review cannot be
+    produced against code the candidate did not submit, and the verdict cannot be steered by a
+    caller. Only the LANGUAGE comes from the browser, and it is only a hint to the evaluator.
+
+    RETURNS A SHORT STRING BECAUSE THE PANEL SPEAKS IT. The full evaluation is a large object;
+    a panel with a 320-token budget that is meant to say two sentences cannot use it, and
+    handing over the whole thing is how the panel started lecturing before. Correctness, the
+    single most important bug, and the complexity gap is what one spoken correction needs.
+
+    FAILS SOFT TO "". Every failure — no submission, unsupported language, the model being
+    slow or down — returns empty, and the brief then tells the panel it has no verdict and
+    must not invent one. A coding round with an ungrounded review is a worse product; a coding
+    round that 500s because the reviewer was slow is a broken one.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
+    from app.models.question import Question  # noqa: PLC0415
+    from app.models.session import Answer, InterviewSession  # noqa: PLC0415
+    from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
+    from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
+    from app.services.ai.schemas import CodingEvaluation  # noqa: PLC0415
+
+    owns = await db.scalar(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id, InterviewSession.user_id == user_id
+        )
+    )
+    if not owns:
+        return ""
+
+    row = (
+        await db.execute(
+            select(Answer.content, Question.content, Question.difficulty)
+            .join(Question, Question.id == Answer.question_id)
+            .where(Answer.session_id == session_id)
+            .order_by(Answer.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return ""
+
+    source, problem, difficulty = row
+    source = (source or "").strip()
+    # Below this it is not a submission — it is an empty editor or a candidate who typed a
+    # sentence instead of code. Reviewing that produces a confident verdict about nothing.
+    if len(source) < 20:
+        return ""
+
+    lang = (language or "").lower().strip() or "java"
+
+    builder = PromptBuilder(get_prompt_loader())
+    messages = builder.chat(
+        system_template="coding_evaluator",
+        user_content=f"Review this {lang} submission:\n\n```{lang}\n{source}\n```",
+        language=lang,
+        problem_title="Interview coding question",
+        problem_description=(problem or "(not provided — infer it from the code)"),
+        difficulty=str(difficulty or "medium"),
+        # The interview does not run the code before reviewing it. Saying "(not run)" rather
+        # than leaving these blank matters: the evaluator prompt reasons about stdout when it
+        # has it, and an empty string reads as "it produced no output", which is a different
+        # and much worse claim than "nobody executed this".
+        stdout="(not run)",
+        stderr="(none)",
+    )
+
+    try:
+        evaluation, _ = await asyncio.wait_for(
+            generate_structured(
+                CodingEvaluation,
+                messages,
+                max_tokens=1200,
+                # One attempt. This sits between the candidate submitting and the panel
+                # speaking, so a retry costs more silence than a missing verdict does.
+                attempts_per_provider=1,
+                cost_tier=CostTier.BALANCED,
+                context="panel_code_review",
+            ),
+            timeout=_CODE_VERDICT_BUDGET_SECONDS,
+        )
+    except (AIProviderUnavailableError, TimeoutError, ValueError):
+        logger.warning("panel_code_verdict_unavailable", session_id=str(session_id), language=lang)
+        return ""
+
+    return summarise_code_verdict(evaluation)
 
 
 async def _pivot_topic(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID) -> str:
@@ -443,6 +618,12 @@ async def panel_turn(
     if request.stage == "pivot":
         pivot_topic = await _pivot_topic(db, request.session_id, current_user.user_id)
 
+    code_verdict = ""
+    if request.stage == "code_review":
+        code_verdict = await _code_verdict(
+            db, request.session_id, current_user.user_id, request.language
+        )
+
     brief = "\n".join(
         [
             "## This moment",
@@ -484,6 +665,23 @@ async def panel_turn(
                 + (
                     f"Language: {request.language or 'unknown'}. The code is what they last "
                     "said, above."
+                    if request.stage == "code_review"
+                    else "(not a code review)"
+                )
+            ),
+            "",
+            # The graded verdict, kept as its own section rather than folded into the block
+            # above, because it is a DIFFERENT kind of thing: the code is what the candidate
+            # wrote, this is what an evaluator concluded about it. The panel must speak from
+            # the conclusion and not re-derive one, for the same reason a correction speaks
+            # from the bank's answer key rather than from the model's recollection.
+            "### The verdict on that code (code_review stage only)",
+            (
+                code_verdict
+                or (
+                    "(not available — say what you can about the code as written, and do NOT "
+                    "state whether it is correct, whether it compiles, or what its complexity "
+                    "is. You have not been told any of those things.)"
                     if request.stage == "code_review"
                     else "(not a code review)"
                 )
