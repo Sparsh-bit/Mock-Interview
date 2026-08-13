@@ -199,7 +199,7 @@ class TestTheWebhookRecomputesTheExpectedPrice:
         # the webhook's comparison is what catches it.
         expected = charge_for(offer(kind=KIND_PERCENT, value=50), ITEM)
         assert expected == 2450
-        assert 100 < expected
+        assert expected > 100
 
 
 class TestTheOrderCannotBeBuiltBelowRazorpaysFloor:
