@@ -28,12 +28,41 @@ original design and it was a deliberate one, twice over:
 | **Anil** | interview | male | Professional Male Voice — authoritative, middle-aged | `595c8bbb74eb471fbb599d81dac5672a` |
 | **Priya** | interview | female | Clear & Confident Female | `cb131d96670e4d92951e5ea56697c5ab` |
 | **interviewer** | fallback | male | *(same as Anil)* | `595c8bbb74eb471fbb599d81dac5672a` |
-| **Riya** | GD | female | Clear Assertive Female | `b7e0bd78d38e4ddd81468e2569f2ad3c` |
+| **Riya** | GD | female | Hannah — professional, confident, middle-aged | `9a9cf47702da476aa4629e2506d4a857` |
 | **Arjun** | GD | male | Clear Male Voice — young, energetic | `01f34c9748f74dcda57448f033ea2935` |
 | **Meera** | GD | female | Friendly Young Female | `1b1286fcf2f44d8ba1405e0b71abca22` |
 
 Riya and Meera are both female and share a round, so they are separated by age band rather
 than by tone alone — two similar female voices was a real complaint about the old roster.
+Hannah is middle-aged and Meera is young, so that separation survives the change below.
+
+### Riya was replaced, and popularity is why
+
+She was `Clear Assertive Female` (`b7e0bd78…`) and was still reported as unpleasant after
+the pacing fix below — which was the signal that pacing was not the whole problem. The
+catalogue says why: **128 generations and 1 like**, against hundreds of thousands and
+four figures for the voices people actually use. Fish's catalogue is largely
+community-uploaded and varies enormously in quality, so usage is the only quality signal
+available without listening to every candidate.
+
+Ranking English female voices by usage and discarding the unusable ones is quick:
+`Jasphina` (960k) is tagged `character-voice, playful, animated, **fast**` — fast being
+the original complaint; `Sarah` (1.7M) is `soft, breathy, intimate`, which is the wrong
+register for somebody challenging your numbers; most of the rest of the top twenty are
+anime characters, celebrity clones and producer watermarks.
+
+That leaves two real candidates, and the choice between them was made by **listening to
+both** rather than by reading tags:
+
+| voice | id | tags | usage |
+|---|---|---|---:|
+| **Hannah** *(chosen)* | `9a9cf477…` | educational, professional, confident, clear | 225k / 1,220 |
+| Laura | `e3cd3841…` | deep, warm, calm, professional, clear | 149k / 1,437 |
+
+Laura remains the better fit for **Meera**, whose stance is the synthesiser — calm, warm,
+brings quiet people in — if that voice is ever revisited.
+
+`scripts/verify_voices.py` passes on the new roster: female, neutral English, not `old`.
 
 ### What the previous roster got wrong
 
@@ -108,6 +137,11 @@ question and Riya conceding a point are both still Riya.
 | **Riya** | 0.92 | reported as "annoying and disturbed" — see below |
 | everyone else | 1.00 | no entry needed; unlisted speakers use the tone speed unchanged |
 
+Kept at 0.92 after the voice change. The pace and the voice were two independent causes of
+one complaint: the arithmetic below made *any* voice in that slot sound resampled, and the
+voice itself was a poor one, so fixing either alone left the other in place. Hannah is not
+tagged `fast`, so if she now reads as too slow this is the single number to raise.
+
 Riya is the only entry and the reason the mechanism exists. Her GD stance is the assertive
 one, so `personaFor` gave her the largest client-side tempo in the product (1.09), and that
 was applied as an `<audio>` **playbackRate on top of** a tone speed already reaching 1.08. An
@@ -164,7 +198,7 @@ TTS_ENABLED=true
 TTS_PROVIDER=fish
 FISH_API_KEY=<your key>
 FISH_MODEL=s2.1-pro-free
-TTS_VOICE_IDS=Anil:595c8bbb74eb471fbb599d81dac5672a,Priya:cb131d96670e4d92951e5ea56697c5ab,interviewer:595c8bbb74eb471fbb599d81dac5672a,Riya:b7e0bd78d38e4ddd81468e2569f2ad3c,Arjun:01f34c9748f74dcda57448f033ea2935,Meera:1b1286fcf2f44d8ba1405e0b71abca22
+TTS_VOICE_IDS=Anil:595c8bbb74eb471fbb599d81dac5672a,Priya:cb131d96670e4d92951e5ea56697c5ab,interviewer:595c8bbb74eb471fbb599d81dac5672a,Riya:9a9cf47702da476aa4629e2506d4a857,Arjun:01f34c9748f74dcda57448f033ea2935,Meera:1b1286fcf2f44d8ba1405e0b71abca22
 ```
 
 `FISH_MODEL` is not optional and not a placeholder. Fish bills API credit separately from
