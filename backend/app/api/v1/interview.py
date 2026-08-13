@@ -368,12 +368,34 @@ async def get_next_question(
     question = await orchestrator.get_next_question(session_id)
     if not question:
         return {"question": None, "message": "Session complete or no questions available."}
+
+    # IS THIS A FOLLOW-UP TO WHAT THEY JUST SAID?
+    #
+    # The reported bug was "I cannot see the cross questions", and the feature was working
+    # the whole time — it was just invisible. The orchestrator generates a follow-up after
+    # every third answer, records its id on the session, and serves it as the next
+    # question. This endpoint then returned it with the same four fields as any other, so
+    # the client had no way to know, the panel delivered it through the generic `mid` stage
+    # as though it were a new topic, and the one moment the interview is most obviously
+    # listening to you looked exactly like the moments it is not.
+    #
+    # Read from the session's own record rather than inferred from the question row, because
+    # `cross_question_ids` is what the orchestrator actually keys its own logic on — a second
+    # derivation could disagree with it.
+    # `session` cannot be None here — _verify_session_ownership above already 404s otherwise
+    # — but the guard is kept rather than asserted away: this reads a label, and a label is
+    # never worth an AttributeError inside a live interview.
+    session = await db.get(InterviewSession, session_id)
+    meta = (session.session_metadata or {}) if session else {}
+    cross_ids = set(meta.get("cross_question_ids", []))
+
     return {
         "question": {
             "id": question.id,
             "content": question.content,
             "type": question.question_type,
-            "difficulty": question.difficulty
+            "difficulty": question.difficulty,
+            "is_follow_up": str(question.id) in cross_ids,
         }
     }
 

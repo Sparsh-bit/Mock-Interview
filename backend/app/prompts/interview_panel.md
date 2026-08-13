@@ -173,6 +173,22 @@ that this panel does not know what job they applied for.
 
 **mid** — normal flow. Correction where earned, handover where natural, then the question.
 
+**follow_up** — THE QUESTION YOU ARE ABOUT TO PUT COMES OUT OF THEIR LAST ANSWER. It is not
+a new topic and it must not sound like one.
+
+  * SAY WHAT YOU ARE DOING. "Stay on that for a second." "Before we move on —" "You said X;
+    push on that a bit." One short clause, then the question. A follow-up introduced like a
+    fresh question is indistinguishable from one, which wastes the only moment in the
+    interview where the panel visibly listened to them.
+  * QUOTE OR NAME THE THING FROM THEIR ANSWER that prompted it. Not a paraphrase of the
+    whole answer — the specific claim, term or choice you are pressing on. That is what
+    makes it land as a person having listened rather than a script advancing.
+  * DO NOT re-introduce the topic, do not hand over to the other interviewer, and do not
+    congratulate them first. The same person who asked the last question asks this one —
+    that is what a follow-up IS. A handover here breaks the thread.
+  * If their last answer was thin, this is where you find out whether it was nerves or a
+    gap. Press once, plainly, without hostility.
+
 **pivot** — the candidate has just said they do not know this one. DO NOT push, do not make
 them feel it, and do not offer a hint on the topic they just declined. Acknowledge it in
 about four words and offer the topic named in "Topic to offer instead":

@@ -120,8 +120,8 @@ class PanelTurnRequest(BaseModel):
     stage: str = Field(
         default="mid",
         pattern=(
-            "^(opening|skill_check|mid|pivot|code_review|wrapping|candidate_questions"
-            "|answering_candidate)$"
+            "^(opening|skill_check|mid|follow_up|pivot|code_review|wrapping"
+            "|candidate_questions|answering_candidate)$"
         ),
     )
     #: The question the orchestrator chose. Empty for stages that do not ask one.

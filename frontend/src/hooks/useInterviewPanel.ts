@@ -46,6 +46,7 @@ export interface PanelLine {
  *
  *   opening              greet, both introduce themselves, first question
  *   mid                  correction where earned, handover, next question
+ *   follow_up            the question comes out of their last answer — stay on the thread
  *   wrapping             the senior one asks the other if they have anything left
  *   candidate_questions  "Do you have any questions for us?"
  *   answering_candidate  the candidate asked something — answer it properly
@@ -54,6 +55,10 @@ export type PanelStage =
   | 'opening'
   | 'skill_check'
   | 'mid'
+  // The next question came out of their last answer. Kept distinct from `mid` because a
+  // follow-up introduced as a fresh question is indistinguishable from one — which wastes
+  // the single moment the interview visibly listened to them.
+  | 'follow_up'
   | 'pivot'
   | 'code_review'
   | 'wrapping'

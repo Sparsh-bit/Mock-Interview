@@ -234,3 +234,58 @@ class TestThePanelSoundsAlive:
         assert "NEVER at the candidate" in gd
         # And the same name discipline, for the same reason.
         assert "Not in consecutive turns" in gd
+
+
+class TestAFollowUpIsDeliveredAsOne:
+    """
+    "I cannot see the cross questions in the interview still."
+
+    The feature was running the whole time. The orchestrator generates a follow-up after
+    every third answer, records its id on the session, and serves it as the next question —
+    but GET /next returned the same four fields for every question, so the client could not
+    tell, delivered it through the generic `mid` stage, and it arrived looking exactly like
+    a fresh question from the plan.
+
+    Which meant the single moment in the interview where the panel visibly listened to the
+    candidate was indistinguishable from the moments it did not. Invisible is the same as
+    absent from where the candidate is sitting.
+    """
+
+    def test_the_api_says_whether_a_question_is_a_follow_up(self):
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/interview.py"
+        ).read_text()
+        nxt = src[src.index("async def get_next_question") :]
+        assert '"is_follow_up"' in nxt
+
+    def test_it_is_read_from_the_session_record_not_re_derived(self):
+        # `cross_question_ids` is what the orchestrator keys its own logic on. A second
+        # derivation — inferring from the question row, say — could disagree with it, and
+        # then the label and the behaviour would drift apart.
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/interview.py"
+        ).read_text()
+        assert "cross_question_ids" in src
+
+    def test_the_panel_accepts_a_follow_up_stage(self):
+        from app.api.v1.panel import PanelTurnRequest
+
+        pattern = PanelTurnRequest.model_fields["stage"].metadata[0].pattern
+        assert "follow_up" in pattern
+
+    def test_the_prompt_tells_it_to_stay_on_the_thread(self, prompt: str):
+        # Uses the module's collapsed `prompt` fixture rather than re-reading the file. The
+        # prompt is hard-wrapped markdown, so "it is not a new topic" is genuinely stored as
+        # "it is not\n   a new topic" — the fixture's own docstring records that this exact
+        # mistake has been made twice in this repo already, and I made it a third time.
+        block = prompt[prompt.index("**follow_up**") : prompt.index("**pivot**")].lower()
+        # The three things that distinguish a follow-up from a new question.
+        assert "not a new topic" in block
+        assert "quote or name the thing" in block
+        # No handover: the same person who asked the last question asks this one.
+        assert "do not re-introduce the topic" in block
+        assert "hand over" in block

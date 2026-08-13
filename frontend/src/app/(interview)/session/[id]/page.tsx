@@ -536,7 +536,13 @@ export default function LiveSessionPage() {
       const { spoke } = await speakTurn({
         // The first question is a greeting and introductions; everything after is normal
         // flow, where a wrong previous answer gets corrected before the next question.
-        stage: answered === 0 ? 'opening' : 'mid',
+        // A follow-up is not a new topic and must not be introduced like one. `follow_up`
+        // tells the panel to stay on the thread, name the thing from their answer it is
+        // pressing on, and keep the same interviewer rather than handing over — which is
+        // what a follow-up IS. Delivered through `mid` it read as a fresh question, which is
+        // why "I cannot see the cross questions" was a fair description of a feature that
+        // had been running all along.
+        stage: answered === 0 ? 'opening' : question?.is_follow_up ? 'follow_up' : 'mid',
         question: questionText,
       });
       // No panel — provider down, or it returned nothing usable. Fall back to the single
@@ -1175,7 +1181,12 @@ export default function LiveSessionPage() {
             <div className="flex-shrink-0 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3">
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">
-                  On the table
+                  {/* Named for what it is. A follow-up is the one question in the interview
+                      that exists BECAUSE of something the candidate said, and until now it
+                      arrived looking exactly like the eleven that did not — so the moment the
+                      panel was most obviously listening was the moment that read as most
+                      scripted. */}
+                  {question?.is_follow_up ? 'Following up on your answer' : 'On the table'}
                 </span>
                 {question?.difficulty && (
                   <span className="text-[10px] uppercase tracking-wide text-muted-foreground">

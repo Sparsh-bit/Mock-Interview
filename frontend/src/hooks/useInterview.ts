@@ -19,6 +19,16 @@ export function useNextQuestion(sessionId: string) {
           content: string;
           type: string;
           difficulty: string;
+          /**
+           * This question came out of the candidate's last answer rather than from the plan.
+           *
+           * Decided server-side from the session's own `cross_question_ids` — the same record
+           * the orchestrator keys its logic on, so there is no second derivation that could
+           * disagree. The client uses it to pick the panel stage and to mark the thread; it
+           * was not sent at all before, which is why follow-ups were indistinguishable from
+           * new questions and the feature looked like it was not running.
+           */
+          is_follow_up?: boolean;
         } | null;
         message?: string;
       };
