@@ -16,13 +16,14 @@ from __future__ import annotations
 import json
 import random
 import uuid
-from typing import Literal
+from typing import Literal, TypedDict
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
+from app.core.exceptions import AIProviderUnavailableError
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import cache_delete, cache_get, cache_set, get_redis
@@ -91,6 +92,60 @@ class SubmitQuizResponse(BaseModel):
     results: list[QuizResultItem]
 
 
+class _PickedQuestion(TypedDict):
+    """
+    One quiz question, normalised across its two possible sources.
+
+    The AI path yields pydantic `QuizQuestion` objects and the bank yields plain dicts. Since
+    a single quiz can now be filled from BOTH — the bank tops up whatever the model was short
+    — they have to meet in one shape before the answer key is built, or the key and the
+    public questions can drift apart depending on where each question came from.
+
+    A TypedDict rather than a bare dict so mypy checks that shape at every construction site;
+    the two sources are in different functions and nothing else would catch a mismatch.
+    """
+
+    question: str
+    options: list[str]
+    correct_index: int
+    explanation: str
+    topic: str
+    difficulty: str
+
+
+def _bank_fill(need: int, exclude: list[str] | None = None) -> list[_PickedQuestion]:
+    """
+    `need` questions from the curated bank, in the same shape the AI path produces.
+
+    The safety net under the generated quiz. Requiring the AI to return the full count turns
+    a persistent undershoot into a raised error, and the honest response to that is not a
+    503 — it is the questions we already have sitting in a Python module, needing no vendor
+    and no network.
+
+    Returns fewer than `need` only when the bank itself cannot cover it, which the caller
+    surfaces rather than papering over.
+    """
+    from app.data.quiz_bank import QUIZ_BANK  # noqa: PLC0415
+
+    seen = {q.strip().lower() for q in (exclude or [])}
+    pool: list[_PickedQuestion] = [
+        {
+            "question": q["question"],
+            "options": list(q["options"]),
+            "correct_index": q["correct_index"],
+            "explanation": q.get("explanation", ""),
+            "topic": topic,
+            "difficulty": q.get("difficulty", "medium"),
+        }
+        for topic, qs in QUIZ_BANK.items()
+        for q in qs
+        # Not a duplicate of something the model already produced. Two near-identical
+        # questions in one quiz is a more obvious defect than a quiz being one short.
+        if q["question"].strip().lower() not in seen
+    ]
+    return random.sample(pool, min(need, len(pool)))
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -146,36 +201,91 @@ async def start_quiz(
     )
 
     # Budget tokens to the quiz size (~300 tokens/question + buffer). Tries the
-    # primary then fallback provider, retrying each; a provider can return empty
-    # content even on a success status, so a non-empty question list is
-    # required (raises AIProviderUnavailableError if all attempts fail).
+    # primary then fallback provider, retrying each.
+    #
+    # THE VALIDITY CHECK IS ON THE COUNT, NOT ON EMPTINESS, and that is the fix for "I
+    # selected 5 questions and only 3 came".
+    #
+    # It used to be `bool(q.questions)`. A model asked for five questions and returning three
+    # therefore passed validation on the first attempt, and the candidate silently got a
+    # shorter quiz than the one they configured — with the score reported out of the number
+    # that arrived, so nothing on screen indicated anything had gone wrong. Models undershoot
+    # a requested count routinely; nothing else in the pipeline was checking, so the request
+    # was effectively a suggestion.
+    #
+    # Requiring the full count makes a short generation a retry instead of a result. Asking
+    # for MORE than the count is fine and is trimmed below — an over-delivery is not a defect.
     max_tokens = min(300 * request.count + 600, 8000)
-    quiz, _ = await generate_structured(
-        QuizGeneration,
-        messages,
-        max_tokens=max_tokens,
-        attempts_per_provider=2,
-        is_valid=lambda q: bool(q.questions),
-        cost_tier=CostTier.BALANCED,
-        context="quiz_generation",
-    )
+    try:
+        quiz, _ = await generate_structured(
+            QuizGeneration,
+            messages,
+            max_tokens=max_tokens,
+            attempts_per_provider=2,
+            is_valid=lambda q: len(q.questions) >= request.count,
+            cost_tier=CostTier.BALANCED,
+            context="quiz_generation",
+        )
+        # Trimmed to exactly what was asked for. A model that returns eight when asked for
+        # five is not an error, but serving eight is still not honouring the request.
+        picked: list[_PickedQuestion] = [
+            {
+                "question": q.question,
+                "options": list(q.options),
+                "correct_index": q.correct_index,
+                "explanation": q.explanation,
+                "topic": q.topic,
+                "difficulty": q.difficulty,
+            }
+            for q in quiz.questions[: request.count]
+        ]
+    except AIProviderUnavailableError:
+        # TIGHTENING THE VALIDITY CHECK MUST NOT TURN A SHORT QUIZ INTO NO QUIZ.
+        #
+        # Requiring the full count means a model that keeps undershooting now exhausts its
+        # retries and raises, where before it returned three questions and the endpoint
+        # happily served them. Letting that propagate would trade a quiz that is too short
+        # for a 503, which is a worse product for the same underlying vendor flakiness.
+        #
+        # So the curated bank fills in instead. It needs no AI, it is the same shape, and it
+        # is already the source for the /bank/start endpoint — a candidate who asked for five
+        # questions gets five questions.
+        logger.warning("quiz_generation_short_falling_back_to_bank", count=request.count)
+        picked = []
+
+    if len(picked) < request.count:
+        picked.extend(_bank_fill(request.count - len(picked), exclude=[p["question"] for p in picked]))
+
+    if not picked:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not build a quiz right now. Please try again in a moment.",
+        )
 
     quiz_id = str(uuid.uuid4())
     public_questions: list[QuizOption] = []
     answer_key: dict[str, dict] = {}
-    for q in quiz.questions:
+    for q in picked:
         qid = str(uuid.uuid4())
+        options = q["options"]
         # Clamp a possibly-out-of-range correct_index to a valid option.
-        correct = q.correct_index if 0 <= q.correct_index < len(q.options) else 0
+        raw_correct = q["correct_index"]
+        correct = raw_correct if 0 <= raw_correct < len(options) else 0
         public_questions.append(
-            QuizOption(id=qid, question=q.question, options=q.options, topic=q.topic, difficulty=q.difficulty)
+            QuizOption(
+                id=qid,
+                question=q["question"],
+                options=options,
+                topic=q["topic"],
+                difficulty=q["difficulty"],
+            )
         )
         answer_key[qid] = {
-            "question": q.question,
-            "options": q.options,
+            "question": q["question"],
+            "options": options,
             "correct_index": correct,
-            "explanation": q.explanation,
-            "topic": q.topic,
+            "explanation": q["explanation"],
+            "topic": q["topic"],
         }
 
     await cache_set(
@@ -269,7 +379,26 @@ async def start_bank_quiz(
     if not pool:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No questions in the bank.")
 
-    sample = random.sample(pool, min(request.count, len(pool)))
+    # SAY SO WHEN THE BANK CANNOT COVER THE REQUEST, rather than quietly serving fewer.
+    #
+    # `min(count, len(pool))` silently short-changed the candidate in exactly the way the AI
+    # path did: ask for fifteen hard SQL questions, get four, with the score reported out of
+    # four and nothing on screen saying why. The difficulty filter above already refuses
+    # loudly when it empties the pool — this is the same situation one step later, and it
+    # deserves the same honesty.
+    if len(pool) < request.count:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Only {len(pool)} "
+                + (f"{request.difficulty} " if request.difficulty else "")
+                + "questions available"
+                + (f" for '{request.topic}'" if request.topic else " in the bank")
+                + f" — you asked for {request.count}."
+            ),
+        )
+
+    sample = random.sample(pool, request.count)
 
     quiz_id = str(uuid.uuid4())
     public_questions: list[QuizOption] = []
