@@ -38,3 +38,17 @@ frontend/tsconfig.tsbuildinfo
 
 # Redis snapshot, written by a locally-run redis-server
 dump.rdb
+
+# Loose photos dropped in the repo root. Real image assets live in frontend/public/img,
+# which is where the landing page reads them from; a 5MB JPG sat here tracked for months
+# and referenced by nothing.
+/*.jpg
+/*.jpeg
+/*.png
+
+# The Obsidian vault's per-machine UI state — open panes, window size, last file viewed.
+# The vault IS this repo, so without these every clone fights over somebody else's window
+# layout. The settings that are worth sharing (graph config, enabled core plugins) are
+# tracked deliberately.
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
