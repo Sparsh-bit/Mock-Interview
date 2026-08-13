@@ -1,0 +1,352 @@
+'use client';
+
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
+
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import { getBrowserApiClient } from '@/lib/api';
+import { ApiError } from '@/lib/api/errors';
+import { cn } from '@/lib/utils';
+
+/**
+ * Offers and promo codes — app/(dashboard)/admin/offers/page.tsx
+ *
+ * THE SWITCH IS THE POINT OF THIS PAGE. A private 100%-off code given to friends needs to be
+ * turnable off and back on without losing who has already used it, and that is one toggle
+ * here rather than a deploy. Turning it off stops it working for everybody on the next
+ * request, including anyone already quoted a discount.
+ *
+ * DELETION IS REFUSED ONCE A CODE HAS BEEN USED, and the server enforces that — the
+ * redemptions are the audit trail for revenue given away, and the foreign key cascades. The
+ * button is hidden rather than shown-and-failing, but the server would refuse it anyway;
+ * this page is a convenience over that rule, never the thing that holds it.
+ *
+ * EVERY FIELD THAT DECIDES MONEY IS SET AT CREATION AND NOT EDITABLE AFTERWARDS. Changing
+ * what a code MEANS after people have used it makes the redemption rows a lie: they record
+ * what was charged under the old terms while the offer claims different ones. Switch it off
+ * and make a new code.
+ */
+
+interface Offer {
+  id: string;
+  code: string;
+  label: string;
+  kind: 'percent' | 'fixed' | 'free';
+  value: number;
+  applies_to: string[];
+  enabled: boolean;
+  is_public: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  max_redemptions: number | null;
+  requires_captcha: boolean;
+  redemptions: number;
+  discount_given_rupees: number;
+}
+
+const BLANK = {
+  code: '',
+  label: '',
+  kind: 'percent' as 'percent' | 'fixed' | 'free',
+  value: 25,
+  enabled: true,
+  is_public: true,
+  requires_captcha: false,
+  max_redemptions: '' as string | number,
+  starts_at: '',
+  ends_at: '',
+};
+
+function describe(o: Offer): string {
+  if (o.kind === 'free') return '100% off';
+  if (o.kind === 'fixed') return `₹${Math.round(o.value / 100)} flat`;
+  return `${o.value}% off`;
+}
+
+export default function AdminOffersPage() {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ ...BLANK });
+
+  const offers = useQuery({
+    queryKey: ['admin', 'offers'],
+    queryFn: async () =>
+      (await getBrowserApiClient().get('/api/v1/admin/offers')).data as Offer[],
+  });
+
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'offers'] });
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = {
+        code: form.code.trim().toUpperCase(),
+        label: form.label.trim() || form.code.trim().toUpperCase(),
+        kind: form.kind,
+        // Rupees in the form, paise on the wire. Prices are integers in paise everywhere
+        // server-side — a rupee figure as a float is a rounding bug waiting for ₹49.50.
+        value: form.kind === 'fixed' ? Math.round(Number(form.value) * 100) : Number(form.value),
+        enabled: form.enabled,
+        is_public: form.is_public,
+        requires_captcha: form.requires_captcha,
+        max_redemptions: form.max_redemptions === '' ? null : Number(form.max_redemptions),
+        starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
+        ends_at: form.ends_at ? new Date(form.ends_at).toISOString() : null,
+      };
+      return (await getBrowserApiClient().post('/api/v1/admin/offers', body)).data;
+    },
+    onSuccess: () => {
+      toast.success('Offer created.');
+      setForm({ ...BLANK });
+      setCreating(false);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Could not create that offer.'),
+  });
+
+  const toggle = useMutation({
+    mutationFn: async (args: { id: string; enabled: boolean }) =>
+      (await getBrowserApiClient().patch(`/api/v1/admin/offers/${args.id}`, {
+        enabled: args.enabled,
+      })).data,
+    onSuccess: (_d, args) => {
+      toast.success(args.enabled ? 'Code is live.' : 'Code is off. Nobody can use it now.');
+      invalidate();
+    },
+    onError: () => toast.error('Could not change that.'),
+  });
+
+  const remove = useMutation({
+    mutationFn: async (id: string) =>
+      (await getBrowserApiClient().delete(`/api/v1/admin/offers/${id}`)).data,
+    onSuccess: () => {
+      toast.success('Offer deleted.');
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete that offer.'),
+  });
+
+  return (
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <PageHeader
+        title="Offers & promo codes"
+        description="Festival offers, launch pricing, and private codes you can switch off."
+      />
+
+      <div className="mb-6 flex justify-end">
+        <Button onClick={() => setCreating((c) => !c)} variant={creating ? 'secondary' : 'primary'}>
+          <Plus className="h-4 w-4" /> {creating ? 'Cancel' : 'New offer'}
+        </Button>
+      </div>
+
+      {creating && (
+        <Card className="mb-8 p-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Code</span>
+              <input
+                value={form.code}
+                onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                placeholder="DIWALI25"
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 font-mono uppercase tracking-wider"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Label (admin only)</span>
+              <input
+                value={form.label}
+                onChange={(e) => setForm({ ...form, label: e.target.value })}
+                placeholder="Diwali 2026"
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2"
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Type</span>
+              <select
+                value={form.kind}
+                onChange={(e) =>
+                  setForm({ ...form, kind: e.target.value as typeof form.kind })
+                }
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2"
+              >
+                <option value="percent">Percent off</option>
+                <option value="fixed">Flat price (₹)</option>
+                <option value="free">Free — 100% off</option>
+              </select>
+            </label>
+
+            {form.kind !== 'free' && (
+              <label className="text-sm">
+                <span className="mb-1 block font-medium">
+                  {form.kind === 'percent' ? 'Percent (1–100)' : 'Price in ₹'}
+                </span>
+                <input
+                  type="number"
+                  value={form.value}
+                  onChange={(e) => setForm({ ...form, value: Number(e.target.value) })}
+                  className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 tabular-nums"
+                />
+              </label>
+            )}
+
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Starts (optional)</span>
+              <input
+                type="datetime-local"
+                value={form.starts_at}
+                onChange={(e) => setForm({ ...form, starts_at: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2"
+              />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Ends (optional)</span>
+              <input
+                type="datetime-local"
+                value={form.ends_at}
+                onChange={(e) => setForm({ ...form, ends_at: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2"
+              />
+            </label>
+
+            <label className="text-sm">
+              <span className="mb-1 block font-medium">Total uses allowed (blank = unlimited)</span>
+              <input
+                type="number"
+                value={form.max_redemptions}
+                onChange={(e) => setForm({ ...form, max_redemptions: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-elevated px-3 py-2 tabular-nums"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-4 text-sm">
+            {/* PUBLIC vs PRIVATE is the friends-code switch. A private code never appears in
+                any public response — it exists only for whoever is told it. */}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.is_public}
+                onChange={(e) => setForm({ ...form, is_public: e.target.checked })}
+              />
+              Show publicly (uncheck for a private code)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.requires_captcha}
+                onChange={(e) => setForm({ ...form, requires_captcha: e.target.checked })}
+              />
+              Require captcha
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+              />
+              Live immediately
+            </label>
+          </div>
+
+          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+            The code, its type and its value cannot be edited afterwards — changing what a
+            code means once people have used it makes the redemption record disagree with the
+            offer. Switch it off and make a new one instead. Everything else here is editable.
+          </p>
+
+          <div className="mt-4 flex justify-end">
+            <Button
+              onClick={() => create.mutate()}
+              loading={create.isPending}
+              disabled={!form.code.trim()}
+            >
+              Create offer
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {offers.isLoading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : !offers.data?.length ? (
+        <Card className="p-10 text-center text-sm text-muted-foreground">
+          No offers yet.
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {offers.data.map((o) => (
+            <Card key={o.id} className="flex flex-wrap items-center gap-4 p-4">
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-sm font-semibold tracking-wider">
+                    {o.code}
+                  </span>
+                  <Badge variant={o.kind === 'free' ? 'violet' : 'primary'}>
+                    {describe(o)}
+                  </Badge>
+                  {!o.is_public && <Badge variant="neutral">private</Badge>}
+                  {o.requires_captcha && <Badge variant="warning">captcha</Badge>}
+                  {o.ends_at && (
+                    <span className="text-[11px] text-muted-foreground">
+                      ends {new Date(o.ends_at).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {o.label} · used {o.redemptions}
+                  {o.max_redemptions ? ` / ${o.max_redemptions}` : ''} time
+                  {o.redemptions === 1 ? '' : 's'}
+                  {o.discount_given_rupees > 0 && ` · ₹${o.discount_given_rupees} given away`}
+                </p>
+              </div>
+
+              {/* THE SWITCH. One tap, immediate, and it keeps the redemption history — which
+                  is why it is a toggle rather than delete-and-recreate: recreating would
+                  reset the single-use record and let everybody claim again. */}
+              <button
+                onClick={() => toggle.mutate({ id: o.id, enabled: !o.enabled })}
+                disabled={toggle.isPending}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                  o.enabled
+                    ? 'border-accent-emerald/40 bg-accent-emerald/10 text-accent-emerald-ink'
+                    : 'border-border text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    o.enabled ? 'bg-accent-emerald-ink' : 'bg-muted-foreground/50',
+                  )}
+                />
+                {o.enabled ? 'Live' : 'Off'}
+              </button>
+
+              {/* Hidden once used. The server refuses it too — this only avoids offering a
+                  button that cannot work. */}
+              {o.redemptions === 0 && (
+                <button
+                  onClick={() => remove.mutate(o.id)}
+                  disabled={remove.isPending}
+                  aria-label={`Delete ${o.code}`}
+                  className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
