@@ -309,8 +309,21 @@ export default function LiveSessionPage() {
      * recording them muttering while they wrote code — and whatever it caught became their
      * "answer" alongside the code. There is nothing for it to hear on a coding question:
      * the panel asked them to write something, and the thing they write is in the editor.
+     *
+     * DURING `asking` ONLY, and that qualifier is the whole fix for "it cannot detect the
+     * answer to how would you rate yourself".
+     *
+     * `isCoding` describes the QUESTION, but this effect also runs for the skill check —
+     * which happens BEFORE that question is put, and is a spoken moment no matter what the
+     * question after it turns out to be. So whenever question one happened to be a coding
+     * question, this returned early during `skill_check`, the microphone never opened, the
+     * candidate said their rating into a closed mic, and parseSelfRating was handed an empty
+     * transcript. The parser was blamed for that; it was never called.
+     *
+     * The failure was intermittent in exactly the way that makes it hard to report — it
+     * depended entirely on the type of the first question the orchestrator happened to pick.
      */
-    if (isCoding) return;
+    if (isCoding && phase === 'asking') return;
     if (!question?.id || !stt.supported) return;
     /*
      * THE INTERLOCK. Nothing opens this microphone while anyone else has the floor.
@@ -324,7 +337,6 @@ export default function LiveSessionPage() {
     if (panelBusy || tts.speaking || panelVoices.speakingNow || panelVoices.takingFloor) return;
     if (stt.listening || stt.error) return;
     if (pinnedClosedRef.current || armedForRef.current === question.id) return;
-    armedForRef.current = question.id;
     /*
      * A beat after they stop — the way you do not start talking the instant someone's last
      * word lands.
@@ -341,6 +353,29 @@ export default function LiveSessionPage() {
      */
     const t = setTimeout(() => {
       if (pinnedClosedRef.current || panelBusyRef.current) return;
+      /*
+       * THE GUARD IS CLAIMED HERE, NOT WHEN THE TIMER WAS SCHEDULED, and the difference is a
+       * microphone that silently never opens.
+       *
+       * It used to be set immediately before the setTimeout. But this effect has eleven
+       * dependencies, and its cleanup clears the pending timer — so ANY of them changing
+       * inside the 900ms window cancelled the arming, and the re-run then hit
+       * `armedForRef.current === question.id` and returned early. The guard had been claimed
+       * by an arming that never happened, and nothing would ever claim it again for this
+       * question. The mic stayed shut for the whole answer with the interface still inviting
+       * the candidate to speak.
+       *
+       * That is a race, so it presented as the intermittent half of "the mic does not turn
+       * on by itself" — dependent on whether a re-render happened to land in a specific
+       * nine-hundred-millisecond window.
+       *
+       * Claiming it at the moment the mic actually opens keeps the property the guard is
+       * for — one auto-open per question, never re-opening one the candidate closed — while
+       * making a cancelled arming simply reschedule, which is what a cancelled arming should
+       * do. Re-runs before it fires are then free: they clear a timer that had claimed
+       * nothing and start a fresh one.
+       */
+      armedForRef.current = question.id;
       openMicRef.current?.();
     }, 900);
     return () => clearTimeout(t);
@@ -1117,8 +1152,62 @@ export default function LiveSessionPage() {
             <div ref={threadEndRef} />
           </div>
 
+          {/* ── The question on the table, pinned above the answer channel ─────
+              THE QUESTION USED TO EXIST ONLY AS A CHAT LINE, and that was the organisational
+              problem behind "the section where the question arises and where the answer is
+              said need to be organised again".
+
+              The panel thread is a conversation, so a question scrolls away behind the
+              correction, the aside and the handover that follow it — and a candidate two
+              minutes into composing an answer had nothing on screen telling them what they
+              were answering. In a real room the question stays in the air; in a chat log it
+              does not, and re-reading upward mid-answer is the moment the illusion breaks.
+
+              So the current question is restated here, immediately above the box it is
+              answered into: the two halves of the exchange are adjacent and separately
+              labelled, rather than one being a scrolled-past message.
+
+              `flex-shrink-0` and outside the scrolling region deliberately — the layout
+              invariants pinned in mic-interlock.test.ts require the answer controls to stay
+              out of the scroll container, and this is part of that block. It is NOT a second
+              copy of the thread: only the question itself, only while one is actually open. */}
+          {phase === 'asking' && questionText && (
+            <div className="flex-shrink-0 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3">
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">
+                  On the table
+                </span>
+                {question?.difficulty && (
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {question.difficulty}
+                  </span>
+                )}
+                {isCoding && (
+                  <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <Code2 className="h-3 w-3" aria-hidden />
+                    coding
+                  </span>
+                )}
+              </div>
+              {/* Clamped rather than scrollable. A long question that grows this block pushes
+                  the microphone off screen on a laptop, and the full text is always still in
+                  the thread above. */}
+              <p className="line-clamp-3 text-sm leading-relaxed text-foreground">
+                {questionText}
+              </p>
+            </div>
+          )}
+
           {/* ── The answer channel, pinned to the bottom of the conversation ── */}
           <div className="flex-shrink-0 border-t border-border/50 pt-4">
+          {/* Labelled, so the two halves of the exchange read as two sections rather than as
+              one undifferentiated column. Hidden on the non-answering phases, where the
+              controls below are an explanation rather than an input. */}
+          {phase === 'asking' && !isCoding && (
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Your answer
+            </p>
+          )}
           {/*
             ONLY WHEN A QUESTION IS ACTUALLY OPEN.
             Without this gate, "seven out of ten" said during the skill check is filed as

@@ -104,6 +104,39 @@ describe('the microphone interlock', () => {
     // during a code review and transcribes Anil reading the candidate's own code back.
     expect(CODE).toMatch(/phase !== 'asking' && phase !== 'skill_check'/);
   });
+
+  it('claims the arming guard when the mic opens, not when the timer is scheduled', () => {
+    /*
+     * Claiming it early made a cancelled arming permanent. This effect has eleven
+     * dependencies and its cleanup clears the pending timer, so any of them changing inside
+     * the 900ms window cancelled the open — and the re-run then saw the guard already
+     * claimed and returned. The microphone never opened for that question, while the
+     * interface went on inviting the candidate to speak.
+     *
+     * Asserted structurally, on the guard sitting inside the timeout body alongside the call
+     * that opens the mic, because the ordering is the whole property.
+     */
+    const timeoutBody = CODE.match(/setTimeout\(\(\)\s*=>\s*\{([\s\S]*?)\},\s*900\)/);
+    expect(timeoutBody).toBeTruthy();
+    expect(timeoutBody![1]).toMatch(/armedForRef\.current\s*=\s*question\.id/);
+    expect(timeoutBody![1]).toMatch(/openMicRef\.current/);
+  });
+
+  it('does not gate the skill check on the question being a coding one', () => {
+    /*
+     * `isCoding` describes the QUESTION, but the arming effect also runs for the skill check,
+     * which happens before that question is put and is a spoken moment regardless of what it
+     * turns out to be. Unqualified, this returned early during `skill_check` whenever question
+     * one happened to be a coding question: the mic never opened, the candidate said their
+     * rating into a closed microphone, and parseSelfRating was handed an empty transcript.
+     *
+     * Intermittent in exactly the way that makes it hard to report, because it depended on
+     * the type of the first question the orchestrator happened to pick.
+     */
+    expect(CODE).toMatch(/if\s*\(isCoding\s*&&\s*phase\s*===\s*'asking'\)\s*return;/);
+    // And the unqualified form must not come back.
+    expect(CODE).not.toMatch(/if\s*\(isCoding\)\s*return;/);
+  });
 });
 
 describe('the layout does not move under the candidate', () => {

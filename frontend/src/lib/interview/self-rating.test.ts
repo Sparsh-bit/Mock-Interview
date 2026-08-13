@@ -84,4 +84,72 @@ describe('parseSelfRating', () => {
       'stream spring hibernate jdbc rest dsa algorithm solid';
     expect(parseSelfRating(everything)!.strengths.length).toBeLessThanOrEqual(8);
   });
+
+  /*
+   * The phrasings that were reported as "it cannot detect the answer".
+   *
+   * Every one of these was collected by running the parser over how candidates actually
+   * answer this question rather than how the original cases assumed they would. The first
+   * group is the important one: those did not fail loudly, they returned a CONFIDENTLY WRONG
+   * number, which is the failure mode the header of self-rating.ts says must never happen.
+   */
+  describe('phrasings that used to be misread', () => {
+    it('reads "on ten" as the scale, not as a separate ten', () => {
+      // Was 10 — the denominator survived and last-number-wins took it. This is the most
+      // common spoken form of the question's answer among this product's users, so the
+      // wrong branch was also the likely one.
+      expect(parseSelfRating('I rate myself 7 on 10')?.rating).toBe(7);
+      expect(parseSelfRating('seven on ten')?.rating).toBe(7);
+      expect(parseSelfRating('8 upon 10')?.rating).toBe(8);
+    });
+
+    it('does not mistake an ordinary "on" for the scale', () => {
+      expect(parseSelfRating('I worked on 3 projects')?.rating).toBe(3);
+    });
+
+    it('collapses a spoken decimal instead of reading its fraction', () => {
+      // Was 5: "seven point five" is two number words and the last one won.
+      expect(parseSelfRating('seven point five')?.rating).toBe(8);
+      expect(parseSelfRating('7 point 5 out of 10')?.rating).toBe(8);
+      expect(parseSelfRating("I'm pretty confident, maybe eight and a half")?.rating).toBe(9);
+    });
+
+    it('finds a digit carrying a spoken suffix', () => {
+      // Was null: \b between "8" and "i" does not exist, so the number was never matched.
+      expect(parseSelfRating('around 8ish')?.rating).toBe(8);
+    });
+  });
+
+  /*
+   * Answers given as a word rather than a number. Returning null for these was defensible
+   * but wrong in practice — the candidate HAS answered, and putting a slider in front of
+   * them is the seam the spoken rating exists to remove.
+   */
+  describe('ratings said as a word', () => {
+    it('reads an unambiguous level', () => {
+      expect(parseSelfRating('I would rate myself as intermediate')?.rating).toBe(5);
+      expect(parseSelfRating('average')?.rating).toBe(5);
+      expect(parseSelfRating('decent')?.rating).toBe(5);
+      expect(parseSelfRating('I am good at Java')?.rating).toBe(7);
+      expect(parseSelfRating('beginner')?.rating).toBe(2);
+      expect(parseSelfRating('expert')?.rating).toBe(9);
+    });
+
+    it('keeps the qualifier rather than matching the bare word inside it', () => {
+      expect(parseSelfRating('very good')?.rating).toBe(8);
+      expect(parseSelfRating('below average')?.rating).toBe(3);
+      expect(parseSelfRating('very basic')?.rating).toBe(2);
+    });
+
+    it('refuses a negated level rather than inverting it', () => {
+      // "not very good" contains "very good". Recording that as an 8 would be both wrong
+      // and confidently high — the worst output this function can produce.
+      expect(parseSelfRating('not very good honestly')).toBeNull();
+      expect(parseSelfRating('I have no idea')).toBeNull();
+    });
+
+    it('lets a spoken number beat a spoken adjective', () => {
+      expect(parseSelfRating("I'm average but I'd say 7")?.rating).toBe(7);
+    });
+  });
 });
