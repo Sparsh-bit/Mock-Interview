@@ -1,9 +1,53 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient, type SetAllCookies } from '@supabase/ssr';
 
-const PROTECTED_ROUTES = ['/dashboard', '/interview', '/report', '/profile', '/settings', '/prepare', '/practice'];
+/**
+ * Everything that needs a session.
+ *
+ * THIS LIST WAS INCOMPLETE, and the omissions were the interesting ones: `/admin` and
+ * `/ai-usage` were not on it. In practice the dashboard layout redirects an anonymous
+ * visitor anyway, so nothing was ever exposed — but the middleware is the cheap edge gate
+ * that runs before any server render, and a protected-routes list that does not include the
+ * admin console is one refactor away from being the only gate that mattered.
+ *
+ * Enumerated rather than expressed as "everything except the public ones", because the
+ * failure directions are not symmetric: forgetting to add a route here leaves it guarded by
+ * the layout, while forgetting to add one to a public list would lock users out of the
+ * landing page.
+ */
+const PROTECTED_ROUTES = [
+  '/dashboard',
+  '/interview',
+  '/session',
+  '/report',
+  '/profile',
+  '/settings',
+  '/prepare',
+  '/practice',
+  '/quiz',
+  '/gd',
+  '/communication',
+  '/analytics',
+  '/tracks',
+  '/achievements',
+  // Admin console and the temporary cost view. Both are independently gated server-side by
+  // the AdminUser dependency; this only stops a logged-out visitor rendering the shell.
+  '/admin',
+  '/ai-usage',
+  // The ban appeal needs a session to know whose account to appeal for. It is exempt from
+  // the BAN (see _BAN_EXEMPT_SUFFIXES in core/security.py), which is a different thing from
+  // being exempt from login.
+  '/account',
+];
 const AUTH_ROUTES = ['/login', '/register', '/forgot-password'];
-const PUBLIC_ROUTES = ['/', '/demo'];
+/**
+ * Reachable with no session at all.
+ *
+ * `/pricing` is deliberate: requiring an account to see what something costs is the one
+ * place where auth actively loses the sale. `/r` is a shared report, gated on the owner
+ * having published it plus an unguessable id.
+ */
+const PUBLIC_ROUTES = ['/', '/demo', '/pricing', '/r'];
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_ROUTES.some((route) => pathname.startsWith(route));

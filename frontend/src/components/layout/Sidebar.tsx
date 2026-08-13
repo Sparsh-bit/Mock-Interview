@@ -81,9 +81,23 @@ interface SidebarProps {
  * second source of truth that could disagree with the server — and no extra API
  * surface to remove when the temporary cost view goes.
  *
- * `/admin/overview` is the cheapest admin read. `retry: false` means a 403 costs
- * exactly one request, and the answer is cached for the session so it does not
- * re-probe on every navigation. A non-admin simply never sees the links.
+ * `/admin/overview` is the cheapest admin read, and `retry: false` means a 403 costs
+ * exactly one request. A non-admin never sees the links.
+ *
+ * IT USED TO BE `staleTime: Infinity, gcTime: Infinity`, AND THAT WAS THE BUG. The answer
+ * was cached for the whole session and never revalidated, so an admin whose access was
+ * revoked kept the Users and AI cost links in their sidebar until they hard-reloaded — the
+ * audit log showed exactly that happening, and the demoted account was still being shown
+ * admin navigation.
+ *
+ * Not a privilege escalation: every admin route is independently gated by the `AdminUser`
+ * dependency server-side, so clicking one of those stale links returns 403 and the page
+ * shows nothing. But an interface that offers an action the server will refuse is lying
+ * about who you are, and for an access control that is not a small lie.
+ *
+ * So the answer now expires. Five minutes, plus a re-check whenever the tab regains focus
+ * or the shell remounts — revocation lands within a few minutes without a reload, and the
+ * cost is one cheap request per five minutes for the handful of accounts that are admins.
  */
 export function useIsAdmin(): boolean {
   const { data } = useQuery({
@@ -93,8 +107,9 @@ export function useIsAdmin(): boolean {
       return true;
     },
     retry: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
   });
   return data === true;
 }

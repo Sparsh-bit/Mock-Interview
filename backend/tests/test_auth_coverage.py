@@ -113,3 +113,59 @@ class TestTheWebhookIsNotAccidentallyOpen:
         # once. Without this a customer who paid for five interviews receives fifteen.
         src = (API / "billing.py").read_text()
         assert "CreditEvent.payment_ref == outcome.payment_id" in src
+
+
+class TestAdminCannotBeSelfGranted:
+    """
+    "non users cannot be admin unless they are assigned".
+
+    The property is that `users.is_admin` has exactly ONE write path and it is behind the
+    admin dependency. Asserted structurally rather than behaviourally, because the failure
+    would be a NEW write somewhere — a signup hook reading a JWT claim, a seed script, a
+    convenience endpoint — and no test of the existing paths would notice one appearing.
+    """
+
+    def test_only_one_place_in_the_app_writes_is_admin(self):
+        import pathlib
+        import re
+
+        app = pathlib.Path(__file__).resolve().parent.parent / "app"
+        writes = []
+        for f in app.rglob("*.py"):
+            for i, line in enumerate(f.read_text().splitlines(), 1):
+                # An assignment to is_admin, not a comparison or a read into a response.
+                if re.search(r"\.is_admin\s*=(?!=)", line):
+                    writes.append(f"{f.relative_to(app)}:{i}")
+        assert writes == ["api/v1/admin.py:397"], (
+            f"is_admin is written in {writes}. Granting admin must happen in exactly one "
+            "place, behind the AdminUser dependency — a second write path is a privilege "
+            "escalation waiting for somebody to find it."
+        )
+
+    def test_that_one_place_is_behind_the_admin_dependency(self):
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/admin.py"
+        ).read_text()
+        sig = src[src.index("async def update_user") : src.index("async def update_user") + 400]
+        assert "current_user: AdminUser" in sig
+
+    def test_nothing_grants_admin_at_signup(self):
+        # The dangerous shape is a JWT claim or an email allowlist being trusted to promote
+        # an account on first login. There is no such path, and there must not be one.
+        import pathlib
+
+        auth = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/auth.py"
+        ).read_text()
+        security = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/core/security.py"
+        ).read_text()
+        for src in (auth, security):
+            assert ".is_admin =" not in src
+
+    def test_the_column_defaults_to_false(self):
+        from app.models.user import User
+
+        assert User.__table__.c.is_admin.default.arg is False

@@ -35,6 +35,8 @@ function InterviewSetup() {
   const [resumeText, setResumeText] = useState('');
   // Shown so a blank box does not look like opting out of personalisation.
   const { data: storedResume } = usePrimaryResume();
+  //: Either source counts. Trimmed, so whitespace is not an answer.
+  const hasResume = !!storedResume?.has_text || resumeText.trim().length >= 20;
 
   useEffect(() => {
     if (requestedCompany) setCompany((c) => c || requestedCompany);
@@ -334,10 +336,23 @@ function InterviewSetup() {
             still takes precedence, which is why it remains editable rather than
             being hidden once a file is on record. */}
         <div className="mb-8">
+          {/* REQUIRED, not optional — and the requirement is satisfied by EITHER a stored
+              resume or pasted text, which is why the label changes rather than always
+              demanding a paste.
+
+              It was optional and that quietly produced the worst interviews the product
+              gives. The planner's whole advantage is asking "you listed <project> — how did
+              you handle X there?" instead of a generic question set; with nothing to read it
+              falls back to the generic set, and a candidate whose first interview was the
+              generic one has seen a worse product than the one that exists. Making it
+              compulsory costs thirty seconds once (the upload is remembered) and changes
+              every interview after it. */}
           <label className="mb-1.5 block text-sm font-medium">
             Your resume{' '}
-            <span className="text-muted-foreground">
-              {storedResume?.has_text ? '(optional — overrides your uploaded resume)' : '(optional — paste skills & projects)'}
+            <span className={storedResume?.has_text ? 'text-muted-foreground' : 'text-destructive'}>
+              {storedResume?.has_text
+                ? '(on file — paste here only to override it for this interview)'
+                : '(required — paste your skills & projects, or upload once in your profile)'}
             </span>
           </label>
 
@@ -377,9 +392,27 @@ function InterviewSetup() {
           )}
         </div>
 
+        {/* A disabled button with no reason beside it is a dead end — the candidate cannot
+            tell whether they missed a field or the app is broken. Named specifically rather
+            than "complete the form", because the two possible causes have different fixes. */}
+        {!hasResume && (
+          <p className="mb-3 text-center text-xs text-muted-foreground">
+            Add your resume above (or{' '}
+            <Link href="/profile" className="font-semibold text-primary hover:underline">
+              upload it once
+            </Link>
+            ) — the interview is built around your own projects.
+          </p>
+        )}
+
         <button
           onClick={handleGenerate}
-          disabled={createPlan.isPending || !selectedTrackId}
+          // The resume gate. Satisfied by a stored file OR pasted text — somebody who
+          // uploaded once should never be asked again, which is what the tip below promises.
+          // The server independently falls back to the stored resume, so this is the
+          // courtesy half; it stops somebody submitting a form that would produce the
+          // generic interview rather than the personalised one they came for.
+          disabled={createPlan.isPending || !selectedTrackId || !hasResume}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/90 disabled:opacity-50"
         >
           {createPlan.isPending ? (
