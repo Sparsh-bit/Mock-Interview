@@ -28,11 +28,13 @@ from typing import Annotated, Any
 
 import httpx
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
+from redis.asyncio import Redis
 
 from app.core.config import settings
+from app.db.redis import get_redis
 from app.db.session import AsyncSession, get_db
 
 logger = structlog.get_logger(__name__)
@@ -193,12 +195,40 @@ async def verify_supabase_jwt(token: str) -> dict:
         raise CREDENTIALS_EXCEPTION from exc
 
 
+#: Routes a suspended account must still reach.
+#:
+#: An automated ban with no route out is indefensible, and these two ARE the route out: the
+#: balance endpoint is how the client learns it is banned and why, and the appeal is the
+#: request for review. Blocking either would leave a wrongly-banned paying user with nothing
+#: but a support email.
+_BAN_EXEMPT_SUFFIXES = ("/billing/me", "/billing/appeal", "/auth/profile")
+
+
+def _is_ban_exempt(path: str) -> bool:
+    return any(path.endswith(s) for s in _BAN_EXEMPT_SUFFIXES)
+
+
+async def _is_banned(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Is this account already suspended? Cheap indexed read on the per-user row."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.models.billing import UserPlan  # noqa: PLC0415
+
+    return bool(
+        await db.scalar(
+            select(UserPlan.is_banned).where(UserPlan.user_id == user_id)
+        )
+    )
+
+
 async def get_current_user(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Depends(_bearer_scheme),
     ],
+    request: Request = None,  # type: ignore[assignment]  # noqa: B008
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),  # noqa: B008
 ) -> AuthenticatedUser:
     """
     FastAPI dependency — extracts and returns the authenticated user.
@@ -272,6 +302,40 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account has been deactivated. Contact support if you think this is a mistake.",
         )
+
+    # CREDENTIAL SHARING — same choke point, same reasoning as `is_active` above.
+    #
+    # Enforcing this per-endpoint would mean auditing every route forever and missing the
+    # next one; here it covers everything by construction.
+    #
+    # TWO PATHS ARE EXEMPT AND MUST STAY EXEMPT. A banned user has to be able to read their
+    # own balance — that is how the UI learns it is banned and shows the appeal — and has to
+    # be able to submit the appeal itself. Blocking those would mean the only route out of a
+    # wrong ban is an email nobody reads, which is what makes an automated ban indefensible.
+    if request is not None and not _is_ban_exempt(request.url.path):
+        from app.services.security.sharing import client_ip, record_and_check  # noqa: PLC0415
+
+        verdict = await record_and_check(
+            db,
+            redis,
+            user.id,
+            client_ip(dict(request.headers), request.client.host if request.client else None),
+            request.headers.get("user-agent"),
+        )
+        # The row is written inside the caller's transaction; commit it here because this
+        # dependency is not the request handler and nothing downstream is obliged to.
+        with contextlib.suppress(Exception):
+            await db.commit()
+
+        if verdict.banned or await _is_banned(db, user.id):
+            logger.warning("auth_rejected_banned_account", user_id=str(user.id))
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This account is suspended because it was used from two places at "
+                    "once. You can request a review from your account page."
+                ),
+            )
 
     # TEMPORARY (token counter) — tag any AI spend during this request with the
     # user who caused it. Removed with the rest of the ledger; see

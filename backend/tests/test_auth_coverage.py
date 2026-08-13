@@ -29,9 +29,9 @@ API = pathlib.Path(__file__).resolve().parent.parent / "app" / "api" / "v1"
 INTENTIONALLY_PUBLIC = {
     # Liveness. Returns no user data and is required by the platform's health checks.
     "health_check",
-    # The pricing page. Requiring a login to see what something costs is the one place where
-    # auth actively loses the sale, and it exposes only what is on the marketing site.
-    "list_plans",
+    # The store. Requiring a login to see what something costs is the one place where auth
+    # actively loses the sale, and it exposes only what is on the marketing site.
+    "list_items",
     # Razorpay has no user token to present. Authenticated by HMAC-SHA256 over the raw body
     # with a constant-time comparison — see services/billing/razorpay.py.
     "razorpay_webhook",
@@ -105,11 +105,11 @@ class TestTheWebhookIsNotAccidentallyOpen:
         verify_at = body.index("verify_signature")
         # Nothing that mutates a plan may appear before the signature check. An ordering
         # mistake here is a free Pro upgrade for anyone who finds the URL.
-        for mutation in ("plan_row.plan_id =", "db.commit()", "plan_from_payment"):
+        for mutation in ("items_from_payment", "grant(", "db.commit()"):
             assert body.index(mutation) > verify_at, f"{mutation} runs before verification"
 
     def test_it_is_idempotent_on_the_payment_id(self):
         # Razorpay retries until it gets a 2xx, so the same payment WILL arrive more than
-        # once. Without this a customer who paid once is granted three months.
+        # once. Without this a customer who paid for five interviews receives fifteen.
         src = (API / "billing.py").read_text()
-        assert "UserPlan.provider_ref == outcome.payment_id" in src
+        assert "CreditEvent.payment_ref == outcome.payment_id" in src

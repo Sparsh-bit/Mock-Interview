@@ -520,15 +520,16 @@ export default function LandingPage() {
           <SectionMark n="07" label="What it costs" />
           <WipeUp delay={0.1}>
             <h2 className="mt-8 max-w-3xl text-[clamp(1.6rem,3.4vw,2.4rem)] font-medium leading-[1.12] tracking-[-0.03em]">
-              Start free. Two full interviews, a group discussion, and
+              Start free. A full interview, a group discussion, a communication drill, and
               <span className="text-accent-indigo-ink"> unlimited quizzes — no card.</span>
             </h2>
           </WipeUp>
           <WipeUp delay={0.18}>
             <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground">
-              Two interviews is enough to get a full hire/no-hire report, act on it, and see
-              the second round improve. That is the whole argument for this — so it is the
-              part you get without paying. Quizzes stay free forever, on every plan.
+              One interview is enough to get a full hire/no-hire report and see exactly where
+              you stand — so that is the part you get without paying. After that there is no
+              subscription to argue yourself into: you buy a session when you want one, from
+              ₹19, and what you buy never expires. Quizzes stay free forever.
             </p>
           </WipeUp>
           <WipeUp delay={0.24}>
@@ -541,7 +542,7 @@ export default function LandingPage() {
                 href="/pricing"
                 className="text-sm font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
               >
-                Compare plans — from ₹299/month
+                See what a session costs
               </Link>
             </div>
           </WipeUp>

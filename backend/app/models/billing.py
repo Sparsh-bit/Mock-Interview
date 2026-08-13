@@ -1,35 +1,42 @@
 """
-Plans and metered usage — models/billing.py
+Entitlement and the ban flag — models/billing.py
 
 Tables: user_plans, credit_events
 
-TWO TABLES, AND THE SPLIT IS THE DESIGN.
+`credit_events` is an append-only, SIGNED ledger. A purchase is +n, a consumption is -1, and
+a user's balance for a feature is one `SUM(delta)` plus the one-time trial constant. There
+is no stored balance anywhere.
 
-`user_plans` is mutable state: which tier somebody is on and when their current period ends.
-There is exactly one row per user and it is overwritten on upgrade, downgrade and renewal.
+`user_plans` holds no balance either. It exists for two things: to be the single per-user
+row that `consume` takes a `SELECT ... FOR UPDATE` on — which is what stops a double-clicked
+Start button spending the same interview twice — and to carry the credential-sharing ban,
+so the ban can be read under that same lock rather than in a second query with a window
+between them.
 
-`credit_events` is an append-only ledger of consumption. It is never updated and never
-deleted. "How many interviews has this user used this period" is a COUNT over it, not a
-counter column.
+WHY A SIGNED LEDGER RATHER THAN A `credits_remaining` INTEGER. It is attached to money:
 
-WHY A LEDGER RATHER THAN A `used_interviews` INTEGER. The same reasoning as the rating ledger
-in models/progress.py, and it matters more here because this one is attached to money:
+  * A counter and the events that produced it are two stores of one fact, and they drift.
+    A decrement that runs twice on a retry, or not at all on a rollback, is silently wrong
+    and stays wrong forever — and it fails in the direction of "charged for something they
+    did not get".
+  * "You said I had five interviews and I have only done three" is unanswerable against a
+    counter and trivial against a ledger. Billing disputes need an audit trail, not a number.
+  * One SUM cannot disagree with itself, where two counts subtracted from each other are two
+    places to filter wrongly and get a number that is plausible and wrong.
 
-  * A counter and the events that produced it are two stores of one fact, and they drift. A
-    decrement that runs twice on a retry, or not at all on a rollback, is silently wrong and
-    stays wrong forever — and the direction it fails in is "customer was charged for
-    something they did not get".
-  * "You said I had eight interviews and I have only done five" is unanswerable against a
-    counter and trivially answerable against a ledger. Billing disputes need an audit trail,
-    not a number.
-  * The period reset becomes free. A monthly allowance against a counter needs a scheduled
-    job to zero it, and that job failing is an outage that hands everybody unlimited use or
-    nobody any. Against a ledger the reset is `WHERE created_at >= period_start` — a query
-    predicate, which cannot fail to run.
+THERE IS NO PERIOD, AND ITS ABSENCE IS THE SIMPLIFICATION. This replaced a monthly
+subscription whose allowance was measured in a rolling 30-day window, which needed
+period_start/period_end on every row, lazy roll-forward on read, and a catch-up loop for
+dormant users — each of them a place to be wrong about somebody's money. Purchased items do
+not expire, so all of that is gone and a user who buys in March and spends in September
+simply gets what they paid for.
 
-WHY session_id IS NULLABLE AND `SET NULL`. Same reason as the rating ledger: deleting a
-session must not delete the fact that it was paid for. Cascading would let a candidate delete
-their sessions to refund themselves the allowance.
+THE TRIAL IS A CONSTANT, NOT ROWS. It is added to the sum at read time rather than granted
+at signup, so changing it changes what every existing account has left — the right behaviour
+for a promotional allowance, and impossible once it has been written as rows.
+
+WHY session_id IS NULLABLE AND `SET NULL`. Deleting a session must not delete the record
+that it was paid for; cascading would let somebody refund themselves by deleting sessions.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,10 +53,10 @@ from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 class UserPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """
-    Which tier a user is on, and the period their allowance is measured against.
+    One row per user: the consume lock, and the ban.
 
-    One row per user, enforced by a unique constraint rather than by convention — the
-    consume path locks this row to serialise concurrent starts, and that lock is only a
+    The unique constraint on user_id is load-bearing rather than hygiene. `consume` takes
+    `SELECT ... FOR UPDATE` on this row to serialise concurrent starts, and a lock is only
     mutual exclusion if there is provably one row to take it on.
     """
 
@@ -62,31 +69,32 @@ class UserPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         index=True,
     )
 
-    #: A plan id from services/billing/plans.py. A plain string, not an enum, because plans
-    #: are product decisions that change more often than schemas should — and `get_plan`
-    #: already degrades an unrecognised id to Free, so a withdrawn tier cannot lock anybody
-    #: out or, worse, keep serving a plan that no longer exists.
-    plan_id: Mapped[str] = mapped_column(String(32), nullable=False, default="free")
-
-    #: The window the allowance is counted over. Stored rather than derived from created_at
-    #: so an upgrade can restart the period immediately — somebody who pays on day 29 of a
-    #: free month expects their eight interviews now, not tomorrow.
-    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    #: How this plan was granted: "signup", "razorpay", "admin". Kept because a free upgrade
-    #: handed out by support and one that was actually paid for look identical afterwards,
-    #: and only one of them should appear in revenue.
+    #: How the account was created: "signup", "admin".
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="signup")
 
-    #: The payment provider's own id for the subscription or order, when there is one.
-    #: Nullable — the free tier has no counterpart at the provider.
-    provider_ref: Mapped[str | None] = mapped_column(String(128), index=True)
+    # ── Credential-sharing ban ────────────────────────────────────────────
+    #
+    # Lives here rather than on `users` because this row is already the per-user lock
+    # target that `consume` takes, so the ban can be read under the same lock that decides
+    # whether to spend an interview — no second query, and no window between the two.
+    is_banned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false", index=True
+    )
+    ban_reason: Mapped[str | None] = mapped_column(String(200))
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: What the user said when appealing. Nullable, and separate from `ban_reason` so an
+    #: admin reading a queue can see our reason and their explanation side by side.
+    appeal_text: Mapped[str | None] = mapped_column(Text)
+    appeal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Set when an admin lifts a ban, so a repeat offender is visible as one.
+    unbanned_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
 
 class CreditEvent(Base, UUIDPrimaryKeyMixin):
     """
-    One consumption of one metered feature. Append-only.
+    One movement of entitlement — bought, granted or spent. Append-only.
 
     Deliberately NOT TimestampMixin: `updated_at` on an append-only row is a column that can
     only ever lie, and its presence invites somebody to write an UPDATE against a table whose
@@ -110,28 +118,33 @@ class CreditEvent(Base, UUIDPrimaryKeyMixin):
     #: "interview" | "gd" | "communication" — see plans.Feature.
     feature: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 
+    #: "purchase" | "consume" | "grant". See the KIND_* constants in credits.py.
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+
+    #: SIGNED. +n for a purchase or grant, -1 for a consumption, so a balance is one
+    #: SUM(delta) rather than two counts subtracted from each other. Two counts is two
+    #: places to filter wrongly and get a number that is plausible and wrong; one sum
+    #: cannot disagree with itself.
+    delta: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: The payment id this entry came from, for purchases. Indexed because the webhook
+    #: checks it on every delivery to stay idempotent — Razorpay redelivers until it gets a
+    #: 2xx, and without this check one payment grants its items several times.
+    payment_ref: Mapped[str | None] = mapped_column(String(128), index=True)
+
     #: What was started. SET NULL, not CASCADE — see the note at the top of this file.
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("interview_sessions.id", ondelete="SET NULL"),
         nullable=True,
     )
 
-    #: The plan and period this was charged against, copied at write time.
-    #:
-    #: Denormalised on purpose. Reading the allowance from the user's CURRENT plan row when
-    #: investigating a past charge gives the wrong answer the moment they upgrade, and "what
-    #: was this user entitled to at the time" is exactly the question a billing dispute asks.
-    plan_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
     #: Room for anything the dispute needs later without a migration.
     detail: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
-        # THE HOT READ, and the only one that runs inside a request: "how many of this
-        # feature has this user consumed since their period started". Composite and in this
-        # column order so it is an index-only range scan rather than a walk of every event
-        # the user has ever produced — this query sits between a candidate pressing Start
-        # and the interview beginning.
-        Index("ix_credit_events_user_feature_created", "user_id", "feature", "created_at"),
+        # THE HOT READ, and the only one that runs inside a request: this user's net
+        # balance for one feature. Composite and in this column order so the SUM is an
+        # index-only scan of just their rows rather than a walk of the whole table — it
+        # sits between a candidate pressing Start and the interview beginning.
+        Index("ix_credit_events_user_feature", "user_id", "feature"),
     )

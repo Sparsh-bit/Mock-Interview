@@ -19,34 +19,38 @@ from __future__ import annotations
 
 import pathlib
 import uuid
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.services.billing.credits import CreditsExhaustedError, consume
-from app.services.billing.plans import get_plan
+from app.services.billing.plans import trial_allowance
 
 API = pathlib.Path(__file__).resolve().parent.parent / "app" / "api" / "v1"
 
 
 class _Plan:
-    def __init__(self, plan_id="free", period_start=None, period_end=None):
-        now = datetime.now(UTC)
-        self.plan_id = plan_id
-        self.period_start = period_start or now - timedelta(days=1)
-        self.period_end = period_end or now + timedelta(days=29)
+    """The per-user row. Holds no balance now — only the lock target and the ban flag."""
+
+    def __init__(self, banned=False):
+        self.is_banned = banned
+        self.ban_reason = None
 
 
 class _StubDB:
-    """Returns the plan row, then the usage count. Records what was added."""
+    """Returns the plan row, then the ledger totals. Records what was added."""
 
-    def __init__(self, plan: _Plan | None, used: int):
-        self._returns = [plan, used]
+    def __init__(self, plan: _Plan | None, net: dict[str, int] | None = None):
+        self._plan = plan
+        self._net = net or {}
         self.added: list = []
         self.flushed = 0
 
     async def scalar(self, _stmt):
-        return self._returns.pop(0) if self._returns else 0
+        return self._plan
+
+    async def execute(self, _stmt):
+        # _totals() iterates (feature, sum) pairs.
+        return list(self._net.items())
 
     def add(self, obj):
         self.added.append(obj)
@@ -56,57 +60,70 @@ class _StubDB:
 
 
 @pytest.mark.asyncio
-class TestItRefusesWhenTheAllowanceIsSpent:
-    async def test_the_last_unit_is_allowed(self):
-        # Free gives 2 interviews; one used means one left.
-        db = _StubDB(_Plan("free"), used=1)
+class TestTheTrialThenNothing:
+    async def test_the_trial_is_spendable_without_buying_anything(self):
+        # A brand-new account: no ledger rows at all, and the trial is a constant added at
+        # read time rather than rows granted at signup.
+        db = _StubDB(_Plan(), net={})
         await consume(db, uuid.uuid4(), "interview")
-        assert len(db.added) == 1, "the consumption was not recorded"
+        assert len(db.added) == 1
+        assert db.added[0].delta == -1
+        assert db.added[0].kind == "consume"
 
-    async def test_one_past_the_allowance_is_refused(self):
-        db = _StubDB(_Plan("free"), used=2)
+    async def test_a_spent_trial_with_no_purchases_is_refused(self):
+        assert trial_allowance("interview") == 1
+        db = _StubDB(_Plan(), net={"interview": -1})
         with pytest.raises(CreditsExhaustedError) as exc:
             await consume(db, uuid.uuid4(), "interview")
-        assert exc.value.status_code == 402, "must be 402 so the client offers an upgrade"
+        assert exc.value.status_code == 402, "must be 402 so the client offers the store"
         assert exc.value.code == "CREDITS_EXHAUSTED"
 
     async def test_nothing_is_recorded_when_it_refuses(self):
         # A refusal that still writes a ledger row would charge the user for the 402.
-        db = _StubDB(_Plan("free"), used=99)
+        db = _StubDB(_Plan(), net={"gd": -1})
         with pytest.raises(CreditsExhaustedError):
             await consume(db, uuid.uuid4(), "gd")
         assert db.added == []
 
-    async def test_the_refusal_carries_what_the_paywall_needs_to_render(self):
-        db = _StubDB(_Plan("free"), used=5)
+    async def test_a_purchase_restores_entitlement(self):
+        # trial 1, spent 1, bought 5 -> 5 left.
+        db = _StubDB(_Plan(), net={"interview": 4})
+        await consume(db, uuid.uuid4(), "interview")
+        assert len(db.added) == 1
+
+    async def test_the_features_do_not_share_a_pool(self):
+        # Buying interviews must not grant group discussions. The whole point of named
+        # allowances over one credit number.
+        db = _StubDB(_Plan(), net={"interview": 10, "gd": -1})
+        with pytest.raises(CreditsExhaustedError):
+            await consume(db, uuid.uuid4(), "gd")
+
+    async def test_the_refusal_says_whether_the_trial_was_the_thing_spent(self):
+        # Drives the copy: "you have used your free mock interview" reads very differently
+        # from "you have no mock interviews left", and only one of them is true for a
+        # first-time user.
+        db = _StubDB(_Plan(), net={"interview": -1})
         with pytest.raises(CreditsExhaustedError) as exc:
-            await consume(db, uuid.uuid4(), "communication")
-        details = exc.value.details
-        assert details["feature"] == "communication"
-        assert details["plan_id"] == "free"
-        assert details["allowance"] == 5
-        # The client must never have to parse the message string to know what ran out.
-        assert "used" in details
+            await consume(db, uuid.uuid4(), "interview")
+        assert exc.value.details["feature"] == "interview"
+        assert exc.value.details["trial_used"] is True
 
-    async def test_a_paid_plan_allows_what_free_refuses(self):
-        db = _StubDB(_Plan("pro"), used=2)
-        await consume(db, uuid.uuid4(), "interview")
-        assert len(db.added) == 1
 
-    async def test_an_unlimited_feature_is_allowed_but_still_recorded(self):
-        # Usage data on the unmetered tiers is what tells you whether the next price change
-        # is safe, and it costs one insert.
-        assert get_plan("pro").allowances["communication"] >= 1_000_000
-        db = _StubDB(_Plan("pro"), used=10_000)
-        await consume(db, uuid.uuid4(), "communication")
-        assert len(db.added) == 1
+@pytest.mark.asyncio
+class TestABannedAccountCannotSpend:
+    async def test_it_is_refused_before_anything_is_charged(self):
+        # Checked under the same row lock that decides entitlement — this is the last gate
+        # before something billable happens.
+        from app.services.billing.credits import AccountBannedError
 
-    async def test_the_charge_is_attributed_to_the_plan_in_force_at_the_time(self):
-        # Denormalised at write time so a later upgrade cannot rewrite history — "what was
-        # this user entitled to at the time" is what a billing dispute asks.
-        db = _StubDB(_Plan("starter"), used=0)
-        await consume(db, uuid.uuid4(), "interview")
-        assert db.added[0].plan_id == "starter"
+        db = _StubDB(_Plan(banned=True), net={"interview": 10})
+        with pytest.raises(AccountBannedError) as exc:
+            await consume(db, uuid.uuid4(), "interview")
+        # 403, not 402: more money does not fix this, and routing it to the store would be
+        # both wrong and insulting.
+        assert exc.value.status_code == 403
+        assert exc.value.details["appealable"] is True
+        assert db.added == []
 
 
 class TestNoMeteredRouteCanForgetToCharge:

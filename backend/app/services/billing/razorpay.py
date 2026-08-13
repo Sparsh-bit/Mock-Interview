@@ -1,5 +1,5 @@
 """
-Turning a payment into a plan change — services/billing/razorpay.py
+Turning a payment into granted items — services/billing/razorpay.py
 
 WRITTEN BEFORE THE KEYS EXIST, AND THAT IS THE POINT. The parts of a payment integration that
 are easy to get wrong are not the API calls — those fail loudly the first time you try them.
@@ -12,8 +12,8 @@ deadline pressure on the day the keys arrive.
 ## The two things that must not be got wrong
 
 **VERIFY THE SIGNATURE, ALWAYS.** The webhook URL is public. Anyone who finds it can POST a
-"payment succeeded" body naming any user and any plan, and without verification they get Pro
-for free — and so does everybody they tell. Razorpay signs every webhook with HMAC-SHA256 over
+"payment succeeded" body naming any user and any item, and without verification they get
+five interviews for free — and so does everybody they tell. Razorpay signs every webhook with HMAC-SHA256 over
 the raw request body using the webhook secret. The comparison must be constant-time
 (`hmac.compare_digest`); `==` on a signature leaks its bytes through timing.
 
@@ -22,15 +22,15 @@ different string for the same payload — key order and whitespace differ — an
 looks like an attack rather than like the bug it is.
 
 **BE IDEMPOTENT.** Razorpay retries a webhook until it gets a 2xx, so the same payment WILL be
-delivered more than once — after a timeout, a deploy, or a 500. Granting a month of Pro per
-delivery means a customer who paid once gets three months, and the only signal is a support
-ticket you cannot reconcile. `provider_ref` on `user_plans` holds the payment id, and applying
-a payment whose id is already recorded is a no-op that still returns 200 — because returning
+delivered more than once — after a timeout, a deploy, or a 500. Granting the items per
+delivery means a customer who paid for five interviews receives fifteen, and the only signal
+is a support ticket you cannot reconcile. `payment_ref` on `credit_events` holds the payment
+id, and applying one already recorded is a no-op that still returns 200 — because returning
 an error to a retry is how you get retried forever.
 
 ## Why this is a seam rather than a client
 
-`verify_signature` and `plan_from_payment` are pure functions over strings and dicts. They
+`verify_signature` and `items_from_payment` are pure functions over strings and dicts. They
 need no key, no network and no account, so they are fully testable today. The only piece that
 genuinely requires credentials is creating the order, and that is one function at the bottom
 which raises a clear configuration error until `RAZORPAY_KEY_ID` is set.
@@ -45,14 +45,14 @@ from dataclasses import dataclass
 import structlog
 
 from app.core.exceptions import AppError
-from app.services.billing.plans import PLANS, Plan, get_plan
+from app.services.billing.plans import ITEMS, Item, get_item
 
 logger = structlog.get_logger(__name__)
 
 #: Razorpay's own field names, so a typo is a constant rather than a silent None deep in a
 #: handler.
 _PAYMENT_ENTITY = "payment"
-_NOTES_PLAN_KEY = "plan_id"
+_NOTES_ITEM_KEY = "item_id"
 _NOTES_USER_KEY = "user_id"
 
 
@@ -111,27 +111,29 @@ def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool:
 
 @dataclass(frozen=True)
 class PaymentOutcome:
-    """What a verified payment says should happen."""
+    """What a verified payment says should be granted."""
 
     payment_id: str
+    order_id: str
     user_id: str
-    plan: Plan
+    item: Item
     amount_paise: int
 
 
-def plan_from_payment(payload: dict) -> PaymentOutcome | None:
+def items_from_payment(payload: dict) -> PaymentOutcome | None:
     """
-    Read a verified webhook body into "give this user this plan", or None.
+    Read a verified webhook body into "grant this user this item", or None.
 
     Returns None for anything that is not a captured payment — Razorpay sends many event
     types to one URL, and an unrecognised one is routine rather than an error. The caller
     answers 200 to those, because a non-2xx makes Razorpay retry an event we will never
     want.
 
-    THE AMOUNT IS CHECKED AGAINST THE PLAN'S PRICE. Without that, `notes.plan_id` is a
-    client-supplied field that says which plan to grant — so a ₹1 payment annotated
-    `plan_id=pro` would buy Pro. The notes say what was INTENDED; the amount is what was
-    actually paid, and they have to agree.
+    THE AMOUNT IS CHECKED AGAINST THE ITEM'S REAL PRICE. Without that, `notes.item_id` is a
+    client-supplied field naming what to grant — so a ₹1 payment annotated
+    `item_id=interview_5` would buy five interviews. The notes say what was INTENDED; the
+    amount is what was actually paid, and they have to agree. This is the check that makes
+    the whole flow safe, because everything else about `notes` is attacker-influenced.
     """
     entity = (payload.get("payload") or {}).get(_PAYMENT_ENTITY) or {}
     payment = entity.get("entity") or {}
@@ -143,57 +145,59 @@ def plan_from_payment(payload: dict) -> PaymentOutcome | None:
 
     notes = payment.get("notes") or {}
     user_id = str(notes.get(_NOTES_USER_KEY) or "").strip()
-    plan_id = str(notes.get(_NOTES_PLAN_KEY) or "").strip()
+    item_id = str(notes.get(_NOTES_ITEM_KEY) or "").strip()
     payment_id = str(payment.get("id") or "").strip()
+    order_id = str(payment.get("order_id") or "").strip()
     amount = int(payment.get("amount") or 0)
 
     if not user_id or not payment_id:
         logger.warning("razorpay_payment_missing_notes", payment_id=payment_id)
         return None
 
-    plan = get_plan(plan_id)
-    if plan.is_free:
-        # Somebody paid real money against the free plan id. Never grant on this — it means
-        # the notes were wrong or tampered with, and the safe outcome is a support ticket
-        # rather than an unpaid upgrade.
-        logger.warning("razorpay_payment_for_free_plan", payment_id=payment_id, plan_id=plan_id)
+    item = get_item(item_id)
+    if item is None:
+        # A payment naming something not in the catalogue. Never guess — granting the
+        # nearest thing would be inventing a purchase nobody made. A support ticket is the
+        # right outcome.
+        logger.warning("razorpay_payment_unknown_item", payment_id=payment_id, item_id=item_id)
         return None
 
-    if amount < plan.price_paise:
+    if amount < item.price_paise:
         # Underpaid. See the note above — the notes are an intention, the amount is the fact.
         logger.warning(
-            "razorpay_amount_below_plan_price",
+            "razorpay_amount_below_item_price",
             payment_id=payment_id,
-            plan_id=plan.id,
+            item_id=item.id,
             paid=amount,
-            expected=plan.price_paise,
+            expected=item.price_paise,
         )
         return None
 
     return PaymentOutcome(
         payment_id=payment_id,
+        order_id=order_id,
         user_id=user_id,
-        plan=plan,
+        item=item,
         amount_paise=amount,
     )
 
 
-def purchasable_plans() -> tuple[Plan, ...]:
-    """The plans somebody can actually pay for — everything except Free."""
-    return tuple(p for p in PLANS if not p.is_free)
+def purchasable_items() -> tuple[Item, ...]:
+    """Everything in the catalogue. All of it is purchasable — there is no free tier item."""
+    return ITEMS
 
 
-async def create_order(plan: Plan, user_id: str) -> dict:
+async def create_order(item: Item, user_id: str) -> dict:
     """
-    Open an order at Razorpay for `plan`, returning what the browser checkout needs.
+    Open an order at Razorpay for `item`, returning what the browser checkout needs.
 
     THE ONLY FUNCTION HERE THAT NEEDS CREDENTIALS, which is why everything above it is
     testable today. Raises PaymentNotConfiguredError until the keys are set, rather than
     returning a fake order — a stub that looks like it worked is how an unpayable checkout
     reaches production.
 
-    `notes` carries the user and plan back to us through the webhook. It is not trusted on the
-    way back: `plan_from_payment` re-checks the amount against the plan's real price.
+    `notes` carries the user and item back to us through the webhook. It is not trusted on
+    the way back: `items_from_payment` re-checks the amount against the item's real price.
     """
     from app.core.config import settings  # noqa: PLC0415
 
@@ -209,9 +213,11 @@ async def create_order(plan: Plan, user_id: str) -> dict:
             "https://api.razorpay.com/v1/orders",
             auth=(key_id, key_secret),
             json={
-                "amount": plan.price_paise,
+                # THE AMOUNT COMES FROM THE RESOLVED ITEM, never from the request. The
+                # caller looked the item up by id; the browser never names a price.
+                "amount": item.price_paise,
                 "currency": "INR",
-                "notes": {_NOTES_PLAN_KEY: plan.id, _NOTES_USER_KEY: user_id},
+                "notes": {_NOTES_ITEM_KEY: item.id, _NOTES_USER_KEY: user_id},
             },
         )
     if resp.status_code >= 400:
@@ -225,9 +231,9 @@ async def create_order(plan: Plan, user_id: str) -> dict:
     order = resp.json()
     return {
         "order_id": order.get("id"),
-        "amount_paise": plan.price_paise,
+        "amount_paise": item.price_paise,
         "currency": "INR",
-        "plan_id": plan.id,
+        "item_id": item.id,
         # The PUBLIC key id — this is meant to reach the browser. The secret never does.
         "key_id": key_id,
     }

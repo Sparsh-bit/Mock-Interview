@@ -16,6 +16,7 @@ from .progress import RatingEvent
 from .question import FollowUpQuestion, Question, Subtopic, Topic
 from .report import Report, ResumeFile
 from .research import CompanyResearch
+from .security import UserSession
 from .session import Answer, InterviewSession, Score, VoiceTranscript
 from .system import AuditLog, SystemPrompt
 from .user import Profile, User
@@ -55,6 +56,8 @@ __all__ = [
     # Billing
     "UserPlan",
     "CreditEvent",
+    # Security
+    "UserSession",
     # Activity
     "ActivityLog",
     # Progress

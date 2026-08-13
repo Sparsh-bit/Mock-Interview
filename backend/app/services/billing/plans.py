@@ -1,55 +1,54 @@
 """
-What each plan includes, and what it costs — services/billing/plans.py
+The trial, and what each thing costs to buy — services/billing/plans.py
 
-THE SINGLE SOURCE OF TRUTH FOR ENTITLEMENT. The enforcement layer, the paywall copy, the
-pricing page and the landing page all read these numbers. There is deliberately no second
-list anywhere: a pricing page that advertises ten interviews while the server allows eight is
-a support ticket and a refund, and that divergence is invisible until a paying customer hits
-it.
+THE SINGLE SOURCE OF TRUTH FOR ENTITLEMENT AND PRICE. The enforcement layer, the paywall
+copy, the pricing page and the landing page all read these numbers. There is deliberately no
+second list anywhere: a page that advertises ₹49 while the server charges ₹79 is a refund and
+a support ticket, and that divergence is invisible until a paying customer hits it.
 
-WHY PER-FEATURE QUOTAS RATHER THAN ONE POOL OF CREDITS. A single "credits" number is simpler
-to implement and worse to use — it forces the candidate to do arithmetic about whether a GD
-round is worth three interviews before they start one, at exactly the moment they should be
-thinking about the interview. Named allowances ("2 interviews, 1 group discussion") are what
-the product promises out loud, so they are what it should count.
+## No subscription. A trial, then you buy what you use.
 
-## The costs these are priced against
+This replaced a monthly Starter/Pro model, and the change is not cosmetic — it is a
+different business.
 
-Measured, not estimated — see docs/AI-COST-MODEL.md, which was produced from the logged usage
+A subscription asks somebody to bet ₹299 on using the product enough to justify it. The
+users here are campus students with a placement season a few weeks long: they want three
+interviews the week before a drive and nothing for the two months after. For that shape,
+a monthly plan is a bad deal in both directions — they overpay in quiet months and feel
+metered in busy ones — and the decision to subscribe is a much bigger commitment than the
+decision to buy one more interview tonight.
+
+So: **one free trial of each feature, then a fixed price per item, with no expiry.** The
+question at the paywall stops being "is this worth ₹299 a month" and becomes "is one more
+mock interview worth ₹49", which is a far easier yes and is asked at the exact moment the
+answer is obviously yes — they have just finished one and want another.
+
+`TRIAL` is not a plan anybody stays on. It is the one-time allowance every account starts
+with, and once spent, entitlement comes entirely from purchased items.
+
+## Why the prices are what they are
+
+Measured costs, not estimates — see docs/AI-COST-MODEL.md, produced from the logged usage
 ledger rather than from vendor rate cards:
 
-  * one full interview (12 questions + 4 cross-questions + report)  ~$0.17 cold, $0.23 warm
-  * one full GD round (26 panel turns + evaluation)                 ~$0.14
-  * speech, on the current Fish free tier                            ~$0
+| item | our AI cost | price | gross margin |
+|---|---:|---:|---:|
+| interview (12 questions + report) | ~$0.154 (₹13) | **₹49** | ~73% |
+| group discussion (26 turns + scoring) | ~$0.142 (₹12) | **₹39** | ~69% |
+| communication drill | ~$0.02 (₹1.7) | **₹19** | ~91% |
 
-The report alone is 58% of an interview and is output-bound, so it does not get cheaper with
-caching. That is the number that sets the floor under all of this.
+Margins look generous against raw AI cost and are not, once payment fees (~2-3% + GST),
+speech, hosting and the free trials of everyone who never buys are taken out. The trial
+alone is roughly ₹27 of AI given away per signup.
 
-## Why the free tier is shaped the way it is
+**The interview is priced highest because it costs the most and is worth the most** — it is
+the only item that ends in a full report. The communication drill is priced well above its
+cost deliberately: at ₹5 it would be an impulse buy nobody values, and a drill is worth
+more to a candidate than a fifth of an interview.
 
-Two interviews, one GD, five communications is roughly **$0.60** of AI per signup. That is
-deliberately a real cost rather than a token one: a free tier that cannot show the product
-working does not convert, and the expensive part — the report — is precisely the part worth
-seeing. Two interviews is enough to get a report, act on it, and see the second one improve,
-which is the whole argument for the product.
-
-Quizzes are unlimited and always free because they cost nothing to serve from the curated
-bank, and they are the habit that brings somebody back on the days they do not have forty
-minutes for a full interview.
-
-## Why the paid tiers are priced where they are
-
-Priced in INR because the users are Indian campus students, and against what that audience
-actually pays for exam prep rather than against USD SaaS norms.
-
-  Starter ₹299  →  ~$3.60.  8 x $0.20 + 4 x $0.14 = $2.16 of AI.  ~40% gross margin.
-  Pro     ₹699  →  ~$8.40.  20 x $0.20 + 12 x $0.14 = $5.68 of AI.  ~32% gross margin.
-
-Those margins are thin on purpose and are the reason the allowances are not rounder, more
-generous numbers. Thirty interviews at ₹499 — which reads like a much better offer — is $6.00
-of cost against $6.00 of revenue, so every heavy user on that plan would be served at a loss
-and growth would make the problem worse rather than better. If the report's output cost falls,
-raise the allowances; do not lower the prices first.
+Bundles exist because a single ₹49 purchase has the same payment-gateway overhead as a
+₹199 one, and because somebody buying five interviews has decided to prepare properly
+rather than to try one more thing.
 """
 
 from __future__ import annotations
@@ -59,127 +58,151 @@ from typing import Literal
 
 #: The metered features. Anything not listed here is free and unlimited.
 #:
-#: `quiz` is deliberately absent rather than present with a large number — an unlimited
-#: feature and a feature with a high cap behave differently at the boundary, and quizzes
-#: should never have a boundary.
+#: `quiz` is deliberately absent rather than present with a large number — quizzes cost
+#: nothing to serve from the curated bank, they are the habit that brings somebody back on a
+#: day they have no time for an interview, and an unlimited feature behaves differently at
+#: the boundary from one with a high cap.
 Feature = Literal["interview", "gd", "communication"]
 
 FEATURES: tuple[Feature, ...] = ("interview", "gd", "communication")
 
-#: Human-readable, for paywall copy and the report of what ran out. Kept beside the features
-#: themselves so a new feature cannot ship with a raw identifier leaking into the UI.
 # Keyed by `str` rather than by `Feature`, deliberately. A feature name reaching this at
 # runtime has come from a database column or a request body, so it is a plain string however
-# tightly the call site is typed — and a lookup that needs a cast at every use is a lookup
-# that will eventually be done without one.
+# tightly the call site is typed — and a lookup needing a cast at every use is a lookup that
+# will eventually be done without one.
 FEATURE_LABELS: dict[str, str] = {
     "interview": "mock interviews",
     "gd": "group discussions",
     "communication": "communication drills",
 }
 
-#: Sentinel for "no limit". A large integer rather than None so every comparison downstream
-#: stays a plain `used < allowance` — a nullable allowance means every call site needs a
-#: None branch, and the one that forgets is the one that charges a paying customer.
-UNLIMITED = 1_000_000
+#: Singular, for "buy 1 more ___" copy. Kept beside the plural so a new feature cannot ship
+#: with a raw identifier leaking into a purchase button.
+FEATURE_LABELS_SINGULAR: dict[str, str] = {
+    "interview": "mock interview",
+    "gd": "group discussion",
+    "communication": "communication drill",
+}
+
+#: THE TRIAL. One of everything, once, for the lifetime of the account.
+#:
+#: One interview rather than two: the trial's job is to prove the product works, and one
+#: interview ending in a full hire/no-hire report does that. A second is what somebody buys
+#: once they have seen the first — which is the whole model.
+#:
+#: NOT per month. There is no renewal anywhere in this file; see `credits.py` for why the
+#: absence of a period is what makes the ledger simpler rather than harder.
+TRIAL_ALLOWANCE: dict[str, int] = {
+    "interview": 1,
+    "gd": 1,
+    "communication": 1,
+}
 
 
 @dataclass(frozen=True)
-class Plan:
-    """One purchasable tier."""
+class Item:
+    """One purchasable thing, or a bundle of them."""
 
     id: str
-    name: str
-    #: Monthly price in paise, the unit Razorpay bills in. Integers throughout — a price in
-    #: rupees as a float is a rounding bug waiting for the first ₹299.99.
+    #: Which feature this grants. Bundles grant several of ONE feature; a mixed bundle would
+    #: need the ledger to record a quantity per feature and is not worth that today.
+    feature: str
+    quantity: int
+    #: Price in paise, the unit Razorpay bills in. Integers throughout — a price in rupees as
+    #: a float is a rounding bug waiting for the first ₹49.50.
     price_paise: int
+    name: str
     tagline: str
-    allowances: dict[str, int]
-    #: Shown on the pricing page under the numbers.
-    highlights: tuple[str, ...]
 
     @property
     def price_rupees(self) -> int:
         return self.price_paise // 100
 
     @property
-    def is_free(self) -> bool:
-        return self.price_paise == 0
+    def unit_price_paise(self) -> int:
+        return self.price_paise // self.quantity
 
 
-FREE = Plan(
-    id="free",
-    name="Free",
-    price_paise=0,
-    tagline="Enough to see whether this actually helps you.",
-    allowances={"interview": 2, "gd": 1, "communication": 5},
-    highlights=(
-        "Unlimited quizzes, forever",
-        "Full hire/no-hire report on every interview",
-        "The two-person AI panel, with voice",
-        "No card required",
+#: The catalogue. Ordered as the store renders it: single items first, then bundles.
+ITEMS: tuple[Item, ...] = (
+    Item(
+        id="interview_1",
+        feature="interview",
+        quantity=1,
+        price_paise=4_900,
+        name="1 mock interview",
+        tagline="Twelve questions, the two-person panel, and a full report.",
+    ),
+    Item(
+        id="gd_1",
+        feature="gd",
+        quantity=1,
+        price_paise=3_900,
+        name="1 group discussion",
+        tagline="Eight minutes against three AI panelists, then scored.",
+    ),
+    Item(
+        id="communication_1",
+        feature="communication",
+        quantity=1,
+        price_paise=1_900,
+        name="1 communication drill",
+        tagline="Speak an answer, get scored on delivery.",
+    ),
+    Item(
+        id="interview_5",
+        feature="interview",
+        quantity=5,
+        price_paise=19_900,
+        name="5 mock interviews",
+        tagline="For a placement season rather than a single drive.",
+    ),
+    Item(
+        id="gd_5",
+        feature="gd",
+        quantity=5,
+        price_paise=15_900,
+        name="5 group discussions",
+        tagline="Enough rounds to stop freezing in the first two minutes.",
+    ),
+    Item(
+        id="communication_10",
+        feature="communication",
+        quantity=10,
+        price_paise=14_900,
+        name="10 communication drills",
+        tagline="Daily practice for a fortnight.",
     ),
 )
 
-STARTER = Plan(
-    id="starter",
-    name="Starter",
-    price_paise=29_900,
-    tagline="For the few weeks before your placement season.",
-    allowances={"interview": 8, "gd": 4, "communication": 25},
-    highlights=(
-        "Everything in Free",
-        "8 full interviews a month",
-        "Coding and SQL rounds, graded",
-        "Progress tracking across rounds",
-    ),
-)
-
-PRO = Plan(
-    id="pro",
-    name="Pro",
-    price_paise=69_900,
-    tagline="For clearing a specific company, not just practising.",
-    allowances={"interview": 20, "gd": 12, "communication": UNLIMITED},
-    highlights=(
-        "Everything in Starter",
-        "20 full interviews a month",
-        "Unlimited communication drills",
-        "Company-specific preparation",
-    ),
-)
-
-#: Ordered cheapest first — the pricing page and the upgrade prompt both render in this order,
-#: and "the next plan up" is defined by this sequence rather than by comparing prices.
-PLANS: tuple[Plan, ...] = (FREE, STARTER, PRO)
-
-_BY_ID: dict[str, Plan] = {p.id: p for p in PLANS}
-
-#: The plan a user has when nothing says otherwise. Named rather than inlined because
-#: "unknown plan falls back to free" must be one decision made in one place — falling back to
-#: a PAID plan on a lookup miss would give away the product, and falling back to nothing would
-#: lock out every user whose plan row has not been created yet.
-DEFAULT_PLAN_ID = FREE.id
+_BY_ID: dict[str, Item] = {i.id: i for i in ITEMS}
 
 
-def get_plan(plan_id: str | None) -> Plan:
+def get_item(item_id: str | None) -> Item | None:
     """
-    A plan by id, falling back to Free.
+    An item by id, or None.
 
-    Total by design. A plan id read from the database can be stale — a tier that was renamed
-    or withdrawn — and the safe response to "I do not recognise this plan" is to serve the
-    free allowance, not to raise inside a request that is trying to start an interview.
+    Returns None rather than falling back to anything. This is unlike `get_plan` in the
+    subscription model it replaced, and the asymmetry is deliberate: an unrecognised PLAN
+    could safely degrade to the free tier, whereas an unrecognised ITEM is somebody trying
+    to buy something that does not exist, and quietly selling them the cheapest thing on the
+    list instead would be worse than refusing.
     """
-    return _BY_ID.get((plan_id or "").strip().lower(), FREE)
+    return _BY_ID.get((item_id or "").strip().lower())
 
 
-def allowance_for(plan_id: str | None, feature: str) -> int:
+def items_for(feature: str) -> tuple[Item, ...]:
+    """Everything that grants `feature`, cheapest first — the upgrade sheet's contents."""
+    return tuple(
+        sorted((i for i in ITEMS if i.feature == feature), key=lambda i: i.price_paise)
+    )
+
+
+def trial_allowance(feature: str) -> int:
     """
-    How many of `feature` this plan includes per period.
+    How many of `feature` the one-time trial includes.
 
-    An unknown FEATURE returns 0 rather than UNLIMITED. That asymmetry with `get_plan` is
-    deliberate: an unrecognised plan is a data problem and should degrade to the free tier,
-    whereas an unrecognised feature means somebody is metering something this module has never
-    heard of, and quietly granting it unlimited use is how a metered feature ships free.
+    An unknown feature returns 0. Metering something this module has never heard of must not
+    quietly become a free allowance.
     """
-    return get_plan(plan_id).allowances.get(feature, 0)
+    return TRIAL_ALLOWANCE.get(feature, 0)

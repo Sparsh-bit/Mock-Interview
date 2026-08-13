@@ -5,13 +5,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
 
 /**
- * Plan, balance and checkout — hooks/useBilling.ts
+ * The store, the balance and the appeal — hooks/useBilling.ts
  *
  * THIS IS FOR DISPLAY, NOT FOR ENFORCEMENT. Everything here reads what the server already
  * decided; nothing here decides anything. The balance tells the UI how many interviews to
- * show as remaining and when to put the upgrade sheet in front of somebody BEFORE they start
- * something — but a client that ignores all of it still cannot exceed its allowance, because
- * `consume` re-checks under a row lock inside each metered endpoint's own transaction.
+ * show as remaining and when to put the store in front of somebody BEFORE they start
+ * something — but a client that ignores all of it still cannot start what it has not paid
+ * for, because `consume` re-checks under a row lock inside each metered endpoint's own
+ * transaction.
  *
  * That separation is the point. A paywall that is also the enforcement is one `curl` away
  * from not existing.
@@ -19,38 +20,38 @@ import { getBrowserApiClient } from '@/lib/api';
 
 export interface FeatureBalance {
   feature: string;
-  /** Plural, human-readable: "mock interviews". Comes from the server so the copy cannot drift. */
+  /** Plural, human-readable: "mock interviews". From the server so the copy cannot drift. */
   label: string;
+  /** Trial allowance plus everything bought. */
+  granted: number;
   used: number;
-  allowance: number;
   remaining: number;
-  unlimited: boolean;
 }
 
 export interface Balance {
-  plan_id: string;
-  plan_name: string;
-  period_start: string;
-  period_end: string;
   features: FeatureBalance[];
+  /** True once the account has consumed anything — drives "your free trial" copy. */
+  trial_started: boolean;
+  is_banned: boolean;
+  ban_reason: string | null;
+  appeal_submitted: boolean;
 }
 
-export interface Plan {
+export interface StoreItem {
   id: string;
-  name: string;
+  feature: string;
+  quantity: number;
   price_rupees: number;
   price_paise: number;
+  name: string;
   tagline: string;
-  allowances: Record<string, number>;
-  highlights: string[];
-  is_free: boolean;
 }
 
 /**
- * What this user is on and what they have left.
+ * What this account has left.
  *
  * `staleTime` is short because the number changes as a direct result of things the user just
- * did — finishing an interview should not leave "2 remaining" on screen. Refetched on window
+ * did — finishing an interview should not leave "1 remaining" on screen. Refetched on window
  * focus for the same reason: a second tab is the most common way this goes stale.
  */
 export function useBalance(options?: { enabled?: boolean }) {
@@ -62,7 +63,7 @@ export function useBalance(options?: { enabled?: boolean }) {
     },
     staleTime: 30_000,
     refetchOnWindowFocus: true,
-    // `enabled` exists for the PUBLIC pricing page, which renders for logged-out visitors.
+    // `enabled` exists for the PUBLIC store page, which renders for logged-out visitors.
     // /billing/me is authenticated, so asking without a session is a guaranteed 401 — a
     // console error on the one page whose job is to look trustworthy to somebody about to
     // enter card details. Defaults to on, so every authenticated caller is unaffected.
@@ -71,12 +72,12 @@ export function useBalance(options?: { enabled?: boolean }) {
 }
 
 /** The catalogue. Public, and it never changes within a session. */
-export function usePlans() {
+export function useStoreItems() {
   return useQuery({
-    queryKey: ['billing', 'plans'],
+    queryKey: ['billing', 'items'],
     queryFn: async () => {
-      const res = await getBrowserApiClient().get('/api/v1/billing/plans');
-      return res.data as Plan[];
+      const res = await getBrowserApiClient().get('/api/v1/billing/items');
+      return res.data as StoreItem[];
     },
     staleTime: Infinity,
   });
@@ -92,31 +93,52 @@ export interface CheckoutOrder {
   order_id: string;
   amount_paise: number;
   currency: string;
-  plan_id: string;
+  item_id: string;
   /** The PUBLIC key id. The secret never leaves the server. */
   key_id: string;
 }
 
 /**
- * Open a Razorpay order.
+ * Open a Razorpay order for one item.
  *
- * Sends only the plan ID. The amount is resolved server-side from the plan — a
+ * Sends only the item id. The amount is resolved server-side from the catalogue — a
  * client-supplied price is the oldest bug in online payments, and Razorpay would happily
- * accept ₹1 for Pro if we let the browser name the figure.
+ * accept ₹1 for five interviews if we let the browser name the figure.
  *
- * Invalidates the balance on success so the new allowance appears without a reload. That is
- * optimistic about webhook timing — the plan only actually changes when Razorpay's webhook
- * lands — so the refetch may briefly still show the old plan. Correct, if slightly behind, is
- * the right failure here: showing Pro before the payment is confirmed would be the other way.
+ * Invalidates the balance on success so new items appear without a reload. That is
+ * optimistic about webhook timing — entitlement only actually changes when Razorpay's
+ * webhook lands — so the refetch may briefly still show the old number. Correct but
+ * slightly behind is the right failure here; showing the items before the payment is
+ * confirmed would be the other way.
  */
 export function useCheckout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (planId: string) => {
+    mutationFn: async (itemId: string) => {
       const res = await getBrowserApiClient().post('/api/v1/billing/checkout', {
-        plan_id: planId,
+        item_id: itemId,
       });
       return res.data as CheckoutOrder;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
+    },
+  });
+}
+
+/**
+ * Ask for a suspended account to be reviewed.
+ *
+ * Deliberately does not unban anything — only an admin can. This records the request, and
+ * the balance query is invalidated so the UI switches to "review requested" rather than
+ * leaving the form up inviting a second submission.
+ */
+export function useAppeal() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (message: string) => {
+      const res = await getBrowserApiClient().post('/api/v1/billing/appeal', { message });
+      return res.data as { status: string };
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });

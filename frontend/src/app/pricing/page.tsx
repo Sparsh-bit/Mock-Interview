@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Check, Infinity as InfinityIcon, Loader2 } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -9,185 +9,131 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useAuth } from '@/hooks/useAuth';
-import { useBalance, useCheckout, usePlans, type Plan } from '@/hooks/useBilling';
+import { useBalance, useCheckout, useStoreItems, type StoreItem } from '@/hooks/useBilling';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
 
 /**
- * Plans — app/pricing/page.tsx
+ * The store — app/pricing/page.tsx
  *
- * THE NUMBERS COME FROM THE SERVER. Every allowance and price on this page is fetched from
- * /billing/plans rather than written here, because a pricing page that advertises ten
- * interviews while the server allows eight is a refund — and that divergence is invisible
- * until a paying customer hits it. There is one source of truth
- * (backend/app/services/billing/plans.py) and this renders it.
+ * NO SUBSCRIPTION. One free trial of each thing, then you buy what you use, and what you
+ * buy does not expire. The users here are campus students with a placement season a few
+ * weeks long: they want three interviews the week before a drive and nothing for two
+ * months. A monthly plan is a bad deal for that shape in both directions, and "is this
+ * worth ₹299 a month" is a far harder question than "is one more mock interview worth ₹49"
+ * — which is asked at the moment the answer is obviously yes.
  *
- * TOP-LEVEL, NOT INSIDE THE (dashboard) GROUP, and that placement is the whole point.
+ * EVERY NUMBER COMES FROM THE SERVER. Prices and quantities are fetched from /billing/items
+ * rather than written here, because a page advertising ₹49 while the server charges ₹79 is
+ * a refund, and that divergence is invisible until a paying customer hits it. One source of
+ * truth (backend/app/services/billing/plans.py) and this renders it.
  *
- * It started under (dashboard) and that was wrong: `DashboardLayout` redirects anyone
- * without a session to /login, so the "Compare plans" link on the landing page bounced
- * every logged-out visitor into a sign-up form before they could see a price. Requiring an
- * account to find out what something costs is the one place where auth actively loses the
- * sale — which is also why `GET /billing/plans` is the only unauthenticated route in the
- * billing API. Putting the page behind a login threw that away.
- *
- * So it renders for everyone, and the only thing a session changes is the "Your plan" badge
- * and whether the buttons do anything.
+ * TOP-LEVEL, NOT INSIDE (dashboard), because that layout redirects anyone without a session
+ * to /login — and requiring an account to see what something costs is the one place where
+ * auth actively loses the sale.
  */
 
-/** The order the allowances read in. Interviews first: it is what people are buying. */
 const FEATURE_ORDER = ['interview', 'gd', 'communication'] as const;
 
-const FEATURE_LABEL: Record<string, string> = {
-  interview: 'mock interviews',
-  gd: 'group discussions',
-  communication: 'communication drills',
+const FEATURE_HEADING: Record<string, string> = {
+  interview: 'Mock interviews',
+  gd: 'Group discussions',
+  communication: 'Communication drills',
 };
 
-/** Matches UNLIMITED in the backend's plans.py. */
-const UNLIMITED = 1_000_000;
+const FEATURE_BLURB: Record<string, string> = {
+  interview: 'Twelve questions from a two-person panel, a coding round, and a full report.',
+  gd: 'Eight minutes against three AI panelists who argue back, then scored.',
+  communication: 'Speak an answer or read a passage; scored on clarity, pace and fillers.',
+};
 
-function Allowance({ feature, count }: { feature: string; count: number }) {
-  const label = FEATURE_LABEL[feature] ?? feature;
-  return (
-    <li className="flex items-center gap-2.5 text-sm">
-      <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-      {count >= UNLIMITED ? (
-        <span className="flex items-center gap-1.5">
-          <InfinityIcon className="h-3.5 w-3.5" aria-hidden />
-          <span>Unlimited {label}</span>
-        </span>
-      ) : (
-        <span>
-          <span className="font-medium tabular-nums">{count}</span> {label}
-          <span className="text-muted-foreground"> a month</span>
-        </span>
-      )}
-    </li>
-  );
-}
-
-function PlanCard({
-  plan,
-  current,
+function ItemCard({
+  item,
   onBuy,
   busy,
+  signedIn,
 }: {
-  plan: Plan;
-  current: boolean;
+  item: StoreItem;
   onBuy: (id: string) => void;
   busy: boolean;
+  signedIn: boolean;
 }) {
-  // Highlighted rather than hardcoded to a plan id, so reordering or renaming the catalogue
-  // server-side cannot leave the badge on the wrong card.
-  const recommended = plan.id === 'starter';
+  const isBundle = item.quantity > 1;
+  const perUnit = Math.round(item.price_rupees / item.quantity);
 
   return (
     <Card
-      variant={recommended ? 'elevated' : 'flat'}
-      padding="lg"
-      className={cn(
-        'flex flex-col gap-6',
-        recommended && 'ring-1 ring-primary/40',
-      )}
+      variant={isBundle ? 'elevated' : 'flat'}
+      padding="md"
+      className={cn('flex flex-col gap-4', isBundle && 'ring-1 ring-primary/30')}
     >
-      <div className="space-y-2">
+      <div className="space-y-1">
         <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-foreground">{plan.name}</h2>
-          {recommended && <Badge>Most popular</Badge>}
-          {current && <Badge variant="neutral">Your plan</Badge>}
+          <h3 className="text-sm font-semibold text-foreground">{item.name}</h3>
+          {isBundle && <Badge>Better value</Badge>}
         </div>
-        <p className="text-sm text-muted-foreground">{plan.tagline}</p>
+        <p className="text-xs text-muted-foreground">{item.tagline}</p>
       </div>
 
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-3xl font-semibold tabular-nums text-foreground">
-          ₹{plan.price_rupees}
+      <div className="flex items-baseline gap-2">
+        <span className="text-2xl font-semibold tabular-nums text-foreground">
+          ₹{item.price_rupees}
         </span>
-        {!plan.is_free && <span className="text-sm text-muted-foreground">/ month</span>}
-      </div>
-
-      <ul className="space-y-2.5">
-        {FEATURE_ORDER.filter((f) => f in plan.allowances).map((f) => (
-          <Allowance key={f} feature={f} count={plan.allowances[f]} />
-        ))}
-      </ul>
-
-      <ul className="space-y-2 border-t border-border/60 pt-4">
-        {plan.highlights.map((h) => (
-          <li key={h} className="flex items-start gap-2.5 text-sm text-muted-foreground">
-            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden />
-            <span>{h}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-auto pt-2">
-        {plan.is_free ? (
-          <Button variant="outline" className="w-full" disabled>
-            {current ? 'Your current plan' : 'Included with every account'}
-          </Button>
-        ) : (
-          <Button
-            className="w-full"
-            variant={recommended ? 'primary' : 'outline'}
-            disabled={busy || current}
-            onClick={() => onBuy(plan.id)}
-          >
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : current ? (
-              'Your current plan'
-            ) : (
-              `Upgrade to ${plan.name}`
-            )}
-          </Button>
+        {isBundle && (
+          <span className="text-xs text-muted-foreground">₹{perUnit} each</span>
         )}
       </div>
+
+      <Button
+        className="mt-auto w-full"
+        variant={isBundle ? 'primary' : 'outline'}
+        disabled={busy}
+        onClick={() => onBuy(item.id)}
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        ) : signedIn ? (
+          'Buy'
+        ) : (
+          'Sign up to buy'
+        )}
+      </Button>
     </Card>
   );
 }
 
-export default function PricingPage() {
-  const { data: plans, isLoading, isError } = usePlans();
+export default function StorePage() {
+  const { data: items, isLoading, isError } = useStoreItems();
   const { session, loading: authLoading } = useAuth();
   const signedIn = !!session;
-  // Only asked for when there is a session to ask with. /billing/me is authenticated, so
-  // firing it for a logged-out visitor is a guaranteed 401 — a console error on the page
-  // whose entire job is to look trustworthy to somebody about to pay.
   const { data: balance } = useBalance({ enabled: signedIn });
   const checkout = useCheckout();
 
-  const buy = (planId: string) => {
+  const buy = (itemId: string) => {
     if (!signedIn) {
-      // Nothing to attach a purchase to. Sending them to register with the plan in the query
-      // string means they land back here having already chosen, rather than starting over.
-      window.location.href = `/register?redirectTo=${encodeURIComponent(`/pricing?plan=${planId}`)}`;
+      window.location.href = `/register?redirectTo=${encodeURIComponent('/pricing')}`;
       return;
     }
-    checkout.mutate(planId, {
+    checkout.mutate(itemId, {
       onSuccess: (order) => {
         /*
          * THE CHECKOUT WIDGET IS NOT WIRED YET, AND THIS SAYS SO RATHER THAN PRETENDING.
          *
          * Everything up to here is real: the order is opened against Razorpay with a
-         * server-resolved amount, and the webhook that applies the plan is written, verified
-         * and tested. What is missing is the browser SDK, which cannot be integrated without
-         * live keys to load it with.
+         * server-resolved amount, and the webhook that grants the items is written,
+         * signature-verified, amount-checked and idempotent. What is missing is the browser
+         * SDK, which cannot be integrated without live keys to load it with.
          *
-         * Failing loudly and honestly is the right behaviour for that gap. A button that
-         * silently does nothing reads as a broken product, and one that optimistically shows
-         * "upgraded" would be worse than either.
+         * Failing loudly is right for that gap. A button that silently does nothing reads
+         * as a broken product, and one that optimistically says "bought" would be worse.
          */
         toast.success(
           `Order ${order.order_id} is ready. Add your Razorpay keys to finish checkout.`,
         );
       },
       onError: (err) => {
-        // 503 is the honest "payments are not switched on for this deployment yet" from the
-        // server, and it deserves different copy from a genuine failure.
         const notConfigured = err instanceof ApiError && err.status === 503;
         toast.error(
           notConfigured
@@ -199,16 +145,12 @@ export default function PricingPage() {
   };
 
   return (
-    // Its own chrome, because this page no longer sits inside DashboardLayout and would
-    // otherwise render as bare text on the background for a logged-out visitor.
     <div className="min-h-screen bg-background paper-grain">
       <header className="border-b border-border">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 sm:px-10">
+        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5 sm:px-10">
           <Link href="/" className="text-sm font-semibold tracking-tight text-foreground">
             InterviewOS
           </Link>
-          {/* The destination depends on whether they already have an account, so a visitor
-              is never sent to a login form they do not need or a signup they already did. */}
           {!authLoading && (
             <Link
               href={signedIn ? '/dashboard' : '/login'}
@@ -220,45 +162,84 @@ export default function PricingPage() {
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-6xl space-y-8 px-6 py-10 sm:px-10 sm:py-14">
-      <PageHeader
-        title="Plans"
-        description="Free covers enough to see whether this helps. Upgrade when you need volume."
-      />
+      <div className="mx-auto w-full max-w-5xl space-y-10 px-6 py-10 sm:px-10 sm:py-14">
+        <PageHeader
+          title="Buy what you need"
+          description="No subscription. Try each thing free once, then pay per session — and what you buy never expires."
+        />
 
-      {isLoading && (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
-        </div>
-      )}
-
-      {isError && (
-        <Card variant="flat" padding="lg">
-          <p className="text-sm text-muted-foreground">
-            Could not load plans right now. Your existing allowance is unaffected — refresh to
-            try again.
-          </p>
+        {/* The trial, stated plainly and first. It is the most persuasive thing on the page
+            and it costs the reader nothing to accept. */}
+        <Card variant="flat" padding="md">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <span className="font-medium text-foreground">Free on every account:</span>
+            {['1 mock interview', '1 group discussion', '1 communication drill', 'Unlimited quizzes'].map(
+              (t) => (
+                <span key={t} className="flex items-center gap-1.5 text-muted-foreground">
+                  <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
+                  {t}
+                </span>
+              ),
+            )}
+          </div>
         </Card>
-      )}
 
-      {plans && (
-        <div className="grid gap-5 md:grid-cols-3">
-          {plans.map((p) => (
-            <PlanCard
-              key={p.id}
-              plan={p}
-              current={balance?.plan_id === p.id}
-              onBuy={buy}
-              busy={checkout.isPending && checkout.variables === p.id}
-            />
-          ))}
-        </div>
-      )}
+        {isLoading && (
+          <div className="flex justify-center py-16">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+          </div>
+        )}
 
-      <p className="text-xs text-muted-foreground">
-        Quizzes are unlimited and free on every plan, including Free. Allowances reset every 30
-        days. Prices are in INR and include GST where applicable.
-      </p>
+        {isError && (
+          <Card variant="flat" padding="lg">
+            <p className="text-sm text-muted-foreground">
+              Could not load the store right now. Anything you have already bought is
+              unaffected — refresh to try again.
+            </p>
+          </Card>
+        )}
+
+        {items &&
+          FEATURE_ORDER.filter((f) => items.some((i) => i.feature === f)).map((feature) => {
+            const forFeature = items
+              .filter((i) => i.feature === feature)
+              .sort((a, b) => a.price_paise - b.price_paise);
+            const left = balance?.features.find((f) => f.feature === feature);
+
+            return (
+              <section key={feature} className="space-y-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">
+                      {FEATURE_HEADING[feature] ?? feature}
+                    </h2>
+                    <p className="text-sm text-muted-foreground">{FEATURE_BLURB[feature]}</p>
+                  </div>
+                  {left && (
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {left.remaining} left on your account
+                    </span>
+                  )}
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {forFeature.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      onBuy={buy}
+                      busy={checkout.isPending && checkout.variables === item.id}
+                      signedIn={signedIn}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+
+        <p className="text-xs text-muted-foreground">
+          Quizzes are unlimited and free on every account. Purchases do not expire. Prices are
+          in INR and include GST where applicable.
+        </p>
       </div>
     </div>
   );
