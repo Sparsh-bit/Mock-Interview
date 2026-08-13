@@ -11,6 +11,8 @@ lives. The database round-trip, the HNSW index and the hit counting are exercise
 separately against real pgvector (see tests/test_vector_cache_db.py).
 """
 
+import re
+
 import pytest
 
 from app.models.ai_cache import EMBEDDING_DIM
@@ -64,7 +66,50 @@ class TestTheTenancyAllowlist:
             )
 
     def test_the_allowlist_holds_only_public_topic_data(self):
-        assert frozenset({"gd_topic_prep", "interview_plan"}) == CACHEABLE_FEATURES
+        """
+        Pinned as an exact set, not a subset check, so a new entry cannot be added without
+        editing this line — which is the moment somebody has to say out loud why the new
+        feature's input is public.
+
+        `study_resources`: the key is a TOPIC LABEL from the question bank ("Spring
+        Security", "Collections"), the same string for every candidate. Nothing the
+        candidate said reaches either the key or the prompt — the generation is handed the
+        topic name and nothing else. It is the purest entry on this list, and unlike the
+        others its key space is bounded by the syllabus rather than by the user count, so
+        it saturates and stops costing anything at all.
+        """
+        assert (
+            frozenset({"gd_topic_prep", "interview_plan", "study_resources"})
+            == CACHEABLE_FEATURES
+        )
+
+    def test_the_shared_resource_generation_takes_only_a_topic(self):
+        """
+        The allowlist entry above is only safe while this stays true, so it is asserted
+        rather than left to a docstring: if the resource generation ever grows a
+        candidate-derived input, it must leave the allowlist.
+
+        Asserted on the SIGNATURE and on what is interpolated into the prompt, not on
+        whether the word "candidate" appears anywhere in the file. The prompt legitimately
+        says "placement candidates" and "a candidate's evening" — that is prose describing
+        who the resources are for, not a value read from one. A substring scan cannot tell
+        those apart and would fail on correct code, which is how a guard gets deleted.
+        """
+        import inspect
+
+        from app.services.prep import study_resources as sr
+
+        # Only the session and the topic. No answer, session_id, user or transcript.
+        assert list(inspect.signature(sr._generate).parameters) == ["db", "topic"]
+        assert list(inspect.signature(sr.resolve).parameters) == ["db", "topic"]
+
+        # And `topic` is the only thing interpolated into the messages.
+        src = inspect.getsource(sr._generate)
+        interpolations = re.findall(r"\{([a-z_]+)[^}]*\}", src)
+        assert set(interpolations) <= {"topic"}, (
+            f"the shared resource prompt interpolates {set(interpolations) - {'topic'}} — "
+            "anything beyond the topic makes this per-candidate and uncacheable"
+        )
 
     @pytest.mark.asyncio
     async def test_an_unlisted_feature_is_refused_at_runtime(self):

@@ -179,6 +179,13 @@ CACHEABLE_FEATURES: frozenset[str] = frozenset(
         # Company + program + focus. Already cached in Redis; here it also survives a
         # restart, which is the whole reason to duplicate it.
         "interview_plan",
+        # Study resources for a topic. The purest case on this list: the key is a syllabus
+        # LABEL from the question bank, identical for everybody, and nothing about the
+        # candidate reaches the prompt. It is also the one whose key space is bounded by
+        # the syllabus rather than by the user count, so it SATURATES — once every topic
+        # anyone is weak in has been generated once, this feature costs nothing for every
+        # future user. That is what makes cost per user fall as the user base grows.
+        "study_resources",
     }
 )
 

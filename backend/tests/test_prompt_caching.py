@@ -27,7 +27,17 @@ PROMPTS = BACKEND / "app" / "prompts"
 API = BACKEND / "app" / "api" / "v1"
 
 #: Templates a call site marks cacheable. Each must be free of placeholders.
-CACHED_TEMPLATES = ("gd_panel", "interview_panel")
+#:
+#: `report_generator` is the newest and the largest saving. The report is the most
+#: expensive call in the product — 17,059 input tokens against a 5,580-token output cap —
+#: and 2,778 of those input tokens are this static rubric, previously re-sent and re-billed
+#: at full price on every single report. It could not be cached before because the template
+#: carried eight $placeholders (candidate name, company, track, duration, question count,
+#: delivery, previous performance); those now live in a session brief in the USER message,
+#: exactly as _round_brief does for gd_panel. Worth ~$0.0075 a report, ~4.5% of a warm
+#: interview, and it scales the right way: a provider cache entry lives about five minutes
+#: and every read refreshes it, so the hit rate rises with how busy the product is.
+CACHED_TEMPLATES = ("gd_panel", "interview_panel", "report_generator")
 
 
 def _static_templates() -> set[str]:
@@ -99,6 +109,33 @@ class TestTheCachedPromptIsActuallyStatic:
                 "Every request would then have a unique system prefix, so the cache "
                 "marker would bill a 1.25x write on every call and never read. Move the "
                 "variable content into the user message — see _round_brief in api/v1/gd.py."
+            )
+
+    def test_the_reports_per_session_values_survived_the_move(self):
+        """
+        Moving a value OUT of the prompt is only safe if it lands in the user message.
+
+        These eight were placeholders in report_generator.md until it was made cacheable.
+        Dropping one would not fail anything — the report still generates, the rubric still
+        caches — it would just quietly stop telling the model the candidate's name, or how
+        they spoke, or how they did last time, and every report afterwards would be a little
+        more generic for a reason nobody could see.
+        """
+        src = (API / "reports.py").read_text()
+        brief = src[src.index("session_brief = ") : src.index("messages = prompt_builder")]
+        for value in (
+            "candidate_name",
+            "company.name",
+            "track.name",
+            "transcript_rows",
+            "duration_minutes",
+            "delivery_summary",
+            "previous_performance",
+            "self_assessment",
+        ):
+            assert value in brief, (
+                f"{value} was a placeholder in report_generator.md and is not in the "
+                "session brief that replaced it — the model no longer receives it"
             )
 
     def test_the_system_block_is_byte_identical_across_different_requests(self):

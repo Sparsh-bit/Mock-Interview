@@ -27,6 +27,7 @@ from app.db.redis import CacheKeys, get_redis
 from app.db.session import AsyncSession, get_db
 from app.events import ReportGeneratedEvent, ReportGeneratedPayload, get_event_emitter
 from app.events.emitter import EventEmitter
+from app.services.prep.study_resources import attach_to_roadmap
 from app.services.progress.rating import tier_for
 from app.services.progress.recorder import record_round
 
@@ -644,24 +645,49 @@ async def generate_report(
     else:
         previous_performance = "This is their first interview — welcome them warmly and set a baseline."
 
-    messages = prompt_builder.chat(
+    # THE SESSION BRIEF, IN THE USER MESSAGE — WHICH IS WHAT MAKES THE RUBRIC CACHEABLE.
+    #
+    # Everything here used to be interpolated into report_generator.md as $placeholders. That
+    # made the system block different on every single report, so the provider could never
+    # cache it: 2,778 tokens of static rubric re-sent and re-billed at full price on the most
+    # expensive call in the product.
+    #
+    # Moving the varying parts down here leaves the rubric byte-identical, so it is written
+    # to the provider cache once and read at a tenth of the price after — worth ~$0.0075 a
+    # report, about 4.5% of a warm interview. Exactly the change that took the GD round down
+    # 59%; see docs/AI-COST-MODEL.md.
+    #
+    # It also scales the right way. A provider cache entry lives ~5 minutes and every read
+    # refreshes it, so the hit rate is a function of how often reports are generated — it is
+    # near zero for one user a day and near 100% once reports are minutes apart. This is one
+    # of the few savings that literally arrives as the product gets busier.
+    session_brief = "\n".join(
+        [
+            "## This session",
+            "",
+            f"Candidate: {candidate_name}",
+            f"Company: {company.name if company else 'Unknown Company'}",
+            f"Track: {track.name if track else 'Unknown Track'}",
+            f"Questions asked: {len(transcript_rows)}",
+            f"Duration: {duration_minutes} minutes",
+            "",
+            "### Delivery (how they spoke)",
+            delivery_summary,
+            "",
+            "### Progress vs their last interview",
+            previous_performance,
+            "",
+            self_assessment,
+            *((["", pivot_note]) if pivot_note else []),
+            "",
+            "---",
+            "",
+        ]
+    )
+
+    messages = prompt_builder.chat_static(
         system_template="report_generator",
-        user_content=user_content,
-        track_name=track.name if track else "Unknown Track",
-        company_name=company.name if company else "Unknown Company",
-        candidate_name=candidate_name,
-        total_questions=str(len(transcript_rows)),
-        session_duration_minutes=str(duration_minutes),
-        delivery_summary=delivery_summary,
-        previous_performance=(
-            # Appended rather than given their own template slots so the report prompt does
-            # not need new placeholders — a missing placeholder is a hard failure at render
-            # time, and this ships alongside a frontend change rather than ahead of it.
-            previous_performance
-            + "\n\n"
-            + self_assessment
-            + (("\n\n" + pivot_note) if pivot_note else "")
-        ),
+        user_content=session_brief + user_content,
     )
 
     # Tries primary then fallback provider; if all fail we degrade to a
@@ -788,6 +814,13 @@ async def generate_report(
                     # which the candidate can regenerate. That is strictly better than
                     # storing a report that looks finished and is not.
                     is_valid=lambda r: _report_is_complete(r, len(transcript_rows)),
+                    # The 2,778-token rubric is byte-identical on every report now that the
+                    # per-session values live in the user brief, so it is cached at the
+                    # provider: written once at 1.25x, read at 0.1x thereafter. Opt-in per
+                    # call rather than globally, because a global flag would bill a cache
+                    # WRITE on every other feature whose system block still varies, and
+                    # never read one back.
+                    cache_system=True,
                     context="report_generation",
                 ),
                 timeout=report_ai_budget_seconds(),
@@ -814,6 +847,34 @@ async def generate_report(
         )
 
     if ai_report is not None:
+        # STUDY RESOURCES ARE ATTACHED HERE, NOT GENERATED ABOVE.
+        #
+        # The prompt tells the model to leave `resources` empty, and this overwrites it
+        # regardless — an instruction is a request, this is the guarantee. Two reasons, and
+        # the second is the one that compounds:
+        #
+        #   Trust. A book title or a docs URL is exactly the kind of specific, plausible
+        #   detail a model invents, and a dead link in a study plan wastes a candidate's
+        #   evening. resources.yaml is human-verified and carries a `verified:` date.
+        #
+        #   Cost. This is the most expensive call in the product and it is OUTPUT-bound,
+        #   sitting on its token cap — so every resource object the model writes displaces
+        #   something a candidate actually reads, and is paid for again on every report
+        #   forever. Resources are a function of the topic, not of the candidate, so paying
+        #   per candidate for them is paying repeatedly for one answer.
+        #
+        # Curated first, then a globally shared cache, then a small one-off generation that
+        # writes back to that cache — see services/prep/study_resources.py for why the
+        # shared tier is what makes cost per user FALL as the user base grows.
+        roadmap = [item.model_dump() for item in ai_report.improvement_roadmap]
+        try:
+            roadmap = await attach_to_roadmap(db, roadmap)
+        except Exception:
+            # Never at the cost of the report. An item still carries its topic, score gap
+            # and study-hours estimate without resources, which is most of its value; a
+            # report that failed to save has none of it.
+            logger.warning("roadmap_resource_attach_failed", session_id=str(session_id))
+
         report = Report(
             session_id=session_id,
             user_id=current_user.user_id,
@@ -824,7 +885,7 @@ async def generate_report(
             strengths=ai_report.strengths,
             weaknesses=ai_report.weaknesses,
             topic_scores=ai_report.topic_scores,
-            improvement_roadmap=[item.model_dump() for item in ai_report.improvement_roadmap],
+            improvement_roadmap=roadmap,
             raw_report={
                 "generated_by": "ai",
                 "readiness_reasoning": ai_report.readiness_reasoning,

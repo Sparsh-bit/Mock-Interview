@@ -225,6 +225,48 @@ async def get_ai_usage(
         )
     ).scalar()
 
+    # PRICING THE CACHE, which the stats alone cannot do.
+    #
+    # vector_cache.stats() counts hits; the ledger knows what a call of that feature costs.
+    # Neither is the saving on its own, and the two have been sitting side by side in this
+    # response without ever being multiplied — so "the cache is working" has been an
+    # assertion rather than a figure.
+    #
+    # Priced from the average cost per call IN THIS WINDOW, not from a constant: model
+    # prices change, prompt caching moved the GD turn by 59%, and a saving quoted against
+    # last quarter's rate is a made-up number.
+    #
+    # Hits are LIFETIME per entry while the spend window is `days`, so on a short window
+    # this over-states. Stated rather than silently corrected, because the alternative —
+    # recording a timestamp on every cache read — is a write on the hot path to make a
+    # reporting figure tidier.
+    cache_rows = await vector_cache.stats(db)
+    cost_per_call = {r["feature"]: r["avg_cost_per_call_usd"] for r in by_feature}
+    avoided_by_feature: list[dict] = []
+    avoided_total = 0.0
+    for row in cache_rows:
+        unit = float(cost_per_call.get(row["feature"], 0.0))
+        avoided = row["hits"] * unit
+        avoided_total += avoided
+        avoided_by_feature.append(
+            {
+                "feature": row["feature"],
+                "hits": row["hits"],
+                "entries": row["entries"],
+                "never_hit": row["never_hit"],
+                "cost_per_call_usd": unit,
+                "avoided_usd": round(avoided, 6),
+                # Hits per entry is the saturation signal, and it is the one to watch. A
+                # shared cache only makes the product cheaper at scale if entries are reused
+                # many times over: climbing across releases means the key space is bounded
+                # and the cache is saturating; flat near 1.0 means it never will.
+                "hits_per_entry": (
+                    round(row["hits"] / row["entries"], 2) if row["entries"] else 0.0
+                ),
+            }
+        )
+    avoided_by_feature.sort(key=lambda r: r["avoided_usd"], reverse=True)
+
     return {
         "temporary": True,
         "note": (
@@ -253,5 +295,28 @@ async def get_ai_usage(
         # "what did this feature cost" and "how often did we avoid paying for it" read
         # side by side. Entries with hit_count 0 are the honest signal that caching a
         # feature bought nothing — a table of those is a table of wasted writes.
-        "cache": await vector_cache.stats(db),
+        "cache": cache_rows,
+        # THE NUMBER THE PRICING DECISION ACTUALLY NEEDS.
+        #
+        # Everything above answers "what did we spend". This answers "is it getting cheaper
+        # per user as more people use it", which is a different question and the only one
+        # that says whether a lower price is survivable later.
+        #
+        # `avoided_usd` prices the cache: hits x what that feature costs per call, per
+        # feature, from THIS window's real ledger rather than from a constant in a document.
+        # A feature with entries and no hits shows up as zero, which is the honest way to
+        # find a cache that is only ever written to.
+        "savings": {
+            "avoided_usd": round(avoided_total, 6),
+            "by_feature": avoided_by_feature,
+            # What the bill would have been without the shared cache. The ratio of these two
+            # is the whole economies-of-scale claim, expressed as a number somebody can
+            # check against an invoice.
+            "would_have_cost_usd": round(total_cost + avoided_total, 6),
+            "avoided_pct": (
+                round(avoided_total / (total_cost + avoided_total) * 100, 1)
+                if (total_cost + avoided_total)
+                else 0.0
+            ),
+        },
     }

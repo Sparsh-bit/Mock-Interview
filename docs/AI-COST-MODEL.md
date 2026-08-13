@@ -69,8 +69,49 @@ FROM ai_usage GROUP BY feature ORDER BY 6 DESC;
 | | | | | | **$0.1660** | with the plan cache hit |
 
 The report is **58%** of an interview's cost, and it is output-bound: 5,580 output tokens
-at $15/M is $0.0837 of its $0.1349. **Prompt caching cannot fix this** — there is not
-enough input in it to matter.
+at $15/M is $0.0837 of its $0.1349.
+
+> **This paragraph used to say "prompt caching cannot fix this — there is not enough input
+> in it to matter". That was wrong, and it is worth recording why.** The report's input is
+> 17,059 tokens, which is not small; what made it uncacheable was that
+> `report_generator.md` carried eight `$placeholders`, so the system block differed on every
+> report and the provider could never reuse it. The rubric inside it is **2,778 tokens of
+> byte-identical text**. Moving the per-session values into a session brief in the user
+> message — the same change `_round_brief` made for the GD panel — makes it cacheable, and
+> it reads at 0.1x thereafter.
+
+### Two changes, measured
+
+| change | mechanism | $/report |
+|---|---|---:|
+| study resources no longer generated | attached from the verified library instead | **−0.0036** |
+| the 2,778-token rubric is cached | placeholders moved to the user message | **−0.0080** |
+| | | **−0.0116** |
+
+The resources figure is the measured size of the JSON the model used to emit — 876
+characters across three roadmap items, ~237 output tokens of the 5,580 cap. It is the
+smaller of the two and was worth doing anyway: a book title or a docs URL is exactly the
+kind of plausible detail a model invents, and `resources.yaml` is human-verified.
+
+**Report: $0.1349 → $0.1233 (−8.6%). Warm interview: $0.1660 → $0.1544 (−7.0%).**
+`$2/day` goes from 12.0 warm interviews to **13.0**.
+
+### Which of these get cheaper as the product gets busier
+
+This is the distinction that matters for pricing, and only two of the four mechanisms in
+this codebase have it:
+
+| mechanism | improves with scale? | why |
+|---|---|---|
+| **shared vector cache** | **yes, permanently** | keyed by topic/plan, so the key space is bounded by the syllabus, not the user count. It saturates: once every topic has been generated once, it is free for every future user. |
+| **provider prompt caching** | **yes, while busy** | an entry lives ~5 minutes and each read refreshes it. Near-zero hit rate at one report a day; near-100% once reports are minutes apart. |
+| curated library | no — but already zero | a fixed asset. Costs nothing at any scale. |
+| per-candidate generation | **no** | the report's judgement, a cross-question, a GD turn. Identical cost on user one and user ten thousand. |
+
+The last row is the honest limit. Most of what is left in an interview is per-candidate
+judgement, and no cache makes that cheaper — which is why the plan cache (−28% on a hit)
+and the GD prompt cache (−59%) remain the two biggest wins in this document, and why the
+next one is unlikely to come from caching at all. See **What to change** below.
 
 ## One full group discussion — 8 minutes, 26 panel turns
 
@@ -139,9 +180,26 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
    "the service is over its safety limit" must not look the same, and neither should look
    like a crash. Today both produce the unscored-report placeholder.
 4. ~~Restructure `gd_panel.md` for prompt caching~~ — **done**, 59% off the GD round.
-5. **Then re-derive this whole document from the `ai_usage` ledger**, which is what it is
+5. ~~Restructure `report_generator.md` for prompt caching~~ — **done**, with the study
+   resources moved to the verified library. 7.0% off a warm interview.
+6. **The Message Batches API, for reports.** This is now the single largest saving left and
+   it is not a cache: Anthropic bills batch requests at **50%**, and a report is the one
+   call in this product that does not have to be synchronous — the interview is already
+   over. At $0.1233 that is **−$0.062 a report, ~40% of a warm interview**, which is many
+   times everything above put together.
+
+   Not done here because it is a product decision, not a refactor: it trades a few minutes
+   of latency for half the cost of the most expensive thing we do. The report page would
+   need a "we are preparing your report" state and a poll or a notification. Worth costing
+   properly before the price is set, because it changes what the free tier can afford.
+7. **Shorten the report.** It sits on its 5,580-token output cap, which means the model is
+   being truncated rather than choosing to stop — so nobody knows how long it *would* be.
+   Output is $0.0837 of $0.1233. Any honest reduction here is money, and a report a
+   candidate actually finishes reading is also a better report.
+8. **Then re-derive this whole document from the `ai_usage` ledger**, which is what it is
    for. Every estimate above should become a measurement.
 
-Per-user quotas are also the natural shape of the credit/subscription system the
-`ai_usage` ledger is a placeholder for (see [[TEMPORARY-token-counter]]), so this is
-groundwork rather than a detour.
+Per-user quotas turned out to be exactly what shipped: see
+`backend/app/services/billing/`, which meters interviews, GDs and communication drills
+against a per-plan allowance. The `ai_usage` ledger it was groundwork for is still the
+thing to re-derive this document from (see [[TEMPORARY-token-counter]]).

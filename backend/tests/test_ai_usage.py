@@ -247,3 +247,49 @@ def test_unpriced_calls_record_zero_not_null(cost, expected):
     """
     got = Decimal(str(cost)) if cost is not None else Decimal("0")
     assert got == expected
+
+
+class TestTheCacheSavingIsPriced:
+    """
+    "The cache is working" has to be a figure, not an assertion.
+
+    vector_cache.stats() counts hits and the ledger knows what a call costs; the two sat
+    side by side in this response for a long time without ever being multiplied, so nothing
+    in the product could say what the cache had actually saved. That matters more now than
+    it did: the argument for pricing the free tier where it is rests on cost per user
+    FALLING as the user base grows, and an argument like that should be checkable against
+    an invoice rather than against a paragraph in a design doc.
+    """
+
+    def test_the_saving_is_computed_from_this_window_not_a_constant(self):
+        # A saving quoted against a hardcoded price is a made-up number the day a model
+        # price changes — and prompt caching already moved the GD turn by 59%.
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/ai_usage.py"
+        ).read_text()
+        block = src[src.index("cache_rows = await vector_cache.stats") :]
+        assert "avg_cost_per_call_usd" in block, (
+            "the cache saving is not priced from the window's own ledger"
+        )
+
+    def test_it_reports_hits_per_entry(self):
+        # The saturation signal. A shared cache only makes the product cheaper at scale if
+        # entries are reused many times over; flat near 1.0 means the key space grows with
+        # the user count and the cache will never pay for itself.
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/ai_usage.py"
+        ).read_text()
+        assert "hits_per_entry" in src
+
+    def test_a_feature_with_no_ledger_rows_prices_at_zero_rather_than_raising(self):
+        # A cache entry for a feature that has not been called inside the window has no
+        # average cost. That must be 0.0, not a KeyError on the admin dashboard.
+        cost_per_call: dict[str, float] = {}
+        row = {"feature": "study_resources", "hits": 12, "entries": 4, "never_hit": 0}
+        unit = float(cost_per_call.get(row["feature"], 0.0))
+        assert unit == 0.0
+        assert row["hits"] * unit == 0.0

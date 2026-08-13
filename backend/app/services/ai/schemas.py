@@ -190,6 +190,29 @@ class ImprovementResourceItem(BaseModel):
     author: str | None = None
 
 
+class StudyResource(BaseModel):
+    """One study resource for a topic. Mirrors ImprovementResourceItem, generated shape."""
+
+    type: str = "reference"
+    title: str
+    #: Optional because the prompt tells the model to omit a URL it is not certain of,
+    #: rather than invent one. A titled resource with no link is still findable; a
+    #: confident dead link is worse than nothing.
+    url: str | None = None
+    author: str | None = None
+
+
+class StudyResourceList(BaseModel):
+    """
+    Output of the shared, topic-keyed resource generation.
+
+    Cached globally by topic — see services/prep/study_resources.py. Nothing about a
+    candidate reaches this prompt, which is what makes it safe to share.
+    """
+
+    resources: list[StudyResource] = Field(default_factory=list)
+
+
 class ImprovementRoadmapItem(BaseModel):
     priority: int
     topic: str
