@@ -14,6 +14,7 @@ import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
 import type { CodeLanguage } from '@/hooks/useCode';
 import { useSpeechRecognition, useSpeechSynthesis, usePanelVoices } from '@/hooks/useSpeech';
 import { useCandidateName } from '@/hooks/useCandidateName';
+import { useConnection, isNetworkError } from '@/hooks/useConnection';
 import {
   useInterviewPanel,
   useInterviewers,
@@ -69,6 +70,45 @@ export default function LiveSessionPage() {
   const { useNextQuestion, submitAnswer, completeSession } = useInterview();
 
   const { data, isLoading, isFetching, isError, refetch } = useNextQuestion(sessionId);
+
+  /*
+   * THE CONNECTION. Reported: "if the device goes offline then the interview must give the
+   * warning of the internet connection and also the session must go on or it must resume from
+   * theri as it was earlier... the interview must not start from the starting."
+   *
+   * RESUMING IS ALREADY CORRECT AND THAT IS THE POINT. The interview's position lives
+   * server-side: the plan is in the session row and `/next` returns the question the candidate
+   * has not answered yet. So a drop cannot lose the candidate's place, and reconnecting is a
+   * re-fetch, not a restart. What was missing was everything around it — no warning, a
+   * microphone that stayed armed against a recogniser it could not reach, and a query layer
+   * that surfaced the outage as an interview error.
+   *
+   * So this hook is only asked whether the connection works. What to do about it is decided
+   * here, where it is known which actions are safe.
+   */
+  const connection = useConnection();
+
+  /*
+   * COME BACK TO THE SAME QUESTION.
+   *
+   * On reconnect, re-fetch rather than assume. The client's copy of "the current question" was
+   * correct when the connection dropped, but an answer submitted from another tab — or one
+   * that reached the server and whose RESPONSE was lost, which is the ordinary case for a drop
+   * mid-submit — means the server has moved on. Re-fetching is how the two agree again, and it
+   * is also what makes a lost-response submit resolve correctly instead of asking the candidate
+   * the same question twice.
+   */
+  const wasOfflineRef = useRef(false);
+  useEffect(() => {
+    if (!connection.online) {
+      wasOfflineRef.current = true;
+      return;
+    }
+    if (!wasOfflineRef.current) return;
+    wasOfflineRef.current = false;
+    void refetch();
+  }, [connection.online, refetch]);
+
   const [answer, setAnswer] = useState('');
   const [answered, setAnswered] = useState(0);
   // Voice is the primary way to answer; typing is a fallback when the mic or
@@ -364,6 +404,17 @@ export default function LiveSessionPage() {
      * is unavailable, which panelBusy knows nothing about.
      */
     if (panelBusy || tts.speaking || panelVoices.speakingNow || panelVoices.takingFloor) return;
+    /*
+     * AND NOT WHILE THE CONNECTION IS DOWN.
+     *
+     * Recognition is a network service in every browser that has it, so an open mic during an
+     * outage is not a recording — it is a mic that produces nothing, or worse, produces a
+     * partial transcript when the connection returns and files it as the candidate's answer.
+     * Holding it shut is the "less disturbance" half of the report: the question stays on
+     * screen, the answer they already typed stays in the box, and nothing is captured badly in
+     * between.
+     */
+    if (!connection.online) return;
     if (stt.listening || stt.error) return;
     if (pinnedClosedRef.current || armedForRef.current === question.id) return;
     /*
@@ -409,7 +460,9 @@ export default function LiveSessionPage() {
     }, 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handsFree, useTyping, preparing, phase, panelBusy, isCoding, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error]);
+    // `connection.online` is in the list so the mic re-arms once the connection returns —
+    // without it a candidate who dropped out mid-question would have to reach for the button.
+  }, [handsFree, useTyping, preparing, phase, panelBusy, isCoding, question?.id, tts.speaking, panelVoices.speakingNow, panelVoices.takingFloor, stt.supported, stt.listening, stt.error, connection.online]);
 
   /**
    * END OF ANSWER — A LABEL, NOT A CLOSE. The mic stays open until they submit.
@@ -842,6 +895,21 @@ export default function LiveSessionPage() {
           refetch();
         },
         onError: (err: Error) => {
+          /*
+           * A FAILED SUBMIT IS THE STRONGEST CONNECTIVITY SIGNAL WE GET, and the only one that
+           * catches a device whose `navigator.onLine` is lying — a hotspot with no data left
+           * keeps the radio associated and reports itself online forever.
+           *
+           * Filtered by `isNetworkError`, because a 402 out of credits or a 500 from the
+           * scorer is not a connection problem, and telling a candidate to check their wifi
+           * when the server rejected their request sends them to fix the wrong thing.
+           */
+          if (isNetworkError(err)) {
+            connection.reportFailure();
+            // No toast on this path. The strip already says it, more calmly and without
+            // stacking one per retry.
+            return;
+          }
           toast.error(err.message || 'Failed to submit answer. Please try again.');
         },
       }
@@ -859,8 +927,22 @@ export default function LiveSessionPage() {
     );
   }
 
-  // ─── Network / server error — clean retry, no console/toast storm ─────────
-  if (isError) {
+  /*
+   * ─── Network / server error — clean retry, no console/toast storm ─────────
+   *
+   * ONLY WHEN THERE IS NOTHING TO SHOW. This used to fire on `isError` alone, and that is the
+   * biggest part of "there must be a less disturbance": a thirty-second wifi drop mid-interview
+   * replaced the entire session — the pinned question, the answer half-typed in the box, the
+   * whole panel thread — with a full-screen error card. The progress was never actually lost,
+   * but every visible trace of it was, and coming back to an empty thread is indistinguishable
+   * from starting over. It is why the report says "the interview must not start from the
+   * starting" about a system that already resumed correctly.
+   *
+   * With a question in hand the interview stays exactly where it was and the offline strip
+   * above does the talking. TanStack Query keeps the last successful data through an error, so
+   * `question` survives the outage — which is what makes this safe rather than optimistic.
+   */
+  if (isError && !question) {
     return (
       <div className="hero-wash flex min-h-screen items-center justify-center bg-background p-6">
         <motion.div
@@ -968,6 +1050,34 @@ export default function LiveSessionPage() {
           <StopCircle className="h-4 w-4" /> End Interview
         </button>
       </header>
+
+      {/* ── The connection warning ──────────────────────────────────────────────
+          A STRIP, NOT A MODAL, and that is the whole design. "there must be a less
+          disturbance": a dialog over the interview would take the question off screen,
+          steal focus from the answer box and make a thirty-second wifi blip feel like a
+          failed session. This states the problem, says what is safe, and leaves everything
+          else exactly where it was — the question stays pinned, the typed answer stays in
+          the box, the timer holds, and the microphone stays shut until it can be heard.
+
+          flex-shrink-0 so it cannot be compressed out of existence by the panes below, and
+          outside the scroll container so it stays visible while the thread scrolls. */}
+      {!connection.online && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex flex-shrink-0 items-center gap-3 border-b border-accent-amber/30 bg-accent-amber/10 px-6 py-2.5"
+        >
+          <WifiOff className="h-4 w-4 flex-shrink-0 text-accent-amber" aria-hidden />
+          <p className="text-xs leading-relaxed text-foreground">
+            <span className="font-semibold">No internet connection.</span>{' '}
+            {/* Says the thing the candidate is actually worried about. A generic "connection
+                lost" leaves them wondering whether to refresh — and refreshing is the one
+                action that would feel like losing the interview, even though it would not. */}
+            Your interview is paused, not lost — you&rsquo;ll carry on from this same question
+            once you&rsquo;re back. Nothing you&rsquo;ve typed will be discarded.
+          </p>
+        </div>
+      )}
       {/* The proctoring alert, wherever the candidate is looking.
           Duplicated from inside the video pane on purpose: below lg that pane is behind a
           tab, and an invigilation warning the candidate never sees is not invigilation. */}
