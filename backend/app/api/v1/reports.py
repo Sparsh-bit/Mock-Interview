@@ -599,11 +599,14 @@ async def generate_report(
     # bluffing.
     meta = session.session_metadata or {}
     rating = meta.get("self_rating") or {}
-    claimed = rating.get("java")
+    claimed = rating.get("rating")
+    subject = str(rating.get("subject") or "").strip()
     if isinstance(claimed, int):
         strengths = ", ".join(str(x) for x in (rating.get("strengths") or [])[:8])
         self_assessment = (
-            f"Before the technical questions the candidate rated their own Java {claimed}/10"
+            "Before the questions the candidate rated their own "
+            + (subject or "ability for this role")
+            + f" {claimed}/10"
             + (f" and named these as their strongest areas: {strengths}." if strengths else ".")
             + " Judge their answers AGAINST THAT CLAIM. A candidate who claimed 8 or more and"
             " could not answer straightforward questions has misjudged themselves, and saying"

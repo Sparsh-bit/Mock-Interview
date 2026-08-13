@@ -234,7 +234,15 @@ class SelfRatingRequest(BaseModel):
     dial rather than an answer.
     """
 
-    java_rating: int = Field(ge=1, le=10)
+    rating: int = Field(ge=1, le=10)
+    #: What they were asked to rate themselves ON, echoed back from the panel's question.
+    #:
+    #: Carried rather than assumed, because the panel now asks a sales candidate about sales
+    #: and an HR candidate about HR — see _rating_subject in api/v1/panel.py. This used to be
+    #: a bare `java_rating`, which stored a sales candidate's answer under the key "java":
+    #: harmless while every interview was a Java interview and a straightforward lie
+    #: afterwards, in the one record the report reads to judge them against their own claim.
+    subject: str = Field(default="", max_length=80)
     #: Areas they said they are strongest in, in their own words. Free text, capped, and only
     #: ever used to STEER topic choice — never matched exactly, because "collections" and
     #: "Collections framework" and "DSA collections" are the same claim.
@@ -284,7 +292,8 @@ async def set_self_rating(
 
     meta = dict(session.session_metadata or {})
     meta["self_rating"] = {
-        "java": request.java_rating,
+        "rating": request.rating,
+        "subject": (request.subject or "").strip()[:80],
         "strengths": [s.strip()[:60] for s in request.strengths if s.strip()][:8],
     }
     # Reassigned rather than mutated in place: JSONB columns are not tracked for in-place
@@ -295,7 +304,8 @@ async def set_self_rating(
     logger.info(
         "self_rating_recorded",
         session_id=str(session_id),
-        java_rating=request.java_rating,
+        rating=request.rating,
+        subject=request.subject,
         strengths=len(meta["self_rating"]["strengths"]),
     )
     return {"status": "recorded", "self_rating": meta["self_rating"]}

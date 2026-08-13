@@ -75,9 +75,24 @@ describe('the single-voice fallback and the panel never overlap', () => {
   });
 
   it('still falls back to one voice when the panel returned nothing', () => {
-    // The fallback must survive the fix. A panel that cannot speak and a page that then says
-    // nothing is a silent interview, which is worse than a plainer voice.
-    expect(CODE).toMatch(/!spoke\s*&&\s*tts\.supported/);
+    // The fallback must survive every refactor. A panel that cannot speak and a page that
+    // then says nothing is a silent interview, which is worse than a plainer voice.
+    //
+    // Asserted on the BRANCH rather than on one expression, because the fallback now does
+    // two things — speak the question, and append it to the thread as a line from the lead
+    // interviewer — and pinning the old single-line shape made a correct change look broken.
+    const branch = CODE.match(/if\s*\(!spoke\)\s*\{([\s\S]*?)\n {6}\}/);
+    expect(branch).toBeTruthy();
+    expect(branch![1]).toMatch(/tts\.supported/);
+    expect(branch![1]).toMatch(/tts\.speak\(questionText\)/);
+  });
+
+  it('a question the panel could not dress up still lands in the thread', () => {
+    // Otherwise a failed turn leaves the conversation pane blank and the candidate is
+    // listening to a question they cannot see — which is how "I cannot see what the
+    // interviewers are saying" happened in the first place.
+    const branch = CODE.match(/if\s*\(!spoke\)\s*\{([\s\S]*?)\n {6}\}/);
+    expect(branch![1]).toMatch(/setPanelLines/);
   });
 });
 

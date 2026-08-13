@@ -100,6 +100,13 @@ export interface PanelTurnResult {
    * declined — which would be worse than not offering one.
    */
   pivot_topic?: string;
+  /**
+   * For the skill_check stage: what the panel asked them to rate themselves on.
+   *
+   * Chosen by the SERVER from the role — a sales candidate is asked about sales, not Java.
+   * Recorded alongside the number so the report can say which subject a 7 refers to.
+   */
+  rating_subject?: string;
 }
 
 /**
@@ -109,6 +116,18 @@ export interface PanelTurnResult {
  * prompt, the transcript and the voice allocation, and a frontend copy that drifts means Priya
  * speaks in Anil's voice or a line from an unknown speaker is silently dropped.
  */
+/**
+ * Who is on the panel, and whether this is a technical interview.
+ *
+ * `technical` is what decides whether a code editor exists at all. A sales candidate has no
+ * use for one, and showing it says the simulation has not understood the role — the same
+ * class of mistake as asking them to rate themselves in Java.
+ */
+export interface PanelInfo {
+  interviewers: Interviewer[];
+  technical: boolean;
+}
+
 export function useInterviewers(sessionId?: string) {
   return useQuery({
     // Keyed by session, because the DESIGNATIONS depend on the role: a sales interview is run
@@ -121,7 +140,7 @@ export function useInterviewers(sessionId?: string) {
           ? `/api/v1/panel/interviewers?session_id=${encodeURIComponent(sessionId)}`
           : '/api/v1/panel/interviewers',
       );
-      return res.data as Interviewer[];
+      return res.data as PanelInfo;
     },
     // Still Infinity: names, genders and designations are fixed for the life of a session, and
     // the voice allocation downstream keys off the names.
@@ -140,7 +159,7 @@ export function useInterviewPanel() {
       } catch {
         // Empty, not an error. The caller shows the question on its own and the interview
         // continues — see the note at the top of this file.
-        return { turns: [], asked_question: false, pivot_topic: '' };
+        return { turns: [], asked_question: false, pivot_topic: '', rating_subject: '' };
       }
     },
   });
@@ -157,7 +176,7 @@ export function useInterviewPanel() {
  */
 export function useSelfRating(sessionId: string) {
   return useMutation({
-    mutationFn: async (args: { java_rating: number; strengths: string[] }) => {
+    mutationFn: async (args: { rating: number; subject: string; strengths: string[] }) => {
       const res = await getBrowserApiClient().post(
         `/api/v1/interview/${sessionId}/self-rating`,
         args,

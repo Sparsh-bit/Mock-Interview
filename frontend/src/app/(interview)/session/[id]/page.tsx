@@ -139,7 +139,21 @@ export default function LiveSessionPage() {
   const { first: candidateName } = useCandidateName();
   // Session-scoped: the designations follow the role, so a sales candidate sees a Regional
   // Sales Manager rather than a Senior Engineering Manager.
-  const { data: interviewers } = useInterviewers(sessionId);
+  const { data: panelInfo } = useInterviewers(sessionId);
+  const interviewers = panelInfo?.interviewers;
+  /*
+   * IS THERE A CODE EDITOR AT ALL?
+   *
+   * Resolved from the role, not from the question type. A sales or HR interview never needs
+   * one, and a permanent editor in a sales round is not neutral clutter — it says the
+   * simulation has not understood what job the candidate applied for, which is the same
+   * class of mistake as asking them to rate themselves in Java.
+   *
+   * Defaults to true while the roster is still loading, and true for any role the domain
+   * classifier does not recognise: a missing editor costs a technical candidate the
+   * question, a spurious one costs everybody else a glance.
+   */
+  const hasEditor = panelInfo?.technical ?? true;
   const { turn: panelTurn } = useInterviewPanel();
   const panelVoices = usePanelVoices(
     useMemo(
@@ -206,8 +220,18 @@ export default function LiveSessionPage() {
   //: users are overwhelmingly phone-first, so below lg they become tabs rather than a stack —
   //: stacked, the compiler would sit two screens below the question it belongs to.
   const [mobilePane, setMobilePane] = useState<'talk' | 'code' | 'you'>('talk');
+  //: If the roster arrives after the candidate has already tapped Compiler — it defaults to
+  //: available while loading — they would be left looking at a pane that no longer exists.
+  useEffect(() => {
+    if (!hasEditor && mobilePane === 'code') setMobilePane('talk');
+  }, [hasEditor, mobilePane]);
+
   //: The topic the panel offered after a decline, so a "yes" can be acted on.
   const [pivotOffer, setPivotOffer] = useState<{ topic: string; declined: string } | null>(null);
+  //: What the panel asked them to rate themselves on — "Java" for a Java role, "Sales &
+  //: Business Development" for a sales one. Recorded with the number so the report knows
+  //: which subject a bare 7 refers to.
+  const [ratingSubject, setRatingSubject] = useState('');
   //: Which language the compiler is set to. Lifted out of CodingWorkspace so a code review
   //: can say which language it is reading — "this is Java" changes what counts as a mistake.
   const [codeLanguage, setCodeLanguage] = useState<CodeLanguage>('java');
@@ -504,9 +528,22 @@ export default function LiveSessionPage() {
       question?: string;
       candidate_question?: string;
       language?: string;
+      /**
+       * DEAD, AND KEPT ONLY TO SAY SO. The thread never resets any more.
+       *
+       * It used to clear on every new question, which is why "I cannot see what the
+       * interviewers are saying" was a fair report: the moment the next turn began, the
+       * correction they had just given, the code review, the whole exchange — gone, before
+       * anybody had finished reading it. Combined with a remount on every phase change it
+       * meant the pane was empty far more often than it had anything in it.
+       *
+       * An interview is a conversation and a conversation accumulates. Scrolling back to see
+       * what somebody said two questions ago is the entire reason this is a thread rather
+       * than a question box.
+       */
       reset?: boolean;
-    }): Promise<{ spoke: boolean; pivotTopic: string }> => {
-      if (args.reset !== false) setPanelLines([]);
+    }): Promise<{ spoke: boolean; pivotTopic: string; ratingSubject: string }> => {
+      // Deliberately does not clear. See the note on `reset`.
       setPanelPending(true);
       // Held from BEFORE the request until after the last word — the request itself counts,
       // because a mic opened while the turn is being written is a mic that is open when it
@@ -567,7 +604,13 @@ export default function LiveSessionPage() {
         candidate_name: candidateName,
       });
       setPanelPending(false);
-      if (!result.turns.length) return { spoke: false, pivotTopic: result.pivot_topic ?? '' };
+      if (!result.turns.length) {
+        return {
+          spoke: false,
+          pivotTopic: result.pivot_topic ?? '',
+          ratingSubject: result.rating_subject ?? '',
+        };
+      }
 
       // Every line starts synthesising NOW rather than when its turn comes to speak.
       // Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
@@ -584,7 +627,11 @@ export default function LiveSessionPage() {
           tone: line.tone,
         });
       }
-      return { spoke: true, pivotTopic: result.pivot_topic ?? '' };
+      return {
+        spoke: true,
+        pivotTopic: result.pivot_topic ?? '',
+        ratingSubject: result.rating_subject ?? '',
+      };
       } finally {
         // `finally`, so a provider failure or a thrown mutation cannot leave the microphone
         // interlocked for the rest of the interview — that would be a worse bug than the one
@@ -614,7 +661,8 @@ export default function LiveSessionPage() {
     if (isLoading || !question) return;
     skillAskedRef.current = true;
     void (async () => {
-      const { spoke } = await speakTurn({ stage: 'skill_check' });
+      const { spoke, ratingSubject: subject } = await speakTurn({ stage: 'skill_check' });
+      setRatingSubject(subject);
       // No panel, no skill check. Falling through to the questions is right: the rating is
       // an enhancement, and a candidate staring at a silent screen waiting to be asked
       // something is the worst possible failure mode for it.
@@ -647,9 +695,19 @@ export default function LiveSessionPage() {
         stage: answered === 0 ? 'opening' : question?.is_follow_up ? 'follow_up' : 'mid',
         question: questionText,
       });
-      // No panel — provider down, or it returned nothing usable. Fall back to the single
-      // voice reading the question, which is exactly the old behaviour.
-      if (!spoke && tts.supported) tts.speak(questionText);
+      /*
+       * No panel — provider down, over budget, or nothing usable came back.
+       *
+       * The question is APPENDED TO THE THREAD as a line from the lead interviewer rather
+       * than rendered separately, so a failed turn does not blank the conversation or change
+       * what the screen looks like. The candidate loses the panel's phrasing, which is a real
+       * loss; they do not also lose everything said before it.
+       */
+      if (!spoke) {
+        const lead = interviewers?.[0]?.name ?? 'Interviewer';
+        setPanelLines((prev) => [...prev, { speaker: lead, text: questionText, tone: 'asking' }]);
+        if (tts.supported) tts.speak(questionText);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, questionText, question?.id, useTyping]);
@@ -733,7 +791,11 @@ export default function LiveSessionPage() {
      */
     const t = setTimeout(
       () => {
-        selfRating.mutate({ java_rating: parsed.rating, strengths: parsed.strengths });
+        selfRating.mutate({
+          rating: parsed.rating,
+          subject: ratingSubject,
+          strengths: parsed.strengths,
+        });
         setAnswer('');
         stt.reset();
         setPhase('asking');
@@ -1100,7 +1162,9 @@ export default function LiveSessionPage() {
       <div className="flex flex-shrink-0 items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden">
         {([
           { id: 'talk', label: 'Interview', icon: MessageSquare },
-          { id: 'code', label: 'Compiler', icon: Code2 },
+          // Filtered, not disabled. A tab that leads to a pane the interview does not have
+          // is a dead end, and on a phone it is a third of the bar.
+          ...(hasEditor ? [{ id: 'code' as const, label: 'Compiler', icon: Code2 }] : []),
           { id: 'you', label: 'You', icon: Video },
         ] as const).map((t) => {
           const Icon = t.icon;
@@ -1139,7 +1203,15 @@ export default function LiveSessionPage() {
         // min-h-0 is what actually makes the panes scroll rather than the page: a grid item
         // defaults to min-height:auto, which means "as tall as my content" and silently
         // defeats every overflow rule inside it.
-        className="mx-auto grid w-full min-h-0 max-w-[1800px] flex-1 gap-4 p-3 sm:p-4 lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)_minmax(280px,0.85fr)] lg:gap-5 lg:p-5"
+        className={cn(
+          'mx-auto grid w-full min-h-0 max-w-[1800px] flex-1 gap-4 p-3 sm:p-4 lg:gap-5 lg:p-5',
+          // Two columns without an editor, not three with an empty one. A non-technical
+          // interview is a conversation and a camera, and giving the conversation the room
+          // the editor was taking is the point of removing it.
+          hasEditor
+            ? 'lg:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)_minmax(280px,0.85fr)]'
+            : 'lg:max-w-[1200px] lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.8fr)]',
+        )}
       >
         {/* ── LEFT: the conversation ──────────────────────────────────────── */}
         <motion.div
@@ -1173,22 +1245,29 @@ export default function LiveSessionPage() {
               thing you must always be able to reach is the microphone, and a mic button that
               scrolls off after a long code review is a mic button that is not there. */}
           <div className="mb-4 min-h-0 flex-1 overflow-y-auto pr-1">
-            <AnimatePresence mode="wait">
+            {/* NO AnimatePresence AND NO CHANGING KEY.
+                Both were destroying the conversation. `mode="wait"` unmounts the current
+                child before mounting the next, and the key included `phase` — so every move
+                between skill_check, asking, pivot, reviewing and closing tore down the whole
+                thread and rebuilt it empty. Together with the reset that used to run on each
+                turn, the interviewers' words were being deleted twice over, which is exactly
+                what "I cannot see what the interviewers are saying" describes.
+
+                The lines animate themselves in individually inside PanelThread, which is
+                where the animation belonged all along. */}
+            <div>
               {preparing && !panelLines.length ? (
-                <GeneratingQuestion key="gen" label="Thinking about your next question…" />
+                <GeneratingQuestion label="Thinking about your next question…" />
               ) : (
-                <motion.div
-                  key={`${phase}-${question?.id ?? 'none'}`}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                >
+                <div>
                   <PanelThread
                     lines={panelLines}
                     speakingNow={panelVoices.speakingNow}
                     takingFloor={panelVoices.takingFloor}
                     interviewers={interviewers}
-                    fallbackQuestion={phase === 'asking' ? question?.content : null}
+                    // No fallback prop any more: a question the panel could not dress up is
+                    // appended to the thread as a line from the lead interviewer, so it
+                    // reads as the same interview rather than as the page changing.
                     pending={panelPending}
                   />
 
@@ -1300,7 +1379,7 @@ export default function LiveSessionPage() {
                           <button
                             key={n}
                             onClick={() => {
-                              selfRating.mutate({ java_rating: n, strengths: [] });
+                              selfRating.mutate({ rating: n, subject: ratingSubject, strengths: [] });
                               setPhase('asking');
                             }}
                             className="h-9 w-9 rounded-lg border border-border text-xs font-semibold transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
@@ -1311,9 +1390,9 @@ export default function LiveSessionPage() {
                       </div>
                     </div>
                   )}
-                </motion.div>
+                </div>
               )}
-            </AnimatePresence>
+            </div>
             <div ref={threadEndRef} />
           </div>
 
@@ -1648,7 +1727,10 @@ export default function LiveSessionPage() {
           variants={fadeUp}
           className={cn(
             'glass min-h-0 overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5',
-            mobilePane === 'code' ? 'block' : 'hidden lg:block',
+            // Gone entirely, not merely hidden — a pane that exists but never shows still
+            // mounts CodeMirror, still loads its language modes, and still shows up in the
+            // tab bar as somewhere to go.
+            !hasEditor ? 'hidden' : mobilePane === 'code' ? 'block' : 'hidden lg:block',
           )}
         >
           <div className="mb-4 flex items-center justify-between gap-2">

@@ -49,6 +49,20 @@ router = APIRouter(prefix="/panel", tags=["Interview Panel"])
 _CODE_VERDICT_BUDGET_SECONDS = 18.0
 
 
+class PanelInfo(BaseModel):
+    """
+    Who is on the panel, and what kind of interview this is.
+
+    `technical` exists so the UI can stop showing a code editor to a sales candidate. It is
+    resolved from the role by `domains.is_technical` — the same classification the planner
+    uses to decide what to ask and the panel uses to decide what to call itself — rather than
+    being a fourth opinion about what a role is.
+    """
+
+    interviewers: list[Interviewer]
+    technical: bool
+
+
 class Interviewer(BaseModel):
     """
     One member of the interview panel.
@@ -140,6 +154,47 @@ def panel_for(role_title: str = "") -> list[Interviewer]:
     ]
 
 
+def _rating_subject(role_title: str) -> str:
+    """
+    What the panel asks the candidate to rate themselves on.
+
+    THE SALES BUG. The prompt used to reason from the role title itself, and every branch it
+    offered was technical — Java, or "programming fundamentals" when it could not tell. A
+    sales role fell into that last branch and got asked to rate itself in Java, which tells a
+    candidate in the first ten seconds that the simulation does not know what job they
+    applied for.
+
+    No prompt wording fixes that, because the model is not the thing that knows. `domains.py`
+    is: it already resolves a role title to one of twelve families, each with a validated
+    topic weighting, and the orchestrator already plans the interview from it. Deciding the
+    subject HERE and handing the model a noun is the same fix, in the same place, as
+    `_render_panel` resolving the panel's designations rather than inventing them.
+
+    Falls back to a phrase with no technology in it. A rating question that names no subject
+    is odd; one that names the wrong subject is disqualifying.
+    """
+    from app.data import domains  # noqa: PLC0415
+    from app.services.interview.orchestrator import _is_java_role  # noqa: PLC0415
+
+    if _is_java_role(role_title, ""):
+        return "Java"
+
+    if domains.matched(role_title, ""):
+        profile = domains.profile_for(role_title, "")
+        # The heaviest topic in the family is what the role is really screened on, and it is
+        # already weighted for exactly this reason. Sales opens on prospecting and objection
+        # handling; mechanical on design and thermodynamics.
+        top = max(profile["topics"], key=lambda t: t[1])[0]
+        if domains.is_technical(role_title, ""):
+            return top
+        # For a non-technical role the family label reads better out loud than its top topic
+        # — "how would you rate yourself in sales and business development" is a question a
+        # person asks; "in prospecting and pipeline" is a form field.
+        return profile["label"]
+
+    return "the core skills for this role"
+
+
 def _render_panel(role_title: str = "") -> str:
     return "\n".join(
         f"- {i.name} ({i.gender}, {i.role}): {i.disposition}" for i in panel_for(role_title)
@@ -176,6 +231,13 @@ class PanelTurnRequest(BaseModel):
 class PanelTurnResponse(BaseModel):
     turns: list[dict]
     asked_question: bool
+    #: For the skill_check stage: what the panel asked them to rate themselves on.
+    #:
+    #: Returned rather than parsed back out of what was said, for the same reason pivot_topic
+    #: is: the server chose it, and the client needs to record it alongside the number so the
+    #: report can say "they rated their own sales ability 7/10" rather than guessing which
+    #: subject a bare 7 refers to.
+    rating_subject: str = ""
     #: For the pivot stage: the topic the panel offered to move to.
     #:
     #: Returned rather than sent, because the SERVER chooses it — it is the only side that
@@ -620,19 +682,30 @@ async def get_interviewers(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
     session_id: uuid.UUID | None = None,
-) -> list[Interviewer]:
+) -> PanelInfo:
     """
-    The panel for this session, designations included.
+    The panel for this session, designations included, plus whether this is a technical role.
 
     `session_id` is optional and the role is read from the session's own track, never accepted
     from the caller — the same rule as everywhere else here, so the chip the candidate reads
     cannot disagree with the panel the prompt was written from. Without it the caller gets the
-    default designations, which keeps every existing consumer working.
+    default designations.
+
+    `technical` defaults to TRUE when there is no session to resolve. A missing code editor in
+    a technical interview costs the candidate the question; a spurious one in a sales
+    interview is only clutter. When we do not know, the more forgiving failure is the one to
+    take.
     """
     if session_id is None:
-        return INTERVIEWERS
+        return PanelInfo(interviewers=INTERVIEWERS, technical=True)
+    from app.data import domains  # noqa: PLC0415
+
     _, track_name = await _role_for_session(db, session_id, current_user.user_id)
-    return panel_for(track_name)
+    # An unmatched role title is treated as technical, for the same reason the no-session
+    # branch above is: a missing editor costs a technical candidate the question, a spurious
+    # one costs a sales candidate a glance.
+    technical = not domains.matched(track_name, "") or domains.is_technical(track_name, "")
+    return PanelInfo(interviewers=panel_for(track_name), technical=technical)
 
 
 @router.post(
@@ -665,6 +738,7 @@ async def panel_turn(
     # client is not allowed to pick. An empty string means there is nothing left to offer,
     # and the prompt is told to close the topic out rather than invent one.
     role_line, track_name = await _role_for_session(db, request.session_id, current_user.user_id)
+    rating_subject = _rating_subject(track_name)
     use_name = await _should_use_name(db, request.session_id, current_user.user_id, request.stage)
 
     pivot_topic = ""
@@ -690,6 +764,11 @@ async def panel_turn(
             # and defaults to Java — which is how an Analyst ended up being asked to rate
             # themselves in a language their role never touches.
             f"### The role they are interviewing for\n{role_line}",
+            "",
+            # Decided server-side. See _rating_subject — the model is not the thing that
+            # knows what a role is screened on, and asked to guess it guesses Java.
+            "### What to ask them to rate themselves on (skill_check stage only)",
+            rating_subject,
             "",
             "### Using their name this turn",
             (
@@ -788,7 +867,9 @@ async def panel_turn(
         # and puts it to the candidate the old way — a dialogue failure must never cost
         # somebody their interview.
         logger.warning("panel_turn_unavailable", session_id=str(request.session_id))
-        return PanelTurnResponse(turns=[], asked_question=False, pivot_topic=pivot_topic)
+        return PanelTurnResponse(
+            turns=[], asked_question=False, pivot_topic=pivot_topic, rating_subject=rating_subject
+        )
 
     # Only real panel members may speak. The model must never be able to put words in the
     # candidate's mouth — the same guard the GD panel carries, for the same reason.
@@ -822,4 +903,5 @@ async def panel_turn(
         turns=valid,
         asked_question=turn.asked_question and bool(valid),
         pivot_topic=pivot_topic,
+        rating_subject=rating_subject,
     )

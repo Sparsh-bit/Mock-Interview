@@ -119,10 +119,16 @@ class TestThePromptAsksAboutTheRightSubject:
             Path(__file__).resolve().parents[1] / "app" / "prompts" / "interview_panel.md"
         ).read_text()
         prompt = re.sub(r"\s+", " ", raw)
-        # It must reason from the role rather than naming one language for everybody.
-        assert "ASK ABOUT THE SUBJECT THIS ROLE IS ACTUALLY SCREENED ON" in prompt
-        assert "Analyst or consulting role" in prompt
-        assert "Never invent a technology the role has nothing to do with" in prompt
+        # The prompt no longer REASONS about the subject at all — it is handed one.
+        #
+        # Asking the model to infer it from the role title was the bug: every branch it could
+        # be given was technical, so a sales role fell through to "programming fundamentals".
+        # The model is not the thing that knows what a role is screened on; domains.py is.
+        assert "THE SUBJECT IS GIVEN TO YOU" in prompt
+        assert "What to ask them to rate themselves on" in prompt
+        assert "Do not substitute your own idea of what the role needs" in prompt
+        # And the consequence, stated, because a rule with a reason is followed.
+        assert "does not know what job they applied for" in prompt
 
 
 class TestANonTechnicalRoleGetsANonTechnicalInterview:
@@ -291,3 +297,75 @@ class TestTheDomainRegistryResolvesAmbiguousTitles:
                 f"{key}: {len(textbook)} of {len(scenarios)} seed questions open like a "
                 "definition; the bank has drifted back toward a viva"
             )
+
+
+class TestTheRatingSubjectComesFromTheRole:
+    """
+    The sales bug, pinned. "in the sales interview the interviewer is still asking for the
+    rate in java" — reported after the role scoping was supposedly fixed, because the
+    scoping fixed what was ASKED and not what the candidate was asked to rate themselves on.
+    """
+
+    def test_a_java_role_is_asked_about_java(self):
+        from app.api.v1.panel import _rating_subject
+
+        assert _rating_subject("Digital Nurture — Java FSE") == "Java"
+
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [
+            ("Sales Executive", "Sales & Business Development"),
+            ("Business Development", "Sales & Business Development"),
+            ("Marketing", "Marketing & Brand"),
+            ("HR Executive", "Human Resources"),
+        ],
+    )
+    def test_a_non_technical_role_is_asked_about_its_own_field(self, role, expected):
+        from app.api.v1.panel import _rating_subject
+
+        assert _rating_subject(role) == expected
+
+    def test_no_role_is_ever_asked_about_a_technology_it_does_not_use(self):
+        # The assertion that would have caught the original report.
+        from app.api.v1.panel import _rating_subject
+
+        for role in ("Sales", "Sales Executive", "HR Executive", "Marketing", "Recruiter"):
+            subject = _rating_subject(role).lower()
+            for tech in ("java", "python", "sql", "programming", "data structure"):
+                assert tech not in subject, f"{role} would be asked to rate itself on {tech}"
+
+    def test_an_unknown_role_names_no_technology_at_all(self):
+        # The old fallback said "programming fundamentals", which is a guess dressed as an
+        # answer. Naming nothing is honest; naming the wrong thing is disqualifying.
+        from app.api.v1.panel import _rating_subject
+
+        subject = _rating_subject("Something Nobody Has Heard Of").lower()
+        assert "java" not in subject
+        assert "programming" not in subject
+
+
+class TestTheEditorFollowsTheRole:
+    """A sales candidate must not be shown a code editor."""
+
+    @pytest.mark.parametrize("role", ["Sales Executive", "HR Executive", "Marketing"])
+    def test_non_technical_roles_get_no_editor(self, role):
+        from app.data import domains
+
+        technical = not domains.matched(role, "") or domains.is_technical(role, "")
+        assert technical is False
+
+    @pytest.mark.parametrize(
+        "role", ["Digital Nurture — Java FSE", "Mechanical Engineer", "Data Analyst"]
+    )
+    def test_technical_roles_keep_it(self, role):
+        from app.data import domains
+
+        assert not domains.matched(role, "") or domains.is_technical(role, "")
+
+    def test_an_unrecognised_role_keeps_the_editor(self):
+        # The forgiving direction. A missing editor costs a technical candidate the question;
+        # a spurious one costs everybody else a glance.
+        from app.data import domains
+
+        role = "Something Nobody Has Heard Of"
+        assert (not domains.matched(role, "") or domains.is_technical(role, "")) is True

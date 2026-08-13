@@ -47,16 +47,54 @@ const sleep = (ms: number) =>
  * characters a second is roughly half the slowest rate we ever set, plus 3s of
  * headroom for a cloud voice's fetch.
  */
-function speakOnce(utter: SpeechSynthesisUtterance): Promise<void> {
+function speakOnce(
+  utter: SpeechSynthesisUtterance,
+  onStart?: () => void,
+): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
+    let started = false;
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearTimeout(startFallback);
+      // A voice that errors or is cancelled before speaking still has to release the
+      // caller's reveal, or a failed utterance would leave the line permanently hidden.
+      if (!started) {
+        started = true;
+        onStart?.();
+      }
       resolve();
     };
     const timer = setTimeout(finish, 3000 + utter.text.length * 90);
+
+    /*
+     * FIRED WHEN THE VOICE ACTUALLY STARTS, which is what the caller reveals text on.
+     *
+     * The neural path already waits for its audio before showing the words. This is the
+     * BROWSER path, and it had the original bug the whole time: the line was revealed, and
+     * then speechSynthesis got around to speaking it. On a cold engine — the first utterance
+     * of a session, a Windows machine loading a voice, anything on Safari — that gap is
+     * comfortably over a second, so the question arrives on screen and the voice follows.
+     *
+     * This is the path most people are on until Fish is configured, so "the questions are
+     * coming first on the screen and then the AI speaks it" was still true for them after
+     * the neural fix.
+     */
+    utter.onstart = () => {
+      if (started) return;
+      started = true;
+      onStart?.();
+    };
+    // Some engines never fire onstart at all — it is optional in the spec and Safari has
+    // historically skipped it. Reveal anyway after a beat rather than never.
+    const startFallback = setTimeout(() => {
+      if (started) return;
+      started = true;
+      onStart?.();
+    }, 1200);
+
     utter.onend = finish;
     utter.onerror = finish;
     window.speechSynthesis.speak(utter);
@@ -819,9 +857,23 @@ export function usePanelVoices(
         setTakingFloor(null);
         setSpeakingNow(speaker);
         lastSpeakerRef.current = speaker;
-        // The floor is theirs, and their audio is in hand — reveal the line now, in step
-        // with the first word rather than several seconds ahead of it.
-        opts.onStart?.();
+        /*
+         * THE REVEAL, fired once, by whichever path actually produces sound.
+         *
+         * It used to fire here unconditionally, which is correct for the neural path — the
+         * audio is already downloaded by this point — and WRONG for the browser fallback,
+         * where speechSynthesis has not been handed the utterance yet. On a cold engine that
+         * is over a second, so the line appeared and the voice followed. Anyone without Fish
+         * configured was still seeing the original bug.
+         *
+         * Guarded because both paths must be able to call it and only the first may win.
+         */
+        let revealed = false;
+        const reveal = () => {
+          if (revealed) return;
+          revealed = true;
+          opts.onStart?.();
+        };
 
         /*
          * NEURAL SPEECH FIRST, browser speech as the fallback.
@@ -836,6 +888,8 @@ export function usePanelVoices(
          * the candidate, and their own microphone would transcribe it into their answer.
          */
         if (blob) {
+          // Neural: the bytes are in hand, so the words and the first syllable land together.
+          reveal();
           // The persona tempo applies to neural audio too, via playbackRate. Without it
           // the per-panelist pacing — the whole reason three voices were tellable apart
           // before — would vanish the moment neural speech came on.
@@ -890,12 +944,17 @@ export function usePanelVoices(
             1.35,
             Math.max(0.7, Math.round(baseRate * shapingFor(chunk) * 100) / 100),
           );
-          await speakOnce(utter);
+          // Browser: reveal on the engine's own onstart, not before handing it the text.
+          await speakOnce(utter, reveal);
           if (chunk.pauseAfterMs > 0 && !live()) break;
           if (chunk.pauseAfterMs > 0) await sleep(chunk.pauseAfterMs);
         }
         // A question left hanging makes the NEXT voice wait — this is what stops
         // one panelist answering a question another just put to the candidate.
+        // Nothing spoke — no chunks, or every one was cancelled. The line still has to
+        // appear: a candidate must never be left with a silent, blank screen because the
+        // speech engine had nothing to say.
+        reveal();
         heldQuestionRef.current = chunks[chunks.length - 1]?.isQuestion ?? false;
         if (live()) setSpeakingNow(null);
       };

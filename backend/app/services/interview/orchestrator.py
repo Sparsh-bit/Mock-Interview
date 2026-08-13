@@ -1481,13 +1481,16 @@ class InterviewOrchestrator:
         """
         session = await self.db.get(InterviewSession, session_id)
         rating = ((session.session_metadata or {}) if session else {}).get("self_rating") or {}
-        java = rating.get("java")
-        if not isinstance(java, int):
+        # `rating`, not `java`. The panel asks a sales candidate about sales and an HR
+        # candidate about HR, so the number is a self-assessment of whatever they were asked
+        # about — the difficulty banding below is the same either way.
+        claimed = rating.get("rating")
+        if not isinstance(claimed, int):
             return "medium", []
 
-        if java <= 4:
+        if claimed <= 4:
             target = "easy"
-        elif java <= 7:
+        elif claimed <= 7:
             target = "medium"
         else:
             target = "hard"
