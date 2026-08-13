@@ -24,6 +24,15 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+#: The tables this migration creates, named once.
+#:
+#: A module-level `_TABLES` list with the `public.` prefix below is not stylistic — it is the
+#: shape tests/test_rls_coverage.py scans for, and that test is what stops a new table
+#: reaching Supabase readable through PostgREST with the anon key that ships in the browser
+#: bundle. Written first as an inline tuple, this migration's RLS was invisible to the scanner
+#: and the test failed, which is exactly what it exists to do.
+_TABLES: list[str] = ["offers", "offer_redemptions"]
+
 revision = "016"
 down_revision = "015"
 branch_labels = None
@@ -105,9 +114,9 @@ def upgrade() -> None:
 
     # Same posture as every other table here: enabled, no policies, so PostgREST is shut and
     # the app's owner connection is unaffected.
-    for table in ("offers", "offer_redemptions"):
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+    for table in _TABLES:
+        op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY")
 
 
 def downgrade() -> None:

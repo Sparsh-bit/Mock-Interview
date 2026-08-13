@@ -150,6 +150,56 @@ async def my_balance(
     )
 
 
+class QuoteRequest(BaseModel):
+    item_id: str = Field(min_length=1, max_length=32)
+    code: str = Field(default="", max_length=40)
+
+
+@router.post(
+    "/quote",
+    dependencies=[Depends(_checkout_rate_limit)],
+    summary="What an item costs this account with a code, without committing",
+)
+async def quote_item(
+    request: QuoteRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    Price a code before the candidate commits to paying.
+
+    SHARES ITS VALIDATION WITH CHECKOUT rather than reimplementing it. Two functions deciding
+    whether a code is valid will disagree eventually, and the one that disagrees in the
+    candidate's favour is the one that gives product away. This calls `offers.quote`; so does
+    checkout, and checkout calls `redeem` on top — which re-validates everything again under
+    a lock, because this answer may be minutes old by the time they pay.
+
+    RATE LIMITED WITH CHECKOUT, on the same bucket. Without that, this is an oracle for
+    guessing private codes: unlimited attempts against a 40-character keyspace is slow, but
+    against a code somebody chose to be memorable it is not.
+
+    Raises the same OfferError messages, which are written to be actionable — "this offer has
+    expired" rather than "invalid code".
+    """
+    item = get_item(request.item_id)
+    if item is None:
+        raise NotFoundError("Item", request.item_id)
+
+    quoted = await offers.quote(
+        db, item=item, code=request.code, user_id=current_user.user_id
+    )
+    return {
+        "item_id": item.id,
+        "original_paise": quoted.original_paise,
+        "charged_paise": quoted.charged_paise,
+        "is_free": quoted.is_free,
+        # So the page knows to render the widget BEFORE the candidate presses pay, rather
+        # than bouncing them back with a challenge after they thought they were done.
+        "requires_captcha": bool(quoted.offer and quoted.offer.requires_captcha),
+        "label": quoted.offer.label if quoted.offer else "",
+    }
+
+
 @router.post(
     "/checkout",
     dependencies=[Depends(_checkout_rate_limit)],

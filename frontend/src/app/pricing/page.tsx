@@ -3,13 +3,17 @@
 import Link from 'next/link';
 import { Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useAuth } from '@/hooks/useAuth';
-import { useBalance, useCheckout, useStoreItems, type StoreItem } from '@/hooks/useBilling';
+import { useBalance, useCheckout, useQuote, useStoreItems, type StoreItem } from '@/hooks/useBilling';
+import { openCheckout } from '@/lib/billing/razorpay-checkout';
+import { Turnstile } from '@/components/billing/Turnstile';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -110,38 +114,122 @@ export default function StorePage() {
   const signedIn = !!session;
   const { data: balance } = useBalance({ enabled: signedIn });
   const checkout = useCheckout();
+  const quote = useQuote();
+  const qc = useQueryClient();
+  //: The code that has been CHECKED, not what is in the box. Only a code the server has
+  //: already priced is sent with a purchase, so a half-typed one cannot ride along.
+  const [appliedCode, setAppliedCode] = useState('');
+  const [codeInput, setCodeInput] = useState('');
+  const [quoted, setQuoted] = useState<{
+    charged_paise: number;
+    original_paise: number;
+    is_free: boolean;
+    requires_captcha: boolean;
+    label: string;
+  } | null>(null);
+  const [captchaToken, setCaptchaToken] = useState('');
+
+  /*
+   * Priced against the CHEAPEST item, purely so the box can be validated before the
+   * candidate picks something.
+   *
+   * The real price is computed again server-side at purchase, against the item they
+   * actually chose — this is a check that the code exists and applies, not the quote that
+   * decides what they pay. A code restricted to other items fails here and says so, which
+   * is better than accepting it and refusing at the till.
+   */
+  const applyCode = () => {
+    const code = codeInput.trim();
+    if (!code || !items?.length) return;
+    quote.mutate(
+      { itemId: items[0].id, code },
+      {
+        onSuccess: (q) => {
+          setAppliedCode(code.toUpperCase());
+          setQuoted(q);
+          toast.success(q.label ? `${q.label} applied.` : 'Code applied.');
+        },
+        onError: (err) => {
+          setAppliedCode('');
+          setQuoted(null);
+          toast.error(
+            err instanceof ApiError && err.status === 400
+              ? err.message
+              : 'Could not check that code.',
+          );
+        },
+      },
+    );
+  };
 
   const buy = (itemId: string) => {
     if (!signedIn) {
       window.location.href = `/register?redirectTo=${encodeURIComponent('/pricing')}`;
       return;
     }
-    checkout.mutate(itemId, {
-      onSuccess: (order) => {
+    checkout.mutate(
+      { itemId, code: appliedCode, captchaToken },
+      {
+      onSuccess: async (order) => {
         /*
-         * THE CHECKOUT WIDGET IS NOT WIRED YET, AND THIS SAYS SO RATHER THAN PRETENDING.
-         *
-         * Everything up to here is real: the order is opened against Razorpay with a
-         * server-resolved amount, and the webhook that grants the items is written,
-         * signature-verified, amount-checked and idempotent. What is missing is the browser
-         * SDK, which cannot be integrated without live keys to load it with.
-         *
-         * Failing loudly is right for that gap. A button that silently does nothing reads
-         * as a broken product, and one that optimistically says "bought" would be worse.
+         * A FREE CODE HAS ALREADY GRANTED THE ITEM. There is nothing to pay and no sheet to
+         * open — Razorpay has a ₹1 minimum, so a fully-discounted item never becomes an
+         * order at all. Opening the widget here would show a payment form for ₹0.
          */
-        toast.success(
-          `Order ${order.order_id} is ready. Add your Razorpay keys to finish checkout.`,
-        );
+        if (order.granted) {
+          toast.success('Added to your account. Nothing to pay.');
+          setAppliedCode('');
+          setQuoted(null);
+          return;
+        }
+        if (!order.order_id || !order.key_id) {
+          toast.error('Payments are not switched on yet.');
+          return;
+        }
+
+        const opened = await openCheckout({
+          orderId: order.order_id,
+          amountPaise: order.amount_paise,
+          keyId: order.key_id,
+          itemName: items?.find((i) => i.id === itemId)?.name ?? 'InterviewOS',
+          prefill: { email: session?.user?.email ?? undefined },
+          onSuccess: () => {
+            // The candidate finished the form. The items are granted by the WEBHOOK, not
+            // here — treating this callback as proof of payment would let anyone who can
+            // call a JavaScript function grant themselves interviews. So this only says
+            // what happened and refreshes.
+            toast.success('Payment received. Your account updates in a moment.');
+            void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
+          },
+          onDismiss: () => {
+            // Closing the sheet is an ordinary thing to do and is not an error.
+          },
+          onFailure: (reason) => toast.error(reason),
+        });
+
+        if (!opened) {
+          // A blocked CDN or an ad blocker. Saying so beats a button that appears dead.
+          toast.error(
+            'Could not load the payment window. Check your connection or any ad blocker, then try again.',
+          );
+        }
       },
       onError: (err) => {
         const notConfigured = err instanceof ApiError && err.status === 503;
+        // An offer error carries a message the candidate can act on — "this offer has
+        // expired" rather than "invalid code", which sends them hunting for a typo that is
+        // not there. Surfaced verbatim rather than replaced with a generic line.
+        const offerMessage =
+          err instanceof ApiError && err.status === 400 ? err.message : null;
         toast.error(
-          notConfigured
-            ? 'Payments are not switched on yet. Add your Razorpay keys to enable checkout.'
-            : 'Could not start the payment. Please try again.',
+          offerMessage ??
+            (notConfigured
+              ? 'Payments are not switched on yet. Add your Razorpay keys to enable checkout.'
+              : 'Could not start the payment. Please try again.'),
         );
       },
-    });
+      },
+    );
   };
 
   return (
@@ -227,7 +315,7 @@ export default function StorePage() {
                       key={item.id}
                       item={item}
                       onBuy={buy}
-                      busy={checkout.isPending && checkout.variables === item.id}
+                      busy={checkout.isPending && checkout.variables?.itemId === item.id}
                       signedIn={signedIn}
                     />
                   ))}
@@ -235,6 +323,77 @@ export default function StorePage() {
               </section>
             );
           })}
+
+        {/* THE PROMO BOX.
+            Placed once, above the items, rather than on every card: a code applies to the
+            purchase, not to a tile, and six identical boxes would suggest six separate
+            discounts. Checking it before anything is chosen also means an unusable code is
+            refused while the candidate is still browsing rather than at the till. */}
+        {signedIn && (
+          <div className="rounded-2xl border border-border p-4 sm:p-5">
+            <label
+              htmlFor="promo"
+              className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+              Have a code?
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="promo"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applyCode();
+                }}
+                placeholder="DIWALI25"
+                // Uppercased as they type, because the server stores and compares uppercase.
+                // Seeing the code in the form it will actually be checked in avoids the
+                // "but I typed it correctly" class of support message.
+                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 font-mono text-sm uppercase tracking-wider focus:border-primary focus:outline-none"
+                maxLength={40}
+              />
+              <Button
+                variant="secondary"
+                onClick={applyCode}
+                loading={quote.isPending}
+                disabled={!codeInput.trim()}
+              >
+                Apply
+              </Button>
+              {appliedCode && (
+                <button
+                  onClick={() => {
+                    setAppliedCode('');
+                    setQuoted(null);
+                    setCodeInput('');
+                    setCaptchaToken('');
+                  }}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+
+            {quoted && appliedCode && (
+              <p className="mt-3 text-sm">
+                <span className="font-semibold text-accent-emerald-ink">
+                  {quoted.is_free
+                    ? 'Free with this code'
+                    : `Discount applied — ${Math.round(
+                        (1 - quoted.charged_paise / quoted.original_paise) * 100,
+                      )}% off`}
+                </span>{' '}
+                <span className="text-muted-foreground">
+                  The exact price is confirmed on the item you choose.
+                </span>
+              </p>
+            )}
+
+            {/* Only when this offer asks for it. */}
+            {quoted?.requires_captcha && <Turnstile onToken={setCaptchaToken} />}
+          </div>
+        )}
 
         <p className="text-xs text-muted-foreground">
           Quizzes are unlimited and free on every account. Purchases do not expire. Prices are

@@ -97,7 +97,18 @@ export interface CheckoutOrder {
   currency: string;
   item_id: string;
   /** The PUBLIC key id. The secret never leaves the server. */
-  key_id: string;
+  key_id: string | null;
+  /**
+   * True when a 100%-off code granted the item outright and no payment happened.
+   *
+   * Razorpay has a ₹1 minimum, so a free item cannot be expressed as an order at all. The
+   * caller must NOT open the checkout widget in this case — there is nothing to pay.
+   */
+  granted?: boolean;
+  /** List price before the discount, so the UI can show what was saved. */
+  original_paise?: number;
+  /** The code that was applied, echoed back. */
+  code?: string;
 }
 
 /**
@@ -116,9 +127,14 @@ export interface CheckoutOrder {
 export function useCheckout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (itemId: string) => {
+    mutationFn: async (args: { itemId: string; code?: string; captchaToken?: string }) => {
       const res = await getBrowserApiClient().post('/api/v1/billing/checkout', {
-        item_id: itemId,
+        item_id: args.itemId,
+        // The CODE, never a price. The server resolves the offer and computes the charge —
+        // see services/billing/offers.py. A discount named by the browser is the same bug
+        // as a price named by the browser.
+        code: args.code ?? '',
+        captcha_token: args.captchaToken ?? '',
       });
       return res.data as CheckoutOrder;
     },
@@ -144,6 +160,36 @@ export function useAppeal() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
+    },
+  });
+}
+
+/**
+ * Check a promo code against an item without committing to anything.
+ *
+ * Deliberately reuses the checkout endpoint's validation on the server rather than adding a
+ * second one: two code paths that decide whether a code is valid will disagree, and the one
+ * that disagrees in the candidate's favour is the one that costs money. This asks for the
+ * price; `useCheckout` asks for the price AND acts on it.
+ *
+ * Errors carry a message the candidate can act on — "this offer has expired" rather than
+ * "invalid code", which would send them hunting for a typo that is not there.
+ */
+export function useQuote() {
+  return useMutation({
+    mutationFn: async (args: { itemId: string; code: string }) => {
+      const res = await getBrowserApiClient().post('/api/v1/billing/quote', {
+        item_id: args.itemId,
+        code: args.code,
+      });
+      return res.data as {
+        item_id: string;
+        original_paise: number;
+        charged_paise: number;
+        is_free: boolean;
+        requires_captcha: boolean;
+        label: string;
+      };
     },
   });
 }

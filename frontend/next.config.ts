@@ -28,6 +28,12 @@ function connectOrigins(): string[] {
   // auth to work at all under a restrictive policy.
   origins.add('https://*.supabase.co');
   origins.add('wss://*.supabase.co');
+  // The payment widget calls Razorpay's own API from the page while the card form is open,
+  // and Turnstile posts the challenge result. Both are connect-src, not just frame-src —
+  // missing them presents as a payment sheet that opens and then silently fails.
+  origins.add('https://api.razorpay.com');
+  origins.add('https://lumberjack.razorpay.com');
+  origins.add('https://challenges.cloudflare.com');
   return [...origins];
 }
 
@@ -171,7 +177,11 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              // checkout.razorpay.com is the payment widget's SDK. It has to be script-src
+              // and frame-src both: the SDK is a script that opens the card form in an
+              // iframe, and omitting either makes the button appear to do nothing with a
+              // console error the candidate never sees.
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://avatars.githubusercontent.com",
               "font-src 'self' data:",
@@ -183,6 +193,10 @@ const nextConfig: NextConfig = {
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",
+              // The payment form and Turnstile both render in an iframe on this page.
+              // frame-src governs what we may EMBED; frame-ancestors below governs who may
+              // embed us, and stays 'none'.
+              "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com https://challenges.cloudflare.com",
               "frame-ancestors 'none'",
               'upgrade-insecure-requests',
             ].join('; '),
