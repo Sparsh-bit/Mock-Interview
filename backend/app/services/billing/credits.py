@@ -130,6 +130,22 @@ class Balance:
     #: True once the account has consumed anything at all — drives "your free trial" copy,
     #: which should not appear to somebody who has been paying for months.
     trial_started: bool
+    #: Operator account: not metered at all. Surfaced so the UI can say "unlimited" rather
+    #: than render a countdown that never moves, which looks like a broken meter.
+    unlimited: bool = False
+
+
+async def _is_admin(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """
+    Is this an operator account?
+
+    Read from `users.is_admin` rather than from anything on the billing tables, so there is
+    one definition of "admin" in the system and granting someone admin cannot leave their
+    metering behind in a stale state.
+    """
+    from app.models.user import User  # noqa: PLC0415
+
+    return bool(await db.scalar(select(User.is_admin).where(User.id == user_id)))
 
 
 async def _plan_row(db: AsyncSession, user_id: uuid.UUID, *, lock: bool) -> UserPlan:
@@ -213,7 +229,11 @@ async def get_balance(db: AsyncSession, user_id: uuid.UUID) -> Balance:
             )
         )
 
-    return Balance(features=features, trial_started=bool(used_any))
+    return Balance(
+        features=features,
+        trial_started=bool(used_any),
+        unlimited=await _is_admin(db, user_id),
+    )
 
 
 async def remaining_for(db: AsyncSession, user_id: uuid.UUID, feature: str) -> int:
@@ -242,6 +262,21 @@ async def consume(
     would create a window in which the user has been charged for a session that does not
     exist, and that window is exactly where a 500 lands.
     """
+    # ADMINS ARE NOT METERED.
+    #
+    # Not a perk — it is the only way the product can be operated. Every check of whether
+    # an interview still works, every reproduction of a reported bug, every demo, runs
+    # through the same paths a candidate uses; metering them means the person answering
+    # support tickets runs out of interviews on a Tuesday and starts testing on a spare
+    # account, which is how a broken flow reaches production unnoticed.
+    #
+    # Checked before the balance rather than after, so no ledger row is written at all.
+    # Recording admin usage as consumption would make the cost-per-user figures in
+    # /ai-usage wrong in the direction of "our users are more expensive than they are",
+    # which is the number the pricing rests on.
+    if await _is_admin(db, user_id):
+        return
+
     plan_row = await _plan_row(db, user_id, lock=True)
     if plan_row.is_banned:
         # Checked here as well as at the request boundary. This is the last gate before

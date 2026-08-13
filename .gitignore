@@ -52,3 +52,7 @@ dump.rdb
 # tracked deliberately.
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
+
+# Obsidian scratch canvases created by a stray click in the vault. Two empty ones were
+# committed by a `git add -A`; a canvas that is genuinely wanted can be force-added.
+Untitled*.canvas

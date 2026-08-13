@@ -32,6 +32,8 @@ export interface Balance {
   features: FeatureBalance[];
   /** True once the account has consumed anything — drives "your free trial" copy. */
   trial_started: boolean;
+  /** Operator account: not metered. Shown as unlimited rather than as a stuck countdown. */
+  unlimited: boolean;
   is_banned: boolean;
   ban_reason: string | null;
   appeal_submitted: boolean;

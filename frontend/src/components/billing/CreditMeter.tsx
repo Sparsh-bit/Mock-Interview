@@ -48,6 +48,19 @@ export function CreditMeter({ className }: { className?: string }) {
     );
   }
 
+  // An operator account is not metered, so a countdown would be a stuck number pretending
+  // to mean something. Say what is true instead.
+  if (data.unlimited) {
+    return (
+      <Card variant="flat" padding="md" className={cn('space-y-1', className)}>
+        <p className="text-sm font-medium text-foreground">Unlimited access</p>
+        <p className="text-xs text-muted-foreground">
+          Admin account — sessions are not counted against a balance.
+        </p>
+      </Card>
+    );
+  }
+
   const anythingLeft = data.features.some((f) => f.remaining > 0);
 
   return (

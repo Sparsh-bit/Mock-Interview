@@ -37,16 +37,36 @@ class _Plan:
 
 
 class _StubDB:
-    """Returns the plan row, then the ledger totals. Records what was added."""
+    """
+    Answers by WHICH TABLE the statement touches, not by call order.
 
-    def __init__(self, plan: _Plan | None, net: dict[str, int] | None = None):
+    Call order was the obvious way and it broke the moment `consume` grew an admin check in
+    front of the balance read — every test started handing the plan row to the wrong query.
+    Matching on the rendered SQL means adding another lookup in front does not silently
+    rewrite what these tests are asserting.
+    """
+
+    def __init__(
+        self,
+        plan: _Plan | None,
+        net: dict[str, int] | None = None,
+        *,
+        is_admin: bool = False,
+    ):
         self._plan = plan
         self._net = net or {}
+        self._is_admin = is_admin
         self.added: list = []
         self.flushed = 0
 
-    async def scalar(self, _stmt):
-        return self._plan
+    async def scalar(self, stmt):
+        sql = str(stmt)
+        if "users.is_admin" in sql:
+            return self._is_admin
+        if "user_plans" in sql:
+            return self._plan
+        # count(*) of consume rows, used only by get_balance.
+        return 0
 
     async def execute(self, _stmt):
         # _totals() iterates (feature, sum) pairs.
@@ -107,6 +127,36 @@ class TestTheTrialThenNothing:
             await consume(db, uuid.uuid4(), "interview")
         assert exc.value.details["feature"] == "interview"
         assert exc.value.details["trial_used"] is True
+
+
+@pytest.mark.asyncio
+class TestAdminsAreNotMetered:
+    """
+    Not a perk — it is the only way the product can be operated. Every check that an
+    interview still works, every reproduction of a reported bug, every demo runs through the
+    same paths a candidate uses. Metering them means whoever answers support runs out on a
+    Tuesday and starts testing on a spare account, which is how a broken flow reaches
+    production unnoticed.
+    """
+
+    async def test_an_admin_with_nothing_left_is_still_allowed(self):
+        db = _StubDB(_Plan(), net={"interview": -99}, is_admin=True)
+        await consume(db, uuid.uuid4(), "interview")
+
+    async def test_no_ledger_row_is_written_for_an_admin(self):
+        # Recording admin usage as consumption would push the cost-per-user figures in
+        # /ai-usage in the direction of "our users are more expensive than they are", and
+        # that number is what the pricing rests on.
+        db = _StubDB(_Plan(), net={}, is_admin=True)
+        await consume(db, uuid.uuid4(), "interview")
+        assert db.added == []
+
+    async def test_a_non_admin_is_still_metered(self):
+        # Guards the exemption from becoming a hole: if the admin lookup ever returned
+        # truthy by accident, every one of the tests above would still pass.
+        db = _StubDB(_Plan(), net={"interview": -1}, is_admin=False)
+        with pytest.raises(CreditsExhaustedError):
+            await consume(db, uuid.uuid4(), "interview")
 
 
 @pytest.mark.asyncio

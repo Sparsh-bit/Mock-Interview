@@ -15,7 +15,8 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import settings
 from app.core.rate_limit import rate_limiter
@@ -218,6 +219,29 @@ async def _streak_days(db: AsyncSession, user_id: uuid.UUID) -> int:
     return streak
 
 
+#: What counts as an interview the candidate actually SAT.
+#:
+#: ONE DEFINITION, USED BY EVERY READ ON THE DASHBOARD. There used to be two, and the
+#: dashboard showed both at once: the stat cards counted every InterviewSession row while
+#: the history list below them hid the ones that were never answered. Since `create_plan`
+#: creates a session on every setup attempt, a candidate who opened the setup form twenty
+#: times and finished nothing saw "23 sessions, 15.8 hours practised" directly above "No
+#: sessions yet".
+#:
+#: Numbers that contradict the list beside them do not read as a counting bug. They read as
+#: somebody else's data, which is exactly how it was reported.
+#:
+#: An abandoned plan is not practice: nothing was asked, nothing was answered, and the
+#: elapsed wall-clock time is the candidate walking away from a form.
+def _real_session() -> ColumnElement[bool]:
+    from app.models.session import InterviewSession  # noqa: PLC0415
+
+    return or_(
+        InterviewSession.questions_asked > 0,
+        InterviewSession.status == "completed",
+    )
+
+
 @router.get(
     "/me/stats", response_model=UserStatsResponse,
     dependencies=[Depends(_read_rate_limit)],
@@ -258,7 +282,7 @@ async def get_stats(
                     0,
                 )
             ).label("total_seconds"),
-        ).where(InterviewSession.user_id == current_user.user_id)
+        ).where(InterviewSession.user_id == current_user.user_id, _real_session())
     )
     session_row = sessions_result.one()
 
@@ -268,7 +292,7 @@ async def get_stats(
     answers_result = await db.execute(
         select(func.count(Answer.id))
         .join(InterviewSession, Answer.session_id == InterviewSession.id)
-        .where(InterviewSession.user_id == current_user.user_id)
+        .where(InterviewSession.user_id == current_user.user_id, _real_session())
     )
     total_answers = answers_result.scalar() or 0
 
@@ -280,7 +304,7 @@ async def get_stats(
             func.max(Report.overall_score).label("best_score"),
         )
         .join(InterviewSession, Report.session_id == InterviewSession.id)
-        .where(InterviewSession.user_id == current_user.user_id)
+        .where(InterviewSession.user_id == current_user.user_id, _real_session())
     )
     score_row = reports_result.one()
 
@@ -325,12 +349,9 @@ async def get_session_history(
         .join(Company, InterviewTrack.company_id == Company.id)
         .outerjoin(Report, Report.session_id == InterviewSession.id)
         .where(InterviewSession.user_id == current_user.user_id)
-        # Hide empty, abandoned plan sessions (created but never answered) so the
-        # history shows real interviews only, not clutter.
-        .where(
-            (InterviewSession.questions_asked > 0)
-            | (InterviewSession.status == "completed")
-        )
+        # The same definition the stat cards use — see _real_session. Two copies of this
+        # predicate is how the cards and this list came to disagree.
+        .where(_real_session())
         .order_by(InterviewSession.created_at.desc())
         .limit(limit)
         .offset(offset)

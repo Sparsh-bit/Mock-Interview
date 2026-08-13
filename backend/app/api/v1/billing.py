@@ -78,6 +78,8 @@ class FeatureBalanceOut(BaseModel):
 class BalanceOut(BaseModel):
     features: list[FeatureBalanceOut]
     trial_started: bool
+    #: Operator account — not metered. The UI shows "unlimited" rather than a countdown.
+    unlimited: bool = False
     is_banned: bool
     ban_reason: str | None = None
     appeal_submitted: bool = False
@@ -136,6 +138,7 @@ async def my_balance(
             for f in balance.features
         ],
         trial_started=balance.trial_started,
+        unlimited=balance.unlimited,
         is_banned=bool(plan_row and plan_row.is_banned),
         ban_reason=plan_row.ban_reason if plan_row else None,
         appeal_submitted=bool(plan_row and plan_row.appeal_at),

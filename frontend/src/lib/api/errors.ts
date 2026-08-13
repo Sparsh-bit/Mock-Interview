@@ -100,10 +100,19 @@ export class ApiError extends Error {
 // ─── Error normalization ─────────────────────────────────────────────────────
 
 /** Shape of error payloads returned by FastAPI */
+/**
+ * Both error shapes this backend can send.
+ *
+ * `detail` is FastAPI's own (a bare HTTPException, a 422 validation error). `error` is the
+ * envelope every AppError goes through — see `_error_response` in core/exceptions.py — and
+ * it is the one that carries the structured `details` a paywall or a ban screen renders
+ * from. Declaring only the first is how the second went unread for every AppError.
+ */
 interface FastApiErrorPayload {
   code?: string;
   message?: string;
   detail?: unknown;
+  error?: { code?: string; message?: string; details?: unknown };
   request_id?: string;
 }
 
@@ -156,16 +165,49 @@ export async function normalizeError(
       // Body parse failure — fall back to status text
     }
 
+    /*
+     * THIS BACKEND SENDS TWO ERROR SHAPES, AND ONLY ONE WAS BEING READ.
+     *
+     * FastAPI's own errors are `{detail: ...}`. But every AppError raised by this app goes
+     * through `_error_response` in core/exceptions.py, which emits an envelope:
+     *
+     *     {"error": {"code": "...", "message": "...", "details": {...}}}
+     *
+     * Only `payload.detail` was read, so for the entire second shape the message fell back
+     * to `response.statusText` and `details` came through as undefined.
+     *
+     * That silently broke every paywall. `consume` raises a 402 carrying
+     * `{feature, trial_used}` in `details`, `paywallFromError` reads it to decide what to
+     * show, and it was always null — so a candidate who had run out got a generic toast
+     * instead of the top-up sheet. In the group discussion, where the same 402 arrives on
+     * the first panel turn, that toast read "Panel could not respond", which looks like the
+     * AI is broken rather than like the round needs paying for.
+     *
+     * The envelope is preferred when present because it is the richer, deliberate shape;
+     * `detail` remains the fallback so genuine FastAPI errors (422 validation, and anything
+     * raised as a bare HTTPException) are unaffected.
+     */
+    const envelope =
+      payload.error && typeof payload.error === 'object'
+        ? (payload.error as { code?: string; message?: string; details?: unknown })
+        : null;
+
+    // `||`, not `??`, on the last two. `response.statusText` is an EMPTY STRING rather than
+    // undefined whenever the server does not set a reason phrase — which is always under
+    // HTTP/2, where reason phrases were removed from the protocol. A nullish coalesce
+    // therefore accepted "" and never reached the literal, so an unrecognised error body
+    // produced an ApiError with a blank message and the UI showed an empty toast.
     const message =
-      typeof payload.detail === 'string'
-        ? payload.detail
-        : payload.message ?? response.statusText ?? 'Request failed';
+      envelope?.message ||
+      (typeof payload.detail === 'string' ? payload.detail : payload.message) ||
+      response.statusText ||
+      'Request failed';
 
     return new ApiError(
       response.status,
       statusToCode(response.status),
       message,
-      payload.detail,
+      envelope ? envelope.details : payload.detail,
       requestId,
     );
   }
