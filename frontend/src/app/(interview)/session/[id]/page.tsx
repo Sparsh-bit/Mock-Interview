@@ -200,6 +200,33 @@ export default function LiveSessionPage() {
   const questionText = question?.content;
   const useTyping = typing || !stt.supported;
 
+  /*
+   * WHAT THE INTERVIEWER ACTUALLY ASKED, in their words.
+   *
+   * Reported as "i cannot see the real question asked by the interviewer", alongside a
+   * complaint that the question appears on screen every time. Both describe the same thing.
+   *
+   * `questionText` is the PLANNED question — the row the orchestrator chose, phrased for a
+   * bank. The panel does not read it out; it asks the question in its own words, in the middle
+   * of a conversation ("Okay — so you've got a dealer threatening to walk over margin. What do
+   * you actually do on Monday?"). The pinned block showed the bank row, so the candidate was
+   * looking at a second, differently-worded copy of a question they had just been asked, which
+   * reads as the same question arriving twice.
+   *
+   * So: pin the line the panel actually spoke. Found by walking BACK for the most recent
+   * `asking` line, because a turn can end on an aside or a correction and the question is not
+   * necessarily last. Falls back to the planned text, which is the right fallback and not
+   * merely a safe one — when the panel could not speak, the planned text IS what the candidate
+   * was shown.
+   */
+  const askedAloud = useMemo(() => {
+    for (let i = panelLines.length - 1; i >= 0; i--) {
+      if (panelLines[i].tone === 'asking' && panelLines[i].text.trim()) return panelLines[i];
+    }
+    return null;
+  }, [panelLines]);
+  const pinnedQuestion = askedAloud?.text ?? questionText;
+
   /**
    * Words a real panel would have heard you say and could not un-hear.
    *
@@ -457,6 +484,26 @@ export default function LiveSessionPage() {
        * path on which this can take a candidate's own words away from them.
        */
       resetAnswerRef.current?.();
+      /*
+       * AND SILENCE THE SINGLE-VOICE FALLBACK.
+       *
+       * Reported as "sometimes the old google voice arises in the question's background", and
+       * that is exactly what it is — a second voice under the panel, not beside it.
+       *
+       * There are two independent owners of `window.speechSynthesis`, which is a GLOBAL
+       * queue: this page's interviewer fallback (`tts`, used when the panel cannot speak) and
+       * usePanelVoices' own browser fallback. Neither knows about the other. usePanelVoices
+       * cancels the queue with speechSynthesis.cancel() when it takes the floor — but cancel()
+       * only resolves `tts`'s pending utterance, it does not bump `tts`'s generation counter,
+       * so `tts`'s loop wakes up at its next await, decides it is still current, and speaks
+       * the REST of the previous question over the panel's neural audio. The browser voice is
+       * whatever the OS defaults to, which on Chrome is a Google voice.
+       *
+       * `tts.cancel()` bumps that counter, which is the only thing that actually stops the
+       * loop. Called here rather than at each of the six speakTurn call sites, because the
+       * invariant is "the panel is about to talk", and that is what this function means.
+       */
+      tts.cancel();
       try {
       const result = await panelTurn.mutateAsync({
         session_id: sessionId,
@@ -1188,7 +1235,13 @@ export default function LiveSessionPage() {
                       arrived looking exactly like the eleven that did not — so the moment the
                       panel was most obviously listening was the moment that read as most
                       scripted. */}
-                  {question?.is_follow_up ? 'Following up on your answer' : 'On the table'}
+                  {/* Attributed when the panel spoke it, because "Anil asked" and "on the
+                      table" are different claims and only one of them is true here. */}
+                  {askedAloud
+                    ? `${askedAloud.speaker} asked`
+                    : question?.is_follow_up
+                      ? 'Following up on your answer'
+                      : 'On the table'}
                 </span>
                 {question?.difficulty && (
                   <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -1206,7 +1259,7 @@ export default function LiveSessionPage() {
                   the microphone off screen on a laptop, and the full text is always still in
                   the thread above. */}
               <p className="line-clamp-3 text-sm leading-relaxed text-foreground">
-                {questionText}
+                {pinnedQuestion}
               </p>
             </div>
           )}
