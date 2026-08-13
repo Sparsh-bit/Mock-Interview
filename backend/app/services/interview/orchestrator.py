@@ -134,26 +134,61 @@ def _must_cover_block(track_name: str, program: str, company: str = "") -> str:
     What the planner is told this interview must cover.
 
     ROLE FIRST, and that ordering is the whole point. For a Java role this is the curated
-    bank grouped by topic, exactly as before. For everything else it is the company's own
-    weighting, and the Java bank is not mentioned at all — because mentioning it is an
-    instruction to ask about it, and an Analyst being asked about the JVM is the complaint
-    this function now exists to prevent.
+    bank grouped by topic, exactly as before. For everything else it is the role's DOMAIN,
+    refined by the company's own weighting where the company is on the catalogue.
+
+    THE DOMAIN BRANCH IS A BUG FIX, not a refactor. What used to be here, when the company
+    was not on the catalogue, was a sentence telling the planner to cover "programming
+    fundamentals, DBMS and SQL, data structures". That fired for every role at every company
+    outside the twelve in the catalogue — so a candidate preparing for **Asian Paints,
+    sales / business development** was briefed for a CS interview and got exactly that:
+    Programming Fundamentals, Data Structures, DBMS & SQL, Version Control. The model was
+    following its instructions. The instructions were wrong.
+
+    `app.data.domains` now answers "what is this role about" for every role, so the
+    fallback has a real weighting to hand over instead of a list of CS subjects. The company
+    block still comes through underneath when there is one, because an Accenture sales role
+    is a sales interview shaped by how Accenture assesses — not the other way round.
     """
+    from app.data import domains  # noqa: PLC0415
+
     company_block = _company_topic_block(company)
 
     if not _is_java_role(track_name, program):
-        if company_block:
-            return (
-                "This is NOT a Java/backend role. Do not build the interview around Java "
-                "language internals. Cover what this company actually assesses, in roughly "
-                f"these proportions:\n{company_block}"
+        blocks: list[str] = []
+        if domains.matched(track_name, program):
+            blocks.append(domains.topic_block(track_name, program))
+            # Only on a real match. On a fall-through the domain is a guess, and a guess is
+            # not worth a hard prohibition that could shut down a legitimately technical
+            # interview.
+            if not domains.is_technical(track_name, program):
+                blocks.append(
+                    "This is NOT a technical role. Do not ask about programming, data "
+                    "structures, SQL, or any other computer-science topic — not as a warm-up, "
+                    "and not as a 'general aptitude' question. A candidate asked about Java in "
+                    "a sales interview has been told the simulation does not know what job "
+                    "they applied for."
+                )
+        else:
+            # The title matched no domain — "Analyst" on its own is the common case, and it
+            # is genuinely ambiguous: a Deloitte Analyst is a consulting role and a Capgemini
+            # Analyst is a technical one. Asserting a domain here would be inventing one, so
+            # say what is actually known and let the company weighting carry the shape. This
+            # is the branch that used to name CS subjects outright; what it must keep from
+            # that version is only the instruction not to fall back to Java.
+            blocks.append(
+                "The role title did not match a known domain. Infer what this role is "
+                "actually screened for from the role title and the company research above, "
+                "and build the interview from that. Do not default to Java language "
+                "internals, and do not assume the role is technical unless the title says "
+                "so."
             )
-        return (
-            "This is NOT a Java/backend role. Build the interview from the role title and "
-            "the company research above — programming fundamentals, DBMS and SQL, data "
-            "structures, and the reasoning and communication this role is really screened "
-            "for. Do not default to Java language internals."
-        )
+        if company_block:
+            blocks.append(
+                "How this company weights its assessment overall — use it to shape the "
+                f"emphasis WITHIN the areas above, not to replace them:\n{company_block}"
+            )
+        return "\n\n".join(blocks)
 
     from app.data.java_fundamentals import for_track  # noqa: PLC0415
 
@@ -1501,19 +1536,44 @@ class InterviewOrchestrator:
         wrong subject is worse than being asked less, because it is the thing that makes a
         practice interview feel fake.
         """
+        from collections.abc import Mapping, Sequence  # noqa: PLC0415
+        from typing import Any  # noqa: PLC0415
+
+        from app.data import domains  # noqa: PLC0415
         from app.models.company import QuestionCategory
         from app.models.question import QuestionDifficulty, QuestionType, Topic
 
         track = await self.db.get(InterviewTrack, track_id)
         track_name = track.name if track else ""
-        if not _is_java_role(track_name, ""):
+
+        # WHICH BANK. This used to be "the Java bank, or nothing" — a non-Java role seeded
+        # no questions and returned None, which the caller reads as "no more questions" and
+        # ends the interview. That was the right call while Java was the only curated set,
+        # because being asked about the JVM in a sales screen is worse than a short
+        # interview. It is the wrong call now that every role has a domain: a sales
+        # candidate gets the sales scenarios, and the interview runs to its full length.
+        if _is_java_role(track_name, ""):
+            from app.data.java_fundamentals import JAVA_QUESTION_BANK  # noqa: PLC0415
+
+            # Mapping, not either TypedDict: the two banks carry the same six keys this
+            # function reads, and the Java one additionally carries `tier`, which no TypedDict
+            # union expresses cleanly. The shared shape is what matters here.
+            bank: Sequence[Mapping[str, Any]] = list(JAVA_QUESTION_BANK)
+            category_name, category_slug = "Java Core", "java-core"
+        else:
+            profile = domains.profile_for(track_name, "")
+            bank = list(profile["scenarios"])
+            category_name = profile["label"]
+            category_slug = domains.resolve(track_name, "")
             logger.info(
-                "seed_skipped_non_java_role",
+                "seed_using_domain_bank",
                 track_id=str(track_id),
                 track_name=track_name,
-                reason="the curated seed bank is Java; seeding it here would ask this role "
-                "about the wrong subject",
+                domain=category_slug,
+                questions=len(bank),
             )
+
+        if not bank:
             return None
 
         cat = await self.db.scalar(select(QuestionCategory).where(QuestionCategory.track_id == track_id))
@@ -1521,8 +1581,8 @@ class InterviewOrchestrator:
             cat = QuestionCategory(
                 id=uuid.uuid4(),
                 track_id=track_id,
-                name="Java Core",
-                slug="java-core",
+                name=category_name,
+                slug=category_slug,
                 order_index=0,
                 is_active=True,
             )
@@ -1534,7 +1594,8 @@ class InterviewOrchestrator:
         # manual seed script read — two divergent sets, neither big enough to fill
         # a twelve-question interview, which is why a short AI plan had nothing to
         # be topped up from. app/data/java_fundamentals.py is now the one source.
-        from app.data.java_fundamentals import JAVA_QUESTION_BANK  # noqa: PLC0415
+        # (The bank itself is chosen above — Java for Java roles, the role's domain
+        # scenarios otherwise. Both carry the same keys, so everything below is shared.)
 
         # One Topic row per bank topic. The report groups scores by topic, so
         # seeding everything under a single "Java Fundamentals" topic — as this
@@ -1544,7 +1605,7 @@ class InterviewOrchestrator:
         # This looked up each bank topic individually — around twenty round trips — and
         # while seeding only runs when the bank is empty, it runs INSIDE a candidate's
         # first request, so they wore all of it.
-        wanted = list(dict.fromkeys(q["topic"] for q in JAVA_QUESTION_BANK))
+        wanted = list(dict.fromkeys(q["topic"] for q in bank))
         existing_topics = {
             t.name: t
             for t in (
@@ -1580,7 +1641,7 @@ class InterviewOrchestrator:
                 "ideal": q["ideal"],
                 "topic_id": topic_rows[q["topic"]].id,
             }
-            for q in JAVA_QUESTION_BANK
+            for q in bank
         ]
 
         # And one query for every bank question that already exists, rather than one per

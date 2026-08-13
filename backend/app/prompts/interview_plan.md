@@ -57,8 +57,8 @@ How to use it:
 Produce an ordered plan of $question_count interview questions that a candidate for this specific company/program should expect, ordered EXACTLY as a real interview flows:
 
 1. **Question 1 MUST be a warm-up introduction** — a "Tell me about yourself" / "Walk me through your background" style opener (topic_name "Introduction", difficulty "easy", question_type "conceptual"). Every real interview starts here.
-2. Then **core technical fundamentals**, easy → medium.
-3. Then **deeper / scenario / coding** questions, medium → hard.
+2. Then the **core areas for this role**, easy → medium — drawn from the must-cover list below, which is already scoped to this role's domain.
+3. Then **deeper scenario questions**, medium → hard.
 4. If the resume above has real content, include **1–2 questions that directly reference the candidate's own projects, skills, or experience** from it (e.g. "You listed <project> — how did you handle <X> there?").
 5. End with **HR / behavioural** questions where appropriate.
 
@@ -72,21 +72,35 @@ from a syllabus:
 
 $must_cover
 
-**Draw the majority of your technical questions from this list.** A candidate who
+**Draw the majority of your questions from this list.** A candidate who
 has prepared for this company has prepared these topics, and an interview that
 skips them to ask something more exotic is not the practice they need — it is the
 single most common complaint about mock interviews. Spend the remaining slots on
 the company's own weighting, the resume, and behavioural questions.
 
-**Keep them theoretical and spoken.** These are asked out loud, in a room, with no
-editor — so "what is the difference between X and Y", "why does Java do Z", "walk
-me through what happens when…". Difficulty `easy` to `medium`. Do NOT turn a
-fundamentals question into a multi-part design exercise; a candidate has about a
-minute to answer and hard multi-part questions belong in the coding round.
+**MOST QUESTIONS MUST BE SCENARIO-BASED.** At least two thirds of them. A scenario
+puts the candidate in a situation and asks what they would do — "a dealer is
+threatening to switch to a competitor over margins you can't change, what do you
+do?", "a query that was fast last month now takes thirty seconds and nothing in the
+code changed, where do you look?", "you arrive on site and the slab has been poured
+without the reinforcement being inspected." That is how these interviews are
+actually run, and it is what distinguishes a real screen from a viva. Prefer the
+situations that genuinely recur in this company's and this role's interviews over
+anything clever or unusual.
 
-The list above is already filtered for this role — if it does not mention a
-framework, this role is not asked about frameworks, so do not add Spring, JPA,
-Hibernate or Jackson questions of your own accord.
+Keep the remaining third as direct questions where a definition really is what gets
+asked ("explain why a profitable company can run out of cash"). Never open with a
+definition when a situation would do.
+
+**Spoken, and answerable in about a minute.** These are asked out loud, in a room,
+with no editor. Difficulty `easy` to `medium`. Do NOT turn a question into a
+multi-part design exercise — hard multi-part problems belong in the coding round.
+
+The list above is already filtered for this role. Stay inside it. If it does not
+mention programming, this is not a technical role and must not be given
+programming, SQL or data-structure questions — not even as a warm-up. If it does
+not mention a framework, do not add Spring, JPA, Hibernate or Jackson questions of
+your own accord.
 
 ## Questions this candidate has already been asked
 

@@ -109,13 +109,22 @@ export interface PanelTurnResult {
  * prompt, the transcript and the voice allocation, and a frontend copy that drifts means Priya
  * speaks in Anil's voice or a line from an unknown speaker is silently dropped.
  */
-export function useInterviewers() {
+export function useInterviewers(sessionId?: string) {
   return useQuery({
-    queryKey: ['panel', 'interviewers'],
+    // Keyed by session, because the DESIGNATIONS depend on the role: a sales interview is run
+    // by a Regional Sales Manager, not a Technical Lead. Sharing one cache entry across
+    // sessions would show whichever role loaded first.
+    queryKey: ['panel', 'interviewers', sessionId ?? 'default'],
     queryFn: async () => {
-      const res = await getBrowserApiClient().get('/api/v1/panel/interviewers');
+      const res = await getBrowserApiClient().get(
+        sessionId
+          ? `/api/v1/panel/interviewers?session_id=${encodeURIComponent(sessionId)}`
+          : '/api/v1/panel/interviewers',
+      );
       return res.data as Interviewer[];
     },
+    // Still Infinity: names, genders and designations are fixed for the life of a session, and
+    // the voice allocation downstream keys off the names.
     staleTime: Infinity,
   });
 }

@@ -97,7 +97,9 @@ export default function LiveSessionPage() {
   // Same precedence the dashboard and the GD round use — profile name, then signup metadata,
   // then the email local part — reduced to something a person would say out loud.
   const { first: candidateName } = useCandidateName();
-  const { data: interviewers } = useInterviewers();
+  // Session-scoped: the designations follow the role, so a sales candidate sees a Regional
+  // Sales Manager rather than a Senior Engineering Manager.
+  const { data: interviewers } = useInterviewers(sessionId);
   const { turn: panelTurn } = useInterviewPanel();
   const panelVoices = usePanelVoices(
     useMemo(

@@ -110,8 +110,40 @@ _panel_rate_limit = rate_limiter(
 )
 
 
-def _render_panel() -> str:
-    return "\n".join(f"- {i.name} ({i.gender}, {i.role}): {i.disposition}" for i in INTERVIEWERS)
+def panel_for(role_title: str = "") -> list[Interviewer]:
+    """
+    The panel, with DESIGNATIONS THAT MATCH THE JOB.
+
+    Names, genders and dispositions are fixed — they are tied to the voice ids and to how the
+    two of them behave in the room, and there is no reason a sales panel should be paced
+    differently from an engineering one. What changes is what they *are*: a sales candidate is
+    interviewed by a Regional Sales Manager and an Area Sales Lead, not by a "Senior
+    Engineering Manager" and a "Technical Lead".
+
+    This is not cosmetic. The designation is in the prompt the panel is written from and on the
+    chip the candidate reads, so a hardcoded engineering title tells them in the first second
+    that the simulation does not know which job they applied for — and it pulls the model
+    toward technical questions in a role that has none.
+    """
+    from app.data import domains  # noqa: PLC0415
+
+    profile = domains.profile_for(role_title, "")
+    designations = (profile["lead_role"], profile["specialist_role"])
+    return [
+        Interviewer(
+            name=i.name,
+            gender=i.gender,
+            role=designation,
+            disposition=i.disposition,
+        )
+        for i, designation in zip(INTERVIEWERS, designations, strict=True)
+    ]
+
+
+def _render_panel(role_title: str = "") -> str:
+    return "\n".join(
+        f"- {i.name} ({i.gender}, {i.role}): {i.disposition}" for i in panel_for(role_title)
+    )
 
 
 class PanelTurnRequest(BaseModel):
@@ -547,9 +579,15 @@ async def _should_use_name(
     return answered % 3 == 0
 
 
-async def _role_for_session(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID) -> str:
+async def _role_for_session(
+    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID
+) -> tuple[str, str]:
     """
-    Which job this interview is for, as one line for the prompt.
+    Which job this interview is for: (one line for the prompt, the raw track name).
+
+    The raw track name is returned alongside the prose line because the panel's designations
+    are resolved from it — `panel_for` needs the role title on its own, and re-querying for it
+    would be a second round trip for something this already has in hand.
 
     Read from the session's track rather than accepted from the client, for the same reason
     everything else here is: it is what the orchestrator planned the interview against, and a
@@ -572,14 +610,29 @@ async def _role_for_session(db: AsyncSession, session_id: uuid.UUID, user_id: uu
         )
     ).first()
     if not row:
-        return "a general software engineering fresher role"
+        return "a general software engineering fresher role", ""
     track_name, company_name = row
-    return f"{track_name} at {company_name}"
+    return f"{track_name} at {company_name}", track_name or ""
 
 
 @router.get("/interviewers", summary="Who is on the panel")
-async def get_interviewers(current_user: CurrentUser) -> list[Interviewer]:
-    return INTERVIEWERS
+async def get_interviewers(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    session_id: uuid.UUID | None = None,
+) -> list[Interviewer]:
+    """
+    The panel for this session, designations included.
+
+    `session_id` is optional and the role is read from the session's own track, never accepted
+    from the caller — the same rule as everywhere else here, so the chip the candidate reads
+    cannot disagree with the panel the prompt was written from. Without it the caller gets the
+    default designations, which keeps every existing consumer working.
+    """
+    if session_id is None:
+        return INTERVIEWERS
+    _, track_name = await _role_for_session(db, session_id, current_user.user_id)
+    return panel_for(track_name)
 
 
 @router.post(
@@ -611,7 +664,7 @@ async def panel_turn(
     # Chosen server-side, and only for the stage that uses it — see _pivot_topic for why the
     # client is not allowed to pick. An empty string means there is nothing left to offer,
     # and the prompt is told to close the topic out rather than invent one.
-    role_line = await _role_for_session(db, request.session_id, current_user.user_id)
+    role_line, track_name = await _role_for_session(db, request.session_id, current_user.user_id)
     use_name = await _should_use_name(db, request.session_id, current_user.user_id, request.stage)
 
     pivot_topic = ""
@@ -629,7 +682,7 @@ async def panel_turn(
             "## This moment",
             "",
             "### The panel",
-            _render_panel(),
+            _render_panel(track_name),
             "",
             f"### The candidate\n{name}",
             "",
