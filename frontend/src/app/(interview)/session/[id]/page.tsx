@@ -1243,7 +1243,10 @@ export default function LiveSessionPage() {
                 onChange={(e) => setAnswer(e.target.value)}
                 disabled={preparing}
                 placeholder="Type your answer here as if you were speaking to an interviewer…"
-                className="ease-out-expo w-full flex-1 resize-none rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
+                /* Capped for the same reason as the voice transcript below — `flex-1` in a
+                   content-sized parent grows instead of scrolling, and a long typed answer
+                   pushed Submit off the bottom. A textarea scrolls natively once bounded. */
+                className="ease-out-expo max-h-[22vh] min-h-[96px] w-full resize-none overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
               />
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-xs text-muted-foreground/70">
@@ -1393,8 +1396,26 @@ export default function LiveSessionPage() {
                 </div>
               )}
 
-              {/* Live transcript — filler words in red, pauses marked */}
-              <div className="min-h-[96px] w-full flex-1 overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
+              {/*
+                Live transcript — filler words in red, pauses marked.
+
+                CAPPED, NOT `flex-1`. This is the fix for "when the answer gets long the
+                submit button hides below".
+
+                It read `min-h-[96px] flex-1 overflow-y-auto`, and the overflow rule never
+                fired. `flex-1` only bounds a child when the flex PARENT has a bounded
+                height, and this one is inside the answer channel, which is `flex-shrink-0`
+                and therefore sized to its content. So `flex-1` resolved to "grow to fit",
+                the box grew with every sentence the candidate spoke, the channel grew with
+                it, and Submit & Next was pushed off the bottom of the viewport — at exactly
+                the moment a candidate who had just given a long answer wanted to press it.
+
+                An explicit max-height makes the scroll real: the transcript scrolls inside
+                itself and the controls below it never move. In vh so it adapts to a laptop
+                and a large monitor, and paired with min-h so a one-word answer does not
+                collapse the box to nothing.
+              */}
+              <div className="min-h-[96px] max-h-[22vh] w-full overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
                 <DeliveryTranscript
                   text={answer}
                   pauses={stt.pauses}

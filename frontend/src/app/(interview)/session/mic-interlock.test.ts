@@ -166,6 +166,28 @@ describe('the layout does not move under the candidate', () => {
     expect(CODE).toMatch(/grid w-full min-h-0/);
   });
 
+  it('caps both answer inputs so a long answer cannot push Submit off screen', () => {
+    /*
+     * REPORTED: "when the answer gets so long the submit next buttons hides down".
+     *
+     * Both inputs read `flex-1 overflow-y-auto` (the voice transcript) and `flex-1`
+     * (the typing textarea), and in both cases the overflow never fired. `flex-1` only
+     * bounds a child when the flex PARENT has a bounded height — and their parent is the
+     * answer channel, which is `flex-shrink-0` and therefore sized to its own content. So
+     * `flex-1` resolved to "grow to fit": the box grew with every sentence, the channel
+     * grew with it, and Submit & Next slid below the fold at exactly the moment somebody
+     * who had just given a long answer wanted to press it.
+     *
+     * An explicit max-height is what makes the scroll real. Asserted on both, because the
+     * two paths are edited independently and only one of them was ever noticed.
+     */
+    const capped = [...CODE.matchAll(/max-h-\[\d+vh\][^"']*overflow-y-auto|overflow-y-auto[^"']*max-h-\[\d+vh\]|max-h-\[\d+vh\][^"']*resize-none|resize-none[^"']*max-h-\[\d+vh\]/g)];
+    expect(capped.length).toBeGreaterThanOrEqual(2);
+    // And neither may go back to growing with its content.
+    expect(CODE).not.toMatch(/min-h-\[96px\] w-full flex-1 overflow-y-auto/);
+    expect(CODE).not.toMatch(/w-full flex-1 resize-none/);
+  });
+
   it('keeps the answer controls out of the scrolling region', () => {
     expect(CODE).toMatch(/flex-shrink-0 border-t border-border\/50 pt-4/);
   });
