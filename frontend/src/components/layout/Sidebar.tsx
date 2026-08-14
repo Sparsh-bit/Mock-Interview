@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, Trophy, User, Users } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+
+import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { getBrowserApiClient } from '@/lib/api';
 import { useState } from 'react';
@@ -84,8 +86,22 @@ interface SidebarProps {
  * cost is one cheap request per five minutes for the handful of accounts that are admins.
  */
 export function useIsAdmin(): boolean {
+  // THE USER ID IS IN THE KEY, and this is the one place that is worth doing rather than the
+  // general rule. Providers clears the whole cache when the account changes, which is the
+  // systemic fix and covers every key including the ones that do not exist yet — but if it
+  // ever failed, THIS entry is the one whose staleness matters most: a cached `true` shows a
+  // normal account the Users, Offers and AI cost pages. That is exactly what happened when
+  // the cache was not cleared at all.
+  //
+  // The server refuses those endpoints regardless — every one is gated by `AdminUser` and
+  // returns 403 — so this is about not showing somebody navigation to pages they cannot open,
+  // not about access. Two independent reasons for it to be right is the correct amount for
+  // the only key that changes what the application looks like.
+  const { session } = useAuth();
+  const userId = session?.user?.id ?? 'anon';
+
   const { data } = useQuery({
-    queryKey: ['is-admin'],
+    queryKey: ['is-admin', userId],
     queryFn: async () => {
       await getBrowserApiClient().get('/api/v1/admin/overview');
       return true;

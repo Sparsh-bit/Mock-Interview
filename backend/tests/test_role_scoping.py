@@ -23,8 +23,30 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.v1.panel import _pivot_order_for
+from app.api.v1.panel import _pivot_order_for, _rating_subject
+from app.data import domains
+from app.services.interview.context import InterviewContext, decide_technical
 from app.services.interview.orchestrator import _is_java_role, _must_cover_block
+
+
+def ctx(role: str, company: str = "") -> InterviewContext:
+    """
+    An InterviewContext built the way the app builds one — from what the CANDIDATE typed.
+
+    These used to pass a bare track name, which is precisely the bug that made a sales
+    interview for Morani Plastics greet the candidate as an "Advanced ASE at Accenture": the
+    catalogue track and what they actually asked for are two different things, and the panel
+    was reading the wrong one. Going through the same resolver the app uses means a test
+    cannot pass while the real call site reads the other source.
+    """
+    return InterviewContext(
+        company=company,
+        role=role,
+        domain=domains.resolve(role, ""),
+        is_technical=decide_technical(role),
+        domain_matched=domains.matched(role, ""),
+    )
+
 
 
 class TestWhichRolesGetJava:
@@ -80,29 +102,29 @@ class TestThePivotOffersSomethingRelevant:
     def test_an_analyst_is_not_offered_the_jvm_as_a_lifeline(self):
         # A pivot is offered to somebody who has just admitted they do not know something.
         # Offering them a topic from the wrong job, at that moment, is worse than nothing.
-        offered = _pivot_order_for("Analyst", "Deloitte")
+        offered = _pivot_order_for(ctx("Analyst", "Deloitte"))
         assert offered
         assert not any("JVM" in t or "String pool" in t for t in offered)
 
     def test_it_offers_what_the_company_weights_most_first(self):
-        assert _pivot_order_for("Analyst", "Deloitte")[0] == "Aptitude & Case Reasoning"
-        assert _pivot_order_for("Analyst", "Capgemini")[0] == "Aptitude & Logical Reasoning"
+        assert _pivot_order_for(ctx("Analyst", "Deloitte"))[0] == "Aptitude & Case Reasoning"
+        assert _pivot_order_for(ctx("Analyst", "Capgemini"))[0] == "Aptitude & Logical Reasoning"
 
     def test_it_never_offers_to_talk_about_hr_instead(self):
         # A pivot finds technical ground the candidate can stand on. "Shall we talk about
         # your project instead?" reads as giving up on the technical round.
         for company in ("Deloitte", "Capgemini", "Infosys"):
-            for topic in _pivot_order_for("Analyst", company):
+            for topic in _pivot_order_for(ctx("Analyst", company)):
                 assert "hr" not in topic.lower()
 
     def test_a_java_role_still_gets_the_curated_order(self):
-        assert _pivot_order_for("Digital Nurture — Java FSE", "Cognizant")[0] == (
+        assert _pivot_order_for(ctx("Digital Nurture — Java FSE", "Cognizant"))[0] == (
             "OOP & class design"
         )
 
     def test_an_unknown_company_falls_back_to_universal_topics(self):
         # Every Indian campus technical round covers these whatever the employer.
-        offered = _pivot_order_for("Analyst", "Some Startup")
+        offered = _pivot_order_for(ctx("Analyst", "Some Startup"))
         assert "DBMS & SQL" in offered
         assert "Programming fundamentals" in offered
 
@@ -307,9 +329,8 @@ class TestTheRatingSubjectComesFromTheRole:
     """
 
     def test_a_java_role_is_asked_about_java(self):
-        from app.api.v1.panel import _rating_subject
 
-        assert _rating_subject("Digital Nurture — Java FSE") == "Java"
+        assert _rating_subject(ctx("Digital Nurture — Java FSE")) == "Java"
 
     @pytest.mark.parametrize(
         ("role", "expected"),
@@ -321,25 +342,22 @@ class TestTheRatingSubjectComesFromTheRole:
         ],
     )
     def test_a_non_technical_role_is_asked_about_its_own_field(self, role, expected):
-        from app.api.v1.panel import _rating_subject
 
-        assert _rating_subject(role) == expected
+        assert _rating_subject(ctx(role)) == expected
 
     def test_no_role_is_ever_asked_about_a_technology_it_does_not_use(self):
         # The assertion that would have caught the original report.
-        from app.api.v1.panel import _rating_subject
 
         for role in ("Sales", "Sales Executive", "HR Executive", "Marketing", "Recruiter"):
-            subject = _rating_subject(role).lower()
+            subject = _rating_subject(ctx(role)).lower()
             for tech in ("java", "python", "sql", "programming", "data structure"):
                 assert tech not in subject, f"{role} would be asked to rate itself on {tech}"
 
     def test_an_unknown_role_names_no_technology_at_all(self):
         # The old fallback said "programming fundamentals", which is a guess dressed as an
         # answer. Naming nothing is honest; naming the wrong thing is disqualifying.
-        from app.api.v1.panel import _rating_subject
 
-        subject = _rating_subject("Something Nobody Has Heard Of").lower()
+        subject = _rating_subject(ctx("Something Nobody Has Heard Of")).lower()
         assert "java" not in subject
         assert "programming" not in subject
 

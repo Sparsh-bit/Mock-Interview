@@ -2,8 +2,10 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
 import { ApiError } from '@/lib/api';
+import { createClient } from '@/lib/supabase/client';
 
 // Some browser extensions (translate / save-page tools) inject content
 // scripts that throw "Cannot find menu item with id ..." on every page —
@@ -35,6 +37,70 @@ function useSilenceExtensionNoise() {
   }, []);
 }
 
+/**
+ * Throw away every cached query when the signed-in account changes.
+ *
+ * THE BUG THIS FIXES IS A CROSS-ACCOUNT DATA LEAK, and it is the most serious one this app
+ * has had. Signing in as a second account showed the FIRST account's name, session history,
+ * statistics, credit balance and admin navigation — reported as "I signed in as concilio and
+ * it is opening the id sparsh", which looked like the two accounts had been merged in the
+ * database. Nothing was merged. Nothing server-side was wrong at all.
+ *
+ * TanStack Query caches by query key, and none of the keys carry a user id: `['user-stats']`,
+ * `['user-profile']`, `['user-sessions', limit]`, `['billing', 'balance']`. The QueryClient
+ * is created once for the lifetime of the tab. So signing out and back in as somebody else
+ * left every one of those entries in place, and each was served to the new account until it
+ * happened to refetch — with `staleTime` at a minute, that is a minute of one person reading
+ * another person's data, including whether they are an admin.
+ *
+ * WHY THE FIX IS HERE AND NOT IN THE QUERY KEYS. Adding a user id to every key would work
+ * and would be wrong: it puts the burden on every hook, forever, and the failure mode for
+ * forgetting is silent and is this. There are twenty query keys today and the next one added
+ * would have to remember. Clearing at the identity boundary is one rule in one place that
+ * cannot be forgotten, and it is correct for keys that do not exist yet.
+ *
+ * KEYED ON THE USER ID, NOT THE EVENT. Supabase fires `TOKEN_REFRESHED` and `SIGNED_IN`
+ * routinely for the SAME user — on every tab focus, on every token refresh — and clearing the
+ * cache on those would throw away good data constantly and re-fetch the whole dashboard. Only
+ * a change of identity matters, so that is what is compared.
+ */
+function useClearCacheOnAccountChange(queryClient: QueryClient) {
+  const seenUserId = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    const applyIdentity = (userId: string | null) => {
+      // `undefined` is the first observation of the tab — there is nothing cached from
+      // anybody else yet, so recording it is right and clearing would be a wasted refetch of
+      // everything on every page load.
+      if (seenUserId.current === undefined) {
+        seenUserId.current = userId;
+        return;
+      }
+      if (seenUserId.current === userId) return;
+
+      seenUserId.current = userId;
+      // `clear()`, not `invalidateQueries()`. Invalidating marks entries stale but KEEPS
+      // them, and a stale entry is still rendered while its refetch is in flight — so the
+      // new account would still see the previous one's name and numbers for as long as the
+      // network takes. Removing them means the UI shows a loading state instead, which is
+      // the only honest thing to show somebody whose data has not arrived yet.
+      queryClient.clear();
+    };
+
+    void supabase.auth.getUser().then(({ data }) => applyIdentity(data.user?.id ?? null));
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      applyIdentity(session?.user?.id ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [queryClient]);
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   useSilenceExtensionNoise();
   const [queryClient] = useState(
@@ -61,6 +127,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       })
   );
+
+  useClearCacheOnAccountChange(queryClient);
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -34,6 +34,8 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys
 from app.db.session import get_db
+from app.services.interview import context
+from app.services.interview.context import InterviewContext
 from app.services.tts.base import TONE_PROSODY
 
 logger = structlog.get_logger(__name__)
@@ -154,7 +156,7 @@ def panel_for(role_title: str = "") -> list[Interviewer]:
     ]
 
 
-def _rating_subject(role_title: str) -> str:
+def _rating_subject(ctx: InterviewContext) -> str:
     """
     What the panel asks the candidate to rate themselves on.
 
@@ -176,16 +178,19 @@ def _rating_subject(role_title: str) -> str:
     from app.data import domains  # noqa: PLC0415
     from app.services.interview.orchestrator import _is_java_role  # noqa: PLC0415
 
-    if _is_java_role(role_title, ""):
+    # A NON-TECHNICAL ROLE IS NEVER ASKED TO RATE ITSELF IN A LANGUAGE, whatever its title
+    # happens to contain. Checked before the Java branch rather than after, because "Sales
+    # Engineer" and "Solutions Consultant" both contain words that trip a keyword test.
+    if ctx.is_technical and _is_java_role(ctx.role, ""):
         return "Java"
 
-    if domains.matched(role_title, ""):
-        profile = domains.profile_for(role_title, "")
+    if ctx.domain_matched:
+        profile = domains.profile_for(ctx.role, "")
         # The heaviest topic in the family is what the role is really screened on, and it is
         # already weighted for exactly this reason. Sales opens on prospecting and objection
         # handling; mechanical on design and thermodynamics.
         top = max(profile["topics"], key=lambda t: t[1])[0]
-        if domains.is_technical(role_title, ""):
+        if ctx.is_technical:
             return top
         # For a non-technical role the family label reads better out loud than its top topic
         # — "how would you rate yourself in sales and business development" is a question a
@@ -511,27 +516,19 @@ async def _pivot_topic(db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UU
     # Analyst "JVM, JDK & JRE" as a lifeline is worse than offering nothing — it tells them
     # the panel has not understood what they applied for, at the moment they are already
     # uncomfortable.
-    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
+    # The SAME resolved context the rest of this module uses. Reading the catalogue track
+    # here — as this used to — is how a sales candidate got offered "JVM, JDK & JRE" as the
+    # thing to talk about instead.
+    ctx = await context.resolve(db, session_id, user_id)
 
-    role = (
-        await db.execute(
-            select(InterviewTrack.name, Company.name)
-            .join(InterviewSession, InterviewSession.track_id == InterviewTrack.id)
-            .join(Company, Company.id == InterviewTrack.company_id)
-            .where(InterviewSession.id == session_id)
-        )
-    ).first()
-    track_name = role[0] if role else ""
-    company_name = role[1] if role else ""
-
-    for topic in _pivot_order_for(track_name, company_name):
+    for topic in _pivot_order_for(ctx):
         if topic.lower() in seen_text:
             continue
         return topic
     return ""
 
 
-def _pivot_order_for(track_name: str, company_name: str) -> list[str]:
+def _pivot_order_for(ctx: InterviewContext) -> list[str]:
     """
     Topics to offer this role, easiest first.
 
@@ -548,10 +545,25 @@ def _pivot_order_for(track_name: str, company_name: str) -> list[str]:
     from app.services.interview.research_lookup import slugify  # noqa: PLC0415
     from app.services.prep import get_company  # noqa: PLC0415
 
-    if _is_java_role(track_name, ""):
+    if ctx.is_technical and _is_java_role(ctx.role, ""):
         return [t for t in _PIVOT_ORDER if t in java_fundamentals.ALL_TOPICS]
 
-    slug = slugify(company_name)
+    # A NON-TECHNICAL ROLE GETS ITS OWN DOMAIN'S TOPICS, not the company's assessment
+    # weighting. Morani Plastics is not in the catalogue and never will be — the employer
+    # here is whoever the candidate typed — but "sales" is a domain we know how to interview
+    # for, and offering prospecting or objection handling is a real lifeline where offering
+    # "Aptitude & Case Reasoning" from some IT firm's syllabus is not.
+    if not ctx.is_technical:
+        from app.data import domains  # noqa: PLC0415
+
+        profile = domains.profile_for(ctx.role, "")
+        return [
+            name
+            for name, _weight in sorted(profile["topics"], key=lambda t: -t[1])
+            if not any(k in name.lower() for k in ("hr", "behavioural", "behavioral"))
+        ]
+
+    slug = slugify(ctx.company)
     entry = get_company(slug) or get_company(slug.replace("-", ""))
     if entry and entry.topics:
         ranked = sorted(entry.topics, key=lambda t: -t.weight)
@@ -641,40 +653,23 @@ async def _should_use_name(
     return answered % 3 == 0
 
 
-async def _role_for_session(
-    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID
-) -> tuple[str, str]:
+async def _context(
+    db: AsyncSession, session_id: uuid.UUID, user_id: uuid.UUID | None = None
+) -> InterviewContext:
     """
-    Which job this interview is for: (one line for the prompt, the raw track name).
+    What this interview is for. Delegates to the ONE resolver.
 
-    The raw track name is returned alongside the prose line because the panel's designations
-    are resolved from it — `panel_for` needs the role title on its own, and re-querying for it
-    would be a second round trip for something this already has in hand.
+    This used to be `_role_for_session`, and it joined InterviewTrack and Company — the
+    catalogue track the session row points at. That is not what the candidate asked for: the
+    setup form preselects the first track when they do not pick one, so anybody typing their
+    own employer got an arbitrary IT-services track. A sales interview for Morani Plastics
+    was greeted as an "Advanced ASE role at Accenture", with a code editor.
 
-    Read from the session's track rather than accepted from the client, for the same reason
-    everything else here is: it is what the orchestrator planned the interview against, and a
-    caller-supplied role could put the panel and the questions in different jobs.
-
-    Falls back to a neutral line rather than an empty one — a prompt slot that says nothing
-    invites the model to assume, and what it assumes is Java.
+    Everything in this module now reads the same context, so the greeting, the designations,
+    the rating subject, the pivot topics and the editor cannot disagree with each other or
+    with the plan.
     """
-    from sqlalchemy import select  # noqa: PLC0415
-
-    from app.models.company import Company, InterviewTrack  # noqa: PLC0415
-    from app.models.session import InterviewSession  # noqa: PLC0415
-
-    row = (
-        await db.execute(
-            select(InterviewTrack.name, Company.name)
-            .join(InterviewSession, InterviewSession.track_id == InterviewTrack.id)
-            .join(Company, Company.id == InterviewTrack.company_id)
-            .where(InterviewSession.id == session_id, InterviewSession.user_id == user_id)
-        )
-    ).first()
-    if not row:
-        return "a general software engineering fresher role", ""
-    track_name, company_name = row
-    return f"{track_name} at {company_name}", track_name or ""
+    return await context.resolve(db, session_id, user_id)
 
 
 @router.get("/interviewers", summary="Who is on the panel")
@@ -698,14 +693,11 @@ async def get_interviewers(
     """
     if session_id is None:
         return PanelInfo(interviewers=INTERVIEWERS, technical=True)
-    from app.data import domains  # noqa: PLC0415
 
-    _, track_name = await _role_for_session(db, session_id, current_user.user_id)
-    # An unmatched role title is treated as technical, for the same reason the no-session
-    # branch above is: a missing editor costs a technical candidate the question, a spurious
-    # one costs a sales candidate a glance.
-    technical = not domains.matched(track_name, "") or domains.is_technical(track_name, "")
-    return PanelInfo(interviewers=panel_for(track_name), technical=technical)
+    ctx = await _context(db, session_id, current_user.user_id)
+    # Both read from the same resolved context, so the chip the candidate sees, the panel the
+    # prompt was written from, and the presence of the editor cannot disagree.
+    return PanelInfo(interviewers=panel_for(ctx.role), technical=ctx.is_technical)
 
 
 @router.post(
@@ -737,8 +729,9 @@ async def panel_turn(
     # Chosen server-side, and only for the stage that uses it — see _pivot_topic for why the
     # client is not allowed to pick. An empty string means there is nothing left to offer,
     # and the prompt is told to close the topic out rather than invent one.
-    role_line, track_name = await _role_for_session(db, request.session_id, current_user.user_id)
-    rating_subject = _rating_subject(track_name)
+    ctx = await _context(db, request.session_id, current_user.user_id)
+    role_line = ctx.role_line
+    rating_subject = _rating_subject(ctx)
     use_name = await _should_use_name(db, request.session_id, current_user.user_id, request.stage)
 
     pivot_topic = ""
@@ -756,7 +749,7 @@ async def panel_turn(
             "## This moment",
             "",
             "### The panel",
-            _render_panel(track_name),
+            _render_panel(ctx.role),
             "",
             f"### The candidate\n{name}",
             "",

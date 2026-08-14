@@ -26,6 +26,7 @@ from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
+from app.services.interview.context import decide_technical
 from app.services.interview.dont_know import said_dont_know
 from app.services.interview.research_lookup import find_research, render_research, slugify
 
@@ -607,6 +608,15 @@ class InterviewOrchestrator:
             "company": company,
             "program": program,
             "focus": focus,
+            # RESOLVED ONCE, HERE, AND PINNED. Everything downstream — the panel's
+            # designations, the self-rating subject, the pivot topics, and whether a code
+            # editor appears at all — reads this rather than re-deriving it per request.
+            #
+            # Pinning matters because the derivation is keyword matching over a free-text
+            # role, and a candidate must never watch a code editor appear halfway through a
+            # sales interview because a later match went differently. It is also the value
+            # somebody can look at when asking why their interview looked the way it did.
+            "is_technical": decide_technical(program, focus),
             "topics": topics,
             "planned_question_ids": planned_ids,
             "cross_question_ids": [],
