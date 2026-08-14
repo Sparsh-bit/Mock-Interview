@@ -1303,6 +1303,117 @@ class InterviewOrchestrator:
         await self.db.flush()
         return q
 
+    async def _bank_question(
+        self,
+        *,
+        track_name: str,
+        topics_str: str,
+        difficulty: str,
+        asked_texts: list[str],
+    ) -> dict | None:
+        """
+        A question from the shared, cached pool for this role and difficulty. Or None.
+
+        WHY THIS EXISTS: AI COST THAT FALLS AS USAGE RISES. Question generation runs on
+        nearly every question of every interview, and most of those calls are asking for the
+        same thing — a medium Java question about collections — with nothing candidate-
+        specific in the request at all. Paying for that generation once per user is paying
+        for it thousands of times over.
+
+        THE KEY HAS NO CANDIDATE IN IT, and that is what makes sharing this legitimate rather
+        than the tenancy bug the allowlist exists to prevent. Role, topic list, difficulty —
+        three pieces of syllabus. The generation below is made from exactly those three and
+        nothing else: no resume, no focus concepts, no previous answer.
+
+        SO IT IS ONLY REACHED WHEN THERE ARE NO FOCUS CONCEPTS. The moment the interview has
+        something specific to probe — a concept they missed, something they raised — that is
+        a question ABOUT this candidate and it goes through the uncached path. This covers
+        the opening questions and the fresh-topic ones, which is most of them.
+
+        A BATCH, NOT ONE. Generating five at a time and caching the set means the cost is
+        amortised five ways even on a miss, and a later interview on the same track can take
+        a different one — which is also what stops every candidate on a track being asked the
+        same opening question in the same order.
+
+        Returns None on any failure. The caller falls through to normal generation, so this
+        is strictly an optimisation and can never cost somebody their interview.
+        """
+        from app.services.ai import vector_cache  # noqa: PLC0415
+
+        key = f"{track_name} | {difficulty} | {topics_str[:300]}"
+        seen = {t.strip().lower() for t in asked_texts}
+
+        cached = await vector_cache.lookup(db=self.db, feature="question_bank", key=key)
+        if cached:
+            for q in cached.get("questions") or []:
+                content = str(q.get("content") or "").strip()
+                if content and content.lower() not in seen:
+                    return q
+
+        # Miss, or every cached question already asked this session. Generate a fresh batch
+        # from the syllabus alone.
+        messages = self.prompt_builder.chat(
+            system_template="question_generator",
+            user_content=(
+                "Generate FIVE distinct interview questions for this role and difficulty, as "
+                "a JSON array under the key `questions`. They must not depend on any "
+                "particular candidate — no reference to a resume, a previous answer, or "
+                "anything said earlier. Spread them across different topics from the list."
+            ),
+            track_name=track_name,
+            topics=topics_str,
+            difficulty=difficulty,
+            question_number="1",
+            already_asked="(none — these are for a shared pool)",
+            focus_concepts="(none — general questions for this role)",
+            candidate_experience_years="not specified",
+        )
+
+        from app.services.ai.schemas import QuestionBatch  # noqa: PLC0415
+
+        try:
+            batch, _ = await generate_structured(
+                QuestionBatch,
+                messages,
+                max_tokens=1400,
+                attempts_per_provider=1,
+                is_valid=lambda b: len(b.questions) >= 2,
+                cost_tier=CostTier.CHEAP,
+                context="question_bank",
+            )
+        except Exception:
+            # Any failure at all — provider down, malformed output, budget. The caller
+            # generates one question the old way.
+            logger.info("question_bank_generation_failed", track=track_name, difficulty=difficulty)
+            return None
+
+        # Typed as a plain dict of str -> list[dict[str, object]] so mypy can see that
+        # "content" is a str rather than inferring the union of every value type in the row.
+        payload: dict[str, list[dict[str, object]]] = {
+            "questions": [
+                {
+                    "content": q.content,
+                    "topic": q.topic_name,
+                    "difficulty": difficulty,
+                    "expected_keywords": q.expected_keywords,
+                    "ideal_answer": q.ideal_answer,
+                }
+                for q in batch.questions
+                if q.content.strip()
+            ]
+        }
+        if not payload["questions"]:
+            return None
+
+        await vector_cache.store(
+            db=self.db, feature="question_bank", key=key, payload=payload
+        )
+
+        for q in payload["questions"]:
+            if str(q["content"]).strip().lower() not in seen:
+                return q
+        return None
+
     async def _generate_question(
         self,
         session: InterviewSession,
@@ -1339,6 +1450,36 @@ class InterviewOrchestrator:
             asked_texts = [c for c in rows if c]
         already_asked = "\n".join(f"- {t}" for t in asked_texts) if asked_texts else "(none yet)"
         focus_str = ", ".join(focus_concepts) if focus_concepts else "(none — this is a fresh topic)"
+
+        # ── THE SHARED POOL, WHEN THERE IS NOTHING CANDIDATE-SPECIFIC TO ASK ─────────────
+        #
+        # No focus concepts means this question is not about this candidate: it is "a medium
+        # question about collections for a Java FSE", which is the same request thousands of
+        # interviews make. Serving it from the cache is what makes AI cost fall as usage
+        # rises rather than scale with it — the key space is the syllabus, so it saturates.
+        #
+        # The moment there IS a focus — a concept they missed, something they raised — this
+        # is skipped entirely and the question is generated for them. That branch is the
+        # whole reason the cache is safe: a question derived from somebody's answer is about
+        # that person and is never shared.
+        if not focus_concepts:
+            banked = await self._bank_question(
+                track_name=track_name,
+                topics_str=topics_str,
+                difficulty=target_difficulty,
+                asked_texts=asked_texts,
+            )
+            if banked:
+                persisted = await self._persist_generated_question(
+                    session=session,
+                    content=str(banked.get("content") or ""),
+                    topic_name=str(banked.get("topic") or "General"),
+                    difficulty=target_difficulty,
+                    expected_keywords=[str(k) for k in (banked.get("expected_keywords") or [])],
+                    ideal_answer=str(banked.get("ideal_answer") or ""),
+                )
+                if persisted is not None:
+                    return persisted
 
         messages = self.prompt_builder.chat(
             system_template="question_generator",
@@ -1382,6 +1523,46 @@ class InterviewOrchestrator:
             question_type=parsed.question_type,
             expected_keywords=parsed.expected_keywords,
             ideal_answer=parsed.ideal_answer or None,
+        )
+        self.db.add(question)
+        await self.db.commit()
+        await self.db.refresh(question)
+        return question
+
+    async def _persist_generated_question(
+        self,
+        *,
+        session: InterviewSession,
+        content: str,
+        topic_name: str,
+        difficulty: str,
+        expected_keywords: list[str],
+        ideal_answer: str,
+    ) -> Question | None:
+        """
+        Write a generated question as a row this session owns.
+
+        SESSION-SCOPED even though the TEXT came from a shared pool, and the distinction
+        matters. The pool holds strings; this row is one candidate being asked one thing, and
+        it carries their answer's foreign key. Adding it to the shared bank instead would
+        undo migration 010's per-session ownership — every other candidate would start seeing
+        it in their selection, which is the bug that migration exists to prevent.
+
+        Returns None rather than raising if the content is unusable, so the caller falls
+        through to normal generation.
+        """
+        if len(content.strip()) < 15:
+            return None
+        topic = await self._get_or_create_topic(session.track_id, topic_name)
+        question = Question(
+            id=uuid.uuid4(),
+            topic_id=topic.id,
+            session_id=session.id,
+            content=content.strip(),
+            difficulty=difficulty,
+            question_type="conceptual",
+            expected_keywords=expected_keywords,
+            ideal_answer=ideal_answer or None,
         )
         self.db.add(question)
         await self.db.commit()

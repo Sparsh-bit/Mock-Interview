@@ -91,6 +91,51 @@ class UserPlan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         Integer, nullable=False, default=0, server_default="0"
     )
 
+    # ── Auto top-up ───────────────────────────────────────────────────────
+    #
+    # AUTO TOP-UP, NOT A SUBSCRIPTION, and the difference is the product decision this app
+    # already made. A subscription asks a student to bet ₹299 on using the product enough to
+    # justify it; the store exists because that bet is the reason most of them never start.
+    # This keeps "you buy what you use" and removes only the interruption: when you run out
+    # mid-preparation, the next pack is bought for you instead of a paywall appearing the
+    # evening before a drive.
+    #
+    # OFF BY DEFAULT AND OPTED INTO EXPLICITLY. Money leaving somebody's account without them
+    # pressing anything is the single easiest way to lose their trust, so it is never the
+    # default, it names the exact item and price, and it is revocable from the same screen.
+    autopay_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    #: Which item is bought when the balance runs out. An item id from plans.ITEMS, resolved
+    #: server-side to its price — the browser never names what gets charged.
+    autopay_item_id: Mapped[str | None] = mapped_column(String(64))
+
+    #: Razorpay's token for the saved payment instrument, from a mandate the user authorised.
+    #:
+    #: A TOKEN, NOT A CARD. Razorpay holds the instrument; this is an opaque reference that
+    #: is useless anywhere else, so a database leak does not become a card leak. Nothing in
+    #: this app ever sees a card number.
+    autopay_token: Mapped[str | None] = mapped_column(String(128))
+
+    #: Razorpay's id for the customer the token belongs to. Required alongside the token to
+    #: charge it, and stored separately because one customer can have several instruments.
+    autopay_customer_id: Mapped[str | None] = mapped_column(String(128))
+
+    #: The last charge attempt, successful or not.
+    #:
+    #: THE THROTTLE. A failed card that is retried on every request is a card the bank blocks
+    #: and a user who gets a wall of declines from their bank rather than from us. One
+    #: attempt per window, decided against this timestamp.
+    autopay_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Consecutive failures. Auto top-up switches ITSELF off after a few, because a card that
+    #: has declined three times is a card that will decline again, and the honest response is
+    #: to stop trying and tell the user rather than to keep quietly failing.
+    autopay_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
 
 class CreditEvent(Base, UUIDPrimaryKeyMixin):
     """

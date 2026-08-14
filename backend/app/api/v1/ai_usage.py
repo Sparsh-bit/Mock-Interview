@@ -53,6 +53,7 @@ _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not fo
 FEATURE_LABELS: dict[str, str] = {
     "interview_plan": "Interview plan (pre-generates the whole question set)",
     "question_generation": "Adaptive question during an interview",
+    "question_bank": "Shared question pool — generated once per role, then cached for everyone",
     "cross_question": "Live follow-up probing the last answer",
     "report_generation": "Final report — scores, topics, roadmap",
     "model_answer": "Detailed analysis: the answer they should have given",

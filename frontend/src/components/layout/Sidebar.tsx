@@ -3,24 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import {
-  Target,
-  BarChart3,
-  BookOpen,
-  ChevronLeft,
-  FileText,
-  LayoutDashboard,
-  ListChecks,
-  MessageSquare,
-  Play,
-  Users,
-  Settings,
-  Trophy,
-  User,
-  Coins,
-  ShieldCheck,
-  Sparkles,
-} from 'lucide-react';
+import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, Trophy, User, Users } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { getBrowserApiClient } from '@/lib/api';
@@ -66,6 +49,7 @@ export const NAV_ITEMS = [
 // does — see docs/TEMPORARY-token-counter.md.
 export const ADMIN_NAV_ITEMS = [
   { href: '/admin', icon: ShieldCheck, label: 'Users' },
+  { href: '/admin/offers', icon: Tag, label: 'Offers' },
   { href: '/ai-usage', icon: Coins, label: 'AI cost' },
 ];
 

@@ -77,8 +77,26 @@ class TestTheTenancyAllowlist:
         topic name and nothing else. It is the purest entry on this list, and unlike the
         others its key space is bounded by the syllabus rather than by the user count, so
         it saturates and stops costing anything at all.
+
+        `question_bank`: a pool of interview questions for one (role, difficulty, topic list).
+        The key is three pieces of SYLLABUS — a track name, a difficulty band, and the topic
+        names configured for that track. The generation that fills it is handed exactly those
+        and is told in the prompt that the questions must not depend on any particular
+        candidate: no resume, no previous answer, no focus concepts.
+
+        The safety rests on the branch that reaches it. `_generate_question` consults this
+        pool ONLY when `focus_concepts` is empty — the moment the interview has something
+        specific to probe, that question is ABOUT this candidate and goes through the uncached
+        path instead. A question derived from somebody's missed concepts is never shared, and
+        that is enforced by control flow rather than by hoping the key stays clean.
+
+        Like study_resources, its key space is the syllabus rather than the user count, so it
+        saturates: once each (role, difficulty) cell is filled it costs nothing forever.
         """
-        assert frozenset({"gd_topic_prep", "study_resources"}) == CACHEABLE_FEATURES
+        assert (
+            frozenset({"gd_topic_prep", "study_resources", "question_bank"})
+            == CACHEABLE_FEATURES
+        )
 
     def test_the_plan_is_not_globally_cacheable_because_it_reads_the_resume(self):
         """

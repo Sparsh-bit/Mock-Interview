@@ -194,6 +194,20 @@ CACHEABLE_FEATURES: frozenset[str] = frozenset(
         # anyone is weak in has been generated once, this feature costs nothing for every
         # future user. That is what makes cost per user fall as the user base grows.
         "study_resources",
+        # A pool of interview questions for one (role, topic, difficulty).
+        #
+        # SAFE BECAUSE OF WHAT IS NOT IN THE KEY. It is built from the track name, the topic
+        # name and a difficulty band — three pieces of syllabus. No resume, no focus
+        # concepts, no answer, no name. The generation that fills it is made with the same
+        # three inputs and nothing else, which is the property that makes it shareable at
+        # all: a question generated from a candidate's missed concepts is ABOUT that
+        # candidate, and this deliberately never takes that path.
+        #
+        # It saturates like study_resources, and that is the whole point. The key space is
+        # bounded by the syllabus — roles × topics × three difficulties — not by the number
+        # of users, so once each cell has been filled once it costs nothing forever. Cost per
+        # user falls as the user base grows, rather than scaling with it.
+        "question_bank",
     }
 )
 

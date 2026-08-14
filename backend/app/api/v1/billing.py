@@ -33,7 +33,13 @@ from app.core.security import CurrentUser
 from app.db.session import get_db
 from app.models.billing import CreditEvent, UserPlan
 from app.services.billing import captcha, offers, razorpay
-from app.services.billing.credits import KIND_GRANT, KIND_PURCHASE, get_balance, grant
+from app.services.billing.credits import (
+    KIND_GRANT,
+    KIND_PURCHASE,
+    _plan_row,
+    get_balance,
+    grant,
+)
 from app.services.billing.plans import ITEMS, get_item
 
 logger = structlog.get_logger(__name__)
@@ -421,6 +427,73 @@ async def razorpay_webhook(
         amount_paise=outcome.amount_paise,
     )
     return {"status": "granted", "item_id": outcome.item.id}
+
+
+class AutopayRequest(BaseModel):
+    """Turn auto top-up on or off, and choose what it buys."""
+
+    enabled: bool
+    #: Which item to buy when the balance runs out. Required when enabling; the price is
+    #: resolved server-side from the catalogue, never sent by the browser.
+    item_id: str = Field(default="", max_length=64)
+
+
+@router.post("/autopay", summary="Turn auto top-up on or off")
+async def set_autopay(
+    request: AutopayRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    Auto top-up: buy the next pack automatically when the balance runs out.
+
+    NOT A SUBSCRIPTION, and the distinction is the product decision this app already made.
+    A subscription asks a student to bet ₹299 on using the product enough to justify it,
+    which is why the store replaced it. This keeps "you buy what you use" and removes only
+    the interruption — running out at eleven at night before a drive buys the next pack
+    instead of putting a paywall in the way.
+
+    ENABLING HERE DOES NOT AUTHORISE A CHARGE. It records the intent and the chosen item;
+    the mandate itself is authorised by the user inside Razorpay's own sheet, and until that
+    token exists `is_eligible` refuses every attempt. So a half-finished setup is inert
+    rather than dangerous.
+
+    TURNING IT OFF IS IMMEDIATE AND ALSO CLEARS THE FAILURE COUNTER, so somebody who fixes
+    their card and switches it back on is not still carrying three old declines toward the
+    automatic disable.
+    """
+    # Get-or-create, reusing credits' own helper rather than a second one — two functions
+    # that create the per-user lock row would race each other into a duplicate, and the
+    # uniqueness of that row is what makes `consume` a real lock.
+    plan = await _plan_row(db, current_user.user_id, lock=True)
+
+    if request.enabled:
+        item = get_item(request.item_id)
+        if item is None:
+            raise NotFoundError("Item", request.item_id)
+        plan.autopay_enabled = True
+        plan.autopay_item_id = item.id
+        # A fresh start. Someone re-enabling after fixing their card must not inherit the
+        # declines that switched it off.
+        plan.autopay_failures = 0
+        plan.autopay_last_attempt_at = None
+    else:
+        plan.autopay_enabled = False
+        plan.autopay_failures = 0
+
+    logger.info(
+        "autopay_setting_changed",
+        user_id=str(current_user.user_id),
+        enabled=plan.autopay_enabled,
+        item=plan.autopay_item_id,
+    )
+    return {
+        "enabled": plan.autopay_enabled,
+        "item_id": plan.autopay_item_id,
+        # False until the user authorises a mandate in Razorpay's sheet. The UI uses this to
+        # say "finish setup" rather than claiming auto top-up is live when it cannot charge.
+        "mandate_ready": bool(plan.autopay_token),
+    }
 
 
 @router.post(

@@ -160,6 +160,18 @@ class GeneratedQuestion(BaseModel):
     ideal_answer: str = ""
 
 
+class QuestionBatch(BaseModel):
+    """
+    Several questions generated at once for the shared, cached pool.
+
+    Reuses GeneratedQuestion so the batch and the single-question path cannot drift into
+    different shapes — the batch is the same thing, five times, generated without any
+    candidate context so it can be shared. See orchestrator._bank_question.
+    """
+
+    questions: list[GeneratedQuestion] = Field(default_factory=list)
+
+
 class InterviewPlan(BaseModel):
     """Matches the output of app/prompts/interview_plan.md."""
 
