@@ -21,6 +21,7 @@ import {
 } from '@/hooks/useBilling';
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
 import { Turnstile } from '@/components/billing/Turnstile';
+import { PaymentHistory } from '@/components/billing/PaymentHistory';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -423,6 +424,10 @@ export default function StorePage() {
             {quoted?.requires_captcha && <Turnstile onToken={setCaptchaToken} />}
           </div>
         )}
+
+        {/* Only for somebody signed in — there is nothing to show otherwise, and an empty
+            "Payment history" card on a public pricing page is noise. */}
+        {signedIn && <PaymentHistory />}
 
         <p className="text-xs text-muted-foreground">
           Quizzes are unlimited and free on every account. Purchases do not expire. Prices are

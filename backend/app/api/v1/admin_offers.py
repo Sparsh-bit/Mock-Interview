@@ -22,6 +22,7 @@ offer would take them with it. An unused code can go; a used one is switched off
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime
 
@@ -305,3 +306,188 @@ async def delete_offer(
     await db.delete(offer)
     logger.info("offer_deleted", code=offer.code, by=str(current_user.user_id))
     return {"status": "deleted"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reconciliation
+# ─────────────────────────────────────────────────────────────────────────────
+
+reconcile_router = APIRouter(prefix="/admin/payments", tags=["Admin — Payments"])
+
+
+@reconcile_router.get("/unapplied", summary="Captured payments that were never credited")
+async def list_unapplied(
+    current_user: AdminUser,  # noqa: ARG001
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Money that arrived and product that never did.
+
+    WHY THIS CAN HAPPEN AT ALL. The webhook is the primary granting path and a webhook is not
+    a guarantee — pointed at the wrong URL, signed with the wrong secret, blocked, or dropped,
+    it simply never arrives. Verify-on-return covers payments made from a browser that stays
+    open, and covers nothing that was paid before it existed. Neither helps a payment that
+    already happened, and "we fixed the webhook" does not go back and grant it.
+
+    READ-ONLY. It says what is missing; `POST /apply` is what acts. Being able to look without
+    acting matters here, because the thing being looked at is other people's money.
+    """
+    from app.models.billing import CreditEvent  # noqa: PLC0415
+    from app.services.billing import razorpay  # noqa: PLC0415
+    from app.services.billing.plans import get_item  # noqa: PLC0415
+
+    payments = await razorpay.list_recent_payments(since_days=days)
+    captured = [p for p in payments if p.get("status") == "captured"]
+    if not captured:
+        return {"unapplied": [], "checked": len(payments)}
+
+    ids = [str(p.get("id")) for p in captured if p.get("id")]
+    applied = set(
+        (
+            await db.execute(
+                select(CreditEvent.payment_ref).where(CreditEvent.payment_ref.in_(ids))
+            )
+        ).scalars()
+    )
+
+    out = []
+    for p in captured:
+        pid = str(p.get("id") or "")
+        if not pid or pid in applied:
+            continue
+        notes = p.get("notes") or {}
+        item = get_item(str(notes.get("item_id") or ""))
+        out.append(
+            {
+                "payment_id": pid,
+                "amount_paise": int(p.get("amount") or 0),
+                "amount_rupees": int(p.get("amount") or 0) / 100,
+                "email": p.get("email") or "",
+                "created_at": p.get("created_at"),
+                "user_id": str(notes.get("user_id") or ""),
+                "item_id": str(notes.get("item_id") or ""),
+                "item_name": item.name if item else "(unknown item)",
+                # A payment whose notes name no known user or item cannot be applied
+                # automatically — granting a guess would be inventing a purchase.
+                "applicable": bool(item and notes.get("user_id")),
+            }
+        )
+    return {"unapplied": out, "checked": len(payments)}
+
+
+@reconcile_router.post("/apply", summary="Credit every captured payment that was never applied")
+async def apply_unapplied(
+    current_user: AdminUser,
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Grant what was paid for. Idempotent, and safe to run repeatedly.
+
+    EVERY CHECK THE OTHER TWO PATHS MAKE, MADE AGAIN HERE:
+
+      * only `captured` payments — authorised is not money
+      * the amount against the item's real price, recomputed from the offer row when one was
+        used, so a discounted payment is accepted for what it should have cost and no more
+      * the ledger for idempotency, so a payment the webhook has since delivered is skipped
+        rather than granted twice
+
+    WHAT IT WILL NOT DO. A payment whose notes name no user, or an item that is not in the
+    catalogue, is REPORTED and not applied. Granting the nearest thing would be inventing a
+    purchase nobody made, and an admin reading a list of three anomalies is a better outcome
+    than a silent guess.
+    """
+    from app.models.billing import CreditEvent  # noqa: PLC0415
+    from app.services.billing import offers, razorpay  # noqa: PLC0415
+    from app.services.billing.credits import KIND_PURCHASE, grant  # noqa: PLC0415
+    from app.services.billing.plans import get_item  # noqa: PLC0415
+
+    payments = await razorpay.list_recent_payments(since_days=days)
+    granted: list[dict] = []
+    skipped: list[dict] = []
+
+    for p in payments:
+        pid = str(p.get("id") or "")
+        if not pid or p.get("status") != "captured":
+            continue
+
+        already = await db.scalar(
+            select(CreditEvent.id).where(CreditEvent.payment_ref == pid)
+        )
+        if already:
+            continue
+
+        notes = p.get("notes") or {}
+        item = get_item(str(notes.get("item_id") or ""))
+        raw_user = str(notes.get("user_id") or "")
+        if item is None or not raw_user:
+            skipped.append({"payment_id": pid, "reason": "notes name no known user or item"})
+            continue
+        try:
+            user_uuid = uuid.UUID(raw_user)
+        except ValueError:
+            skipped.append({"payment_id": pid, "reason": "user id in notes is not a uuid"})
+            continue
+
+        amount = int(p.get("amount") or 0)
+        offer_code = str(notes.get("offer_code") or "").strip().upper()
+        if offer_code:
+            offer = await offers.find_code(db, offer_code)
+            expected = offers.charge_for(offer, item) if offer else item.price_paise
+        else:
+            offer = None
+            expected = item.price_paise
+
+        if amount < expected:
+            skipped.append(
+                {"payment_id": pid, "reason": f"paid {amount} against an expected {expected}"}
+            )
+            continue
+
+        if offer is not None:
+            # Already redeemed by this account is not a reason to withhold the grant: the
+            # code has been counted, and the money was still taken.
+            with contextlib.suppress(offers.OfferError):
+                await offers.redeem_verified(
+                    db,
+                    offer=offer,
+                    item=item,
+                    user_id=user_uuid,
+                    charged_paise=amount,
+                    payment_ref=pid,
+                )
+
+        await grant(
+            db,
+            user_uuid,
+            item.feature,
+            item.quantity,
+            kind=KIND_PURCHASE,
+            payment_ref=pid,
+            detail={
+                "item_id": item.id,
+                "amount_paise": amount,
+                "offer": offer_code,
+                # So a support question can tell how this arrived. A ledger full of
+                # "reconcile" entries is a webhook that has never worked.
+                "granted_via": "reconcile",
+            },
+        )
+        granted.append(
+            {
+                "payment_id": pid,
+                "user_id": raw_user,
+                "item_id": item.id,
+                "quantity": item.quantity,
+            }
+        )
+        logger.info(
+            "payment_reconciled",
+            payment_id=pid,
+            user_id=raw_user,
+            item=item.id,
+            by=str(current_user.user_id),
+        )
+
+    return {"granted": granted, "skipped": skipped}

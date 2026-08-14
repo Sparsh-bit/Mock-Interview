@@ -42,6 +42,9 @@ v1_router.include_router(billing.router, tags=["Billing"])
 # Prefixed inside the module, so it lands under /admin/offers alongside the rest of the
 # admin surface rather than under a second top-level path.
 v1_router.include_router(admin_offers.router, tags=["Admin — Offers"])
+# Reconciliation lives in the same module because it shares the offer lookups, but it is
+# a separate router so the paths read honestly: /admin/payments, not /admin/offers.
+v1_router.include_router(admin_offers.reconcile_router, tags=["Admin — Payments"])
 
 # Auth required
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])

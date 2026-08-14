@@ -360,3 +360,52 @@ async def fetch_payment(payment_id: str) -> dict:
             code="PAYMENT_LOOKUP_FAILED",
         )
     return resp.json() or {}
+
+
+async def list_recent_payments(*, count: int = 100, since_days: int = 30) -> list[dict]:
+    """
+    Every payment on the Razorpay account in the recent past.
+
+    FOR RECONCILIATION, and reconciliation exists because a webhook is not a guarantee. If it
+    was pointed at the wrong URL, signed with the wrong secret, or dropped, the money still
+    moved and the candidate still has nothing — and no amount of fixing the webhook afterwards
+    goes back and grants what was already paid for. This is how those are found.
+
+    Razorpay's list endpoint is account-wide, so the CALLER must attribute each payment to a
+    user from its `notes` and must be an admin. There is no per-user payments API.
+
+    Returns [] rather than raising on a failed lookup: a reconciliation sweep that cannot
+    reach Razorpay has found nothing, which is different from an error the caller should
+    surface, and it will be run again.
+    """
+    from app.core.config import settings  # noqa: PLC0415
+
+    key_id = getattr(settings, "RAZORPAY_KEY_ID", "") or ""
+    key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "") or ""
+    if not key_id or not key_secret:
+        raise PaymentNotConfiguredError
+
+    import time  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
+    frm = int(time.time()) - since_days * 86_400
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://api.razorpay.com/v1/payments",
+                auth=(key_id, key_secret),
+                # `count` is capped at 100 by Razorpay. A sweep that needs more than the last
+                # hundred payments in thirty days is a sweep that should have run sooner.
+                params={"from": frm, "count": min(count, 100)},
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("razorpay_list_payments_failed", error=str(exc))
+        return []
+
+    if resp.status_code >= 400:
+        logger.warning("razorpay_list_payments_failed", status=resp.status_code)
+        return []
+
+    return list((resp.json() or {}).get("items") or [])
