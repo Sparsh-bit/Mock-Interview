@@ -277,6 +277,17 @@ export default function AdminOffersPage() {
         <div className="flex justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
+      ) : offers.isError ? (
+        /* A FAILED QUERY IS NOT AN EMPTY LIST, and conflating them here would tell a
+           non-admin who navigated straight to this URL that there are no offers — implying
+           they have access and there is simply nothing to see. The server refuses them with
+           a 403; this says so. Every endpoint is gated by `AdminUser` regardless, so this is
+           honesty about what happened rather than the thing enforcing it. */
+        <Card className="p-10 text-center text-sm text-muted-foreground">
+          {offers.error instanceof ApiError && offers.error.status === 403
+            ? 'This page is for administrators.'
+            : 'Could not load offers. Please try again.'}
+        </Card>
       ) : !offers.data?.length ? (
         <Card className="p-10 text-center text-sm text-muted-foreground">
           No offers yet.
