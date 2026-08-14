@@ -14,8 +14,8 @@ as the owner and bypasses RLS; the blanket deny is what keeps PostgREST shut, an
 matters here because the anon key ships in the browser bundle. An offers table readable
 through it would hand every private code to anyone who opened dev tools.
 
-Revision ID: 016
-Revises: 015
+Revision ID: 018
+Revises: 017
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from sqlalchemy.dialects import postgresql
 #: and the test failed, which is exactly what it exists to do.
 _TABLES: list[str] = ["offers", "offer_redemptions"]
 
-revision = "016"
-down_revision = "015"
+revision = "018"
+down_revision = "017"
 branch_labels = None
 depends_on = None
 

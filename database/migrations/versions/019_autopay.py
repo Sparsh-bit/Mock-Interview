@@ -14,8 +14,8 @@ NO CARD DATA. `autopay_token` is Razorpay's opaque reference to an instrument th
 is useless anywhere else. A database leak does not become a card leak, and nothing in this
 app ever sees a card number.
 
-Revision ID: 017
-Revises: 016
+Revision ID: 019
+Revises: 018
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "017"
-down_revision = "016"
+revision = "019"
+down_revision = "018"
 branch_labels = None
 depends_on = None
 
