@@ -4,11 +4,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, Trophy, User, Users } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
 
-import { useAuth } from '@/hooks/useAuth';
+import { useBalance } from '@/hooks/useBilling';
 import { cn } from '@/lib/utils';
-import { getBrowserApiClient } from '@/lib/api';
 import { useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -86,33 +84,28 @@ interface SidebarProps {
  * cost is one cheap request per five minutes for the handful of accounts that are admins.
  */
 export function useIsAdmin(): boolean {
-  // THE USER ID IS IN THE KEY, and this is the one place that is worth doing rather than the
-  // general rule. Providers clears the whole cache when the account changes, which is the
-  // systemic fix and covers every key including the ones that do not exist yet — but if it
-  // ever failed, THIS entry is the one whose staleness matters most: a cached `true` shows a
-  // normal account the Users, Offers and AI cost pages. That is exactly what happened when
-  // the cache was not cleared at all.
-  //
-  // The server refuses those endpoints regardless — every one is gated by `AdminUser` and
-  // returns 403 — so this is about not showing somebody navigation to pages they cannot open,
-  // not about access. Two independent reasons for it to be right is the correct amount for
-  // the only key that changes what the application looks like.
-  const { session } = useAuth();
-  const userId = session?.user?.id ?? 'anon';
-
-  const { data } = useQuery({
-    queryKey: ['is-admin', userId],
-    queryFn: async () => {
-      await getBrowserApiClient().get('/api/v1/admin/overview');
-      return true;
-    },
-    retry: false,
-    staleTime: 5 * 60_000,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-  });
-  return data === true;
+  /*
+   * READ FROM THE BALANCE, WHICH THIS PAGE ALREADY FETCHES.
+   *
+   * This used to answer "am I an admin" by calling /admin/overview and watching for a 403.
+   * That works, and it costs three refused requests and three warning log lines on every
+   * page load for every ordinary user — a 403 there is the correct response and a completely
+   * normal state, so it made a healthy system look like it was being probed.
+   *
+   * `/billing/me` is loaded on every dashboard page anyway, so this is now free.
+   *
+   * FAILS CLOSED, and that is unchanged: `data` is undefined while loading and on any error,
+   * and only an explicit `true` counts. It also changes nothing about ACCESS — every admin
+   * endpoint is gated by the `AdminUser` dependency server-side and returns 403 whatever the
+   * navigation shows. This decides what is rendered, not what is permitted.
+   *
+   * The per-user cache key is gone with the probe: the balance query is cleared on every
+   * identity change by Providers, along with everything else.
+   */
+  const { data } = useBalance();
+  return data?.is_admin === true;
 }
+
 
 export function AppSidebar({ user }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);

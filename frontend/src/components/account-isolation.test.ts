@@ -82,16 +82,26 @@ describe('the query cache is emptied when the account changes', () => {
 });
 
 describe('admin navigation cannot be shown to a normal account', () => {
-  it('the admin probe is keyed by user', () => {
-    // Defence in depth on the one key whose staleness changes what the application looks
-    // like. A cached `true` shows a normal account the Users, Offers and AI cost pages.
-    expect(SIDEBAR_CODE).toMatch(/queryKey: \['is-admin', userId\]/);
+  it('reads the admin flag from the balance rather than probing for a 403', () => {
+    /*
+     * Stronger than the per-user cache key this replaced. There is no separate admin query
+     * to go stale at all now — the flag rides on `/billing/me`, which every dashboard page
+     * already fetches and which Providers clears on every identity change along with
+     * everything else.
+     *
+     * It also stops three refused requests and three warning log lines per page load for
+     * every ordinary user: a 403 on /admin/overview is the correct response to that probe
+     * and a completely normal state, so logging it as a warning made a healthy system look
+     * like it was being attacked.
+     */
+    expect(SIDEBAR_CODE).toMatch(/const \{ data \} = useBalance\(\)/);
+    expect(SIDEBAR_CODE).not.toMatch(/admin\/overview/);
   });
 
   it('it fails closed — anything other than an explicit true is not an admin', () => {
-    // A 403 leaves `data` undefined, and so does a request still in flight. Both must render
-    // as "not an admin" rather than as "not yet known".
-    expect(SIDEBAR_CODE).toMatch(/return data === true;/);
+    // `data` is undefined while loading and on any error. Both must render as "not an admin"
+    // rather than as "not yet known".
+    expect(SIDEBAR_CODE).toMatch(/return data\?\.is_admin === true;/);
   });
 
   it('the admin links are a separate list, not mixed into the default nav', () => {

@@ -22,6 +22,7 @@ import {
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
 import { Turnstile } from '@/components/billing/Turnstile';
 import { PaymentHistory } from '@/components/billing/PaymentHistory';
+import { FreeOrderSheet } from '@/components/billing/FreeOrderSheet';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -137,6 +138,18 @@ export default function StorePage() {
     label: string;
   } | null>(null);
   const [captchaToken, setCaptchaToken] = useState('');
+  /*
+   * A FREE ORDER GETS A CONFIRMATION STEP, NOT A SILENT GRANT.
+   *
+   * Razorpay will not create an order below ₹1, so a 100%-off code has no sheet to open —
+   * that is a platform limit, and it is also what every large Indian checkout does with a
+   * full-value coupon: the payment step disappears and an order summary takes its place.
+   *
+   * What was missing was the summary. The item was granted the instant Buy was pressed with
+   * nothing to confirm, which reads as the button having failed, because everything a
+   * candidate knows about buying says something should appear.
+   */
+  const [freeOrder, setFreeOrder] = useState<StoreItem | null>(null);
 
   /*
    * Priced against the CHEAPEST item, purely so the box can be validated before the
@@ -176,6 +189,29 @@ export default function StorePage() {
       window.location.href = `/register?redirectTo=${encodeURIComponent('/pricing')}`;
       return;
     }
+    // A code that covers this in full goes through the confirm sheet. `quoted` is priced
+    // against the cheapest item, so it is only a reliable "this is free" signal for a `free`
+    // code — which is the only kind that can produce a ₹0 total on every item.
+    if (quoted?.is_free && appliedCode) {
+      const item = items?.find((i) => i.id === itemId) ?? null;
+      if (item) {
+        setFreeOrder(item);
+        return;
+      }
+    }
+    runCheckout(itemId);
+  };
+
+  /*
+   * THE ONE PLACE THAT CHECKS OUT, and the reason it is extracted.
+   *
+   * Two call sites reach it — pressing Buy, and confirming a ₹0 order — and TanStack's
+   * per-call `onSuccess` only fires for the call that passes it. Calling `mutate` a second
+   * time from the confirm sheet without repeating the handlers left the sheet spinning
+   * forever with the item silently granted behind it. One function, one set of handlers,
+   * both paths.
+   */
+  const runCheckout = (itemId: string) => {
     checkout.mutate(
       { itemId, code: appliedCode, captchaToken },
       {
@@ -186,9 +222,13 @@ export default function StorePage() {
          * order at all. Opening the widget here would show a payment form for ₹0.
          */
         if (order.granted) {
+          // Reached from the confirm sheet, or from a code that turned out to be free only
+          // for this particular item.
+          setFreeOrder(null);
           toast.success('Added to your account. Nothing to pay.');
           setAppliedCode('');
           setQuoted(null);
+          setCodeInput('');
           return;
         }
         if (!order.order_id || !order.key_id) {
@@ -245,6 +285,7 @@ export default function StorePage() {
         }
       },
       onError: (err) => {
+        setFreeOrder(null);
         const notConfigured = err instanceof ApiError && err.status === 503;
         // An offer error carries a message the candidate can act on — "this offer has
         // expired" rather than "invalid code", which sends them hunting for a typo that is
@@ -428,6 +469,20 @@ export default function StorePage() {
         {/* Only for somebody signed in — there is nothing to show otherwise, and an empty
             "Payment history" card on a public pricing page is noise. */}
         {signedIn && <PaymentHistory />}
+
+        {/* The confirm step for a ₹0 order. Razorpay cannot open below ₹1, so this is the
+            summary that takes the sheet's place — see FreeOrderSheet. */}
+        <FreeOrderSheet
+          open={!!freeOrder}
+          item={freeOrder}
+          code={appliedCode}
+          originalPaise={quoted?.original_paise ?? freeOrder?.price_paise ?? 0}
+          confirming={checkout.isPending}
+          onCancel={() => setFreeOrder(null)}
+          onConfirm={() => {
+            if (freeOrder) runCheckout(freeOrder.id);
+          }}
+        />
 
         <p className="text-xs text-muted-foreground">
           Quizzes are unlimited and free on every account. Purchases do not expire. Prices are

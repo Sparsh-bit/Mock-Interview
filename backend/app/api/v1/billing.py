@@ -86,6 +86,22 @@ class BalanceOut(BaseModel):
     trial_started: bool
     #: Operator account — not metered. The UI shows "unlimited" rather than a countdown.
     unlimited: bool = False
+    #: Whether this account may see the admin pages.
+    #:
+    #: CARRIED HERE SO THE UI DOES NOT HAVE TO PROBE FOR IT. The sidebar used to answer "am I
+    #: an admin" by calling /admin/overview and watching for a 403 — which works, and costs
+    #: three refused requests and three warning log lines on every page load for every
+    #: ordinary user. A 403 is the correct response to that probe and a completely normal
+    #: state, so logging it as a warning made a healthy system look like it was under attack.
+    #:
+    #: SEPARATE FROM `unlimited` even though both are currently true for the same accounts.
+    #: One is about metering and one is about privilege; collapsing them would mean the first
+    #: unmetered non-admin account — a beta tester, a partner — silently gains the admin
+    #: navigation.
+    #:
+    #: It changes nothing about ACCESS. Every admin endpoint is independently gated by the
+    #: `AdminUser` dependency and returns 403 regardless of what this says.
+    is_admin: bool = False
     is_banned: bool
     ban_reason: str | None = None
     appeal_submitted: bool = False
@@ -150,6 +166,7 @@ async def my_balance(
         ],
         trial_started=balance.trial_started,
         unlimited=balance.unlimited,
+        is_admin=balance.unlimited,
         is_banned=bool(plan_row and plan_row.is_banned),
         ban_reason=plan_row.ban_reason if plan_row else None,
         appeal_submitted=bool(plan_row and plan_row.appeal_at),

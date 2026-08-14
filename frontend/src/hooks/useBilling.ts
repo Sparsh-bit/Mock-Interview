@@ -34,6 +34,9 @@ export interface Balance {
   trial_started: boolean;
   /** Operator account: not metered. Shown as unlimited rather than as a stuck countdown. */
   unlimited: boolean;
+  /** Whether this account may see the admin pages. Never what grants access — the server
+   *  gates every admin endpoint with its own dependency and returns 403 regardless. */
+  is_admin: boolean;
   is_banned: boolean;
   ban_reason: string | null;
   appeal_submitted: boolean;
