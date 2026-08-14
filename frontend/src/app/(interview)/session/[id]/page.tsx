@@ -543,6 +543,22 @@ export default function LiveSessionPage() {
        */
       reset?: boolean;
     }): Promise<{ spoke: boolean; pivotTopic: string; ratingSubject: string }> => {
+      /*
+       * THIS FUNCTION CANNOT REJECT, AND THAT IS A DESIGN DECISION RATHER THAN CAUTION.
+       *
+       * Six places await it, several from inside `void (async () => …)()` where a rejection
+       * is an unhandled promise and nothing recovers. Each of those then fails differently:
+       * the code review leaves the candidate on "They are reading your code…" with no
+       * controls at all, the question path leaves an empty thread that will never retry
+       * because `panelForRef` is already claimed, the closing box leaves its Ask button
+       * spinning forever.
+       *
+       * Six defensive wrappers would be six chances to forget the seventh. One guarantee
+       * here makes every caller safe by construction: on any failure this resolves as
+       * "nobody spoke", which is a case every caller already handles because it is what a
+       * provider outage has always produced.
+       */
+      try {
       // Deliberately does not clear. See the note on `reset`.
       setPanelPending(true);
       // Held from BEFORE the request until after the last word — the request itself counts,
@@ -638,6 +654,13 @@ export default function LiveSessionPage() {
         // it is fixing, and a silent one.
         setPanelPending(false);
         setPanelBusy(false);
+      }
+      } catch (err) {
+        // Logged rather than swallowed silently — this is invisible from the outside (the
+        // interview simply continues in a plainer form), so without a console line there is
+        // no way to tell a provider problem from a bug in here.
+        console.warn('panel turn failed; continuing without it', err);
+        return { spoke: false, pivotTopic: '', ratingSubject: '' };
       }
     },
     // panelTurn and panelVoices are stable enough for this to be safe, and listing them
@@ -911,25 +934,42 @@ export default function LiveSessionPage() {
            */
           if (res.declined) {
             void (async () => {
-              // Appended: the candidate should still see the question they just declined
-              // above the offer to move on. Replacing it would make "do you know about X?"
-              // arrive with no visible reason.
-              const { pivotTopic } = await speakTurn({ stage: 'pivot', reset: false });
-              if (pivotTopic) {
-                setPivotOffer({ topic: pivotTopic, declined: declinedQuestion });
-                setPhase('pivot');
-                recordPivot.mutate({
-                  declined_question: declinedQuestion,
-                  offered_topic: pivotTopic,
-                  // Recorded as offered, not accepted. Whether they take it is a second
-                  // event, and pretending they did would overstate what happened.
-                  accepted: false,
-                });
-              } else {
-                // Nothing left to offer. Moving on is the honest outcome — inventing a
-                // topic the bank cannot source would be a dead end mid-interview.
-                refetch();
+              /*
+               * WRAPPED, BECAUSE A THROW HERE STRANDS THEM.
+               *
+               * If speakTurn rejects — a callback that raises, an unexpected state — neither
+               * branch below runs: the phase stays `asking`, `panelForRef` still holds the
+               * question just answered so no new turn fires, and `refetch` never happens.
+               * The candidate sits on an answered question with an empty box and no way
+               * forward but End Interview.
+               *
+               * The catch does the only thing that is always right: move the interview on.
+               * Losing the pivot costs them a courtesy; losing the interview costs them the
+               * session.
+               */
+              try {
+                // Appended: the candidate should still see the question they just declined
+                // above the offer to move on. Replacing it would make "do you know about X?"
+                // arrive with no visible reason.
+                const { pivotTopic } = await speakTurn({ stage: 'pivot', reset: false });
+                if (pivotTopic) {
+                  setPivotOffer({ topic: pivotTopic, declined: declinedQuestion });
+                  setPhase('pivot');
+                  recordPivot.mutate({
+                    declined_question: declinedQuestion,
+                    offered_topic: pivotTopic,
+                    // Recorded as offered, not accepted. Whether they take it is a second
+                    // event, and pretending they did would overstate what happened.
+                    accepted: false,
+                  });
+                  return;
+                }
+              } catch {
+                // Fall through to the same place "nothing left to offer" goes.
               }
+              // Nothing left to offer, or the turn failed. Moving on is the honest outcome —
+              // inventing a topic the bank cannot source would be a dead end mid-interview.
+              refetch();
             })();
             return;
           }
@@ -945,11 +985,27 @@ export default function LiveSessionPage() {
           if (wasCoding) {
             void (async () => {
               setPhase('reviewing');
-              // Appended for the same reason: a review reads as a review only when the
-              // problem it is reviewing against is still on screen.
-              await speakTurn({ stage: 'code_review', language: codeLanguage, reset: false });
-              setPhase('asking');
-              refetch();
+              try {
+                // Appended for the same reason: a review reads as a review only when the
+                // problem it is reviewing against is still on screen.
+                await speakTurn({
+                  stage: 'code_review',
+                  language: codeLanguage,
+                  reset: false,
+                });
+              } finally {
+                /*
+                 * `finally`, AND THIS ONE IS THE WORST OF THE TWO TO GET WRONG.
+                 *
+                 * `reviewing` is a phase with no controls at all — no microphone, no submit,
+                 * nothing but "They are reading your code…". If speakTurn throws before these
+                 * two lines, the candidate watches that message for the rest of the session.
+                 * Every other phase has at least one button; this one has none, so it is the
+                 * only phase where a missing reset is unrecoverable.
+                 */
+                setPhase('asking');
+                refetch();
+              }
             })();
             return;
           }
@@ -1723,14 +1779,17 @@ export default function LiveSessionPage() {
             the interviewer decides this is now a coding question. On a theory question it
             is a scratchpad and says so; on a coding question it is the answer and says
             that instead. */}
+        {/* NOT RENDERED AT ALL for a non-technical role, rather than rendered and hidden.
+            The comment here used to claim that while the code applied a `hidden` class,
+            which is not the same thing: a hidden pane still mounts CodeMirror, still pulls
+            in every language mode, and still runs its effects — on a sales interview, for
+            an editor nobody will ever open. */}
+        {hasEditor && (
         <motion.div
           variants={fadeUp}
           className={cn(
             'glass min-h-0 overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5',
-            // Gone entirely, not merely hidden — a pane that exists but never shows still
-            // mounts CodeMirror, still loads its language modes, and still shows up in the
-            // tab bar as somewhere to go.
-            !hasEditor ? 'hidden' : mobilePane === 'code' ? 'block' : 'hidden lg:block',
+            mobilePane === 'code' ? 'block' : 'hidden lg:block',
           )}
         >
           <div className="mb-4 flex items-center justify-between gap-2">
@@ -1764,6 +1823,7 @@ export default function LiveSessionPage() {
             }
           />
         </motion.div>
+        )}
 
         {/* ── RIGHT: you ──────────────────────────────────────────────────── */}
         <motion.div

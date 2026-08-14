@@ -192,3 +192,78 @@ describe('the layout does not move under the candidate', () => {
     expect(CODE).toMatch(/flex-shrink-0 border-t border-border\/50 pt-4/);
   });
 });
+
+describe('the interview can never get stuck in a phase', () => {
+  /*
+   * The failure this guards is the worst one this page has: a candidate mid-interview with
+   * no way forward. It is not hypothetical — two paths had it. `reviewing` renders no
+   * controls at all (no microphone, no submit, only "They are reading your code…"), so if
+   * the code-review turn threw before resetting the phase, that message was the rest of
+   * their session. The pivot path had the same shape: a throw left the phase on `asking`
+   * with `panelForRef` already claimed, so no new turn could fire and `refetch` never ran.
+   *
+   * Both are now impossible by construction rather than by six separate try/catches, which
+   * is what these assert.
+   */
+
+  it('speakTurn cannot reject, so no caller needs to defend against it', () => {
+    // Six places await it, several from inside `void (async () => …)()` where a rejection is
+    // an unhandled promise and nothing recovers. One guarantee at the source beats six
+    // wrappers and the chance of forgetting the seventh.
+    const body = CODE.slice(CODE.indexOf('const speakTurn'));
+    const end = body.indexOf('[sessionId, candidateName]');
+    const fn = body.slice(0, end);
+    expect(fn).toMatch(/catch\s*\(err\)\s*\{[\s\S]{0,400}?return\s*\{\s*spoke:\s*false/);
+  });
+
+  it('the code review resets the phase in a finally', () => {
+    // Belt as well as braces. speakTurn cannot reject today; this makes the phase reset
+    // survive somebody adding an await above it that can.
+    const review = CODE.slice(CODE.indexOf("stage: 'code_review'") - 400);
+    expect(review.slice(0, 900)).toMatch(/finally\s*\{[\s\S]{0,300}?setPhase\('asking'\)/);
+  });
+
+  it('every phase with no controls of its own is left automatically', () => {
+    // `reviewing` is the only phase that renders nothing the candidate can press, so it is
+    // the only one where a missing reset is unrecoverable. Its exit must not depend on a
+    // button that does not exist.
+    const reviewingUi = CODE.match(/phase === 'reviewing'\s*\?\s*'([^']+)'/);
+    expect(reviewingUi, 'the reviewing phase should still render a status line').toBeTruthy();
+    expect(CODE).toMatch(/setPhase\('reviewing'\)/);
+    expect(CODE).toMatch(/finally[\s\S]{0,300}?setPhase\('asking'\)/);
+  });
+
+  it('End Interview is reachable from every phase', () => {
+    // The universal escape. It sits in the header, outside the phase-dependent panes, and
+    // cancels speech before completing so the report is never blocked behind a talking panel.
+    const header = CODE.slice(CODE.indexOf('End Interview') - 700, CODE.indexOf('End Interview'));
+    expect(header).toContain('panelVoices.cancelAll()');
+    expect(header).toContain('completeSession.mutate');
+  });
+});
+
+describe('the compiler is only built when the role needs one', () => {
+  it('is not rendered at all for a non-technical role', () => {
+    // Hiding it with a class is not the same thing: a hidden pane still mounts CodeMirror,
+    // still pulls in every language mode, and still runs its effects — on a sales interview,
+    // for an editor nobody will ever open.
+    expect(CODE).toMatch(/\{hasEditor && \(/);
+    expect(CODE).not.toMatch(/!hasEditor \? 'hidden'/);
+  });
+
+  it('the layout collapses to two columns rather than leaving a gap', () => {
+    expect(CODE).toMatch(/lg:grid-cols-\[minmax\(0,1\.7fr\)_minmax\(280px,0\.8fr\)\]/);
+  });
+
+  it('the mobile tab bar drops the Compiler tab with it', () => {
+    // A tab leading to a pane that does not exist is a dead end on the one layout where
+    // panes are the only navigation.
+    expect(CODE).toMatch(/hasEditor \? \[\{ id: 'code'/);
+  });
+
+  it('a candidate already on the Compiler tab is moved off it', () => {
+    // The role is resolved asynchronously, so the tab can be selected before we learn there
+    // is no editor — leaving them staring at an empty pane.
+    expect(CODE).toMatch(/!hasEditor && mobilePane === 'code'[\s\S]{0,60}setMobilePane\('talk'\)/);
+  });
+});
