@@ -68,6 +68,16 @@ class PlanRequest(BaseModel):
     #: When it is true the track is not consulted for the role, the company, the domain or
     #: whether the interview is technical — only what the candidate typed counts.
     custom_setup: bool = False
+    #: The candidate's own answer to "is this a technical interview?".
+    #:
+    #: None means infer it from the role title, which is what happened before this existed and
+    #: is right for a catalogue track. True/False is an explicit statement and OVERRIDES the
+    #: inference — because inference is keyword matching over free text and it cannot know
+    #: that "Civil Services" is not a software role, only that it matches nothing.
+    #:
+    #: It decides whether there is a code editor, whether coding questions are asked at all,
+    #: and whether the panel are engineers or their own domain's managers.
+    is_technical: bool | None = None
     prompt: str = ""
     resume_text: str = ""
 
@@ -159,6 +169,7 @@ async def plan_interview(
         request.prompt,
         resume_context,
         custom_setup=request.custom_setup,
+        is_technical=request.is_technical,
     )
     return plan
 

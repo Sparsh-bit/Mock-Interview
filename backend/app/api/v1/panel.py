@@ -540,7 +540,7 @@ def _pivot_order_for(ctx: InterviewContext) -> list[str]:
     offered is the thing this employer cares most about, which is also the thing the
     candidate is most likely to have prepared.
     """
-    from app.data import java_fundamentals  # noqa: PLC0415
+    from app.data import domains, java_fundamentals  # noqa: PLC0415
     from app.services.interview.orchestrator import _is_java_role  # noqa: PLC0415
     from app.services.interview.research_lookup import slugify  # noqa: PLC0415
     from app.services.prep import get_company  # noqa: PLC0415
@@ -554,8 +554,33 @@ def _pivot_order_for(ctx: InterviewContext) -> list[str]:
     # for, and offering prospecting or objection handling is a real lifeline where offering
     # "Aptitude & Case Reasoning" from some IT firm's syllabus is not.
     if not ctx.is_technical:
-        from app.data import domains  # noqa: PLC0415
+        # AN UNMATCHED ROLE MUST NOT FALL BACK TO THE SOFTWARE PROFILE. `profile_for` resolves
+        # to the default domain when nothing matches, and the default is software — so a
+        # candidate who told us this is NOT a technical interview would be offered "Data
+        # Structures" as their lifeline. The explicit toggle makes this reachable: it is
+        # exactly the UPSC and civil-services case, where the title matches no domain and the
+        # candidate has said outright that it is not technical.
+        # THE CANDIDATE'S STATEMENT BEATS THE KEYWORD MATCH, and this is the general form of
+        # the same lesson. If they have said this is not technical and the matched domain IS a
+        # technical one, the match is simply wrong — "Civil Services" matching civil
+        # ENGINEERING is the case that found it. Trusting the match over the person would mean
+        # offering a UPSC aspirant structural design.
+        if not ctx.domain_matched or domains.is_technical(ctx.role, ""):
+            return list(_GENERAL_NON_TECHNICAL_TOPICS)
 
+        profile = domains.profile_for(ctx.role, "")
+        return [
+            name
+            for name, _weight in sorted(profile["topics"], key=lambda t: -t[1])
+            if not any(k in name.lower() for k in ("hr", "behavioural", "behavioral"))
+        ]
+
+    # A TECHNICAL ROLE THAT IS NOT A SOFTWARE ROLE GETS ITS OWN FIELD. Mechanical, civil,
+    # electrical and chemical are all technical and none of them is asked about DBMS — but
+    # this branch went straight from "not a Java role" to the company catalogue and then to a
+    # computer-science fallback, so a civil engineer was offered "Programming fundamentals".
+    # The domain knows better than the fallback whenever it actually matched.
+    if ctx.domain_matched and ctx.domain != "software":
         profile = domains.profile_for(ctx.role, "")
         return [
             name
@@ -585,6 +610,20 @@ def _pivot_order_for(ctx: InterviewContext) -> list[str]:
         "Operating systems",
     ]
 
+
+#: What to offer a non-technical candidate whose role matched no domain we know.
+#:
+#: Deliberately about reasoning and communication rather than any field's syllabus — these
+#: are what every non-technical interview in the country actually probes, and none of them
+#: assumes an industry. A UPSC aspirant, a hotel-management fresher and a logistics trainee
+#: can all be asked about any of them without the question landing as absurd.
+_GENERAL_NON_TECHNICAL_TOPICS: tuple[str, ...] = (
+    "Situational judgement",
+    "Communication & clarity",
+    "Current affairs & awareness",
+    "Analytical reasoning",
+    "Ethics & decision-making",
+)
 
 #: Easiest first, FOR A JAVA ROLE. A candidate who has just admitted they do not know
 #: something is not helped by being offered Hibernate next; they are helped by being offered

@@ -51,6 +51,8 @@ export interface PlanInput {
   resumeText: string;
   /** True when the candidate typed their own company instead of picking one. */
   customSetup?: boolean;
+  /** Explicit technical/non-technical choice. null lets the backend infer from the role. */
+  isTechnical?: boolean | null;
 }
 
 export function useInterview() {
@@ -85,6 +87,9 @@ export function useInterview() {
           // more — the candidate typed their own employer, so the catalogue track must not
           // be read for the role, the company, the domain, or whether this is technical.
           custom_setup: input.customSetup ?? false,
+          // null means "work it out from the role", which is right for a catalogue track.
+          // true/false is the candidate saying so outright, and it overrides the inference.
+          is_technical: input.isTechnical ?? null,
         },
         { timeout: 150_000 }
       );

@@ -397,6 +397,7 @@ class InterviewOrchestrator:
         # which mypy caught and a runtime would not have.
         *,
         custom_setup: bool = False,
+        is_technical: bool | None = None,
     ) -> dict:
         """
         Generate the full interview plan up front (topics + pre-generated
@@ -621,7 +622,17 @@ class InterviewOrchestrator:
             # role, and a candidate must never watch a code editor appear halfway through a
             # sales interview because a later match went differently. It is also the value
             # somebody can look at when asking why their interview looked the way it did.
-            "is_technical": decide_technical(program, focus),
+            # THE CANDIDATE'S OWN ANSWER WINS OVER THE INFERENCE. `decide_technical` is
+            # keyword matching over a free-text role, and it cannot know that "Civil
+            # Services" is not a software role — only that it matches nothing, which it
+            # treats as technical because a missing editor costs a developer their question.
+            # An explicit choice removes the guess entirely, which is the whole reason the
+            # setup form asks.
+            "is_technical": (
+                is_technical
+                if is_technical is not None
+                else decide_technical(program, focus)
+            ),
             # Recorded so `context.resolve` knows whether the track means anything. On a
             # custom setup the track is a foreign-key carrier and nothing more — see
             # PlanRequest.custom_setup.

@@ -46,6 +46,20 @@ function InterviewSetup() {
    * which of the two the candidate actually meant.
    */
   const [customSetup, setCustomSetup] = useState(false);
+  /*
+   * TECHNICAL OR NOT — ASKED, NOT INFERRED.
+   *
+   * The backend can infer it from the role title and does, but inference is keyword matching
+   * over free text: it cannot know that "Civil Services" is the IAS exam rather than civil
+   * engineering, only that it matches something. It matched civil ENGINEERING, and a UPSC
+   * aspirant was offered "Structural Design".
+   *
+   * `null` means "infer", which is right for a catalogue track where the role is known.
+   * Choosing one is a statement, and a statement beats a guess — it decides whether there is
+   * a code editor at all, whether coding questions are asked, and whether the panel are
+   * engineers or their own field's managers.
+   */
+  const [isTechnical, setIsTechnical] = useState<boolean | null>(null);
   const [program, setProgram] = useState('');
   const [prompt, setPrompt] = useState('');
   const [resumeText, setResumeText] = useState('');
@@ -114,7 +128,15 @@ function InterviewSetup() {
     if (customSetup && !program.trim()) return;
     setPaywall(null);
     createPlan.mutate(
-      { trackId: carrierTrackId, company, program, prompt, resumeText, customSetup },
+      {
+        trackId: carrierTrackId,
+        company,
+        program,
+        prompt,
+        resumeText,
+        customSetup,
+        isTechnical,
+      },
       {
         onError: (err: Error) => {
           const blocked = paywallFromError(err);
@@ -245,6 +267,52 @@ function InterviewSetup() {
             customisation — the resume, the focus box, the whole reason this is
             not a generic interview — so far below the fold that nobody found it.
             Twelve chips and a row of programs fit on one screen. */}
+        {/* ── THE KIND OF INTERVIEW, FIRST ──────────────────────────────────
+            Above the company, because it changes more than the company does: it decides
+            whether there is a code editor at all, whether coding questions are asked, and
+            whether the panel are engineers or their own field's managers.
+
+            "Work it out" stays the default and is right for a catalogue track, where the
+            role is known. The other two are for when it is not — and inference is keyword
+            matching over free text, so it cannot tell that "Civil Services" is the IAS exam
+            rather than civil engineering. It could not, and a UPSC aspirant was offered
+            structural design. */}
+        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          What kind of interview?
+        </p>
+        <div className="mb-6 flex flex-wrap gap-2">
+          {([
+            { value: null, label: 'Work it out for me', hint: 'From the role you name' },
+            { value: true, label: 'Technical', hint: 'Coding, DSA, a code editor' },
+            { value: false, label: 'Non-technical', hint: 'Sales, HR, UPSC — no editor' },
+          ] as const).map((opt) => {
+            const active = isTechnical === opt.value;
+            return (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => setIsTechnical(opt.value)}
+                className={cn(
+                  'rounded-xl border px-4 py-2.5 text-left transition-colors',
+                  active
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border/60 hover:border-border hover:bg-secondary/50',
+                )}
+              >
+                <span
+                  className={cn(
+                    'block text-sm font-medium',
+                    active ? 'text-primary' : 'text-foreground',
+                  )}
+                >
+                  {opt.label}
+                </span>
+                <span className="block text-[11px] text-muted-foreground">{opt.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+
         <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Who are you interviewing with?
         </p>

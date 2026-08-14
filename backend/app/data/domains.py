@@ -1304,7 +1304,18 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ),
     (
         "civil",
-        ("civil", "structural", "construction", "site engineer", "quantity surveyor"),
+        # "civil engineering" rather than bare "civil", because "Civil Services" — the IAS
+        # exam route, one of the largest things this product will ever be used for — matched
+        # civil ENGINEERING and offered a UPSC aspirant "Site Execution" and "Structural
+        # Design". A substring list is only as good as its least specific entry.
+        (
+            "civil engineering",
+            "civil engineer",
+            "structural",
+            "construction",
+            "site engineer",
+            "quantity surveyor",
+        ),
     ),
     (
         "chemical",

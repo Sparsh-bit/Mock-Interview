@@ -387,3 +387,80 @@ class TestTheEditorFollowsTheRole:
 
         role = "Something Nobody Has Heard Of"
         assert (not domains.matched(role, "") or domains.is_technical(role, "")) is True
+
+
+class TestTheExplicitTechnicalChoice:
+    """
+    The setup form asks "technical or not" and the answer beats the inference.
+
+    Inference is keyword matching over a free-text role. It cannot know that "Civil Services"
+    is the IAS exam rather than civil engineering — only that it matches something. It matched
+    civil ENGINEERING, and a UPSC aspirant was offered "Site Execution" and "Structural
+    Design" as the thing to talk about instead.
+    """
+
+    def test_civil_services_no_longer_matches_civil_engineering(self):
+        # The keyword was bare "civil". A substring list is only as good as its least
+        # specific entry, and this product's largest future audience is UPSC.
+        assert domains.resolve("Civil Services", "") != "civil"
+        assert domains.resolve("Civil Engineer", "") == "civil"
+        assert domains.resolve("Structural Engineer", "") == "civil"
+
+    def test_a_stated_non_technical_role_is_never_offered_technical_topics(self):
+        from app.api.v1.panel import _pivot_order_for
+
+        for role in ("Civil Services", "UPSC aspirant", "Something Nobody Has Heard Of"):
+            ctx = InterviewContext(
+                company="",
+                role=role,
+                domain=domains.resolve(role, ""),
+                is_technical=False,
+                domain_matched=domains.matched(role, ""),
+            )
+            offered = " ".join(_pivot_order_for(ctx)).lower()
+            for technical in ("programming", "dbms", "sql", "data structures", "structural"):
+                assert technical not in offered, f"{role} was offered {technical}"
+
+    def test_the_statement_wins_even_when_a_domain_matched(self):
+        # The general form of the bug. If they say it is not technical and the matched domain
+        # IS technical, the match is simply wrong — trusting it over the person is what
+        # produced structural design for a UPSC candidate.
+        from app.api.v1.panel import _pivot_order_for
+
+        ctx = InterviewContext(
+            company="",
+            role="Civil Engineer",  # genuinely matches a technical domain
+            domain="civil",
+            is_technical=False,  # …but the candidate says it is not
+            domain_matched=True,
+        )
+        assert "Situational judgement" in _pivot_order_for(ctx)
+
+    def test_a_non_software_technical_role_gets_its_own_field(self):
+        # The other direction: mechanical and civil are technical and neither is asked about
+        # DBMS. This branch used to go straight from "not a Java role" to a computer-science
+        # fallback.
+        from app.api.v1.panel import _pivot_order_for
+
+        for role, expected in [
+            ("Civil Engineer", "Site Execution"),
+            ("Mechanical Engineer", "Design & Materials"),
+            ("Data Analyst", "Data Analysis"),
+        ]:
+            ctx = InterviewContext(
+                company="",
+                role=role,
+                domain=domains.resolve(role, ""),
+                is_technical=True,
+                domain_matched=True,
+            )
+            assert _pivot_order_for(ctx)[0] == expected
+
+    def test_the_general_list_assumes_no_industry(self):
+        # A UPSC aspirant, a hotel-management fresher and a logistics trainee must all be
+        # askable about every one of these without it landing as absurd.
+        from app.api.v1.panel import _GENERAL_NON_TECHNICAL_TOPICS
+
+        joined = " ".join(_GENERAL_NON_TECHNICAL_TOPICS).lower()
+        for industry_word in ("sales", "hr", "marketing", "code", "engineering"):
+            assert industry_word not in joined
