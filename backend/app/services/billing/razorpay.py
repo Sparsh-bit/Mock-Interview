@@ -293,3 +293,70 @@ async def create_order(
         # The PUBLIC key id — this is meant to reach the browser. The secret never does.
         "key_id": key_id,
     }
+
+
+def verify_checkout_signature(order_id: str, payment_id: str, signature: str, secret: str) -> bool:
+    """
+    Is this checkout callback genuinely from Razorpay?
+
+    A DIFFERENT SIGNATURE FROM THE WEBHOOK ONE, over different data, with a different secret,
+    and confusing them is the most common way this integration goes wrong:
+
+        webhook   HMAC-SHA256(raw request body,        RAZORPAY_WEBHOOK_SECRET)
+        checkout  HMAC-SHA256("order_id|payment_id",   RAZORPAY_KEY_SECRET)
+
+    Razorpay hands the second to the browser when the payment sheet succeeds. It proves the
+    order and payment ids belong together and were issued by us — which is exactly what a
+    client-supplied payment id needs before anything is granted on the strength of it.
+
+    IT IS NOT PROOF OF PAYMENT ON ITS OWN. It says these ids are genuine, not that money
+    moved; a payment can be authorised and never captured. The caller must still ask
+    Razorpay for the payment's status — see `fetch_payment`.
+
+    `compare_digest` for the same reason the webhook check uses it: a comparison that
+    short-circuits on the first differing byte leaks the correct prefix through timing.
+    """
+    if not order_id or not payment_id or not signature or not secret:
+        return False
+    expected = hmac.new(
+        secret.encode(), f"{order_id}|{payment_id}".encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+async def fetch_payment(payment_id: str) -> dict:
+    """
+    Ask Razorpay what actually happened to this payment.
+
+    THE PART THAT MAKES VERIFY-ON-RETURN SAFE. The browser tells us a payment id; the
+    signature proves the id is genuine; this proves it was CAPTURED and for how much. Without
+    it, a valid signature for an authorised-but-uncaptured payment would grant items nobody
+    has paid for — and "authorised" is a real state a card can sit in and then fail from.
+
+    Raises PaymentNotConfiguredError when there are no keys, and AppError on a failed lookup,
+    so the caller can tell "we cannot check" from "it was not paid".
+    """
+    from app.core.config import settings  # noqa: PLC0415
+
+    key_id = getattr(settings, "RAZORPAY_KEY_ID", "") or ""
+    key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "") or ""
+    if not key_id or not key_secret:
+        raise PaymentNotConfiguredError
+
+    import httpx  # noqa: PLC0415
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(
+            f"https://api.razorpay.com/v1/payments/{payment_id}",
+            auth=(key_id, key_secret),
+        )
+    if resp.status_code >= 400:
+        logger.warning(
+            "razorpay_payment_fetch_failed", payment_id=payment_id, status=resp.status_code
+        )
+        raise AppError(
+            message="Could not confirm the payment. It will be applied automatically.",
+            status_code=502,
+            code="PAYMENT_LOOKUP_FAILED",
+        )
+    return resp.json() or {}

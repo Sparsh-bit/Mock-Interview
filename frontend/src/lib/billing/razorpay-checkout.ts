@@ -73,7 +73,19 @@ export interface OpenCheckoutArgs {
   itemName: string;
   /** Prefills the form so the candidate is not retyping what we already know. */
   prefill?: { name?: string; email?: string; contact?: string };
-  onSuccess: () => void;
+  /**
+   * Called with the ids Razorpay hands back when the sheet succeeds.
+   *
+   * These are what `POST /billing/verify` needs. The webhook remains the primary granting
+   * path; this is the second, independent one, because a webhook can be pointed at the wrong
+   * URL, signed with the wrong secret, blocked or simply late — and every one of those
+   * presents to the candidate as "my money left and nothing arrived".
+   */
+  onSuccess: (proof: {
+    razorpay_payment_id: string;
+    razorpay_order_id: string;
+    razorpay_signature: string;
+  }) => void;
   onDismiss: () => void;
   onFailure: (reason: string) => void;
 }
@@ -104,10 +116,20 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<boolean> {
       // an error. Without this the caller is left with a spinner and no event.
       ondismiss: args.onDismiss,
     },
-    handler: () => {
-      // The candidate completed the form. The items arrive when the webhook lands — this
-      // only refreshes the UI and says so.
-      args.onSuccess();
+    handler: (response: {
+      razorpay_payment_id?: string;
+      razorpay_order_id?: string;
+      razorpay_signature?: string;
+    }) => {
+      // The candidate completed the form. STILL NOT PROOF OF PAYMENT — the ids and signature
+      // are handed to the server, which checks the signature and then asks Razorpay whether
+      // the money actually moved. Nothing is granted on the strength of this callback alone;
+      // it is a JavaScript function anyone could call.
+      args.onSuccess({
+        razorpay_payment_id: response?.razorpay_payment_id ?? '',
+        razorpay_order_id: response?.razorpay_order_id ?? '',
+        razorpay_signature: response?.razorpay_signature ?? '',
+      });
     },
   });
 

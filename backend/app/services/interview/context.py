@@ -135,9 +135,29 @@ async def resolve(
     meta, track_name, company_name = row
     meta = meta or {}
 
-    # THE PRECEDENCE. What they typed, then the track, then nothing.
-    role = (meta.get("program") or "").strip() or (track_name or "").strip() or _UNKNOWN_ROLE
-    company = (meta.get("company") or "").strip() or (company_name or "").strip()
+    typed_role = (meta.get("program") or "").strip()
+    typed_company = (meta.get("company") or "").strip()
+
+    # ON A CUSTOM SETUP THE TRACK IS NOT CONSULTED AT ALL.
+    #
+    # The form must send a track_id whatever happens — InterviewSession.track_id is a non-null
+    # foreign key — so "they chose Cognizant Java FSE" and "they typed Morani Plastics while a
+    # chip was left selected from a previous visit" arrive looking identical. `custom_setup`
+    # is the only thing that tells them apart, and they mean opposite things: in the second
+    # case the track is a carrier and reading it is how a sales interview became an Accenture
+    # one.
+    #
+    # Falling back to _UNKNOWN_ROLE rather than the track is deliberate even though it is
+    # vaguer. A vague role produces a general interview; the wrong role produces a confident,
+    # specific interview for a job the candidate did not apply for, and only one of those is
+    # recoverable by the candidate noticing.
+    custom = bool(meta.get("custom_setup"))
+    if custom:
+        role = typed_role or _UNKNOWN_ROLE
+        company = typed_company
+    else:
+        role = typed_role or (track_name or "").strip() or _UNKNOWN_ROLE
+        company = typed_company or (company_name or "").strip()
 
     # The focus text is part of how somebody describes their role — "sales, FMCG distribution"
     # typed into the focus box is a strong signal and costs nothing to consider.

@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { CreditMeter } from '@/components/billing/CreditMeter';
+import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
 export default function InterviewSetupPage() {
@@ -30,6 +31,21 @@ function InterviewSetup() {
 
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [company, setCompany] = useState('');
+  /*
+   * TYPING YOUR OWN EMPLOYER DESELECTS THE CHIPS ABOVE.
+   *
+   * The chips and the free-text boxes were two ways of saying the same thing and both stayed
+   * on at once, so a candidate typing "Morani Plastics" left "Cognizant" and "Digital Nurture
+   * — Java FSE" selected. The backend has to send a track_id regardless (it is a non-null
+   * foreign key), so "I chose Cognizant" and "I typed my own company and the chip is left
+   * over from last time" arrived looking identical — and the panel read the track. That is
+   * how a sales interview at Morani Plastics greeted somebody as an Advanced ASE at
+   * Accenture.
+   *
+   * Deselecting makes the choice exclusive on screen, and `custom_setup` tells the backend
+   * which of the two the candidate actually meant.
+   */
+  const [customSetup, setCustomSetup] = useState(false);
   const [program, setProgram] = useState('');
   const [prompt, setPrompt] = useState('');
   const [resumeText, setResumeText] = useState('');
@@ -87,10 +103,18 @@ function InterviewSetup() {
   const [paywall, setPaywall] = useState<PaywallInfo | null>(null);
 
   const handleGenerate = () => {
-    if (!selectedTrackId) return;
+    // A track id is still required on the wire — it is a non-null foreign key — so on a
+    // custom setup the first track rides along purely as a carrier. `custom_setup` tells the
+    // backend to ignore it for everything that decides what the interview is about.
+    const carrierTrackId = selectedTrackId || tracks?.[0]?.id;
+    if (!carrierTrackId) return;
+    // THE ROLE IS THE ONE THING THAT CANNOT BE GUESSED. With a custom employer there is no
+    // catalogue entry to fall back on, so a blank role leaves the interview with nothing to
+    // be about — which is precisely when it reaches for the leftover track.
+    if (customSetup && !program.trim()) return;
     setPaywall(null);
     createPlan.mutate(
-      { trackId: selectedTrackId, company, program, prompt, resumeText },
+      { trackId: carrierTrackId, company, program, prompt, resumeText, customSetup },
       {
         onError: (err: Error) => {
           const blocked = paywallFromError(err);
@@ -242,6 +266,10 @@ function InterviewSetup() {
                       // is never in a half-chosen state with no track.
                       setSelectedTrackId(c.tracks[0].id);
                       setCompany(c.name);
+                      // Choosing from the catalogue is the other direction of the same
+                      // exclusivity: the typed company is now the chosen one, not a custom
+                      // employer, so the track becomes meaningful again.
+                      setCustomSetup(false);
                     }}
                     className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-[color,background-color,border-color,box-shadow,transform,opacity] ${
                       active
@@ -298,19 +326,51 @@ function InterviewSetup() {
             <label className="mb-1.5 block text-sm font-medium">Company you&apos;re preparing for</label>
             <input
               value={company}
-              onChange={(e) => setCompany(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setCompany(next);
+                // Any typing here means the catalogue is not what they want. Clearing the
+                // track is what stops the backend having two answers to choose between.
+                if (next.trim()) {
+                  setCustomSetup(true);
+                  setSelectedTrackId('');
+                } else {
+                  setCustomSetup(false);
+                }
+              }}
               placeholder="e.g. Cognizant, Infosys, TCS…"
               className="w-full rounded-xl border border-border/50 bg-surface-elevated px-4 py-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Program / role</label>
+            <label className="mb-1.5 block text-sm font-medium">
+              Program / role
+              {/* REQUIRED ONLY ON A CUSTOM SETUP, and said out loud rather than enforced
+                  silently. With a catalogue company the track already names the role; with
+                  your own employer there is nothing else to go on, and a blank here is
+                  exactly when the interview reaches for a leftover track and becomes an
+                  interview for a different job. */}
+              {customSetup && <span className="ml-1 text-destructive">*</span>}
+            </label>
             <input
               value={program}
               onChange={(e) => setProgram(e.target.value)}
-              placeholder="e.g. GenC, GenC Next, Java FSE…"
-              className="w-full rounded-xl border border-border/50 bg-surface-elevated px-4 py-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
+              placeholder={
+                customSetup ? 'e.g. Sales Executive, HR Generalist, Analyst…' : 'e.g. GenC, GenC Next, Java FSE…'
+              }
+              className={cn(
+                'w-full rounded-xl border bg-surface-elevated px-4 py-3 text-sm focus:outline-none focus:ring-2',
+                customSetup && !program.trim()
+                  ? 'border-destructive/50 focus:border-destructive/60 focus:ring-destructive/20'
+                  : 'border-border/50 focus:border-primary/40 focus:ring-primary/20',
+              )}
             />
+            {customSetup && !program.trim() && (
+              <p className="mt-1.5 text-xs text-destructive">
+                Tell us the role — it decides what you are asked, and whether there is a code
+                editor at all.
+              </p>
+            )}
           </div>
         </div>
 

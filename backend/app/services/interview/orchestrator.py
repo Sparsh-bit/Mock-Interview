@@ -392,6 +392,11 @@ class InterviewOrchestrator:
         program: str,
         focus: str,
         resume_text: str = "",
+        # KEYWORD-ONLY, and after the existing parameters. Inserting it in the middle
+        # silently rebound every positional caller — `resume_context` became `custom_setup`,
+        # which mypy caught and a runtime would not have.
+        *,
+        custom_setup: bool = False,
     ) -> dict:
         """
         Generate the full interview plan up front (topics + pre-generated
@@ -617,6 +622,10 @@ class InterviewOrchestrator:
             # sales interview because a later match went differently. It is also the value
             # somebody can look at when asking why their interview looked the way it did.
             "is_technical": decide_technical(program, focus),
+            # Recorded so `context.resolve` knows whether the track means anything. On a
+            # custom setup the track is a foreign-key carrier and nothing more — see
+            # PlanRequest.custom_setup.
+            "custom_setup": custom_setup,
             "topics": topics,
             "planned_question_ids": planned_ids,
             "cross_question_ids": [],

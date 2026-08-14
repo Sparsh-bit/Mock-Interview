@@ -49,6 +49,8 @@ export interface PlanInput {
   program: string;
   prompt: string;
   resumeText: string;
+  /** True when the candidate typed their own company instead of picking one. */
+  customSetup?: boolean;
 }
 
 export function useInterview() {
@@ -79,6 +81,10 @@ export function useInterview() {
           program: input.program,
           prompt: input.prompt,
           resume_text: input.resumeText,
+          // Tells the backend that the track_id above is a foreign-key carrier and nothing
+          // more — the candidate typed their own employer, so the catalogue track must not
+          // be read for the role, the company, the domain, or whether this is technical.
+          custom_setup: input.customSetup ?? false,
         },
         { timeout: 150_000 }
       );

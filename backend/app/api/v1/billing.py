@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AppError, NotFoundError
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
@@ -295,6 +295,165 @@ async def checkout(
     return order
 
 
+class VerifyRequest(BaseModel):
+    """What Razorpay's checkout sheet hands the browser when a payment succeeds."""
+
+    razorpay_payment_id: str = Field(min_length=1, max_length=128)
+    razorpay_order_id: str = Field(min_length=1, max_length=128)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
+
+
+@router.post("/verify", summary="Confirm a payment from the browser and grant it")
+async def verify_payment(
+    request: VerifyRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    Grant a purchase the moment the payment sheet closes, without waiting for the webhook.
+
+    WHY THIS EXISTS. The webhook was the ONLY granting path, and a candidate reported paying
+    and receiving nothing. A webhook is not a guarantee: it can be pointed at the wrong URL,
+    signed with the wrong secret, blocked, or simply late — and every one of those presents
+    identically to the person who has just been charged. "Your money left and nothing
+    arrived" is the one failure a payment flow may not have.
+
+    So there are two independent routes to the same grant, and neither is trusted on its own:
+
+      * the SIGNATURE proves the order and payment ids were issued by us and belong together,
+        which is what makes a client-supplied payment id safe to look at
+      * the FETCH proves the money actually moved. A signature is not proof of payment — a
+        card can authorise and then fail to capture, and granting on "authorised" would give
+        away product nobody paid for
+      * the AMOUNT is checked against the resolved item, exactly as the webhook does it, so a
+        ₹1 payment cannot claim a ₹199 bundle
+      * the LEDGER makes it idempotent. Whichever of this and the webhook arrives second finds
+        the payment_ref already recorded and does nothing, so a purchase cannot be granted
+        twice.
+
+    Returns `{"status": "already_applied"}` when the webhook beat us to it, which is the
+    common case in a healthy deployment and is not an error.
+    """
+    if not settings.RAZORPAY_KEY_SECRET:
+        raise AppError(
+            message="Payments are not configured on this deployment.",
+            status_code=503,
+            code="PAYMENTS_NOT_CONFIGURED",
+        )
+
+    if not razorpay.verify_checkout_signature(
+        request.razorpay_order_id,
+        request.razorpay_payment_id,
+        request.razorpay_signature,
+        settings.RAZORPAY_KEY_SECRET,
+    ):
+        logger.warning(
+            "payment_verify_bad_signature",
+            user_id=str(current_user.user_id),
+            payment_id=request.razorpay_payment_id,
+        )
+        raise razorpay.PaymentVerificationError("signature mismatch")
+
+    # Already granted, by the webhook or by an earlier call to this. Checked BEFORE the
+    # network round trip: the healthy path is that the webhook won, and there is no reason to
+    # ask Razorpay about a payment we have already applied.
+    existing = await db.scalar(
+        select(CreditEvent.id).where(CreditEvent.payment_ref == request.razorpay_payment_id)
+    )
+    if existing:
+        return {"status": "already_applied"}
+
+    payment = await razorpay.fetch_payment(request.razorpay_payment_id)
+
+    if payment.get("status") != "captured":
+        # Authorised is not money. It is a real state a card sits in before failing.
+        logger.info(
+            "payment_verify_not_captured",
+            payment_id=request.razorpay_payment_id,
+            status=payment.get("status"),
+        )
+        return {"status": "pending", "detail": "Payment is not confirmed yet."}
+
+    notes = payment.get("notes") or {}
+    item = get_item(str(notes.get("item_id") or ""))
+    if item is None:
+        logger.warning("payment_verify_unknown_item", payment_id=request.razorpay_payment_id)
+        raise NotFoundError("Item", str(notes.get("item_id") or ""))
+
+    # THE PAYMENT MUST BELONG TO THE CALLER. Without this, anybody holding a valid
+    # (order, payment, signature) triple — their own from a previous purchase, or a friend's —
+    # could grant themselves items against somebody else's payment.
+    if str(notes.get("user_id") or "") != str(current_user.user_id):
+        logger.warning(
+            "payment_verify_user_mismatch",
+            payment_id=request.razorpay_payment_id,
+            caller=str(current_user.user_id),
+        )
+        raise razorpay.PaymentVerificationError("this payment belongs to another account")
+
+    amount = int(payment.get("amount") or 0)
+    offer_code = str(notes.get("offer_code") or "").strip().upper()
+
+    # The same amount rule the webhook applies, and for the same reason: `notes` travelled
+    # through the gateway and back, so it says what was INTENDED while the amount says what
+    # was paid. A discounted payment is legitimately below list, so the expected figure is
+    # recomputed from the offer row rather than taken on trust.
+    if offer_code:
+        offer = await offers.find_code(db, offer_code)
+        if offer is None:
+            raise razorpay.PaymentVerificationError("unknown offer on this payment")
+        expected = offers.charge_for(offer, item)
+    else:
+        offer = None
+        expected = item.price_paise
+
+    if amount < expected:
+        logger.error(
+            "payment_verify_underpaid",
+            payment_id=request.razorpay_payment_id,
+            paid=amount,
+            expected=expected,
+        )
+        raise razorpay.PaymentVerificationError("amount does not match the item")
+
+    if offer is not None:
+        await offers.redeem_verified(
+            db,
+            offer=offer,
+            item=item,
+            user_id=current_user.user_id,
+            charged_paise=amount,
+            payment_ref=request.razorpay_payment_id,
+        )
+
+    await grant(
+        db,
+        current_user.user_id,
+        item.feature,
+        item.quantity,
+        kind=KIND_PURCHASE,
+        payment_ref=request.razorpay_payment_id,
+        detail={
+            "item_id": item.id,
+            "amount_paise": amount,
+            "order_id": request.razorpay_order_id,
+            "offer": offer_code,
+            # Recorded so a support question can tell a browser-verified grant from a
+            # webhook one — they are the same grant, but knowing which arrived first is the
+            # difference between "the webhook is fine" and "the webhook has never worked".
+            "granted_via": "verify",
+        },
+    )
+    logger.info(
+        "payment_verified_and_granted",
+        user_id=str(current_user.user_id),
+        payment_id=request.razorpay_payment_id,
+        item=item.id,
+        amount_paise=amount,
+    )
+    return {"status": "granted", "item_id": item.id, "quantity": item.quantity}
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK, summary="Razorpay payment callback")
 async def razorpay_webhook(
     request: Request,
@@ -494,6 +653,68 @@ async def set_autopay(
         # say "finish setup" rather than claiming auto top-up is live when it cannot charge.
         "mandate_ready": bool(plan.autopay_token),
     }
+
+
+@router.get("/payments", summary="Every payment on this account, newest first")
+async def my_payments(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    The candidate's own receipts.
+
+    READ STRAIGHT OFF THE LEDGER, not from a separate receipts table. `credit_events` already
+    records every grant with its payment reference, what it bought and how many — it is the
+    thing entitlement is computed from, so a receipt derived from it cannot disagree with what
+    the account actually received. A second store would be a second version of the truth about
+    somebody's money, which is the class of bug this whole ledger exists to avoid.
+
+    SCOPED TO THE CALLER BY user_id, not by anything the request supplies. A receipts endpoint
+    that takes an id is a receipts endpoint that reads other people's payments.
+
+    Purchases and grants both appear, distinguished by `kind`: a candidate who redeemed a
+    100%-off code should see it on their history as something they received, not as a gap.
+    Consumptions are excluded — this is what you paid, not what you spent.
+    """
+    rows = (
+        await db.execute(
+            select(CreditEvent)
+            .where(
+                CreditEvent.user_id == current_user.user_id,
+                CreditEvent.kind.in_([KIND_PURCHASE, KIND_GRANT]),
+            )
+            .order_by(CreditEvent.created_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+
+    out = []
+    for r in rows:
+        detail = r.detail or {}
+        item = get_item(str(detail.get("item_id") or ""))
+        paise = int(detail.get("amount_paise") or 0)
+        out.append(
+            {
+                "id": str(r.id),
+                "at": r.created_at.isoformat(),
+                # The payment id IS the receipt number. It is what Razorpay's dashboard,
+                # their support and ours all index by, so inventing a prettier one would mean
+                # a candidate quoting a number nobody can look up.
+                "receipt": r.payment_ref or f"free-{str(r.id)[:8]}",
+                "item_id": detail.get("item_id") or "",
+                "item_name": item.name if item else (detail.get("item_id") or "Credit"),
+                "feature": r.feature,
+                "quantity": r.delta,
+                "amount_paise": paise,
+                "amount_rupees": paise / 100 if paise else 0,
+                "offer": detail.get("offer") or "",
+                # "purchase" or "grant" — a free code or admin goodwill is not a payment and
+                # must not be shown as one.
+                "kind": r.kind,
+                "paid": bool(r.payment_ref),
+            }
+        )
+    return {"payments": out}
 
 
 @router.post(

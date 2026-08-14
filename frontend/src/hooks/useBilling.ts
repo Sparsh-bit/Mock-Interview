@@ -193,3 +193,61 @@ export function useQuote() {
     },
   });
 }
+
+/**
+ * Confirm a payment from the browser, so the items arrive without waiting for the webhook.
+ *
+ * THE WEBHOOK IS STILL THE PRIMARY PATH. This is a second, independent one, and it exists
+ * because a candidate paid and received nothing: a webhook can be pointed at the wrong URL,
+ * signed with the wrong secret, blocked by a network, or simply late, and every one of those
+ * looks the same to the person who has just been charged.
+ *
+ * NOTHING IS TRUSTED FROM HERE. The server checks Razorpay's signature over the ids, then
+ * asks Razorpay directly whether the payment was captured and for how much, then checks that
+ * amount against the item — and the ledger makes whichever of the two paths arrives second a
+ * no-op. See POST /billing/verify.
+ */
+export function useVerifyPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (proof: {
+      razorpay_payment_id: string;
+      razorpay_order_id: string;
+      razorpay_signature: string;
+    }) => {
+      const res = await getBrowserApiClient().post('/api/v1/billing/verify', proof);
+      return res.data as { status: string; item_id?: string; quantity?: number };
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
+      void qc.invalidateQueries({ queryKey: ['billing', 'payments'] });
+    },
+  });
+}
+
+/** Every payment on this account, newest first. Read off the credit ledger. */
+export function usePayments() {
+  return useQuery({
+    queryKey: ['billing', 'payments'],
+    queryFn: async () => {
+      const res = await getBrowserApiClient().get('/api/v1/billing/payments');
+      return (res.data as { payments: PaymentRecord[] }).payments;
+    },
+  });
+}
+
+export interface PaymentRecord {
+  id: string;
+  at: string;
+  /** The Razorpay payment id — the number their support and ours both index by. */
+  receipt: string;
+  item_id: string;
+  item_name: string;
+  feature: string;
+  quantity: number;
+  amount_paise: number;
+  amount_rupees: number;
+  offer: string;
+  kind: string;
+  paid: boolean;
+}

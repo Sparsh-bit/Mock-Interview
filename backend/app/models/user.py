@@ -15,8 +15,9 @@ Architecture note:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -39,6 +40,30 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # ── One device at a time ──────────────────────────────────────────────
+    #
+    # The Supabase `session_id` claim of the login that currently owns this account. It is
+    # stable across token refreshes and changes on a fresh sign-in, which is exactly the
+    # lifetime "one device" needs — a second tab on the same machine shares it and is
+    # allowed, a sign-in on a phone does not and is not.
+    #
+    # NEWEST LOGIN WINS, and the claim happens at LOGIN rather than on any request. That
+    # asymmetry is the whole design: if every request could take the slot, two devices would
+    # simply take it from each other in turn and both would see intermittent errors. Only an
+    # explicit sign-in claims; everything else is checked against it.
+    active_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    #: When a request last arrived on the owning session.
+    #:
+    #: THE SAFETY VALVE. If the owning session goes quiet for longer than the takeover window
+    #: — a closed laptop, a cleared browser, a claim that never landed — the next sign-in may
+    #: take the slot silently. Without it, one lost session locks somebody out of their own
+    #: account with no way back except support, which is a worse failure than the sharing this
+    #: prevents.
+    active_session_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # ── Relationships ──────────────────────────────────────────────────────
     profile: Mapped[Profile] = relationship(

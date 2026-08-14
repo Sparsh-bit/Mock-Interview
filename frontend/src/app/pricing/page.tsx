@@ -11,7 +11,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useAuth } from '@/hooks/useAuth';
-import { useBalance, useCheckout, useQuote, useStoreItems, type StoreItem } from '@/hooks/useBilling';
+import {
+  useBalance,
+  useCheckout,
+  useQuote,
+  useStoreItems,
+  useVerifyPayment,
+  type StoreItem,
+} from '@/hooks/useBilling';
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
 import { Turnstile } from '@/components/billing/Turnstile';
 import { ApiError } from '@/lib/api/errors';
@@ -115,6 +122,7 @@ export default function StorePage() {
   const { data: balance } = useBalance({ enabled: signedIn });
   const checkout = useCheckout();
   const quote = useQuote();
+  const verify = useVerifyPayment();
   const qc = useQueryClient();
   //: The code that has been CHECKED, not what is in the box. Only a code the server has
   //: already priced is sent with a purchase, so a half-typed one cannot ride along.
@@ -193,12 +201,33 @@ export default function StorePage() {
           keyId: order.key_id,
           itemName: items?.find((i) => i.id === itemId)?.name ?? 'InterviewOS',
           prefill: { email: session?.user?.email ?? undefined },
-          onSuccess: () => {
-            // The candidate finished the form. The items are granted by the WEBHOOK, not
-            // here — treating this callback as proof of payment would let anyone who can
-            // call a JavaScript function grant themselves interviews. So this only says
-            // what happened and refreshes.
-            toast.success('Payment received. Your account updates in a moment.');
+          onSuccess: (proof) => {
+            /*
+             * VERIFIED SERVER-SIDE, IMMEDIATELY. Not trusted from here — the server checks
+             * Razorpay's signature over these ids, then asks Razorpay whether the money
+             * actually moved, then checks the amount against the item.
+             *
+             * The webhook is still the primary path and still grants on its own. This is the
+             * second, independent one, and it exists because a candidate paid and received
+             * nothing: a webhook can be pointed at the wrong URL, signed with the wrong
+             * secret, blocked, or late, and all four look identical to somebody who has just
+             * been charged. Whichever path arrives second finds the payment already in the
+             * ledger and does nothing.
+             */
+            verify.mutate(proof, {
+              onSuccess: (res) => {
+                toast.success(
+                  res.status === 'granted' || res.status === 'already_applied'
+                    ? 'Payment received — added to your account.'
+                    : 'Payment received. Your account updates in a moment.',
+                );
+              },
+              onError: () => {
+                // The webhook is still coming. Saying "it failed" would be wrong and would
+                // send them to support for something that resolves itself.
+                toast.success('Payment received. Your account updates shortly.');
+              },
+            });
             void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
           },
           onDismiss: () => {

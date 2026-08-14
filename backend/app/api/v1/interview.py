@@ -51,9 +51,23 @@ class StartSessionRequest(BaseModel):
     track_id: uuid.UUID
 
 class PlanRequest(BaseModel):
+    #: Required because InterviewSession.track_id is a non-null foreign key. On a custom
+    #: setup it is a CARRIER ONLY — see `custom_setup` — and nothing about the interview is
+    #: derived from it.
     track_id: uuid.UUID
     company: str = ""
     program: str = ""
+    #: True when the candidate typed their own employer instead of picking one from the
+    #: catalogue.
+    #:
+    #: THIS IS WHAT STOPS A SALES INTERVIEW BEING AN ACCENTURE ONE. The form must send a
+    #: track_id whatever happens, so without this flag the backend cannot tell "they chose
+    #: Cognizant Java FSE" from "they typed Morani Plastics and the chip was left selected
+    #: from before". Those look identical on the wire and mean opposite things.
+    #:
+    #: When it is true the track is not consulted for the role, the company, the domain or
+    #: whether the interview is technical — only what the candidate typed counts.
+    custom_setup: bool = False
     prompt: str = ""
     resume_text: str = ""
 
@@ -144,6 +158,7 @@ async def plan_interview(
         request.program,
         request.prompt,
         resume_context,
+        custom_setup=request.custom_setup,
     )
     return plan
 
