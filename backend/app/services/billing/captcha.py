@@ -36,8 +36,20 @@ _VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 
 class CaptchaError(AppError):
-    status_code = 400
-    error_code = "captcha_failed"
+    """
+    The human check did not pass.
+
+    Status set in `__init__` for the same reason OfferError does it: `AppError.__init__`
+    defaults to 500 and assigns unconditionally, so a class attribute is overwritten on
+    construction and "please complete the verification" arrives as a crash.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message=message,
+            status_code=400,
+            code="CAPTCHA_FAILED",
+        )
 
 
 async def verify(token: str, *, remote_ip: str | None = None) -> None:

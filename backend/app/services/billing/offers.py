@@ -58,10 +58,25 @@ KINDS = (KIND_PERCENT, KIND_FIXED, KIND_FREE)
 
 
 class OfferError(AppError):
-    """A code that cannot be used, with a reason the candidate can act on."""
+    """
+    A code that cannot be used, with a reason the candidate can act on.
 
-    status_code = 400
-    error_code = "offer_invalid"
+    THE STATUS IS SET IN `__init__`, NOT AS A CLASS ATTRIBUTE, and that distinction was a
+    live 500 on every checkout with a code applied.
+
+    `AppError.__init__` defaults `status_code` to 500 and assigns it unconditionally, so a
+    class-level `status_code = 400` is silently overwritten the moment the exception is
+    constructed. "You have already used this code" — an ordinary, expected outcome — reached
+    the browser as an Internal Server Error with no message, which is how a working guard
+    looks identical to a crash.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message=message,
+            status_code=400,
+            code="OFFER_INVALID",
+        )
 
 
 @dataclass(frozen=True)
