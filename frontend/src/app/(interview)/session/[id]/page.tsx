@@ -139,7 +139,7 @@ export default function LiveSessionPage() {
   const { first: candidateName } = useCandidateName();
   // Session-scoped: the designations follow the role, so a sales candidate sees a Regional
   // Sales Manager rather than a Senior Engineering Manager.
-  const { data: panelInfo } = useInterviewers(sessionId);
+  const { data: panelInfo, isLoading: panelInfoLoading } = useInterviewers(sessionId);
   const interviewers = panelInfo?.interviewers;
   /*
    * IS THERE A CODE EDITOR AT ALL?
@@ -161,6 +161,27 @@ export default function LiveSessionPage() {
       [interviewers],
     ),
   );
+  /*
+   * THE LIVE PANEL VOICES, read through a ref rather than captured.
+   *
+   * `speakTurn` is a useCallback on [sessionId, candidateName], and it called
+   * `panelVoices.speakAs` directly — capturing the `panelVoices` object from the render that
+   * created it. But `speakAs` is itself `useCallback(…, [voiceMap, stanceOf])`, and BOTH
+   * settle asynchronously after mount: `stanceOf` when the interviewers query resolves, and
+   * `voiceMap` when the browser's voice list arrives (`voiceschanged` is famously late, and
+   * on Safari it fires more than once).
+   *
+   * So speakTurn held the FIRST speakAs — the one built when the voice map was still empty —
+   * and every line of every turn went out through it. On the browser-speech path that means
+   * Anil and Priya both speak in the single default voice at identical pitch and rate, which
+   * is exactly the "the voices are so bad" and "Meera has a male voice" reports: the voice
+   * allocation was working and nothing was reading it.
+   *
+   * A ref is read at CALL time, so the current speakAs is always the one used.
+   */
+  const voicesRef = useRef(panelVoices);
+  voicesRef.current = panelVoices;
+
   const [panelLines, setPanelLines] = useState<PanelLine[]>([]);
   //: True from the moment a question arrives until the panel either speaks or gives up. It
   //: is what stops the question text appearing seconds before the voice that says it.
@@ -631,9 +652,9 @@ export default function LiveSessionPage() {
       // Every line starts synthesising NOW rather than when its turn comes to speak.
       // Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
       // with the playback between them.
-      panelVoices.prefetchTurn(result.turns);
+      voicesRef.current.prefetchTurn(result.turns);
       for (const line of result.turns) {
-        await panelVoices.speakAs(line.speaker, line.text, {
+        await voicesRef.current.speakAs(line.speaker, line.text, {
           // Fires when the audio is in hand, not when the request goes out — so the line
           // appears with the voice rather than seconds ahead of it.
           onStart: () => {
@@ -746,6 +767,19 @@ export default function LiveSessionPage() {
    * to strand somebody one click from their result.
    */
   useEffect(() => {
+    /*
+     * A FAILED FETCH IS NOT THE END OF THE INTERVIEW.
+     *
+     * `question` is `data?.question ?? null`, so it is null when the interview is over AND
+     * when the /next request simply failed — a dropped campus connection, both retries lost.
+     * Without this check the closing sequence fires on that failure: `closedRef` latches,
+     * the phase moves to `closing`, and the candidate who taps Retry gets their question
+     * back into a page that has already decided the interview finished. There is no way out
+     * of that except End Interview, on an interview that never started.
+     *
+     * `isError` distinguishes them, and it is the only thing that can.
+     */
+    if (isError) return;
     if (question !== null || preparing || closedRef.current) return;
     // Wait for the skill check ONLY if one is actually going to happen. With no question
     // there is nothing to wait for, and blocking unconditionally would strand a session
@@ -761,7 +795,7 @@ export default function LiveSessionPage() {
       await speakTurn({ stage: 'candidate_questions', reset: false });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question, preparing, phase]);
+  }, [question, preparing, phase, isError]);
 
   useEffect(() => {
     // Never while the panel has the floor. The interlock upstream should mean the mic is
@@ -1037,7 +1071,21 @@ export default function LiveSessionPage() {
   const handleSubmit = () => submitContent(answer);
 
   // ─── Loading / preparing ──────────────────────────────────────────────────
-  if (isLoading) {
+  /*
+   * WAIT FOR THE ROLE BEFORE DRAWING THE ROOM.
+   *
+   * `hasEditor` is `panelInfo?.technical ?? true`, and that default is right — a missing
+   * editor costs a developer the question they were about to answer, a spurious one costs a
+   * sales candidate a glance. But while the query is in flight it means a SALES interview
+   * opens as three columns with a code editor in the middle, mounts CodeMirror and its
+   * language modes, and then reflows to two columns underneath the candidate a moment later.
+   *
+   * The page already shows this spinner while the first question loads, and the two queries
+   * run in parallel, so waiting for both usually costs nothing and removes the flash
+   * entirely. Somebody who told us their interview is not technical should never see a code
+   * editor, not even for a frame.
+   */
+  if (isLoading || panelInfoLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <GeneratingQuestion label="Preparing your first question…" />

@@ -267,3 +267,51 @@ describe('the compiler is only built when the role needs one', () => {
     expect(CODE).toMatch(/!hasEditor && mobilePane === 'code'[\s\S]{0,60}setMobilePane\('talk'\)/);
   });
 });
+
+describe('three silent contradictions found by auditing rather than by failing', () => {
+  /*
+   * None of these broke a test, a type check or a lint rule. Each was code whose apparent
+   * intent differed from its runtime behaviour — the same family as the promo-code errors
+   * that were all 500s because a class attribute was overwritten in __init__.
+   */
+
+  it('a failed /next request does not end the interview', () => {
+    /*
+     * `question` is `data?.question ?? null`, so it is null when the interview is OVER and
+     * when the request simply FAILED. Without an isError check the closing sequence fires on
+     * a dropped connection: closedRef latches, the phase moves to `closing`, and a candidate
+     * who taps Retry gets their question back into a page that has already decided the
+     * interview finished — with no way out but End Interview, on an interview that never
+     * started.
+     */
+    const closing = CODE.slice(CODE.indexOf("setPhase('closing')") - 900, CODE.indexOf("setPhase('closing')"));
+    expect(closing).toMatch(/if \(isError\) return;/);
+    // And the dependency, or the guard reads a stale value.
+    expect(CODE).toMatch(/\[question, preparing, phase, isError\]/);
+  });
+
+  it('the panel speaks through the CURRENT voice allocation, not the first one', () => {
+    /*
+     * `speakTurn` is a useCallback on [sessionId, candidateName] and used to call
+     * `panelVoices.speakAs` directly — capturing the object from the render that created it.
+     * `speakAs` is itself useCallback([voiceMap, stanceOf]), and both settle asynchronously
+     * after mount. So every line went out through the speakAs built when the voice map was
+     * still EMPTY, and on the browser-speech path Anil and Priya shared one default voice at
+     * identical pitch — which is exactly the "the voices are so bad" and "Meera has a male
+     * voice" reports. The allocation was working; nothing was reading it.
+     */
+    expect(CODE).toMatch(/voicesRef\.current\.speakAs/);
+    expect(CODE).toMatch(/voicesRef\.current\.prefetchTurn/);
+    // The stale form must not come back inside speakTurn.
+    const speakTurn = CODE.slice(CODE.indexOf('const speakTurn'), CODE.indexOf('[sessionId, candidateName]'));
+    expect(speakTurn).not.toMatch(/panelVoices\.speakAs/);
+  });
+
+  it('a non-technical interview never shows a code editor, not even for a frame', () => {
+    // `hasEditor` defaults to true while the role query is in flight — the right default,
+    // but it meant a sales interview opened as three columns with CodeMirror mounted and
+    // then reflowed to two underneath the candidate.
+    expect(CODE).toMatch(/if \(isLoading \|\| panelInfoLoading\)/);
+    expect(CODE).toMatch(/isLoading: panelInfoLoading/);
+  });
+});
