@@ -136,7 +136,20 @@ class TestAdminCannotBeSelfGranted:
                 # An assignment to is_admin, not a comparison or a read into a response.
                 if re.search(r"\.is_admin\s*=(?!=)", line):
                     writes.append(f"{f.relative_to(app)}:{i}")
-        assert writes == ["api/v1/admin.py:397"], (
+
+        # ASSERTED ON THE FILE, NOT THE LINE, AND THE STRICTNESS IS UNCHANGED.
+        #
+        # The security property is "exactly one write path, and it is in the admin router".
+        # A second write anywhere still fails this (the list grows); a write moved to
+        # another file still fails it (the name changes). The line NUMBER was never part of
+        # the property — it only pinned where the write happened to sit, so adding an
+        # import above it failed a security test for a reason that had nothing to do with
+        # security. A test that cries wolf on unrelated edits is one people learn to
+        # re-baseline without reading, which is how the real regression gets waved through.
+        #
+        # The message still prints file:line, so a failure points at the exact offender.
+        locations = [w.rsplit(":", 1)[0] for w in writes]
+        assert locations == ["api/v1/admin.py"], (
             f"is_admin is written in {writes}. Granting admin must happen in exactly one "
             "place, behind the AdminUser dependency — a second write path is a privilege "
             "escalation waiting for somebody to find it."

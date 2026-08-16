@@ -541,3 +541,71 @@ async def stats(db: AsyncSession) -> list[dict]:
     except Exception:
         logger.warning("ai_cache_stats_failed", exc_info=True)
         return []
+
+
+async def storage(db: AsyncSession) -> dict:
+    """
+    How much disk the shared cache occupies, and how close it is to its ceiling.
+
+    SEPARATE FROM `stats` BECAUSE IT ASKS POSTGRES, NOT THE ROWS. `stats` counts entries and
+    hits, which says whether the cache is earning its keep; this says what it costs to keep.
+    A 512-dimension vector is ~2KB before the HNSW index, so the index is usually the larger
+    half and `pg_total_relation_size` is the only figure that includes it.
+
+    THE CEILING IS REAL AND WORTH SHOWING. `_MAX_ROWS_PER_FEATURE` is enforced by an LRU trim
+    that runs from inside `store()` every `_EVICT_EVERY` writes — there is no scheduler on
+    this deployment, so eviction only happens on the write path. A feature sitting at its cap
+    is not broken, but it is discarding entries that may still have been earning hits, and
+    that is a thing to know before deciding the cache "stopped helping".
+
+    Degrades to zeroes rather than raising, for the same reason `stats` does: this feeds an
+    admin panel, and a missing migration should grey out a figure rather than 500 the page.
+    """
+    try:
+        row = (
+            await db.execute(
+                text(
+                    """
+                    SELECT pg_total_relation_size('ai_cache')      AS total_bytes,
+                           pg_relation_size('ai_cache')            AS table_bytes,
+                           count(*)                                AS rows,
+                           coalesce(sum(hit_count), 0)             AS hits,
+                           count(DISTINCT feature)                 AS features
+                      FROM ai_cache
+                    """
+                )
+            )
+        ).one()
+    except Exception:
+        logger.warning("ai_cache_storage_failed", exc_info=True)
+        return {
+            "available": False,
+            "total_bytes": 0,
+            "table_bytes": 0,
+            "index_bytes": 0,
+            "rows": 0,
+            "hits": 0,
+            "features": 0,
+            "max_rows_per_feature": _MAX_ROWS_PER_FEATURE,
+            "embedding_dim": EMBEDDING_DIM,
+        }
+
+    total = int(row.total_bytes or 0)
+    table = int(row.table_bytes or 0)
+    return {
+        "available": True,
+        "total_bytes": total,
+        "table_bytes": table,
+        # Everything Postgres counts that is not the heap: the HNSW index, TOAST, the
+        # visibility map. Derived rather than queried separately so the parts always sum
+        # to the total the operator sees in psql.
+        "index_bytes": max(0, total - table),
+        "rows": int(row.rows or 0),
+        "hits": int(row.hits or 0),
+        "features": int(row.features or 0),
+        "max_rows_per_feature": _MAX_ROWS_PER_FEATURE,
+        #: Fixed at 512 and pinned to the migration's vector(512) column — surfaced so a
+        #: mismatch after an embedding change is visible here rather than as a silent
+        #: collapse in hit rate.
+        "embedding_dim": EMBEDDING_DIM,
+    }

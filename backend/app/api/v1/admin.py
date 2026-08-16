@@ -38,7 +38,7 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -49,6 +49,7 @@ from app.db.session import get_db
 from app.models.session import InterviewSession
 from app.models.system import AuditLog
 from app.models.user import Profile, User
+from app.services.billing.plans import get_item
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -651,3 +652,131 @@ async def unban_user(
         times=plan.unbanned_count,
     )
     return {"status": "unbanned", "times_unbanned": plan.unbanned_count}
+
+
+# ── Revenue ──────────────────────────────────────────────────────────────────────
+
+
+#: Paise per rupee. Money is summed as integers and divided exactly once, at the edge,
+#: because float rupees accumulate error and a revenue figure that disagrees with the
+#: payment gateway by a paisa is a figure nobody trusts again.
+_PAISE_PER_RUPEE = 100
+
+
+def _inr(paise: int) -> float:
+    """Paise to rupees, for display only. Never fed back into arithmetic."""
+    return round(paise / _PAISE_PER_RUPEE, 2)
+
+
+#: THE MONEY IS IN `detail`, NOT IN `delta`.
+#:
+#: `delta` is a signed count of ITEMS (+5 for a five-pack), so summing it gives units sold
+#: and not revenue. Both purchase paths — the browser callback at billing.py:481 and the
+#: webhook at billing.py:617 — write `detail.amount_paise`, which is what Razorpay actually
+#: captured. A 100%-off code writes KIND_GRANT with `charged_paise: 0` instead, so free
+#: product is excluded here by construction rather than by a filter somebody has to remember.
+#:
+#: DEDUPED PER PAYMENT, NOT PER ROW. `payment_ref` is indexed but NOT unique, and two
+#: independent paths can grant one payment — the webhook and the browser callback each check
+#: the ledger before inserting, but that check is a read-then-write with a window in it.
+#: Counting rows would turn a double-grant into double revenue, which is the direction that
+#: flatters us; `DISTINCT ON` makes the figure robust to it. `coalesce(payment_ref, id::text)`
+#: is the dedup key so a purchase with no payment reference still counts exactly once rather
+#: than collapsing every such row into one.
+_REVENUE_ROWS = """
+    SELECT DISTINCT ON (coalesce(payment_ref, id::text))
+           coalesce((detail->>'amount_paise')::bigint, 0) AS paise,
+           created_at,
+           detail->>'item_id'                             AS item_id,
+           user_id
+      FROM credit_events
+     WHERE kind = 'purchase'
+       AND created_at >= :since
+     ORDER BY coalesce(payment_ref, id::text), created_at
+"""
+
+
+@router.get("/revenue", summary="What the product actually took, per payment")
+async def admin_revenue(
+    current_user: AdminUser,
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Gross revenue over a window, by day and by item.
+
+    GROSS, AND SAID SO. This is what was captured, before Razorpay's fee and before any
+    refund — neither of which this system records, so calling it "net" would be a guess
+    dressed as a figure. The number is comparable to the Razorpay dashboard's captured
+    total; it is not a P&L.
+    """
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = (await db.execute(text(_REVENUE_ROWS), {"since": since})).all()
+
+    gross_paise = sum(int(r.paise) for r in rows)
+    payments = len(rows)
+    paying_users = len({r.user_id for r in rows if r.user_id is not None})
+
+    by_day: dict[str, dict] = {}
+    for r in rows:
+        key = r.created_at.date().isoformat()
+        bucket = by_day.setdefault(key, {"day": key, "paise": 0, "payments": 0})
+        bucket["paise"] += int(r.paise)
+        bucket["payments"] += 1
+    for bucket in by_day.values():
+        bucket["inr"] = _inr(bucket["paise"])
+
+    by_item: dict[str, dict] = {}
+    for r in rows:
+        # An item id that is no longer in the catalogue still has to appear, or historic
+        # revenue silently vanishes the moment a product is renamed or retired.
+        item_id = r.item_id or "unknown"
+        bucket = by_item.setdefault(
+            item_id, {"item_id": item_id, "name": "", "paise": 0, "payments": 0}
+        )
+        bucket["paise"] += int(r.paise)
+        bucket["payments"] += 1
+    for item_id, bucket in by_item.items():
+        item = get_item(item_id)
+        bucket["name"] = item.name if item else f"{item_id} (retired)"
+        bucket["inr"] = _inr(bucket["paise"])
+
+    # Product given away: 100%-off codes and support goodwill. Not revenue, but the figure
+    # that makes revenue legible — a flat month with a spike here is a promotion working,
+    # not demand collapsing.
+    granted = await db.scalar(
+        text(
+            "SELECT count(*) FROM credit_events "
+            "WHERE kind = 'grant' AND created_at >= :since"
+        ),
+        {"since": since},
+    )
+
+    all_time_paise = await db.scalar(
+        text(
+            "SELECT coalesce(sum(paise), 0) FROM ("
+            "  SELECT DISTINCT ON (coalesce(payment_ref, id::text)) "
+            "         coalesce((detail->>'amount_paise')::bigint, 0) AS paise"
+            "    FROM credit_events WHERE kind = 'purchase'"
+            "   ORDER BY coalesce(payment_ref, id::text), created_at"
+            ") t"
+        )
+    )
+
+    return {
+        "window_days": days,
+        "since": since.isoformat(),
+        "gross_paise": gross_paise,
+        "gross_inr": _inr(gross_paise),
+        "payments": payments,
+        "paying_users": paying_users,
+        # Integer division so the average is itself a real paise value rather than a float
+        # that renders as ₹49.000000000000004.
+        "average_order_paise": gross_paise // payments if payments else 0,
+        "average_order_inr": _inr(gross_paise // payments) if payments else 0.0,
+        "free_grants": int(granted or 0),
+        "all_time_gross_paise": int(all_time_paise or 0),
+        "all_time_gross_inr": _inr(int(all_time_paise or 0)),
+        "by_day": sorted(by_day.values(), key=lambda b: b["day"]),
+        "by_item": sorted(by_item.values(), key=lambda b: b["paise"], reverse=True),
+    }

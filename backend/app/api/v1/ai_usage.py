@@ -297,6 +297,10 @@ async def get_ai_usage(
         # side by side. Entries with hit_count 0 are the honest signal that caching a
         # feature bought nothing — a table of those is a table of wasted writes.
         "cache": cache_rows,
+        # WHAT THE CACHE COSTS TO KEEP, next to what it saves. `cache` above counts entries
+        # and hits; this is disk and the LRU ceiling. Both are needed to answer "should this
+        # cache be bigger" — hits alone argue for growth and never for restraint.
+        "cache_storage": await vector_cache.storage(db),
         # THE NUMBER THE PRICING DECISION ACTUALLY NEEDS.
         #
         # Everything above answers "what did we spend". This answers "is it getting cheaper

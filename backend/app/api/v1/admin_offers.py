@@ -33,6 +33,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import AppError, NotFoundError
 from app.core.security import AdminUser
 from app.db.session import get_db
@@ -121,6 +122,20 @@ class OfferOut(BaseModel):
     #: Rupees given away, so an offer's cost is visible next to the offer itself rather than
     #: needing a separate report to notice a code that has quietly cost thousands.
     discount_given_rupees: int
+    #: Why this offer cannot be bought right now, or "" when nothing is wrong.
+    #:
+    #: THIS EXISTS BECAUSE THE ONE FAILURE IT REPORTS WAS INVISIBLE FROM EVERY ADMIN SCREEN.
+    #: An offer with `requires_captcha` on a deployment where TURNSTILE_SECRET_KEY is unset
+    #: refuses every single purchase — correctly, because captcha.py fails closed rather than
+    #: waiving a check the offer was priced on — but the only place that state surfaced was a
+    #: toast in front of a candidate who could do nothing about it, reading "please try again
+    #: later" for something that will never resolve on its own.
+    #:
+    #: `enabled` says the offer is switched on. It can be true while this is non-empty, and
+    #: that combination is exactly the trap: the row looks healthy in the table and cannot be
+    #: redeemed. Nothing here changes what is enforced — this reports the state, it does not
+    #: relax it.
+    blocked_reason: str = ""
 
 
 @router.get("", response_model=list[OfferOut], summary="Every offer, with usage")
@@ -150,6 +165,10 @@ async def list_offers(
         ).all()
     }
 
+    # Read once for the whole list rather than per row: it is one process-wide setting, and
+    # asking per offer would imply it could differ between them.
+    captcha_ready = bool(settings.TURNSTILE_SECRET_KEY)
+
     return [
         OfferOut(
             id=o.id,
@@ -166,9 +185,33 @@ async def list_offers(
             requires_captcha=o.requires_captcha,
             redemptions=usage.get(o.id, (0, 0))[0],
             discount_given_rupees=usage.get(o.id, (0, 0))[1] // 100,
+            blocked_reason=_blocked_reason(o, captcha_ready=captcha_ready),
         )
         for o in rows
     ]
+
+
+def _blocked_reason(offer: Offer, *, captcha_ready: bool) -> str:
+    """
+    Why this offer refuses every purchase, in words an admin can act on.
+
+    Deliberately NOT a boolean. "Blocked: yes" sends somebody to read the source; the
+    sentence names both fixes, and which one is right is a product decision — a public
+    launch code wants the captcha and therefore the key, a code shared with four friends
+    wants neither.
+
+    Only reports states that are certain and permanent. An expired window or an exhausted
+    `max_redemptions` is already visible in its own column and is the offer working as
+    configured, not a misconfiguration.
+    """
+    if offer.requires_captcha and not captcha_ready:
+        return (
+            "Requires human verification, but TURNSTILE_SECRET_KEY is not set on this "
+            "deployment — every purchase using this code is refused. Either set that key "
+            "(plus NEXT_PUBLIC_TURNSTILE_SITE_KEY on the frontend), or turn off "
+            "\"requires captcha\" here."
+        )
+    return ""
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create an offer")

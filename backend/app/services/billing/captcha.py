@@ -71,9 +71,20 @@ async def verify(token: str, *, remote_ip: str | None = None) -> None:
             "captcha_not_configured",
             reason="an offer requires a captcha but TURNSTILE_SECRET_KEY is unset",
         )
+        # NOT "please try again later", WHICH WAS A LIE.
+        #
+        # Retrying cannot fix an unset key. The old wording described a transient outage,
+        # so a candidate refreshed, waited, and refreshed again against a state that would
+        # never change on its own — and the operator heard about it as "payments are down"
+        # rather than as one missing environment variable.
+        #
+        # The route that DOES work is named, because it exists: the code is what needs the
+        # verification, so the item is still buyable at full price without it. Offering
+        # that beats a dead end, even though it is the more expensive path for them.
         raise CaptchaError(
-            "This offer needs a human verification step that is not available right now. "
-            "Please try again later."
+            "This code needs a human verification step that isn't set up on this site yet, "
+            "so it can't be used right now. You can still buy without the code — or contact "
+            "support if you were promised this discount."
         )
 
     if not (token or "").strip():
