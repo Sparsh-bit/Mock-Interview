@@ -172,7 +172,31 @@ def said_dont_know(answer: str) -> bool:
         stripped = re.sub(r"[^\w/\- ]", "", text).strip().lower()
         if stripped in _BARE_REFUSALS:
             return True
-        return bool(_GIVE_UP_RE.search(text))
+
+        short_match = _GIVE_UP_RE.search(text)
+        if not short_match:
+            return False
+
+        # THE SHORT PATH NEEDS THE SAME QUESTION ASKED AS THE LONG ONE, and for a long time
+        # it did not ask it — it returned on the mere PRESENCE of a give-up phrase.
+        #
+        # Two entries in that list, `\bpass\b` and `blank`, are also ordinary Java
+        # vocabulary. So "Pass by value", "Pass by reference" and "Blank final variable" —
+        # all correct, all three words — were read as refusals. The guard below at the 4-25
+        # word range exists precisely to stop "you PASS the object by reference value" being
+        # misread, and the three-word form of the same answer walked straight past it.
+        #
+        # That was not a cosmetic mislabel: `submit_answer` feeds this into
+        # `_drop_declined_topic`, so answering "Pass by value" correctly deleted every
+        # remaining question on that topic and offered the candidate something easier.
+        #
+        # THE BAR IS ZERO HERE, NOT TWO. At three words a decline leaves literally nothing
+        # once the phrase is removed — "not sure sir" strips to nothing, "no idea" to
+        # nothing, "I forgot" to nothing. But "Pass by value" leaves "value", and one
+        # surviving content word in three is already an answer. The 4-25 word range can
+        # afford a bar of two because it has room for politeness; this range cannot.
+        remainder = text[: short_match.start()] + " " + text[short_match.end() :]
+        return _content_words(remainder) < 1
 
     # Long enough to be an answer, whatever it opens with.
     if len(words) > _MAX_WORDS_TO_COUNT_AS_GIVING_UP:

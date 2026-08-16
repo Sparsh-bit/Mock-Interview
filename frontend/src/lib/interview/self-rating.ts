@@ -80,7 +80,23 @@ const LEVEL_WORDS: Array<[RegExp, number]> = [
  * Only applied to the word path. A negation alongside an explicit number — "I'm not being
  * modest, I'd say 8" — is not a negated rating, and the number said out loud is the answer.
  */
-const NEGATED = /\bnot\b|\bn't\b|\bhardly\b|\bbarely\b|\bnothing\b|\bno\s+(?:idea|clue)\b/;
+/*
+ * `n['’]t\b` HAS NO LEADING \b, AND THAT IS THE WHOLE FIX.
+ *
+ * It was written `\bn't\b`, which can never match anything. In "don't", the `o` before the
+ * `n` is a word character and so is the `n` — there is no word boundary between them, so the
+ * alternative was dead from the day it was written and only the bare "not" branch ever fired.
+ *
+ * The contraction is how people actually speak, so this was the common case, not the edge:
+ * "I don't feel confident" matched nothing, the level-word pass then found `confident`, and a
+ * candidate who said they were NOT confident was filed at 7/10. That raises the difficulty of
+ * every later question and the bar the report judges them against — silently, and in exactly
+ * the direction the header says must never happen.
+ *
+ * The smart apostrophe is included because the speech recogniser emits it: "don’t" and
+ * "don't" are the same word and only one of them was ever going to be typed into a test.
+ */
+const NEGATED = /\bnot\b|n['’]t\b|\bhardly\b|\bbarely\b|\bnothing\b|\bno\s+(?:idea|clue)\b/;
 
 export interface SelfRating {
   /** 1-10. */

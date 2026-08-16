@@ -48,6 +48,60 @@ class TestGivingUp:
         # No phrase list catches these, and at three words there is no answer to protect.
         assert said_dont_know(answer) is True
 
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "not sure sir",
+            "I forgot",
+            "no idea",
+            "skip this",
+            "leave it",
+            "next question",
+        ],
+    )
+    def test_a_short_decline_survives_the_content_word_bar(self, answer: str):
+        # The guard added for the terse-answer false positives below must not have made the
+        # short path so permissive that ordinary short declines stop registering. Each of
+        # these leaves nothing at all once the give-up phrase is removed.
+        assert said_dont_know(answer) is True
+
+
+class TestTerseTechnicalAnswersAreNotDeclines:
+    """
+    THE REGRESSION THAT COST A CANDIDATE THEIR TOPIC.
+
+    `\\bpass\\b` and `blank` are in the give-up list and are also ordinary Java vocabulary. A
+    three-word answer took the bare-fragment path, which searched for a give-up phrase
+    WITHOUT the content-word test that protects the 4-25 word range — so the exact guard
+    written to stop "you PASS the object by reference value" being misread was never reached
+    by the three-word form of the same answer.
+
+    This is not cosmetic. `submit_answer` feeds the result into `_drop_declined_topic`, so a
+    candidate who answered "Pass by value" — which is correct — had every remaining question
+    on that topic deleted from their plan and was offered something easier.
+    """
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "Pass by value",
+            "Pass by reference",
+            "pass by value",
+            "Blank final variable",
+            "A blank final",
+        ],
+    )
+    def test_a_correct_terse_answer_is_not_a_decline(self, answer: str):
+        assert said_dont_know(answer) is False
+
+    @pytest.mark.parametrize(
+        "answer", ["Stack and heap", "Compile time polymorphism", "Method overloading"]
+    )
+    def test_other_terse_answers_are_unaffected(self, answer: str):
+        # Controls: these never contained a give-up word, so they pin that the new bar did
+        # not change the ordinary case.
+        assert said_dont_know(answer) is False
+
 
 class TestNotGivingUp:
     """The expensive errors. Every one of these is a real answer that must not be interrupted."""

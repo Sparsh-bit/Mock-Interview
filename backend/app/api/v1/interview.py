@@ -81,21 +81,35 @@ class PlanRequest(BaseModel):
     prompt: str = ""
     resume_text: str = ""
 
+#: Postgres INT4 ceiling. Anything above this raises asyncpg DataError on flush rather than
+#: failing validation, which is the difference between a 422 naming the field and a 500.
+_INT4_MAX = 2_147_483_647
+
+
 class PauseMark(BaseModel):
     """Where a pause fell, as a word offset into the answer."""
 
     #: Index of the word the pause preceded, so the transcript can be rendered
     #: with the hesitation shown in position rather than as a bare count.
-    wordIndex: int = 0  # noqa: N815 - matches the browser payload exactly
-    seconds: int = 0
+    wordIndex: int = Field(default=0, ge=0, le=_INT4_MAX)  # noqa: N815 - matches the browser payload
+    seconds: int = Field(default=0, ge=0, le=_INT4_MAX)
 
 
 class DeliveryMetrics(BaseModel):
-    filler_count: int = 0
-    pause_count: int = 0
-    total_pause_seconds: int = 0
-    words: int = 0
-    speaking_seconds: int = 0
+    #: THE COUNTS ARE BOUNDED FOR THE SAME REASON THE LISTS BELOW ARE, and they were the
+    #: half that got missed. `words` and `speaking_seconds` are written straight into
+    #: `Answer.word_count` and `Answer.response_time_seconds`, which are Postgres INT4.
+    #: Anything past INT4 makes asyncpg raise DataError on flush — not an AppError, so
+    #: `core/exceptions.py` turns a malformed request body into an opaque 500 instead of
+    #: the 422 that says which field was wrong.
+    #:
+    #: `ge=0` because a negative word count is not a value, it is a broken client. Those
+    #: would not raise — they would store silently and skew a delivery score.
+    filler_count: int = Field(default=0, ge=0, le=_INT4_MAX)
+    pause_count: int = Field(default=0, ge=0, le=_INT4_MAX)
+    total_pause_seconds: int = Field(default=0, ge=0, le=_INT4_MAX)
+    words: int = Field(default=0, ge=0, le=_INT4_MAX)
+    speaking_seconds: int = Field(default=0, ge=0, le=_INT4_MAX)
     #: Individual pauses. Bounded so a pathological client cannot post an
     #: unbounded array into a JSONB column.
     pauses: list[PauseMark] = Field(default_factory=list, max_length=200)
@@ -104,7 +118,7 @@ class DeliveryMetrics(BaseModel):
     #: different advice: a filler is a habit, this is one event that costs the
     #: offer. Casual language ("damn") is deliberately NOT counted here — see
     #: CASUAL_WORDS in frontend/src/lib/speech/delivery.ts.
-    unprofessional_count: int = 0
+    unprofessional_count: int = Field(default=0, ge=0, le=_INT4_MAX)
     unprofessional_words: list[str] = Field(default_factory=list, max_length=40)
 
 class SubmitAnswerRequest(BaseModel):

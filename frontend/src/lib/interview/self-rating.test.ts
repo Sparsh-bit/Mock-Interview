@@ -148,6 +148,33 @@ describe('parseSelfRating', () => {
       expect(parseSelfRating('I have no idea')).toBeNull();
     });
 
+    it.each([
+      "I don't feel confident",
+      "I can't say I'm good",
+      "I haven't done much, just the basics",
+      'I don’t feel confident',
+      'I can’t say I am good',
+    ])('refuses a CONTRACTED negation too: %s', (said) => {
+      // THE REGRESSION. The pattern was `\bn't\b`, which cannot match: in "don't" the `o`
+      // and the `n` are both word characters, so there is no boundary before the `n` and
+      // the alternative was dead. Only the bare "not" branch ever fired.
+      //
+      // The contraction is how people actually speak, so this was the common case. The
+      // level-word pass then found `confident` / `good` and filed a candidate who said they
+      // were NOT confident at 7/10 — silently raising the difficulty of every later question
+      // and the bar their report is judged against.
+      //
+      // The smart apostrophe cases are here because the speech recogniser emits it, and
+      // only the typed form was ever going to appear in a test written by hand.
+      expect(parseSelfRating(said)).toBeNull();
+    });
+
+    it('still reads an unnegated level word', () => {
+      // The control. Widening the negation must not have made it swallow ordinary answers.
+      expect(parseSelfRating('I am confident')?.rating).toBe(7);
+      expect(parseSelfRating('pretty good')?.rating).toBe(7);
+    });
+
     it('lets a spoken number beat a spoken adjective', () => {
       expect(parseSelfRating("I'm average but I'd say 7")?.rating).toBe(7);
     });
