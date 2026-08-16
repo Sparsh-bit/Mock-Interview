@@ -260,22 +260,45 @@ async def create_order(
 
     import httpx  # noqa: PLC0415
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            "https://api.razorpay.com/v1/orders",
-            auth=(key_id, key_secret),
-            json={
-                # THE AMOUNT COMES FROM THE RESOLVED ITEM, never from the request. The
-                # caller looked the item up by id; the browser never names a price.
-                # THE AMOUNT STILL COMES FROM THE SERVER. `charged_paise` is computed by
-                # services/billing/offers.quote from the item and the offer row — the browser
-                # sends a code, never a figure, so this is no more client-controlled than the
-                # list price was.
-                "amount": amount_paise,
-                "currency": "INR",
-                "notes": notes,
-            },
-        )
+    # REACHING RAZORPAY CAN FAIL WITHOUT RAZORPAY EVER ANSWERING, and that is a different
+    # thing from Razorpay rejecting the order below. A DNS failure, a refused connection or a
+    # read timeout raises out of httpx, and an httpx exception is not an AppError — so left
+    # unwrapped it arrives at the browser as a bare INTERNAL_ERROR 500 with no message, which
+    # is indistinguishable from a bug in our own code. `list_recent_payments` in this file and
+    # `captcha.verify` both already wrap; this call was the one that did not.
+    #
+    # 502, NOT 503, AND THE DISTINCTION IS USER-VISIBLE. The pricing page maps 503 to
+    # "Payments are not switched on yet. Add your Razorpay keys" — correct for
+    # PaymentNotConfiguredError, badly wrong for a transient network blip, which would tell a
+    # candidate to go and configure something that is already configured.
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.razorpay.com/v1/orders",
+                auth=(key_id, key_secret),
+                json={
+                    # THE AMOUNT COMES FROM THE RESOLVED ITEM, never from the request. The
+                    # caller looked the item up by id; the browser never names a price.
+                    # THE AMOUNT STILL COMES FROM THE SERVER. `charged_paise` is computed by
+                    # services/billing/offers.quote from the item and the offer row — the browser
+                    # sends a code, never a figure, so this is no more client-controlled than the
+                    # list price was.
+                    "amount": amount_paise,
+                    "currency": "INR",
+                    "notes": notes,
+                },
+            )
+    except httpx.HTTPError as exc:
+        # NOTHING WAS CREATED. The request never completed, so there is no order to reconcile
+        # and retrying is safe — which is why this says "try again" rather than sending the
+        # candidate to support.
+        logger.warning("razorpay_order_unreachable", error=str(exc), item=item.id)
+        raise AppError(
+            message="Could not reach the payment provider. Please try again.",
+            status_code=502,
+            code="PAYMENT_GATEWAY_UNREACHABLE",
+        ) from exc
+
     if resp.status_code >= 400:
         logger.error("razorpay_order_failed", status=resp.status_code, body=resp.text[:300])
         raise AppError(
@@ -284,7 +307,29 @@ async def create_order(
             code="PAYMENT_ORDER_FAILED",
         )
 
-    order = resp.json()
+    # A 2xx THAT IS NOT JSON IS STILL A FAILURE. Razorpay returning HTML — a proxy error page,
+    # a captive portal, a maintenance splash — parses as neither an order nor an exception we
+    # name, and `.json()` raising here would land in the same unhandled-500 hole as above.
+    try:
+        order = resp.json()
+    except ValueError as exc:
+        logger.error("razorpay_order_unparseable", body=resp.text[:300], item=item.id)
+        raise AppError(
+            message="Could not start the payment. Please try again.",
+            status_code=502,
+            code="PAYMENT_ORDER_FAILED",
+        ) from exc
+
+    if not isinstance(order, dict) or not order.get("id"):
+        # An order with no id cannot be paid: the browser needs it to open the sheet. Failing
+        # here beats handing the frontend a null order_id it would have to special-case.
+        logger.error("razorpay_order_missing_id", body=resp.text[:300], item=item.id)
+        raise AppError(
+            message="Could not start the payment. Please try again.",
+            status_code=502,
+            code="PAYMENT_ORDER_FAILED",
+        )
+
     return {
         "order_id": order.get("id"),
         "amount_paise": amount_paise,

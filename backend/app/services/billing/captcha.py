@@ -93,6 +93,16 @@ async def verify(token: str, *, remote_ip: str | None = None) -> None:
             "We could not complete verification. Please try again."
         ) from exc
 
+    # THE BODY MUST BE AN OBJECT BEFORE IT CAN BE ASKED ANYTHING. `resp.json()` above is
+    # guarded against unparseable bodies, but valid JSON that is an array or a bare scalar
+    # parses fine and then `.get` raises AttributeError — which is not a CaptchaError, so it
+    # escapes as an unhandled 500 rather than the rejection this function exists to return.
+    # Failing closed here is the same choice the rest of this module makes: an answer we
+    # cannot read is not a pass.
+    if not isinstance(body, dict):
+        logger.warning("captcha_malformed_response", body_type=type(body).__name__)
+        raise CaptchaError("We could not complete verification. Please try again.")
+
     if not body.get("success"):
         logger.info("captcha_rejected", codes=body.get("error-codes"))
         raise CaptchaError("Verification failed. Please try again.")
