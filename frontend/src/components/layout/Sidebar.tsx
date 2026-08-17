@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, Trophy, User, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
 
 import { useBalance } from '@/hooks/useBilling';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,10 @@ export const NAV_ITEMS = [
 export const ADMIN_NAV_ITEMS = [
   { href: '/admin', icon: ShieldCheck, label: 'Users' },
   { href: '/admin/offers', icon: Tag, label: 'Offers' },
+  // Revenue, vector-cache storage, and cost avoided. Distinct from `AI cost` above, which
+  // answers "what did we spend and on what"; this answers "what came in, and is the spend
+  // falling per user as we grow". They read the same ledger and are not the same question.
+  { href: '/admin/analytics', icon: TrendingUp, label: 'Analytics' },
   { href: '/ai-usage', icon: Coins, label: 'AI cost' },
 ];
 
