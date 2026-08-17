@@ -192,6 +192,22 @@ export function useQuote() {
         is_free: boolean;
         requires_captcha: boolean;
         label: string;
+        /*
+         * WHAT THE CODE IS, rather than what it costs on one particular item.
+         *
+         * Sent so the Apply box can say "25% off" before anything is chosen. The paise
+         * figures above are ZERO when no item was named — there is no item to price
+         * against — so any UI that divides them is dividing by zero. `kind` and `value`
+         * are the offer itself and are true whatever the candidate ends up buying.
+         *
+         * `value` means different things per kind, deliberately, because the offer row
+         * does: a percentage for `percent`, and for `fixed` the final price in paise, not
+         * the amount taken off.
+         */
+        kind: 'percent' | 'fixed' | 'free' | '';
+        value: number;
+        /** Item ids this code covers. Empty means every item. */
+        applies_to: string[];
       };
     },
   });

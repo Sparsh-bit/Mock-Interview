@@ -46,10 +46,15 @@ export function DataError({
       <p className="text-sm text-muted-foreground">
         {message || 'Something went wrong fetching this data.'}
       </p>
+      {/* SAYS WHAT TO DO, NOT WHAT WE RUN ON.
+          This used to read "the API may be starting up after being idle", which tells a
+          visitor the backend sleeps when unused — that is a hosting tier, a spin-up window
+          and a rough traffic level, handed to anyone who sees one slow request. None of it
+          helps the person reading it, and all of it helps somebody probing.
+          A retry hint is the useful part; where it runs is not. */}
       {hint && (
         <p className="mt-3 text-xs text-muted-foreground">
-          If this persists, the API may be starting up after being idle — wait a few
-          seconds and try again.
+          This is usually temporary. Wait a moment and try again.
         </p>
       )}
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3">

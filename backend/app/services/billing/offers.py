@@ -120,6 +120,56 @@ async def find_code(db: AsyncSession, code: str) -> Offer | None:
     return await db.scalar(select(Offer).where(Offer.code == cleaned))
 
 
+async def validate_code(
+    db: AsyncSession, *, code: str, user_id: uuid.UUID
+) -> Offer:
+    """
+    Is this code usable by this account AT ALL, independent of any item?
+
+    SEPARATE FROM `quote` BECAUSE THE QUESTIONS ARE DIFFERENT, and conflating them was a real
+    bug. The Apply box priced every code against the FIRST item in the store, so a code
+    restricted to the five-interview pack was refused as "does not apply to this item" while
+    the candidate was looking at the five-interview pack. The code never reached checkout,
+    and from the outside the promo simply did not work.
+
+    This answers "does the code exist, is it live, has this account used it" — everything
+    that is true regardless of what they end up buying. Which ITEM it applies to is decided
+    at checkout, against the item they actually chose, by `quote`.
+
+    Raises OfferError with a message the candidate can act on. Deliberately does NOT check
+    `applies_to`: that is the item question, and answering it here with the wrong item is the
+    bug this exists to remove.
+    """
+    offer = await find_code(db, code)
+    if offer is None:
+        raise OfferError("That code was not recognised.")
+    if not offer.enabled:
+        raise OfferError("That code is no longer active.")
+
+    now = datetime.now(UTC)
+    if (why := _window_message(offer, now)) is not None:
+        raise OfferError(why)
+
+    used = await db.scalar(
+        select(func.count())
+        .select_from(OfferRedemption)
+        .where(OfferRedemption.offer_id == offer.id, OfferRedemption.user_id == user_id)
+    )
+    if used:
+        raise OfferError("You have already used this code.")
+
+    if offer.max_redemptions is not None:
+        total = await db.scalar(
+            select(func.count())
+            .select_from(OfferRedemption)
+            .where(OfferRedemption.offer_id == offer.id)
+        )
+        if (total or 0) >= offer.max_redemptions:
+            raise OfferError("This offer has been fully claimed.")
+
+    return offer
+
+
 async def quote(
     db: AsyncSession,
     *,

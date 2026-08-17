@@ -174,7 +174,12 @@ async def my_balance(
 
 
 class QuoteRequest(BaseModel):
-    item_id: str = Field(min_length=1, max_length=32)
+    #: Optional. WITHOUT it the code is validated on its own; with it, priced.
+    #:
+    #: The Apply box has no item yet — the candidate is still choosing — and pricing against
+    #: an arbitrary one is how a code restricted to the five-interview pack got refused while
+    #: the candidate was looking at the five-interview pack.
+    item_id: str = Field(default="", max_length=32)
     code: str = Field(default="", max_length=40)
 
 
@@ -204,6 +209,28 @@ async def quote_item(
     Raises the same OfferError messages, which are written to be actionable — "this offer has
     expired" rather than "invalid code".
     """
+    # NO ITEM: validate the code alone. This is the Apply box, where the candidate has not
+    # chosen yet — everything that is true regardless of what they buy is checked, and which
+    # items it covers is decided at checkout against the item they actually pick.
+    if not request.item_id:
+        offer = await offers.validate_code(
+            db, code=request.code, user_id=current_user.user_id
+        )
+        return {
+            "item_id": "",
+            "original_paise": 0,
+            "charged_paise": 0,
+            "is_free": offer.kind == offers.KIND_FREE,
+            "requires_captcha": offer.requires_captcha,
+            "label": offer.label,
+            # So the UI can say "25% off" before an item is chosen, without pretending to
+            # know the rupee figure — that depends on which item, and saying a number that
+            # later changes is worse than saying none.
+            "kind": offer.kind,
+            "value": offer.value,
+            "applies_to": list(offer.applies_to or []),
+        }
+
     item = get_item(request.item_id)
     if item is None:
         raise NotFoundError("Item", request.item_id)
@@ -220,6 +247,9 @@ async def quote_item(
         # than bouncing them back with a challenge after they thought they were done.
         "requires_captcha": bool(quoted.offer and quoted.offer.requires_captcha),
         "label": quoted.offer.label if quoted.offer else "",
+        "kind": quoted.offer.kind if quoted.offer else "",
+        "value": quoted.offer.value if quoted.offer else 0,
+        "applies_to": list(quoted.offer.applies_to or []) if quoted.offer else [],
     }
 
 

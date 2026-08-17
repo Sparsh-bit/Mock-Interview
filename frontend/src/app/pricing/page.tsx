@@ -19,6 +19,7 @@ import {
   useVerifyPayment,
   type StoreItem,
 } from '@/hooks/useBilling';
+import { describeOffer } from '@/lib/billing/describe-offer';
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
 import { Turnstile } from '@/components/billing/Turnstile';
 import { PaymentHistory } from '@/components/billing/PaymentHistory';
@@ -136,6 +137,9 @@ export default function StorePage() {
     is_free: boolean;
     requires_captcha: boolean;
     label: string;
+    kind: 'percent' | 'fixed' | 'free' | '';
+    value: number;
+    applies_to: string[];
   } | null>(null);
   const [captchaToken, setCaptchaToken] = useState('');
   /*
@@ -152,19 +156,25 @@ export default function StorePage() {
   const [freeOrder, setFreeOrder] = useState<StoreItem | null>(null);
 
   /*
-   * Priced against the CHEAPEST item, purely so the box can be validated before the
-   * candidate picks something.
+   * CHECKED WITHOUT NAMING AN ITEM, because at this point there is no item.
    *
-   * The real price is computed again server-side at purchase, against the item they
-   * actually chose — this is a check that the code exists and applies, not the quote that
-   * decides what they pay. A code restricted to other items fails here and says so, which
-   * is better than accepting it and refusing at the till.
+   * This used to price the code against `items[0]` — the cheapest thing in the store —
+   * purely so the box had something to send. That quietly broke every code restricted to a
+   * particular item: a code for the five-interview pack was validated against the single
+   * interview, came back "that code does not apply to this item", and was refused while the
+   * candidate was looking at the five-pack it was made for. From the outside the promo
+   * simply did not work, and the code never reached checkout to be re-checked.
+   *
+   * Sending no item asks the question that can actually be answered now — does this code
+   * exist, is it live, has this account already used it — and leaves WHICH items it covers
+   * to checkout, where the real item is known. The price is computed server-side there
+   * regardless; this was never the thing that decided what anybody pays.
    */
   const applyCode = () => {
     const code = codeInput.trim();
-    if (!code || !items?.length) return;
+    if (!code) return;
     quote.mutate(
-      { itemId: items[0].id, code },
+      { itemId: '', code },
       {
         onSuccess: (q) => {
           setAppliedCode(code.toUpperCase());
@@ -232,7 +242,11 @@ export default function StorePage() {
           return;
         }
         if (!order.order_id || !order.key_id) {
-          toast.error('Payments are not switched on yet.');
+          // Deliberately says nothing about WHY. "Add your Razorpay keys" is an
+          // instruction to the operator that only ever reached customers, and it names the
+          // provider and admits the integration is unfinished — neither is a visitor's
+          // business. The operator learns this from the logs, where it belongs.
+          toast.error('Payments are temporarily unavailable. Please try again shortly.');
           return;
         }
 
@@ -295,7 +309,7 @@ export default function StorePage() {
         toast.error(
           offerMessage ??
             (notConfigured
-              ? 'Payments are not switched on yet. Add your Razorpay keys to enable checkout.'
+              ? 'Payments are temporarily unavailable. Please try again shortly.'
               : 'Could not start the payment. Please try again.'),
         );
       },
@@ -449,11 +463,7 @@ export default function StorePage() {
             {quoted && appliedCode && (
               <p className="mt-3 text-sm">
                 <span className="font-semibold text-accent-emerald-ink">
-                  {quoted.is_free
-                    ? 'Free with this code'
-                    : `Discount applied — ${Math.round(
-                        (1 - quoted.charged_paise / quoted.original_paise) * 100,
-                      )}% off`}
+                  {describeOffer(quoted)}
                 </span>{' '}
                 <span className="text-muted-foreground">
                   The exact price is confirmed on the item you choose.
@@ -476,7 +486,15 @@ export default function StorePage() {
           open={!!freeOrder}
           item={freeOrder}
           code={appliedCode}
-          originalPaise={quoted?.original_paise ?? freeOrder?.price_paise ?? 0}
+          /* THE ITEM'S OWN PRICE, not the quote's.
+           *
+           * This read `quoted.original_paise` first, which was the price of whatever item
+           * the Apply box happened to validate against — the cheapest one — so the sheet
+           * struck through ₹19 while granting the ₹199 five-pack. Now that the box names no
+           * item at all that field is 0, and `??` would have passed the zero straight
+           * through, since it only falls back on null and undefined. The item being
+           * confirmed is right here and knows its own price. */
+          originalPaise={freeOrder?.price_paise ?? 0}
           confirming={checkout.isPending}
           onCancel={() => setFreeOrder(null)}
           onConfirm={() => {
