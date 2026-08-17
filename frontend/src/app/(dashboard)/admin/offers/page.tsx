@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -63,6 +63,14 @@ interface Offer {
   requires_captcha: boolean;
   redemptions: number;
   discount_given_rupees: number;
+  /**
+   * Why this offer refuses every purchase, or "" when nothing is wrong.
+   *
+   * Computed server-side because the cause is a server-side setting the browser cannot
+   * see: an offer requiring a captcha on a deployment with no TURNSTILE_SECRET_KEY. The
+   * backend knows both halves; the browser knows neither.
+   */
+  blocked_reason: string;
 }
 
 const BLANK = {
@@ -132,6 +140,40 @@ export default function AdminOffersPage() {
       })).data,
     onSuccess: (_d, args) => {
       toast.success(args.enabled ? 'Code is live.' : 'Code is off. Nobody can use it now.');
+      invalidate();
+    },
+    onError: () => toast.error('Could not change that.'),
+  });
+
+  /*
+   * THE CAPTCHA SWITCH, WHICH DID NOT EXIST AND LEFT OFFERS UNFIXABLE.
+   *
+   * `requires_captcha` could be SET when creating an offer and never cleared afterwards:
+   * the create form had the checkbox, the list showed a badge, and the only PATCH this page
+   * sent was `{enabled}`. The backend accepted the field the whole time.
+   *
+   * That is worse than a missing feature, because of how the flag fails. An offer requiring
+   * a captcha on a deployment with no TURNSTILE_SECRET_KEY refuses every purchase — the
+   * server is right to fail closed rather than waive a check the offer was priced on — so
+   * the code is simultaneously live and unusable. With no way to clear the flag, the only
+   * remedies were deleting the offer (refused once anyone has redeemed it, to protect the
+   * single-use record) or a hand-written UPDATE against production, which is the exact
+   * situation an admin panel exists to avoid.
+   *
+   * Turning it OFF is always safe. Turning it ON without Turnstile configured is what
+   * created the trap, so that direction is confirmed rather than silent.
+   */
+  const captcha = useMutation({
+    mutationFn: async (args: { id: string; requires: boolean }) =>
+      (await getBrowserApiClient().patch(`/api/v1/admin/offers/${args.id}`, {
+        requires_captcha: args.requires,
+      })).data,
+    onSuccess: (_d, args) => {
+      toast.success(
+        args.requires
+          ? 'Captcha required. Purchases will refuse until Turnstile is configured.'
+          : 'Captcha requirement removed. This code can be used now.',
+      );
       invalidate();
     },
     onError: () => toast.error('Could not change that.'),
@@ -334,6 +376,16 @@ export default function AdminOffersPage() {
                   {o.redemptions === 1 ? '' : 's'}
                   {o.discount_given_rupees > 0 && ` · ₹${o.discount_given_rupees} given away`}
                 </p>
+
+                {/* WHY THIS CODE REFUSES EVERYONE, said on the row rather than left to be
+                    discovered by a candidate who cannot act on it. `enabled` can be true
+                    while this is set, and that combination is the trap: the row reads
+                    healthy and every purchase fails. */}
+                {o.blocked_reason && (
+                  <p className="mt-2 rounded-md border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-xs text-accent-amber-ink">
+                    {o.blocked_reason}
+                  </p>
+                )}
               </div>
 
               {/* THE SWITCH. One tap, immediate, and it keeps the redemption history — which
@@ -356,6 +408,40 @@ export default function AdminOffersPage() {
                   )}
                 />
                 {o.enabled ? 'Live' : 'Off'}
+              </button>
+
+              {/* Turning the requirement OFF needs no confirmation — it can only make a
+                  refusing code work. Turning it ON while Turnstile is unconfigured is the
+                  move that silently breaks an offer, so that direction asks first. */}
+              <button
+                onClick={() => {
+                  if (
+                    !o.requires_captcha &&
+                    !window.confirm(
+                      'Require a captcha for this code?\n\nIf Cloudflare Turnstile is not ' +
+                        'configured on this deployment, every purchase using this code will ' +
+                        'be refused until it is.',
+                    )
+                  ) {
+                    return;
+                  }
+                  captcha.mutate({ id: o.id, requires: !o.requires_captcha });
+                }}
+                disabled={captcha.isPending}
+                title={
+                  o.requires_captcha
+                    ? 'Buyers must pass a Cloudflare Turnstile check. Click to remove.'
+                    : 'No human check. Click to require one.'
+                }
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                  o.requires_captcha
+                    ? 'border-accent-amber/40 bg-accent-amber/10 text-accent-amber-ink'
+                    : 'border-border text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <ShieldCheck className="h-3.5 w-3.5" />
+                {o.requires_captcha ? 'Captcha on' : 'Captcha off'}
               </button>
 
               {/* Hidden once used. The server refuses it too — this only avoids offering a
