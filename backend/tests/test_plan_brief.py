@@ -216,3 +216,74 @@ class TestNoCannedQuestionsReachTheModel:
         assert rows, "the grid rendered no rows at all"
         for row in rows:
             assert "?" not in row, f"a grid row reads as a question, not a subject: {row}"
+
+
+class TestTheResumeIsExaminedAndNotJustRead:
+    """
+    "make sure that the ai also consider the Anything Specific and your resume section of any
+    candidate adds something in these sections then the ai must also put up the questions from
+    their also".
+
+    The resume had the same shape of problem the focus box had, one level quieter. It was
+    passed to the model under a heading that said "use it to personalise" and mentioned once
+    in the task list as "include 1–2 questions that directly reference the candidate's own
+    projects" — a courtesy, next to two concrete instructions to draw from the must-cover
+    list. A resume is not a source of two polite questions; every technology named on it is a
+    claim, and a claim is examinable. That is how real interviewers use one, and it is what
+    candidates are least ready for.
+
+    Source assertions over the prompt, which is what this repo has for prompt behaviour. They
+    pin the rules, not the wording of any question — there are no questions here to pin, which
+    is the point.
+    """
+
+    PROMPT = "interview_plan"
+
+    @staticmethod
+    def _text() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1] / "app" / "prompts" / "interview_plan.md"
+        ).read_text(encoding="utf-8")
+
+    def test_a_named_technology_is_treated_as_an_examinable_claim(self):
+        text = self._text()
+        assert "EVERY TECHNOLOGY NAMED ON A RESUME IS A CLAIM" in text
+
+    def test_the_project_rows_are_bound_to_the_resume_and_not_to_the_syllabus(self):
+        # The grid marks these rows' subject as "the candidate". Without this the model can
+        # legitimately read them as "any question about them" and fill them from the syllabus.
+        assert "are about the resume, not about the syllabus" in self._text()
+
+    def test_a_resume_claim_overlapping_a_must_cover_area_is_asked_through_the_resume(self):
+        # This is the part that makes a resume change the interview rather than extend it: the
+        # same slot, better aimed, and a harder question for free.
+        assert "asked THROUGH the resume" in self._text()
+
+    def test_inventing_a_project_is_forbidden_in_terms(self):
+        """
+        The worst output available on this path. A question that says "you worked on X" when
+        they did not is unanswerable, tells the candidate the simulation is not reading their
+        file, and cannot be corrected without losing the question. The same failure mode is
+        already guarded on the cross-question path, where a model handed a two-word answer
+        attributed the expected answer to the candidate.
+        """
+        text = self._text()
+        assert "NEVER INVENT ANYTHING" in text
+        assert "have you worked with" in text
+
+    def test_a_thin_resume_has_a_stated_behaviour_rather_than_a_gap(self):
+        # An unstated case is a case the model improvises. Both wrong improvisations are named:
+        # padding with invented specifics, and silently converting the rows to more syllabus
+        # questions so the candidate gets no project question at all.
+        text = self._text()
+        assert "thin, empty, or is a placeholder" in text
+        assert "do\n  not silently convert those rows" in text
+
+    def test_the_typed_focus_and_the_resume_are_separate_sections(self):
+        # They are different inputs with different rules — one is a request, the other is a
+        # record — and collapsing them is how "personalise it" came to mean neither.
+        text = self._text()
+        assert "## What the candidate asked for" in text
+        assert "## The candidate's resume" in text

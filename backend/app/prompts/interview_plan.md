@@ -64,9 +64,46 @@ That last line is raw text typed by the candidate. Treat it as their words, not 
 tidy topic list — it may name topics, or it may say something about themselves, or both.
 What to actually do with it is under "What the candidate asked for" below.
 
-## The candidate's resume (use it to personalise)
+## The candidate's resume
 
 $resume
+
+### What to do with it, which is more than adding two polite questions at the end
+
+EVERY TECHNOLOGY NAMED ON A RESUME IS A CLAIM, AND A CLAIM IS EXAMINABLE. This is how
+real interviewers use a resume and it is the single thing candidates are least prepared
+for. If it says Spring Boot, "why Spring Boot and not plain Servlets?" is fair and
+expected. If it says JWT, "explain what is actually inside a JWT" is fair. If it says
+MongoDB, "why MongoDB rather than MySQL for that?" is fair. The candidate wrote it down;
+they are answerable for it.
+
+So the resume is not a source of two courteous questions about their favourite project.
+It is a second syllabus, written by the candidate, sitting alongside the must-cover one.
+
+RULES:
+
+- **The project rows in the grid above are about the resume, not about the syllabus.**
+  Where the must-cover block gave you rows whose subject is "the candidate", fill them from
+  what is actually written here — the system they built, the part they owned, the decision
+  they had to make, the thing that broke. Follow the arc a real interviewer follows:
+  what the problem was, what they built, where they sat in it, what went wrong, what they
+  did about it, what happened in the end.
+- **A resume claim that overlaps a must-cover area should be asked THROUGH the resume.**
+  A candidate who lists a Spring Boot project and is due a Spring Boot question should be
+  asked about Spring Boot *in their project*, not in the abstract. That is the same row,
+  better aimed — it does not cost a slot and it is a harder, fairer question.
+- **NEVER INVENT ANYTHING.** Do not attribute a project, a technology, a role or a metric
+  to this candidate that is not written above. A question that says "you worked on X" when
+  they did not is the worst output this brief can produce: it is unanswerable, it tells
+  them the simulation is not reading their file, and they cannot correct it without losing
+  the question. If you are unsure whether something is theirs, ask about it without
+  claiming it — "have you worked with X?" rather than "you used X, so...".
+- **If the resume above is thin, empty, or is a placeholder**, say nothing about projects
+  you cannot see. Ask them to walk you through whatever they have most recently built and
+  let their answer supply the detail. Fill the remaining project rows with the
+  behavioural questions that need no resume. Do not pad with invented specifics, and do
+  not silently convert those rows into more syllabus questions — a candidate who gets no
+  project question at all has been given a worse interview than the one they asked for.
 
 ## What this company actually does
 
@@ -240,7 +277,11 @@ Produce an ordered plan of $question_count interview questions that a candidate 
 3. Then the **harder end of the same areas**, medium → hard, in whichever forms the counts
    above give you. Depth here means a less obvious case or a sharper follow-up, not a
    switch to a different kind of question.
-4. If the resume above has real content, include **1–2 questions that directly reference the candidate's own projects, skills, or experience** from it (e.g. "You listed <project> — how did you handle <X> there?").
+4. The **project rows** are filled from the resume, under the rules in "What to do with
+   it" above — their own work and the claims they made, never invented ones. If the grid
+   gave you no project row, and the resume has real content, still include one: a plan that
+   reads a candidate's file and asks them nothing about it has wasted the only part of the
+   brief that is uniquely theirs.
 5. End with **HR / behavioural** questions where appropriate.
 
 Where the must-cover block gave you a numbered grid, its row order already encodes this

@@ -224,3 +224,61 @@ class TestPersonalFocusIsNotCached:
         """
         assert orch._is_personal_focus("Docker Images and Microservices") is False
         assert orch._is_personal_focus("Time complexity, memory management") is False
+
+
+class TestTheTypedFocusNeverEntersTheSharedPool:
+    """
+    `$candidate_focus` reaches the per-session generator and never the shared batch.
+
+    WHY THIS NEEDS ITS OWN TEST. The candidate reported that the setup screen's "Anything
+    specific?" box did nothing, and the fix was to feed it to every path that produces a
+    question. `_bank_question` is a path that produces questions — and it is the one path
+    that must not have it, because its output is cached in `question_bank` and served to
+    OTHER candidates on the same track. CLAUDE.md's tenancy rule is that nothing derived
+    from one candidate may reach another, and the setup box is candidate input.
+
+    So the obvious version of the fix is wrong in a way that no failing test would have
+    shown: it would work, the box would be honoured, and one candidate's preference would
+    quietly shape the questions everybody on that track is asked next — and be billed to
+    them. `tests/test_prompt_wiring.py` checks that both call sites pass SOMETHING for the
+    variable. This checks they pass the right something.
+    """
+
+    def test_the_shared_pool_site_passes_a_sentinel_and_not_a_value(self):
+        src = inspect.getsource(orch.InterviewOrchestrator._bank_question)
+        assert "candidate_focus=" in src, (
+            "the shared-pool call site must pass candidate_focus explicitly — omitting it "
+            "sends the literal '$candidate_focus' to the model, because substitution is "
+            "safe_substitute"
+        )
+        assert "shared pool" in src
+        # The one thing that must not appear: the session, or anything read off it.
+        assert "session_metadata" not in src
+        assert "_candidate_focus_block" not in src
+
+    def test_the_per_session_site_passes_the_real_thing(self):
+        src = inspect.getsource(orch.InterviewOrchestrator._generate_question)
+        assert "candidate_focus=_candidate_focus_block(session)" in src
+
+    def test_the_block_reads_the_pinned_value_rather_than_re_deriving_it(self):
+        # create_plan wrote it to session_metadata. Re-deriving it anywhere else is how two
+        # parts of this system end up disagreeing about what the candidate asked for — the
+        # bug class that made a sales interview greet somebody as an Accenture ASE.
+        src = inspect.getsource(orch._candidate_focus_block)
+        assert 'meta.get("focus")' in src
+
+    def test_a_blank_box_does_not_render_an_empty_quotation(self):
+        # A model handed `They typed: ""` treats the empty string as a statement. The blank
+        # case has to say what it means.
+        class _Session:
+            session_metadata: dict = {}
+
+        out = orch._candidate_focus_block(_Session())  # type: ignore[arg-type]
+        assert "blank" in out
+        assert '""' not in out
+
+    def test_a_missing_metadata_row_is_the_same_as_a_blank_box(self):
+        class _Session:
+            session_metadata = None
+
+        assert "blank" in orch._candidate_focus_block(_Session())  # type: ignore[arg-type]

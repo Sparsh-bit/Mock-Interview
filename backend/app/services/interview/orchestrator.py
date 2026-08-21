@@ -177,6 +177,28 @@ def _company_tier(company: str) -> str:
     return getattr(entry, "tier", "") or "" if entry is not None else ""
 
 
+def _candidate_focus_block(session: InterviewSession) -> str:
+    """
+    The candidate's typed focus, for the live question generator. Never raises.
+
+    A DIFFERENT JOB FROM `focus.focus_block`, which is why it is not that function. The plan
+    prompt needs a directive with a guaranteed COUNT, checked against the syllabus, because it
+    is allocating twelve slots at once. This one is choosing a single next question with no
+    budget to allocate, so all it needs is the words the candidate used and the honest note
+    that they may not name a topic at all. Sharing one renderer between the two would mean one
+    of them lying about what it can promise.
+
+    Reads `session_metadata["focus"]`, which is where `create_plan` pinned it. Empty and
+    missing collapse to the same sentence on purpose: "they left it blank" and "this session
+    predates the field" are indistinguishable to the model and mean the same thing to it.
+    """
+    meta = session.session_metadata or {}
+    typed = str(meta.get("focus") or "").strip()
+    if not typed:
+        return "(they left the box blank — choose the topic on merit)"
+    return f'They typed: "{typed}"'
+
+
 def _plan_brief(
     *,
     track_name: str,
@@ -1637,6 +1659,13 @@ class InterviewOrchestrator:
             question_number="1",
             already_asked="(none — these are for a shared pool)",
             focus_concepts="(none — general questions for this role)",
+            # NOT THE CANDIDATE'S TYPED FOCUS, AND IT MUST NEVER BE. This batch is cached in
+            # `question_bank` and served to OTHER candidates on this track. CLAUDE.md's
+            # tenancy rule is that nothing derived from one candidate reaches another, and
+            # the setup box is candidate input — so feeding it here would shape a shared
+            # pool around one person's preference and bill everyone for it. The per-session
+            # call site below is where the real focus goes.
+            candidate_focus="(shared pool — no candidate, no preferences)",
             candidate_experience_years="not specified",
         )
 
@@ -1761,6 +1790,18 @@ class InterviewOrchestrator:
             question_number=str(question_number),
             already_asked=already_asked,
             focus_concepts=focus_str,
+            # WHAT THEY TYPED INTO THE SETUP BOX, on the live path at last.
+            #
+            # It used to reach the PLAN prompt and nothing else, so a candidate who asked for
+            # React questions got them for as long as the plan lasted and then silently
+            # stopped: this function is what runs once the plan is exhausted, and on the
+            # adaptive route it is what runs from the start.
+            #
+            # Read from session_metadata rather than threaded down through four call sites,
+            # because that row is where `create_plan` pinned it and it is the same value the
+            # plan was built from — re-deriving or re-passing it is how two parts of this
+            # system end up disagreeing about what the candidate asked for.
+            candidate_focus=_candidate_focus_block(session),
             candidate_experience_years="not specified",
         )
 

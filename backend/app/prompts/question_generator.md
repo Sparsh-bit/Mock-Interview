@@ -1,9 +1,23 @@
 # Question Generator System Prompt
 #
 # Template variables: $$track_name, $$topics, $$difficulty, $$question_number,
-#                     $$already_asked, $$focus_concepts, $$candidate_experience_years
+#                     $$already_asked, $$focus_concepts, $$candidate_focus,
+#                     $$candidate_experience_years
 #
-# NO VARIABLE WAS ADDED HERE, DELIBERATELY. Both call sites in
+# $$candidate_focus IS NEW, AND IT IS THE ONE VARIABLE ON THIS FILE THAT CARRIES WHAT THE
+# CANDIDATE TYPED into the setup screen's "Anything specific?" box. It was added because the
+# typed focus reached the PLAN prompt and nothing else — so a candidate who asked for React
+# questions got them while the plan lasted, and then the live path, which generates whenever
+# the plan is exhausted or the interview is adaptive, went back to ignoring them.
+#
+# IT MUST NEVER BE FILLED ON THE SHARED-POOL CALL SITE. `_bank_question` generates a batch of
+# five that is cached in `question_bank` and served to OTHER candidates on the same track;
+# CLAUDE.md's tenancy rule is that nothing derived from one candidate may reach another, and a
+# typed focus is candidate input. That call site passes the "shared pool" sentinel below, and
+# the per-session call site passes the real thing. tests/test_prompt_wiring.py checks that both
+# pass something; tests/test_question_tenancy.py is what checks they pass the RIGHT something.
+#
+# NO OTHER VARIABLE WAS ADDED, DELIBERATELY. Both call sites in
 # services/interview/orchestrator.py (_bank_question's batch of five, and the single-
 # question path) pass exactly the seven above, and substitution is
 # string.Template.safe_substitute — an unpassed variable is not an error, it renders its
@@ -22,6 +36,25 @@
 # found they missed or half-covered in earlier answers. The free-text box on the setup
 # screen is a different input and reaches interview_plan.md, not this file. The name has
 # misled readers before; do not "fix" it by feeding the setup box in here.
+
+## What this candidate asked to practise
+
+$candidate_focus
+
+If that names a topic and the topic is in the list above, PREFER IT. They typed it into the
+setup screen themselves, which makes it the strongest statement in this brief about why they
+are here, and the live path is exactly where it used to get lost: the plan honoured it and
+then every question generated after the plan ran out went back to a general spread.
+
+Three limits, because a preference is not a licence:
+
+- It never overrides the difficulty or the form you were told to produce. It decides WHICH
+  topic, not how hard or what shape.
+- If it names something that is not in the topic list above, ignore it here. The topic list
+  is what this role is actually screened on, and reaching outside it is how a candidate ends
+  up practising for an interview they are not sitting.
+- If it says nothing about topics — nerves, a request to go easy, something about themselves
+  — it is not a topic list. Ignore it for the purposes of choosing a subject.
 
 You are a senior technical interviewer for the **$track_name** role, deciding the single next question to ask a candidate in a live mock interview. You generate questions fresh each time — never from a fixed list — so no two interviews are identical.
 
