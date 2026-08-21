@@ -13,6 +13,7 @@ POST /gd/evaluate  — score the candidate's participation
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import structlog
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
@@ -628,14 +630,24 @@ async def gd_turn(
     )
 
     try:
-        turn, _ = await generate_structured(
+        call = generate_structured(
             GDPanelTurn,
             messages,
-            # 1-2 contributions of 1-3 spoken sentences. The autonomous clock
-            # makes this the most frequently called AI path in the app, so the
-            # budget is deliberately tight — CHEAP tier also keeps replies terse
-            # and conversational rather than essay-like.
-            max_tokens=400,
+            # 1-2 contributions of 1-3 spoken sentences, plus the JSON around them.
+            #
+            # RAISED FROM 400, WHICH WAS TRUNCATING TURNS MID-SENTENCE. Reported with a
+            # screenshot: a contribution that ended "Arjun, that statistic is from last" —
+            # cut off exactly where the budget ran out. 400 was set on the assumption of
+            # "1-2 contributions of 1-3 sentences", and the model does not always obey that:
+            # one 4-sentence opener plus a reply plus the field names is past 400, and the
+            # third contribution is what gets cut.
+            #
+            # A ceiling is not a target — the model stops when it is done, so a higher cap
+            # costs nothing on a turn that was already short. What it removes is the failure
+            # where the cap, not the sentence, decides where a panelist stops talking. The
+            # brevity rules belong in gd_panel.md, which states them, rather than in a number
+            # that enforces them by amputation.
+            max_tokens=700,
             attempts_per_provider=2,
             is_valid=lambda t: bool(t.contributions),
             cost_tier=CostTier.CHEAP,
@@ -650,9 +662,25 @@ async def gd_turn(
             # MORE rather than failing.
             cache_system=True,
         )
+        # A WALL-CLOCK BOUND, WHICH THIS PATH HAD NONE OF. See
+        # GD_TURN_AI_BUDGET_SECONDS: with attempts_per_provider=2 and a 180s provider read
+        # timeout, one turn could hold the request for minutes while the client had long
+        # since shown "response timed out" — and the server kept generating a contribution
+        # nobody would ever see.
+        budget = settings.GD_TURN_AI_BUDGET_SECONDS
+        turn, _ = await (asyncio.wait_for(call, timeout=budget) if budget > 0 else call)
     except AIProviderUnavailableError:
         # Non-fatal: return an empty turn so the candidate can keep going.
         logger.warning("gd_turn_unavailable")
+        return GDTurnResponse(contributions=[])
+    except TimeoutError:
+        # INFO, not warning. The round handled this exactly as designed and the discussion
+        # continues — the next tick asks again, and a missing contribution is invisible in a
+        # conversation between three people. The RATE is the signal worth watching.
+        logger.info(
+            "gd_turn_timed_out",
+            budget_seconds=settings.GD_TURN_AI_BUDGET_SECONDS,
+        )
         return GDTurnResponse(contributions=[])
 
     # Keep only non-empty contributions from real panelists — the model must

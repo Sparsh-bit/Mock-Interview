@@ -310,11 +310,52 @@ class TestPerSpeakerPace:
         # Omitted entirely is the same as unknown — every existing caller relies on this.
         assert prosody_for("asking") == TONE_PROSODY["asking"]
 
-    def test_a_listed_speaker_is_slowed_relative_to_their_tone(self):
-        from app.services.tts.base import TONE_PROSODY, prosody_for
+    def test_the_current_roster_is_uniform(self):
+        """
+        REQUESTED DIRECTLY: "i want a normal voice and with a medium speaking pce in all the
+        characters." So SPEAKER_PACE is now empty and every panelist speaks at their tone's
+        speed unchanged.
 
+        This test used to assert the opposite — that Riya was slowed. That entry was right
+        when it was written: her stance is the assertive one and she was stacking a
+        client-side tempo on a tone speed that reached 1.08, which is what "annoying and
+        disturbed" was. The whole roster has changed since, to voices chosen partly for being
+        `measured` and `calm`, so the differentiation the multiplier was compensating for now
+        lives in the voices themselves. Leaving one speaker slower also meant the panel did
+        not sound like one room.
+        """
+        from app.services.tts.base import SPEAKER_PACE, TONE_PROSODY, prosody_for
+
+        assert SPEAKER_PACE == {}
         for tone in TONE_PROSODY:
-            assert prosody_for(tone, "Riya")["speed"] < TONE_PROSODY[tone]["speed"], tone
+            for speaker in ("Anil", "Priya", "Riya", "Arjun", "Meera"):
+                assert prosody_for(tone, speaker) == TONE_PROSODY[tone], (tone, speaker)
+
+    def test_the_dial_still_works_if_a_future_roster_needs_it(self):
+        """
+        The mechanism is kept, not deleted — a roster with one genuinely fast voice will want
+        exactly this. Asserted with a temporary entry so the empty table above is a DECISION
+        rather than a quietly broken feature.
+        """
+        import pytest as _pytest  # noqa: PLC0415
+
+        from app.services.tts import base
+
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setitem(base.SPEAKER_PACE, "Testy", 0.9)
+            assert base.prosody_for("neutral", "Testy")["speed"] < base.TONE_PROSODY["neutral"]["speed"]
+
+    def test_no_two_speakers_differ_by_more_than_a_few_percent(self):
+        """
+        The point of "medium pace in all the characters": the widest gap anywhere in the
+        product. It used to be 20% — a correction at 0.88 against an aside at 1.08, in the same
+        conversation, from the same person. On a metered vendor that is genuinely different
+        speech rather than resampling, so it was audible as two different speakers.
+        """
+        from app.services.tts.base import TONE_PROSODY
+
+        speeds = [v["speed"] for v in TONE_PROSODY.values()]
+        assert max(speeds) - min(speeds) <= 0.10, TONE_PROSODY
 
     def test_pace_does_not_invert_the_tone_ordering(self):
         # Slowing a speaker must not flatten how their own lines differ from each other. A

@@ -97,6 +97,40 @@ const SPELL_RULES: [RegExp, string][] = SPELL_OUT.map((a) => [
  * Idempotent in the way that matters: running it twice does not double-expand, because the
  * output of each rule no longer matches its own pattern.
  */
+/*
+ * PANELIST NAMES, RESPELLED FOR THE EAR ONLY.
+ *
+ * REPORTED: "one of them is saying raya insted of riya". Correct — the vendor reads "Riya" with
+ * a long English i, which is a different name. A panel that cannot say its own members' names
+ * is the single most obviously wrong thing it can do, and it happens on the very first turn
+ * where they greet each other.
+ *
+ * RESPELLED RATHER THAN PHONEME-TAGGED. Fish's markup for pronunciation is model-specific and
+ * undocumented for these voices, and a tag the model does not understand gets READ OUT — which
+ * is how "*(laughs)*" became a spoken word. A respelling is plain text: every engine, neural or
+ * browser, pronounces "Reeya" the way "Riya" is meant to sound, and no engine can recite the
+ * hint itself.
+ *
+ * SPOKEN FORM ONLY. `PanelThread` renders `line.text`, so the screen still says Riya. This
+ * substitution exists between the written line and the vendor, which is the only place it is
+ * correct — a transcript that said "Reeya" would be quoted back in a report.
+ *
+ * Word-boundary anchored and case-preserving on the first letter, so "Priya" cannot be matched
+ * inside by the "Riya" rule — the longer names are listed first for the same reason. Only names
+ * this product actually uses; a general transliteration table would be a large source of new
+ * ways to be wrong.
+ */
+const NAME_SOUNDS: Array<[RegExp, string]> = [
+  // Longest first: "Priya" contains "riya".
+  [/\bPriya\b/g, 'Preeya'],
+  [/\bRiya\b/g, 'Reeya'],
+  // Read as "AY-nil" by several engines; the name is ah-NEEL.
+  [/\bAnil\b/g, 'Uh-neel'],
+  // Usually fine, listed so the set is complete and reviewable in one place.
+  [/\bMeera\b/g, 'Meera'],
+  [/\bArjun\b/g, 'Arjun'],
+];
+
 export function toSpokenForm(text: string): string {
   if (!text) return text;
   let out = text;
@@ -126,6 +160,10 @@ export function toSpokenForm(text: string): string {
    * parenthetical speech — "the JDK (which includes the compiler)" is content a candidate
    * needs to hear, not an aside.
    */
+  // Names before anything else: the operator and spell rules below can split a word, and a
+  // name that has been split is a name this cannot match any more.
+  for (const [pattern, sound] of NAME_SOUNDS) out = out.replace(pattern, sound);
+
   out = out.replace(/\*\(([^)]{0,40})\)\*/g, ' ');
   out = out.replace(
     /\((?:both\s+)?(?:laughs?|laughing|chuckles?|chuckling|smiles?|smiling|grins?|sighs?|pauses?)\)/gi,

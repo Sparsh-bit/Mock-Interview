@@ -292,6 +292,26 @@ class Settings(BaseSettings):
     #: other way and leans harder on the cache. Zero disables the budget, which restores the
     #: old unbounded behaviour and is not recommended.
     INTERVIEW_QUESTION_AI_BUDGET_SECONDS: float = 18.0
+    #: Seconds a GD panel turn may spend waiting on the AI before the round moves on without
+    #: it.
+    #:
+    #: REPORTED AS "the gd is facing the response timed out issue", and there was NOTHING
+    #: bounding it. Not one `asyncio.wait_for` anywhere in api/v1/gd.py, `attempts_per_provider`
+    #: of 2, and a provider read timeout of 180 seconds — so a slow provider could hold a
+    #: single turn for up to six minutes. The client gave up long before that and showed a
+    #: timeout, while the server was still generating a contribution nobody would ever see.
+    #:
+    #: TIGHTER THAN THE INTERVIEW'S 18s, because a group discussion is less forgiving than an
+    #: interview. An interview is turn-taking — the candidate expects to wait after they finish
+    #: speaking. A GD runs on an autonomous clock with three people talking, so a gap reads as
+    #: the discussion having died rather than as somebody thinking, and the candidate starts
+    #: talking over it.
+    #:
+    #: On expiry the round returns an empty turn, which is the same path a provider outage
+    #: already used and which the caller already handles: the discussion continues and the next
+    #: tick asks again. A missing contribution is invisible in a conversation between three
+    #: people; a twelve-second silence is not.
+    GD_TURN_AI_BUDGET_SECONDS: float = 12.0
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20

@@ -25,9 +25,9 @@ original design and it was a deliberate one, twice over:
 
 | speaker | panel | gender | voice | uses / likes | id |
 |---|---|---|---|---:|---|
-| **Anil** | interview | male | Slax — measured, neutral-tone, professional | 1,338,358 / 2,154 | `c5f56a6cc2ec4fa8920cb4c5889a3fb7` |
+| **Anil** | interview | male | Ethan — authoritative, calm, clear | 426,490 / 2,539 | `536d3a5e000945adb7038665781a4aca` |
 | **Priya** | interview | female | Paula — articulate, confident, professional | 126,893 / 1,606 | `c2623f0c075b4492ac367989aee1576f` |
-| **interviewer** | fallback | male | *(same as Anil)* | — | `c5f56a6cc2ec4fa8920cb4c5889a3fb7` |
+| **interviewer** | fallback | male | *(same as Anil)* | — | `536d3a5e000945adb7038665781a4aca` |
 | **Riya** | GD | female | Hannah — professional, confident, middle-aged | 232,838 / 1,250 | `9a9cf47702da476aa4629e2506d4a857` |
 | **Arjun** | GD | male | alex — clear, professional, young | 52,699 / 675 | `1d52151a55eb4878a997bd06e816b5f6` |
 | **Meera** | GD | female | Friendly Young Female | 2,727 / 70 | `1b1286fcf2f44d8ba1405e0b71abca22` |
@@ -59,11 +59,17 @@ a corporate interview panel and against a reject list — `character-voice`, `en
 `announcer`, `advertisement`, `breathy`, `old`, and every regional accent.
 `scripts/verify_voices.py` passes on the new roster.
 
-**Slax for Anil**, on 1.3 million generations, is the most-used professional male voice in the
-catalogue. Its tags are `measured`, `neutral-tone`, `calm`, `confident`, `professional`, which
-is what a senior engineering manager asking a question actually sounds like. Ethan
-(`536d3a5e…`, 426k / 2,539) was the runner-up and is a fine substitute, but its register is
-`documentary` — an explainer rather than an interviewer.
+**Ethan for Anil**, on 426k generations with the best like-rate of any male candidate
+(2,539), is `authoritative`, `calm`, `clear`, `professional`.
+
+Slax (`c5f56a6c…`) was chosen first, on the strength of 1.3 million generations — the
+most-used professional male voice in the catalogue — and was rejected after listening:
+reported as "horrific" and "very bad". That is worth recording rather than quietly
+overwriting, because it is the limit of this document's whole method. Usage separates a
+57-generation upload from a real voice, and it cannot separate two real voices: 1.3M
+generations told us Slax is not amateur, and nothing about whether it is pleasant to be
+interviewed by. **Rank by usage to build the shortlist, then listen before committing.** That
+step was skipped here and cost a round trip.
 
 **Paula for Priya**, on 127k generations with the best like-rate of any candidate, is
 `articulate`, `confident`, `conversational`, `professional`. She sits beside Slax in the same

@@ -74,11 +74,25 @@ Tone = Literal["neutral", "asking", "correcting", "affirming", "aside"]
 #: real and audible, not a placebo field.
 TONE_PROSODY: dict[str, dict[str, float]] = {
     "neutral": {"speed": 1.0, "volume": 0.0},
-    "asking": {"speed": 0.95, "volume": 0.0},
-    "correcting": {"speed": 0.88, "volume": 0.0},
-    "affirming": {"speed": 1.04, "volume": 0.0},
-    "aside": {"speed": 1.08, "volume": 0.0},
+    "asking": {"speed": 0.98, "volume": 0.0},
+    "correcting": {"speed": 0.94, "volume": 0.0},
+    "affirming": {"speed": 1.02, "volume": 0.0},
+    "aside": {"speed": 1.03, "volume": 0.0},
 }
+# NARROWED TO ±6%, FROM A RANGE THAT SPANNED 0.88 TO 1.08.
+#
+# "i want a normal voice and with a medium speaking pce in all the characters." The old spread
+# was 20% wide, and on a metered vendor that renders as genuinely different speech rather than
+# as resampling — so a correction at 0.88 sounded laboured and an aside at 1.08 sounded rushed,
+# in the same conversation, from the same person.
+#
+# Tone is still expressed, because a correction that arrives at exactly the pace of a
+# compliment is one of the things that made the panel read as a form being read out. It is now
+# expressed in a band narrow enough that nobody sounds like a different speaker: the difference
+# is audible when you are listening for it and never conspicuous when you are not.
+#
+# Together with SPEAKER_PACE being empty, the widest gap anywhere in the product is now 5% —
+# between a correction and an aside — where it used to be 20%.
 
 
 #: How fast a NAMED SPEAKER talks, as a multiplier on their tone's speed.
@@ -99,7 +113,21 @@ TONE_PROSODY: dict[str, dict[str, float]] = {
 #: Anything not listed speaks at its tone's speed unchanged, so a new panelist needs no entry
 #: and a renamed one degrades to neutral pacing rather than to an error.
 SPEAKER_PACE: dict[str, float] = {
-    "Riya": 0.92,
+    # EMPTY, AND THAT IS THE SETTING. Requested directly: "i want a normal voice and with a
+    # medium speaking pce in all the characters."
+    #
+    # Riya used to be 0.92. That entry existed for a good reason at the time — her stance is
+    # the assertive one and she was stacking a client-side tempo on top of a tone speed that
+    # reached 1.08, which produced the "annoying and disturbed" voice reported back then. But
+    # the whole roster has changed since: Slax, Paula, Hannah and alex are all `measured` or
+    # `calm` voices chosen partly for pace, so the differentiation this table was compensating
+    # for is now in the voices themselves rather than in a multiplier.
+    #
+    # Leaving one speaker slower than the others also means the panel does not sound like one
+    # room. Everybody at the same pace is what "normal" sounds like.
+    #
+    # Keeping the mechanism rather than deleting it: a future roster with one genuinely fast
+    # voice will want exactly this dial, and the argument for how to use it is above.
 }
 
 #: Floor and ceiling on the combined tone x speaker speed.

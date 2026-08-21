@@ -131,3 +131,44 @@ describe('stage directions are performed, not pronounced', () => {
     expect(toSpokenForm(once)).toBe(once);
   });
 });
+
+describe('panelist names are pronounced, not mangled', () => {
+  /*
+   * "one of them is saying raya insted of riya."
+   *
+   * Correct: the vendor read "Riya" with a long English i, which is a different name. A panel
+   * that cannot say its own members' names is the most obviously wrong thing it can do, and it
+   * happens on the very first turn, where they greet each other.
+   *
+   * Respelled rather than phoneme-tagged: Fish's pronunciation markup is model-specific and
+   * undocumented for these voices, and a tag the model does not understand gets READ OUT —
+   * which is exactly how "*(laughs)*" became a spoken word. Plain respelling cannot be recited.
+   */
+  it('says Riya, not Raya', () => {
+    expect(toSpokenForm('Riya, what do you think?')).toBe('Reeya, what do you think?');
+  });
+
+  it('does not match Riya inside Priya', () => {
+    // Order matters: "Priya" contains "riya". Getting this wrong turns one name into
+    // "PReeya"-with-a-stray-P or worse, and it would only show up for one panelist.
+    expect(toSpokenForm('Priya, over to you.')).toBe('Preeya, over to you.');
+    expect(toSpokenForm('Priya and Riya')).toBe('Preeya and Reeya');
+  });
+
+  it('leaves the written line alone — this is the SPOKEN form only', () => {
+    // PanelThread renders line.text, so the screen still says Riya. A transcript that said
+    // "Reeya" would be quoted back in the candidate's report.
+    const written = 'Riya, what do you think?';
+    expect(written).toContain('Riya');
+    expect(toSpokenForm(written)).not.toContain('Riya');
+  });
+
+  it('only touches whole words', () => {
+    expect(toSpokenForm('Riyadh')).toBe('Riyadh');
+  });
+
+  it('is still idempotent over names', () => {
+    const once = toSpokenForm('Riya and Priya');
+    expect(toSpokenForm(once)).toBe(once);
+  });
+});
