@@ -23,18 +23,74 @@ original design and it was a deliberate one, twice over:
   character for an Indian campus panel, and lands as more incongruous than a neutral
   American one.
 
-| speaker | panel | gender | voice | id |
-|---|---|---|---|---|
-| **Anil** | interview | male | Professional Male Voice — authoritative, middle-aged | `595c8bbb74eb471fbb599d81dac5672a` |
-| **Priya** | interview | female | Clear & Confident Female | `cb131d96670e4d92951e5ea56697c5ab` |
-| **interviewer** | fallback | male | *(same as Anil)* | `595c8bbb74eb471fbb599d81dac5672a` |
-| **Riya** | GD | female | Hannah — professional, confident, middle-aged | `9a9cf47702da476aa4629e2506d4a857` |
-| **Arjun** | GD | male | Clear Male Voice — young, energetic | `01f34c9748f74dcda57448f033ea2935` |
-| **Meera** | GD | female | Friendly Young Female | `1b1286fcf2f44d8ba1405e0b71abca22` |
+| speaker | panel | gender | voice | uses / likes | id |
+|---|---|---|---|---:|---|
+| **Anil** | interview | male | Slax — measured, neutral-tone, professional | 1,338,358 / 2,154 | `c5f56a6cc2ec4fa8920cb4c5889a3fb7` |
+| **Priya** | interview | female | Paula — articulate, confident, professional | 126,893 / 1,606 | `c2623f0c075b4492ac367989aee1576f` |
+| **interviewer** | fallback | male | *(same as Anil)* | — | `c5f56a6cc2ec4fa8920cb4c5889a3fb7` |
+| **Riya** | GD | female | Hannah — professional, confident, middle-aged | 232,838 / 1,250 | `9a9cf47702da476aa4629e2506d4a857` |
+| **Arjun** | GD | male | alex — clear, professional, young | 52,699 / 675 | `1d52151a55eb4878a997bd06e816b5f6` |
+| **Meera** | GD | female | Friendly Young Female | 2,727 / 70 | `1b1286fcf2f44d8ba1405e0b71abca22` |
 
 Riya and Meera are both female and share a round, so they are separated by age band rather
 than by tone alone — two similar female voices was a real complaint about the old roster.
-Hannah is middle-aged and Meera is young, so that separation survives the change below.
+Hannah is middle-aged and Meera is young, so that separation survives the changes below.
+
+### Anil, Priya and Arjun were replaced, by the argument already written here
+
+Reported as "the voices must not look cheap". Measured, and the report was right — the usage
+numbers are not close:
+
+| speaker | old voice | uses | likes |
+|---|---|---:|---:|
+| Anil | Professional Male Voice | **57** | **0** |
+| Priya | Clear & Confident Female | **108** | **3** |
+| Arjun | Clear Male Voice | **42** | **1** |
+
+Fifty-seven generations. Zero likes. These were near-empty community uploads whose only
+recommendation was a title that reads like a description — and this document had ALREADY
+established, in the section below, that usage is the only quality signal available without
+listening to every candidate in the catalogue. Riya was replaced by that argument. Anil,
+Priya and Arjun were never put through it. So the reasoning existed and half the roster had
+never been measured against it, which is the more useful thing to record than the ids.
+
+The replacements are the top of the English catalogue by real usage, filtered to tags that fit
+a corporate interview panel and against a reject list — `character-voice`, `entertainment`,
+`announcer`, `advertisement`, `breathy`, `old`, and every regional accent.
+`scripts/verify_voices.py` passes on the new roster.
+
+**Slax for Anil**, on 1.3 million generations, is the most-used professional male voice in the
+catalogue. Its tags are `measured`, `neutral-tone`, `calm`, `confident`, `professional`, which
+is what a senior engineering manager asking a question actually sounds like. Ethan
+(`536d3a5e…`, 426k / 2,539) was the runner-up and is a fine substitute, but its register is
+`documentary` — an explainer rather than an interviewer.
+
+**Paula for Priya**, on 127k generations with the best like-rate of any candidate, is
+`articulate`, `confident`, `conversational`, `professional`. She sits beside Slax in the same
+round, so the choice was partly about separation: Laura (`e3cd3841…`, 154k / 1,478) scores just
+as well but is `deep`, `warm`, `calm` — too close to Slax's measured register, and two voices
+that blur is the exact complaint Riya and Meera were separated to avoid.
+
+**alex for Arjun** is the smallest of the three upgrades and the least certain. `Energetic
+Male` (`802e3bc2b27e49c2995d23ef70e6ac89`) has far better numbers — 585k / 2,983 — and was
+rejected on register: it is tagged `announcer` and `advertisement`, and a voice that sounds
+like a commercial is wrong in a discussion however popular it is. Arjun's documented stance is
+energetic, so this trades some of that for a professional register. If the GD sounds flat,
+`Energetic Male` is the deliberate alternative and this paragraph is the trade.
+
+### Susan FE was rejected, and how it was caught is the point
+
+`56431e329b21489c9f9f7ab9c77312d4` was the strongest candidate on tags alone — the only voice
+in the catalogue tagged both `Corporate` and `Business`, which is literally what was asked
+for. Its own description reads:
+
+> A professional and confident middle-aged **male** voice.
+
+Tagged female, described male. That is exactly the failure recorded below — Meera was given a
+male voice twice — and the only reason it did not happen a third time is that the description
+was read rather than the tags trusted. `verify_voices.py` checks the gender TAG, so this would
+have passed it. **Read the description, not only the tags**, and treat a disagreement between
+them as disqualifying rather than as something to resolve.
 
 ### Riya was replaced, and popularity is why
 
