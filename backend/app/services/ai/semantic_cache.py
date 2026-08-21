@@ -180,6 +180,48 @@ def _vectorize(company: str, program: str, focus: str) -> dict[str, float]:
     return vec
 
 
+def _focus_partition(focus: str) -> str:
+    """
+    The candidate's typed focus as a bucket name. Two setups may share a cached plan only
+    if this matches exactly.
+
+    THE BUG THIS FIXES, MEASURED. A candidate reported that the "Anything specific?" box on
+    the setup screen did nothing. Most of that was the prompt giving it one trailing clause,
+    and that half is fixed in `interview_plan.md` and `services/interview/focus.py`. But the
+    mechanically decisive half was here, and no prompt change could have reached it.
+
+    `_vectorize` weights company 3.0, program 3.0 and focus 1.0 — the docstring above says
+    why, and for its original purpose that reasoning was sound. The consequence was not:
+    ("Cognizant", "Digital Nurture — Java FSE", "React, SQL, Spring Boot") scores 0.958
+    against the same setup with an EMPTY focus, and the reuse threshold is 0.82. So once a
+    generic Cognizant plan existed, every candidate who typed topics into the box was served
+    that plan — generated before their topics were known — and the lookup happens in
+    `create_plan` before the focus string is even assembled. Nothing downstream could
+    recover: the model that wrote those questions never saw the request.
+
+    A THRESHOLD CANNOT FIX THIS, which is why the fix is a partition. Raising the threshold
+    high enough to separate 0.958 from a genuine match would also separate "Cognizant GenC"
+    from "cognizant gen-c", which is the entire reason this module does fuzzy matching at
+    all. The two things are different questions: company and program answer "which interview
+    is this", and fuzzy is right for them; the focus answers "what did this person ask for",
+    and there is no such thing as approximately what somebody asked for.
+
+    So the focus stays in `_vectorize` — `variant_key` needs its tokens, or two different
+    focuses would share one Redis bucket — and it stops being what protects the candidate.
+    This does.
+
+    Canonical tokens, so word order, spacing and placement jargon still collapse: "SQL and
+    React" and "react, sql" are one request and legitimately share a plan. An empty or
+    subject-free box is its own partition rather than a wildcard, because "I want React
+    questions" and "no preference" are the two things that must never be confused.
+    """
+    tokens = _canonicalize(_TOKEN_RE.findall((focus or "").lower()))
+    if not tokens:
+        return "none"
+    sig = "|".join(sorted(set(tokens)))
+    return hashlib.sha1(sig.encode("utf-8")).hexdigest()[:12]  # noqa: S324 — bucket name, not security
+
+
 def _similarity(a: dict[str, float], b: dict[str, float]) -> float:
     """Cosine similarity of two sparse vectors. 0.0 when either is empty."""
     if not a or not b:
@@ -250,13 +292,31 @@ async def find_similar_key(company: str, program: str, focus: str) -> str | None
         return None
 
     exact = variant_key(company, program, focus)
+    # A HARD GATE, NOT A TERM IN THE SCORE. See `_focus_partition` for the measurement:
+    # a focused setup scores 0.958 against the same setup with no focus, against a 0.82
+    # threshold, so similarity cannot be asked to carry this.
+    wanted_focus = _focus_partition(focus)
     best_key: str | None = None
     best_score = 0.0
+    skipped_legacy = 0
 
     for entry in await _load_index():
         key = entry.get("key")
         vec = entry.get("vec")
         if not key or not isinstance(vec, dict):
+            continue
+        entry_focus = entry.get("focus")
+        if entry_focus is None:
+            # Written before focus was recorded, so what it was generated for is unknown.
+            # Skipped rather than guessed: the only two guesses available are "treat it as
+            # unfocused" and "treat it as matching", and both can hand somebody a plan that
+            # ignores what they typed — which is the bug. Skipping costs one regeneration,
+            # after which `register` rewrites the entry with its partition and the miss does
+            # not recur. The index is capped at 200 entries and expires in 30 days, so this
+            # is a bounded, self-healing, one-off cost.
+            skipped_legacy += 1
+            continue
+        if entry_focus != wanted_focus:
             continue
         if key == exact:
             # Canonical-key hit — nothing can score higher than itself.
@@ -264,6 +324,13 @@ async def find_similar_key(company: str, program: str, focus: str) -> str | None
         score = _similarity(query, vec)
         if score > best_score:
             best_key, best_score = key, score
+
+    if skipped_legacy:
+        logger.info(
+            "semantic_cache_legacy_entries_skipped",
+            count=skipped_legacy,
+            reason="indexed before the focus partition existed; they re-register on next store",
+        )
 
     if best_key and best_score >= _SIMILARITY_THRESHOLD:
         logger.info(
@@ -294,6 +361,9 @@ async def register(company: str, program: str, focus: str) -> str:
     # Replace any existing entry for this key so the vector stays current and
     # the index doesn't grow duplicates.
     index = [e for e in index if e.get("key") != key]
-    index.append({"key": key, "vec": vec})
+    # `focus` is what `find_similar_key` gates on. An entry without it is legacy and is
+    # skipped there, so writing it is not optional — an entry missing this field is
+    # invisible to every future lookup.
+    index.append({"key": key, "vec": vec, "focus": _focus_partition(focus)})
     await _save_index(index)
     return key

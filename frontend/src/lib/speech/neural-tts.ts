@@ -270,9 +270,18 @@ export function degradeNeural(reason: 'budget' | 'vendor'): void {
   if (_neuralOff) return;
   _neuralOff = true;
   _inflight.clear();
-  // Once per round, not once per line. Whoever is reading a candidate's console after a
-  // complaint about the voices needs to see this line and its reason.
-  console.warn(
+  // INFO, NOT WARN, AND THE LEVEL IS THE POINT. Once per round, not once per line —
+  // whoever reads a candidate's console after a complaint about the voices needs this line
+  // and its reason.
+  //
+  // But a spent budget is a NORMAL operating state for a metered vendor, and this module's
+  // own header is explicit that neural speech is an enhancement whose loss may only make a
+  // round sound worse. Logging a designed-for degradation at warn level makes a healthy
+  // system look like a broken one — which is a mistake this codebase has already made and
+  // fixed once, where three refused /admin/overview probes per page load were logged as
+  // warnings for every ordinary user (see components/account-isolation.test.ts). Same
+  // reasoning, same level.
+  console.info(
     `[tts] neural speech is off for the rest of this round (${reason}); browser voices from here.`,
   );
 }

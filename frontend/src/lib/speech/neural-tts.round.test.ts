@@ -233,16 +233,32 @@ describe('the degrade latch — why one bad line cannot become an alternating in
     expect(get).toHaveBeenCalledTimes(1);
   });
 
-  it('warns once per round, not once per line', async () => {
+  it('logs once per round, not once per line', async () => {
     // Whoever reads a candidate's console after a complaint about the voices needs this line
     // and its reason. Forty copies of it is the same as none.
+    //
+    // AT INFO, NOT WARN, AND THE LEVEL IS ASSERTED ON PURPOSE. A spent budget is a normal
+    // operating state for a metered vendor and this module's header is explicit that losing
+    // neural speech may only make a round sound worse. Logging a designed-for degradation
+    // as a warning makes a healthy system look broken — the same mistake this codebase
+    // already made and fixed with the /admin/overview probes (see
+    // components/account-isolation.test.ts). If somebody raises this back to warn, every
+    // candidate on a budget-exhausted day gets a yellow console line about nothing being
+    // wrong.
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const m = await import('./neural-tts');
     m.degradeNeural('budget');
     m.degradeNeural('vendor');
     m.degradeNeural('budget');
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0][0])).toContain('budget');
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(String(info.mock.calls[0][0])).toContain('budget');
+    // A graceful degradation must never reach the console as a warning or an error.
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    info.mockRestore();
     warn.mockRestore();
+    error.mockRestore();
   });
 });

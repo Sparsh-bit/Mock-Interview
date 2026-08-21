@@ -289,3 +289,53 @@ class TestAFollowUpIsDeliveredAsOne:
         # No handover: the same person who asked the last question asks this one.
         assert "do not re-introduce the topic" in block
         assert "hand over" in block
+
+
+class TestTheShapeSurvivesBeingSpoken:
+    """
+    A shape decided once and re-rolled at delivery is not a shape.
+
+    THE REPORT. A candidate sat a Cognizant campus fundamentals mock and said it asked
+    "mostly the scenario based questions only". Two separate instructions produced that, and
+    fixing either alone would have left the other running: `interview_plan.md` demanded two
+    thirds scenario at PLAN time — fixed by `app/data/question_shape.py`, which now hands the
+    planner integer counts per interview kind — and this prompt told the panel, at SPEECH
+    time, that the same question should arrive "sometimes straight, sometimes as a scenario"
+    and to "vary WHICH of those you use".
+
+    So the plan could be perfectly shaped and the room would still turn a direct fundamentals
+    question into a situation, with no knowledge of what kind of interview it was in. The
+    panel receives the question as text and is not told its form; it does not need to be,
+    because the note it is given already IS one. Its job is the voice, not the form.
+    """
+
+    def test_the_panel_is_told_to_keep_the_form_it_was_given(self):
+        text = _PROMPT.read_text()
+        assert "KEEP THE FORM YOU WERE GIVEN" in text
+
+    def test_the_instruction_to_rotate_the_form_is_gone(self):
+        """
+        The exact instruction that caused it. Asserted on the phrase because the phrase is
+        what the model obeyed — it was quantified-feeling and imperative, and it beat every
+        softer rule in the file.
+        """
+        text = _PROMPT.read_text()
+        assert "Vary WHICH of those you use" not in text
+        assert "sometimes as a\n   scenario" not in text
+
+    def test_the_panel_still_has_to_put_it_in_its_own_words(self):
+        """
+        The fix must not become "read the question out". That would be the opposite failure
+        and a worse one: the candidate asked for questions generated fresh, and a panel
+        reading a note verbatim makes every session sound identical no matter how varied the
+        plan is.
+        """
+        text = _PROMPT.read_text()
+        assert "PUT THE QUESTION IN YOUR OWN WORDS" in text
+        assert "Do not read it out" in text
+
+    def test_what_the_panel_may_still_vary_is_spelled_out(self):
+        # Removing a freedom without naming what remains reads as "stop improvising", and
+        # the panel sounding like a person is the whole product.
+        text = _PROMPT.read_text()
+        assert "What is still yours" in text
