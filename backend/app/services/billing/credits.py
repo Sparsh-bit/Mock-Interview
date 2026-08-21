@@ -321,17 +321,66 @@ async def grant(
     kind: str = KIND_PURCHASE,
     payment_ref: str | None = None,
     detail: dict | None = None,
-) -> None:
+) -> bool:
     """
     Add `quantity` of `feature` to the ledger — a purchase, a refund, or admin goodwill.
 
-    IDEMPOTENCY IS THE CALLER'S JOB AND IS NOT OPTIONAL. Razorpay redelivers a webhook until
-    it gets a 2xx, so the same payment WILL arrive more than once; the webhook checks
-    `payment_ref` against the ledger before calling this. It is recorded here so that check
-    has something to look at, and so a disputed charge can be traced to a payment id.
+    Returns True when it granted and False when this `payment_ref` had already been applied.
+
+    IDEMPOTENCY IS THIS FUNCTION'S JOB NOW, AND IT USED TO BE THE CALLER'S. That sentence
+    stood here for a long time — "IDEMPOTENCY IS THE CALLER'S JOB AND IS NOT OPTIONAL" — and
+    both callers did it the same unsafe way, which is the argument against ever writing it
+    again.
+
+    WHAT THE CALLERS DID, AND WHY IT LOST. `/billing/verify` and the webhook each ran
+    `SELECT id FROM credit_events WHERE payment_ref = ?`, and if it came back empty, granted.
+    Under READ COMMITTED, with no lock, two concurrent requests both read empty and both
+    insert — and the window between the read and the write is not small: `/verify` makes a
+    live HTTP call to Razorpay inside it, roughly 300ms. `/verify` also has no rate limit. So
+    an authenticated buyer could purchase one item and then fire the same
+    payment_id/order_id/signature at `/verify` twenty times in parallel; every one passes the
+    signature check, every one reads an empty ledger, and every one commits its own grant. The
+    index on `payment_ref` is not unique, so nothing at the database stopped it either.
+
+    It also double-credited HONEST customers. The webhook and `/verify` fire within
+    milliseconds of the same capture and did not serialise against each other, so whichever
+    lost the race still granted.
+
+    THE LOCK, NOT A UNIQUE INDEX. A partial unique index on `payment_ref` is the other correct
+    answer and is a better long-term shape — but it needs a migration, and a migration that
+    fails on pre-existing duplicates fails the deploy. Locking the user's `user_plans` row is
+    the pattern `consume` already uses for exactly this reason, needs no schema change, and is
+    sufficient: a payment belongs to one user (ownership is checked before we get here), so
+    two grants for one `payment_ref` are always two requests for the same user and always take
+    the same lock. The index is worth adding later, without launch pressure, as belt and
+    braces.
+
+    Grants with NO `payment_ref` — admin goodwill, a refund — are not deduplicated, because
+    there is nothing to deduplicate on and two acts of goodwill are two grants. They still take
+    the lock, so they cannot interleave with a purchase for the same account.
     """
     if quantity <= 0:
         raise ValueError("grant quantity must be positive")
+
+    # Serialises every grant for this user against every other. Must come BEFORE the
+    # duplicate check, or the check races exactly as the callers' versions did.
+    await _plan_row(db, user_id, lock=True)
+
+    if payment_ref:
+        already = await db.scalar(
+            select(CreditEvent.id).where(CreditEvent.payment_ref == payment_ref).limit(1)
+        )
+        if already is not None:
+            # Not an error. Razorpay redelivers until it gets a 2xx, and a client that retries
+            # a verify is doing something reasonable — so the honest response is "already
+            # applied", and the caller returns success without granting twice.
+            logger.info(
+                "credit_grant_already_applied",
+                user_id=str(user_id),
+                payment_ref=payment_ref,
+                feature=feature,
+            )
+            return False
     db.add(
         CreditEvent(
             created_at=datetime.now(UTC),
@@ -344,6 +393,7 @@ async def grant(
         )
     )
     await db.flush()
+    return True
 
 
 class AccountBannedError(AppError):
