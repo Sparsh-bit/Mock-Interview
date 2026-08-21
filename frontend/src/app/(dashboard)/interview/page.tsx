@@ -3,12 +3,15 @@
 import { useInterview } from '@/hooks/useInterview';
 import { useTracks, usePrimaryResume } from '@/hooks/useData';
 import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2 } from 'lucide-react';
-import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { CreditMeter } from '@/components/billing/CreditMeter';
+import { DriveCTA } from '@/components/DriveCTA';
+import { parseIsTechnical } from '@/lib/interview/drive';
+import { FOCUS_SUGGESTIONS, addFocusTerm, focusMentions } from '@/lib/interview/focus';
 import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
@@ -28,6 +31,28 @@ function InterviewSetup() {
   // Carried over from /prepare so picking a target company there lands here with
   // the field already filled — otherwise the candidate chooses twice.
   const requestedCompany = searchParams.get('company');
+  /*
+   * THE REST OF THE DEEP LINK, so a drive-specific entry point can hand over a fully decided
+   * setup instead of a half-filled one.
+   *
+   * `program` is the load-bearing one. `syllabus.resolve(company, program)` keys on these two
+   * strings and takes no track id, by explicit design — so a link that names the company but
+   * not the program lands on the fallback path and the candidate gets the generic plan.
+   *
+   * `focus` is spelled `focus` here and held in state called `prompt` and sent on the wire as
+   * `prompt`, while the backend's own orchestrator calls the argument `focus`. Three names for
+   * one thing, and the URL is the half that a human reads and a support log records, so it
+   * takes the name the backend and the docs use. That mismatch is a trap; it is named here
+   * rather than silently inherited.
+   */
+  const requestedProgram = searchParams.get('program');
+  const requestedFocus = searchParams.get('focus');
+  const requestedTechnical = parseIsTechnical(searchParams.get('isTechnical'));
+  const requestedAutostart = searchParams.get('autostart') === '1';
+  // Any deep link at all. Used to hide the drive shortcut below — offering a link to the page
+  // you are already standing on, pre-filled the way it is already pre-filled, is noise.
+  const arrivedFromDeepLink =
+    !!requestedTrackId || !!requestedCompany || !!requestedProgram || requestedAutostart;
 
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [company, setCompany] = useState('');
@@ -61,6 +86,20 @@ function InterviewSetup() {
    */
   const [isTechnical, setIsTechnical] = useState<boolean | null>(null);
   const [program, setProgram] = useState('');
+  /*
+   * HAS THE CANDIDATE TYPED THEIR OWN PROGRAM?
+   *
+   * A ref rather than state because nothing renders differently because of it — it only decides
+   * whether the derivation effect below is allowed to write. Once they have typed, it never
+   * writes again: a hand-typed role is a stronger signal than anything a chip can infer, and
+   * silently overwriting what somebody typed is the worst outcome available here.
+   *
+   * Note that this is deliberately NOT symmetrical with the company/program text boxes, which
+   * clear each other. Clicking a company chip after typing a program keeps the typed program.
+   * That is on purpose — typing is the stronger statement — but it is a judgement, not an
+   * oversight, and it is written down here so the next person changes it on purpose too.
+   */
+  const programTouched = useRef(false);
   const [prompt, setPrompt] = useState('');
   const [resumeText, setResumeText] = useState('');
   // Shown so a blank box does not look like opting out of personalisation.
@@ -73,13 +112,89 @@ function InterviewSetup() {
   }, [requestedCompany]);
 
   useEffect(() => {
+    if (requestedProgram) {
+      // Treated as typed, not derived: the link author named the program explicitly, and the
+      // derivation effect below must not later overwrite it with a track name that happens to
+      // differ.
+      programTouched.current = true;
+      setProgram((p) => p || requestedProgram);
+    }
+  }, [requestedProgram]);
+
+  // The focus box. `p || …` so a candidate who has started typing is never overwritten by a
+  // late re-run — the param is a starting point, not an instruction.
+  useEffect(() => {
+    if (requestedFocus) setPrompt((p) => p || requestedFocus);
+  }, [requestedFocus]);
+
+  // Only ever applied when the param parsed to one of the two literals. A malformed or absent
+  // param leaves this at `null`, which is "work it out from the role" — today's behaviour — so
+  // a mangled share link degrades to a guess rather than asserting the wrong answer and
+  // removing the code editor from a Java FSE interview.
+  useEffect(() => {
+    if (requestedTechnical !== null) setIsTechnical(requestedTechnical);
+  }, [requestedTechnical]);
+
+  useEffect(() => {
     if (!tracks || tracks.length === 0 || selectedTrackId) return;
     if (requestedTrackId && tracks.some((t) => t.id === requestedTrackId)) {
       setSelectedTrackId(requestedTrackId);
-    } else {
-      setSelectedTrackId(tracks[0].id);
+      return;
     }
-  }, [tracks, selectedTrackId, requestedTrackId]);
+    /*
+     * `?company=` WITHOUT A trackId MUST NOT FALL THROUGH TO tracks[0].
+     *
+     * It did, and the result was a live bug on the /prepare CTA. `/api/v1/questions/tracks`
+     * orders by `InterviewTrack.name` across ALL companies, so `tracks[0]` is the
+     * alphabetically first program name in the whole catalogue — "Advanced ASE", which is
+     * Accenture's. Because a deep link leaves `customSetup` false, the backend reads that
+     * carrier track as a real choice, and `_must_cover_block` built Accenture's must-cover
+     * topics while the prompt said Cognizant. Same class of mismatch as the one the long
+     * comment above `customSetup` was written for, arriving by a different door.
+     *
+     * So: match the requested company by name before giving up. Case-insensitively, because
+     * the param is written by hand as often as it is generated.
+     */
+    if (requestedCompany) {
+      const wanted = requestedCompany.trim().toLowerCase();
+      const match = tracks.find((t) => t.company.name.trim().toLowerCase() === wanted);
+      if (match) {
+        setSelectedTrackId(match.id);
+        return;
+      }
+    }
+    setSelectedTrackId(tracks[0].id);
+  }, [tracks, selectedTrackId, requestedTrackId, requestedCompany]);
+
+  /*
+   * THE PROGRAM IS DERIVED FROM WHICHEVER TRACK IS SELECTED. THIS IS THE FIX THAT MATTERS.
+   *
+   * `program` used to be written by exactly one thing: the text input near the bottom of this
+   * form. Neither the company chip nor the program chip set it. So the ordinary catalogue path
+   * — click Cognizant, click "Digital Nurture — Java FSE", press Build — put `program: ""` on
+   * the wire. The one gesture that unambiguously names the program threw that fact away.
+   *
+   * That was invisible until the backend grew a per-program syllabus. `syllabus.resolve` keys
+   * on (company, program) and takes NO track id, deliberately, so that a leftover carrier track
+   * can never reach the decision. Which means an empty program resolves to None, which means
+   * the fallback path, which means the Cognizant field research — the areas, the weightings,
+   * the cross-question themes — was authored, imported, validated and then never once consulted
+   * for any candidate who clicked rather than typed.
+   *
+   * One derivation here rather than a `setProgram` in each of the two chip handlers: two writers
+   * of one field is how they drift, and this also covers every existing entry point into the
+   * page (the dashboard link, the tracks grid, /prepare, the drive card) without touching any
+   * of them. The DB track name is literally "Digital Nurture — Java FSE", which slugifies to
+   * the exact key the syllabus index holds.
+   *
+   * Skipped on a custom setup, where the catalogue track is a foreign-key carrier and its name
+   * is not the role; and skipped once the candidate has typed, per `programTouched`.
+   */
+  useEffect(() => {
+    if (customSetup || programTouched.current) return;
+    const selected = (tracks ?? []).find((t) => t.id === selectedTrackId);
+    if (selected) setProgram(selected.name);
+  }, [tracks, selectedTrackId, customSetup]);
 
   // Tracks grouped by company: the picker is company-first, and the flat list is
   // 24 items long now that every catalogue company is interviewable.
@@ -126,12 +241,30 @@ function InterviewSetup() {
     // catalogue entry to fall back on, so a blank role leaves the interview with nothing to
     // be about — which is precisely when it reaches for the leftover track.
     if (customSetup && !program.trim()) return;
+    /*
+     * THE PROGRAM THAT GOES ON THE WIRE, DECIDED HERE RATHER THAN TRUSTED FROM STATE.
+     *
+     * The effect above keeps the visible box in step with the selected track, and that is the
+     * half the candidate can see and edit. This is the guarantee. It exists because the effect
+     * can be legitimately out of step — somebody types a program, clears the box again, and the
+     * effect has no reason to re-run because none of its dependencies moved — and "the box
+     * looks empty so we sent nothing" is exactly the failure that made the whole Cognizant
+     * syllabus dead code in the first place.
+     *
+     * Applying the same rule at the send site is not a second source of truth: blank plus a
+     * catalogue track means the track's name, because on a catalogue track the track name IS
+     * the program. On a custom setup it stays blank, because there the track is a foreign-key
+     * carrier and its name is some other company's job title — which is precisely the confusion
+     * `custom_setup` exists to prevent.
+     */
+    const selectedTrack = (tracks ?? []).find((t) => t.id === selectedTrackId);
+    const effectiveProgram = program.trim() || (customSetup ? '' : selectedTrack?.name ?? '');
     setPaywall(null);
     createPlan.mutate(
       {
         trackId: carrierTrackId,
         company,
-        program,
+        program: effectiveProgram,
         prompt,
         resumeText,
         customSetup,
@@ -151,6 +284,59 @@ function InterviewSetup() {
       }
     );
   };
+
+  /*
+   * AUTOSTART — ONE CLICK FROM THE DRIVE CARD, AND AT MOST ONE CHARGE.
+   *
+   * `?autostart=1` says "submit this form for me". It is honoured only when every condition for
+   * a GOOD interview already holds, and it fires at most once per mount. Both of those are
+   * about money, not tidiness.
+   *
+   * POST /api/v1/interview/plan calls `consume(db, user_id, "interview")` BEFORE it generates
+   * anything, and the endpoint is rate-limited. So each fire spends one of a free user's two
+   * interviews whether or not the candidate ever reads the plan. Without the ref, this effect
+   * re-runs whenever `usePrimaryResume` refetches — on window focus, on reconnect — and buys a
+   * second interview; and a browser refresh of a shared link buys a third. A link passed around
+   * a placement WhatsApp group would empty an allowance in a couple of taps.
+   *
+   * THE RESUME GATE IS NOT COSMETIC. The server does not require a resume; it quietly falls
+   * back to the generic question set when there is none. So an ungated autostart would not
+   * fail — it would succeed, silently spend a paid interview, and hand back the worst version
+   * of the product to somebody whose first impression it is. When there is no resume this
+   * effect does nothing at all: no spinner, no toast, no charge. The candidate simply lands on
+   * a form that is already filled in except for the one field only they can supply, with the
+   * explanation already beside it.
+   *
+   * The `plan` and `paywall` guards stop it re-firing behind the two screens that render
+   * INSTEAD of this form: re-submitting under a plan the candidate is still reading would throw
+   * their plan away, and re-submitting under a paywall would buy a second refusal.
+   */
+  const autostarted = useRef(false);
+  useEffect(() => {
+    if (!requestedAutostart || autostarted.current) return;
+    if (!selectedTrackId || !hasResume) return;
+    if (createPlan.isPending || plan || paywall) return;
+    // A deep link is always a catalogue path — nothing in a URL sets `customSetup`, only typing
+    // an employer does. So this being true means the candidate started editing the form while
+    // the resume query was still in flight, and they have taken over. Bailing WITHOUT burning
+    // the one-shot ref matters: `handleGenerate` refuses a custom setup with a blank role, so
+    // arming the ref here would spend the autostart on a call that returns immediately and
+    // leave the link looking like it did nothing.
+    if (customSetup) return;
+    autostarted.current = true;
+    handleGenerate();
+    // `handleGenerate` is intentionally absent from the dependency list. It is rebuilt on every
+    // render, so including it would re-run this effect on every keystroke — and the deps that
+    // ARE listed are the readiness conditions, which is what this effect is actually watching.
+    // The one-shot ref makes re-entry impossible either way; this is about not pretending the
+    // dependency list means something it does not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAutostart, selectedTrackId, hasResume, createPlan.isPending, plan, paywall, customSetup]);
+
+  // Appends through the functional form of setState rather than reading `prompt` from the
+  // closure, so two fast taps on two chips both land — the second would otherwise be computed
+  // from the pre-first-tap text and silently drop the first.
+  const addFocus = (term: string) => setPrompt((current) => addFocusTerm(current, term));
 
   const handleStart = () => {
     if (!plan) return;
@@ -252,6 +438,11 @@ function InterviewSetup() {
           setup form and only then learns they have no interviews left has lost the one thing
           they came with. */}
       <CreditMeter />
+      {/* The drive shortcut, for somebody who walked to the generic setup form without knowing
+          there was a one-click path to the interview they are actually sitting. Hidden when any
+          deep-link param is present, because in that case this IS the pre-filled page and the
+          card would be a link to where you already are. */}
+      {!arrivedFromDeepLink && <DriveCTA />}
       <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
         <div className="mb-8">
           <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Start a New Mock Interview</h1>
@@ -402,6 +593,13 @@ function InterviewSetup() {
                 if (next.trim()) {
                   setCustomSetup(true);
                   setSelectedTrackId('');
+                  // AND DROP A PROGRAM THAT WAS DERIVED RATHER THAN TYPED. The box is now
+                  // showing the catalogue track's name — "Digital Nurture — Java FSE" — beside
+                  // a company called Morani Plastics, which is the same two-answers-at-once
+                  // confusion the chips deselect to avoid, and it would sail past the
+                  // custom-setup required check because the field is not empty. A typed program
+                  // is kept: that one the candidate meant.
+                  if (!programTouched.current) setProgram('');
                 } else {
                   setCustomSetup(false);
                 }
@@ -422,7 +620,13 @@ function InterviewSetup() {
             </label>
             <input
               value={program}
-              onChange={(e) => setProgram(e.target.value)}
+              onChange={(e) => {
+                // Typing here retires the derivation effect for the rest of the session. Set
+                // before the state write so it is already true when the effect next considers
+                // running; a ref, so this does not itself schedule a render.
+                programTouched.current = true;
+                setProgram(e.target.value);
+              }}
               placeholder={
                 customSetup ? 'e.g. Sales Executive, HR Generalist, Analyst…' : 'e.g. GenC, GenC Next, Java FSE…'
               }
@@ -442,18 +646,75 @@ function InterviewSetup() {
           </div>
         </div>
 
-        {/* Free prompt */}
+        {/* ── The focus box ────────────────────────────────────────────────
+            IT WAS LABELLED "Anything specific?" AND READ LIKE A COMMENT CARD.
+
+            A candidate filled it in with the topics they were weakest on, sat the interview,
+            and was asked about none of them — so they reported that the box does nothing.
+            Half of that was the backend, which is being fixed separately. The other half is
+            this surface, and it was two failures of its own.
+
+            First, the label asked a question rather than making a promise. "Anything specific?"
+            is what a form says when it is collecting free-text feedback nobody will read; it
+            never claimed the words would change the interview, so there was nothing to hold it
+            to. The label now says what the box DOES.
+
+            Second — and this is the part that made the box hard to use even when it worked — a
+            blank textarea with one example in the placeholder gave no clue which vocabulary
+            lands. The backend matches a named topic against the areas and sub-topics of the
+            resolved syllabus; a term it recognises pulls plan slots towards that area, and a
+            term it does not recognise is simply passed to the panel as prose. Those two
+            outcomes are invisibly different from here. The chips are the recognised vocabulary,
+            made visible and one tap away, so the common case stops being a guess.
+
+            THE CHIPS ARE THE SIX AREAS THE SYLLABUS ACTUALLY HAS. Project and HR are not
+            among them on purpose: they are covered in every technical interview regardless
+            (they are separate stages, not weighted areas), so offering them as a "focus" would
+            promise a steer that has nothing to steer. The note under the box says so rather
+            than leaving their absence to be read as an omission. */}
         <div className="mb-5">
-          <label className="mb-1.5 block text-sm font-medium">
-            Anything specific? <span className="text-muted-foreground">(optional)</span>
+          <label className="mb-1.5 block text-sm font-medium" htmlFor="focus-box">
+            Topics you want the panel to push on{' '}
+            <span className="text-muted-foreground">(optional)</span>
           </label>
+          <p className="mb-2.5 text-xs text-muted-foreground">
+            Name an area and more of the round goes there — it does not replace the rest of the
+            interview, it changes the balance. Tap to add, or write it your own way.
+          </p>
+          <div className="mb-2.5 flex flex-wrap gap-1.5">
+            {FOCUS_SUGGESTIONS.map((term) => {
+              const added = focusMentions(prompt, term);
+              return (
+                <button
+                  key={term}
+                  type="button"
+                  disabled={added}
+                  onClick={() => addFocus(term)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    added
+                      ? 'cursor-default border-primary/30 bg-primary/10 text-primary'
+                      : 'border-border/60 bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                  )}
+                >
+                  {added ? '✓ ' : '+ '}
+                  {term}
+                </button>
+              );
+            })}
+          </div>
           <textarea
+            id="focus-box"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={2}
-            placeholder="e.g. Focus on Spring Boot and SQL; I struggle with multithreading."
+            placeholder="e.g. OOP cross-questions and SQL joins; I am weakest on multithreading."
             className="w-full resize-none rounded-xl border border-border/50 bg-surface-elevated px-4 py-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Leave it blank for the full spread of the real round. Your project and the HR
+            questions are asked either way.
+          </p>
         </div>
 
         {/* Resume.

@@ -12,10 +12,12 @@ import {
 import { personaFor } from '@/lib/speech/persona';
 import {
   BROWSER_TONE,
-  fetchTTSStatus,
   fetchUtterance,
+  neuralOff,
   playBlob,
   prefetchUtterance,
+  resetSpeechRound,
+  ttsStatusOnce,
   type SpeechTone,
 } from '@/lib/speech/neural-tts';
 import { shapingFor, toProsodyChunks } from '@/lib/speech/prosody';
@@ -554,6 +556,38 @@ export function useSpeechSynthesis() {
  * `speakingNow` is the name of whoever currently holds the floor, which the UI
  * uses to show who is talking — and, by being null, who is listening.
  */
+/**
+ * What this round decided about voices. Resolved once, then never revisited.
+ *
+ * It is a plan rather than a boolean because there are three separate questions and they have
+ * different answers: is neural speech on at all, which vendor is it (for the UI to say so),
+ * and which individual speakers have a voice id on the server. Collapsing them into one flag
+ * is what made a partly-configured panel behave as though it were fully broken, one 503 at a
+ * time.
+ */
+type RoundVoicePlan = {
+  neural: boolean;
+  provider: string | null;
+  /**
+   * Lowercased names of speakers the server can voice, or null for "the server told us
+   * nothing about individual speakers, so try everyone" — see resolveRoundVoice.
+   */
+  neuralSpeakers: Set<string> | null;
+};
+
+/**
+ * Longest the browser path will wait for the real voice list before speaking anyway.
+ *
+ * Only the BROWSER path ever waits: it is the only one that reads voiceMap, so a round on
+ * neural audio pays nothing for this. And the wait overlaps the speaker's handover beat
+ * (90-970ms), so in practice most of it is already being spent on silence that has to happen
+ * regardless.
+ *
+ * The alternative to waiting is not "speak sooner", it is "speak in the wrong voice and then
+ * change" — which is the flip this fix exists to remove.
+ */
+const ALLOCATION_WAIT_MS = 1200;
+
 export function usePanelVoices(
   panel: Array<{ name: string; gender: string; stance?: string }>,
 ) {
@@ -582,10 +616,29 @@ export function usePanelVoices(
    */
   const genRef = useRef(0);
 
-  //: Is server-side neural speech available for this round? Probed ONCE — asking per
-  //: utterance would add a round trip to every contribution to learn something that does
-  //: not change mid-round.
-  const neuralRef = useRef(false);
+  /**
+   * THE ROUND'S VOICE IDENTITY, AS A PROMISE RATHER THAN A FLAG.
+   *
+   * THE BUG, reported verbatim: "in the starting of the interview the voices changes and then
+   * it changed again to the old voices."
+   *
+   * This used to be `const neuralRef = useRef(false)`, written once, optimistically, from a
+   * fire-and-forget effect — and read fresh on every single utterance. Two failures came out
+   * of that one line:
+   *
+   *   THE FIRST LINE RACED THE PROBE. Nothing awaited the fetch, so the greeting read `false`,
+   *   spoke on browser voices, and by the second line the probe had landed and the panel
+   *   switched to Fish. "The voices changes."
+   *
+   *   AND NOTHING LATCHED. The ref was never written false by any failure, so a single 402 or
+   *   503 downgraded ONE line and left the next one trying again. "And then it changed again
+   *   to the old voices" — over and over, for the rest of the interview.
+   *
+   * A promise fixes both, because it is the only shape that can be AWAITED by the thing that
+   * needs the answer. Resolved once per round, before anybody speaks; the degrade latch in
+   * neural-tts.ts makes what happens after monotonic.
+   */
+  const planRef = useRef<Promise<RoundVoicePlan> | null>(null);
   //: The audio element currently playing, so cancelAll can stop it. Browser speech is
   //: cancelled through speechSynthesis.cancel(); an <audio> element is not.
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -608,29 +661,110 @@ export function usePanelVoices(
    */
   const stanceOf = useMemo(() => new Map(panel.map((p) => [p.name, p.stance])), [panel]);
 
-  /**
-   * Ask the server once whether neural speech is on for this round.
-   *
-   * Once, not per utterance: a round is up to 40 contributions and the answer does not
-   * change mid-round, so probing each time would add a round trip to every one of them to
-   * learn something already known. If it says no — off, unconfigured, or budget spent —
-   * every utterance goes straight to speechSynthesis with no wasted attempt.
-   *
-   * `enabled` already folds in the budget, so this also means a round that starts with the
-   * budget spent never tries.
-   */
   const [neuralProvider, setNeuralProvider] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void fetchTTSStatus().then((status) => {
-      if (cancelled) return;
-      neuralRef.current = !!status?.enabled;
-      setNeuralProvider(status?.enabled ? status.provider : null);
+
+  /**
+   * Ask the server ONCE whether neural speech is on for this round, and hand every caller the
+   * same answer.
+   *
+   * Once, not per utterance: a round is up to 40 contributions and the answer does not change
+   * mid-round, so probing each time would add a round trip to every one of them to learn
+   * something already known. If it says no — off, unconfigured, or budget spent — every
+   * utterance goes straight to speechSynthesis with no wasted attempt. `enabled` already folds
+   * in the budget, so a round that starts with the budget spent never tries.
+   *
+   * What is new is that the answer is a promise the callers AWAIT rather than a ref they
+   * happen to read. The memoization lives in ttsStatusOnce, so even the request is shared;
+   * this wrapper only turns the raw status into the decision the speech path actually needs.
+   *
+   * AND IT IS THE FIRST CONSUMER TTSStatus.voices HAS EVER HAD. The server has always reported
+   * which speakers have a voice id configured, per name, precisely so a partly-configured
+   * panel degrades one voice at a time — and the client fetched that map and dropped it on the
+   * floor. Every line for an unvoiced speaker therefore went out, 503'd, and fell back, which
+   * is a permanent per-speaker oscillation with a round trip attached to each flip. Reading it
+   * here means an unvoiced speaker is on browser voices from their first word and stays there,
+   * while the speakers who do have voices keep them.
+   */
+  const resolveRoundVoice = useCallback((): Promise<RoundVoicePlan> => {
+    planRef.current ??= ttsStatusOnce().then((status) => {
+      const listed = Object.entries(status?.voices ?? {});
+      const plan: RoundVoicePlan = {
+        neural: !!status?.enabled,
+        provider: status?.enabled ? status.provider : null,
+        /*
+         * null, not an empty Set, when the server listed nothing.
+         *
+         * An empty map and a map of all-false mean opposite things. A backend older than the
+         * per-speaker field, or one that grew a speaker this deploy's status route does not
+         * know about, would otherwise silently put a perfectly working panel on browser voices
+         * — a worse regression than the bug being fixed. So "no information" means try
+         * everyone, and a speaker who turns out to have no voice id 503s once and latches the
+         * round, which is still consistent even though it is not optimal.
+         */
+        neuralSpeakers: listed.length
+          ? new Set(listed.filter(([, ok]) => ok).map(([name]) => name.toLowerCase()))
+          : null,
+      };
+      setNeuralProvider(plan.provider);
+      return plan;
     });
-    return () => {
-      cancelled = true;
-    };
+    return planRef.current;
   }, []);
+
+  /**
+   * A mounted panel hook IS a round, so this is where a round begins.
+   *
+   * resetSpeechRound clears the module-scope probe memo and the degrade latch in
+   * neural-tts.ts. Doing it on mount rather than asking the page to remember is what makes
+   * "one round" true for the second interview taken in a tab as well as the first: those
+   * module-level values survive client-side navigation, so without this a single 402 in one
+   * interview would put every subsequent interview on browser voices with nothing in the code
+   * having changed.
+   *
+   * The probe is then kicked off immediately — not awaited here — so it is already in flight
+   * by the time the first utterance awaits it, exactly as it was before. The difference is
+   * only that somebody now waits for the answer.
+   */
+  useEffect(() => {
+    resetSpeechRound();
+    void resolveRoundVoice();
+  }, [resolveRoundVoice]);
+
+  /**
+   * How far this panel's browser-voice allocation has got. See planPanelAllocation.
+   *
+   * A ref, not state: it is read inside the poll callback below, which is created once per
+   * panel and would otherwise close over a stale value and re-commit forever.
+   */
+  const stageRef = useRef<AllocationStage>('none');
+  /**
+   * Resolves when the real voice list has been allocated — or at the cap, whichever is first.
+   *
+   * THE SECOND FLIP, and the one that is guaranteed rather than racy, so it is probably what
+   * the user actually heard. `getVoices()` is empty until the engine has enumerated its
+   * voices, so the first allocation of an interview is frequently the pitch-only fallback: the
+   * engine default voice at 0.86 for a man and 1.14 for a woman, which on macOS is a
+   * pitched-down Samantha for Anil. Seconds later the real list arrives and Anil becomes an
+   * actual male voice. Nothing to do with neural TTS at all — that flip happened on every
+   * browser-voice interview, every time.
+   *
+   * So the first utterance waits for the allocation the same way it waits for the neural
+   * probe: bounded, once, and then it speaks in whatever identity was settled on.
+   */
+  const allocationRef = useRef<Promise<void> | null>(null);
+  /**
+   * The live voice map, for speakAs to read at the moment it speaks rather than at the moment
+   * it was built.
+   *
+   * speakAs is a useCallback, and it used to list `voiceMap` as a dependency — so a turn
+   * already queued and awaiting its handover beat was speaking through the map that existed
+   * when it was created. With the allocation now latched that window is small, but "small" is
+   * not the contract: the whole point is that a line cannot be spoken in an identity the round
+   * has already moved on from. A ref removes the window rather than shrinking it, and it drops
+   * a dependency that changed identity mid-turn.
+   */
+  const voiceMapRef = useRef(voiceMap);
+  voiceMapRef.current = voiceMap;
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window) || !panel.length) return;
@@ -640,35 +774,62 @@ export function usePanelVoices(
       gender: p.gender === 'male' || p.gender === 'female' ? p.gender : 'unknown',
     }));
 
+    // A genuinely different panel must reallocate from scratch — this is the only thing that
+    // reopens the latch, and it is keyed on panelKey, which is names and genders only. Editing
+    // a stance deliberately does not reach here; that would change everyone's voice mid-round
+    // for a change that has nothing to do with voices.
+    stageRef.current = 'none';
+    let settleAllocation: () => void = () => {};
+    const realAllocation = new Promise<void>((resolve) => {
+      settleAllocation = resolve;
+    });
+    // Capped, because an engine with genuinely no usable voices never settles the promise and
+    // the first line must still be spoken. The cost of the cap is that a very slow enumeration
+    // can still be beaten by the first utterance — but the pitch-only fallback it would speak
+    // through is a deliberate, gender-anchored identity rather than the empty map that used to
+    // put the whole panel in one default voice.
+    allocationRef.current = Promise.race([realAllocation, sleep(ALLOCATION_WAIT_MS)]);
+
     /**
-     * Commit an allocation, and say whether the real voice list was available.
+     * Commit an allocation if this trigger has anything new to say, and report whether the
+     * real voice list has landed.
      *
-     * THE BUG THIS FIXES. This used to be `if (!available.length) return;` — so when the
-     * voice list was not ready, voiceMap stayed EMPTY. speakAs then read
-     * `assigned?.pitch ?? 1` and every panelist got pitch 1.0 and no voice, meaning all
-     * three spoke in the browser's default voice at the same pitch. On macOS that default
-     * is Samantha, so Arjun sounded female too — the panel was one woman reading three
-     * name tags, which is the exact failure this whole layer exists to prevent.
+     * THE FIRST BUG THIS FIXES, which shipped. This used to be `if (!available.length)
+     * return;` — so when the voice list was not ready, voiceMap stayed EMPTY. speakAs then
+     * read `assigned?.pitch ?? 1` and every panelist got pitch 1.0 and no voice, meaning all
+     * three spoke in the browser's default voice at the same pitch. On macOS that default is
+     * Samantha, so Arjun sounded female too — the panel was one woman reading three name
+     * tags, which is the exact failure this whole layer exists to prevent. And
+     * allocatePanelVoices' no-voices branch, which assigns gender-anchored pitches (0.86 male
+     * / 1.14 female) precisely for this case, was UNREACHABLE from here: it had a passing unit
+     * test, which is why nothing caught it. The fallback worked, it just could never be
+     * triggered. So an allocation is always committed.
      *
-     * And allocatePanelVoices' no-voices branch, which assigns gender-anchored pitches
-     * (0.86 male / 1.14 female) precisely for this case, was UNREACHABLE from here. It has
-     * a passing unit test, which is why nothing caught it: the fallback worked, it just
-     * could never be triggered.
+     * THE SECOND BUG, which is the reported one. This function has three triggers — the
+     * immediate call, the 250ms poll and the `voiceschanged` listener — and it used to REPLACE
+     * the map wholesale on every successful call. `allocatePanelVoices` sorts its input by
+     * scoreVoice, and Chrome appends its network "Google …" voices (qualityTier 800) AFTER the
+     * local ones (10) on a later `voiceschanged`. So the pool reordered and Anil and Priya
+     * were reassigned to entirely different voices, mid-interview, with nothing having failed.
      *
-     * So an allocation is always committed. With no voices that is pitch-only, which is
-     * degraded but still three distinguishable people.
+     * The decision of what to commit is now planPanelAllocation, which is pure and tested
+     * against exactly that three-step sequence. All this closure does is apply it.
      */
     const allocate = (): boolean => {
-      const available = window.speechSynthesis.getVoices();
-      if (available.length) {
-        setVoiceMap(allocatePanelVoices(available, speakers));
-        return true;
+      const decision = planPanelAllocation(
+        stageRef.current,
+        window.speechSynthesis.getVoices(),
+        speakers,
+      );
+      if (decision) {
+        stageRef.current = decision.stage;
+        setVoiceMap(decision.map);
       }
-      // Pitch-only fallback, committed once. The functional form matters: this runs on
-      // every poll tick below, and unconditionally setting a fresh Map would re-render
-      // forever.
-      setVoiceMap((prev) => (prev.size ? prev : allocatePanelVoices([], speakers)));
-      return false;
+      if (stageRef.current !== 'real') return false;
+      // Release the first utterance. Idempotent — a resolved promise cannot be re-resolved —
+      // which matters because the poll and the event can both land after the latch closed.
+      settleAllocation();
+      return true;
     };
 
     if (allocate()) return;
@@ -770,12 +931,38 @@ export function usePanelVoices(
 
       const run = async () => {
         if (!live()) return;
-        const assigned = voiceMap.get(speaker);
-        const all = window.speechSynthesis.getVoices();
-        const chosen = assigned?.voiceURI
-          ? (all.find((v) => v.voiceURI === assigned.voiceURI) ?? null)
-          : null;
         const persona = personaFor(stanceOf.get(speaker));
+
+        /*
+         * WHICH VOICE THIS ROUND USES IS DECIDED BEFORE THE FIRST WORD, NOT DISCOVERED DURING IT.
+         *
+         * This await is the fix for "in the starting of the interview the voices changes". The
+         * neural probe used to be read from a ref that an async effect had not written yet, so
+         * the greeting spoke on browser voices and everything after it spoke on Fish — the
+         * voice of the interview changed one sentence in, for no reason the candidate could
+         * see. Awaiting means the decision exists before there is any sound to be inconsistent
+         * with.
+         *
+         * It cannot hang and it cannot cost anything perceptible; both properties are proved
+         * in the comment on ttsStatusOnce, and neither is an assumption about the network.
+         */
+        const plan = await resolveRoundVoice();
+        // A new suspension point, and cancelAll can land inside any of them. Without this
+        // check a panelist cancelled while the probe was in flight would wake up and talk over
+        // the candidate — the same lesson as the lead-in sleep below.
+        if (!live()) return;
+
+        /*
+         * `neuralOff()` is the round's degrade latch, not a per-line retry. Once it is true it
+         * stays true, so this expression can go from neural to browser exactly once in a round
+         * and never back — which is the whole no-oscillation guarantee, expressed here.
+         *
+         * `neuralSpeakers` is per speaker: an interviewer the server has no voice id for is on
+         * browser voices from their first line while the rest of the panel keeps theirs, rather
+         * than 503-ing once per line forever.
+         */
+        const useNeural =
+          plan.neural && !neuralOff() && (plan.neuralSpeakers?.has(speaker.toLowerCase()) ?? true);
 
         /*
          * THE BEAT BEFORE SPEAKING.
@@ -832,13 +1019,24 @@ export function usePanelVoices(
          */
         const spoken = toSpokenForm(text);
 
-        const audioPromise = neuralRef.current
-          ? fetchUtterance(speaker, text, opts.tone)
-          : null;
+        const audioPromise = useNeural ? fetchUtterance(speaker, text, opts.tone) : null;
 
         setTakingFloor(speaker);
-        if (leadIn > 0) {
-          await sleep(leadIn);
+        /*
+         * THE HANDOVER BEAT AND THE VOICE-LIST WAIT ARE SPENT TOGETHER, NOT ONE AFTER THE OTHER.
+         *
+         * Same trick as starting the vendor fetch before the pause: the browser path has to
+         * know its voice before it speaks, and it also has to wait a persona-length beat before
+         * it speaks. Running both at once means a 520ms lead-in pays for 520ms of the voice
+         * enumeration for free, and the cap is only ever reached by a browser that is genuinely
+         * still thinking about it.
+         *
+         * Only the browser path waits. The neural path never reads voiceMap, so making it wait
+         * would be pure latency for nothing.
+         */
+        const allocationGate = useNeural ? null : allocationRef.current;
+        if (leadIn > 0 || allocationGate) {
+          await Promise.all([allocationGate, leadIn > 0 ? sleep(leadIn) : null]);
           // speechSynthesis.cancel() cannot stop an utterance that has not been
           // queued yet, so this check is the ONLY thing standing between a
           // cancelled panelist and talking over the candidate.
@@ -852,6 +1050,29 @@ export function usePanelVoices(
         if (!live()) {
           setTakingFloor(null);
           return;
+        }
+
+        /*
+         * THE LINE THAT TRIGGERS THE DEGRADE IS THE ONE MOST LIKELY TO BE SPOKEN WRONG.
+         *
+         * Neural was attempted and came back with nothing, so the latch has just closed and
+         * this line — right now, not the next one — is on the browser path. It skipped the
+         * allocation gate above, because a neural line has no reason to wait for a voice list it
+         * will never read. Without this it would speak through whatever voiceMap happened to
+         * hold, and the flip would survive in miniature at precisely the moment the round
+         * changes identity: one line in the engine default, everything after it in the real
+         * allocation.
+         *
+         * Usually free — the vendor round trip it just spent is longer than the enumeration this
+         * waits for, so the promise is already resolved. `takingFloor` is deliberately still set
+         * across it, which reads as somebody drawing breath rather than as a stall.
+         */
+        if (!blob && useNeural && allocationRef.current) {
+          await allocationRef.current;
+          if (!live()) {
+            setTakingFloor(null);
+            return;
+          }
         }
 
         setTakingFloor(null);
@@ -914,6 +1135,21 @@ export function usePanelVoices(
         // matters most, since that is the path a spent budget puts everyone on.
         const toneShape = BROWSER_TONE[opts.tone ?? 'neutral'] ?? BROWSER_TONE.neutral;
 
+        /*
+         * RESOLVED HERE, AFTER THE GATE, AND FROM THE REF.
+         *
+         * These two lines used to sit at the top of `run`, which meant a queued turn read the
+         * allocation as it was when the turn was QUEUED — before the voice list had arrived, on
+         * the first turn of every interview. Reading them after the allocation gate, through
+         * voiceMapRef rather than a captured value, is what makes "who sounds like whom" a
+         * property of the round rather than of when a line happened to be enqueued.
+         */
+        const assigned = voiceMapRef.current.get(speaker);
+        const chosen = assigned?.voiceURI
+          ? (window.speechSynthesis.getVoices().find((v) => v.voiceURI === assigned.voiceURI) ??
+            null)
+          : null;
+
         const network = isNetworkVoice(chosen);
         // Local formant synthesis needs the extra room to stay intelligible;
         // neural voices are already well paced. Persona tempo multiplies on top of
@@ -962,7 +1198,9 @@ export function usePanelVoices(
       chainRef.current = chainRef.current.then(run, run);
       return chainRef.current;
     },
-    [voiceMap, stanceOf],
+    // voiceMap is deliberately absent: it is read through voiceMapRef inside `run`, so a
+    // reallocation no longer changes this callback's identity mid-turn.
+    [stanceOf, resolveRoundVoice],
   );
 
   /**
@@ -982,10 +1220,26 @@ export function usePanelVoices(
    */
   const prefetchTurn = useCallback(
     (lines: { speaker: string; text: string; tone?: SpeechTone }[]) => {
-      if (!neuralRef.current) return;
-      for (const l of lines) prefetchUtterance(l.speaker, l.text, l.tone);
+      /*
+       * WAITS FOR THE PLAN INSTEAD OF HARD-RETURNING ON IT.
+       *
+       * This used to open with `if (!neuralRef.current) return;`, which meant that while the
+       * probe was unresolved — i.e. for the first turn of the interview, the one this
+       * optimisation exists for — prefetching was silently off. The two failures compounded:
+       * the first line was both a surprise voice change AND cold, paying Fish's full ~3.5s on
+       * the critical path. Deferring instead of giving up costs nothing, because the plan is
+       * already in flight from mount and the lines are not needed until the turn is spoken.
+       */
+      void resolveRoundVoice().then((plan) => {
+        if (!plan.neural || neuralOff()) return;
+        for (const l of lines) {
+          // Skip a speaker the server cannot voice rather than paying a request to be told so.
+          if (plan.neuralSpeakers && !plan.neuralSpeakers.has(l.speaker.toLowerCase())) continue;
+          prefetchUtterance(l.speaker, l.text, l.tone);
+        }
+      });
     },
-    [],
+    [resolveRoundVoice],
   );
 
   return {
@@ -995,10 +1249,67 @@ export function usePanelVoices(
     prefetchTurn,
     speakAs,
     cancelAll,
-    ready: voiceMap.size > 0,
     //: Which vendor is speaking, or null for browser voices. Exposed so the UI can say so —
     //: a candidate hearing flat system speech should know the round is on standby voices
     //: rather than assume that is how the product sounds.
     neuralProvider,
   };
+}
+
+/**
+ * How far a panel's browser-voice allocation has got. Only ever moves forward.
+ *
+ * `none` — nothing committed; speakAs would read an empty map and put the whole panel in the
+ * engine's default voice at pitch 1.0, which is the "Meera has a male voice" report.
+ * `pitch-only` — committed with gender-anchored pitches because getVoices() was still empty.
+ * Degraded but deliberate, and still upgradable: this is the state Safari can sit in for
+ * seconds, and the one the poll and the `voiceschanged` listener exist to get it out of.
+ * `real` — committed from the actual voice list. TERMINAL for the life of the panel.
+ */
+export type AllocationStage = 'none' | 'pitch-only' | 'real';
+
+/**
+ * Decide what a voice-list trigger should commit, or null for "leave it alone".
+ *
+ * THE REPORT THIS ANSWERS: "in the starting of the interview the voices changes and then it
+ * changed again to the old voices." The neural probe race is one half of that; this is the
+ * other, and it is the half that fired on every browser-voice interview rather than only on a
+ * cold backend.
+ *
+ * `allocate` in usePanelVoices runs from three triggers — an immediate call, a 250ms poll, and
+ * the `voiceschanged` event — and it used to replace the map on every one of them that found
+ * voices. `allocatePanelVoices` ranks its input with scoreVoice, and Chrome does not deliver
+ * its voices all at once: the local ones (qualityTier 10) arrive first and the network "Google
+ * …" ones (tier 800) are appended by a later `voiceschanged`. A better pool is not a better
+ * assignment of the same voices — it is a DIFFERENT assignment. So Anil was one voice for the
+ * greeting, another for the first question, and the candidate heard the interviewer change
+ * person twice before answering anything.
+ *
+ * The rule is therefore monotonic rather than "best available": the first allocation made from
+ * a real voice list wins for the rest of the panel's life, and later triggers are ignored. A
+ * marginally better voice is worth nothing against a stable one — see the note on the degrade
+ * latch in neural-tts.ts for why a change of voice is read as a change of PERSON, and why that
+ * costs the candidate more than the audio quality ever gains them.
+ *
+ * WHAT IS DELIBERATELY NOT LATCHED: the pitch-only fallback. Latching there would strand
+ * Safari — which frequently never fires `voiceschanged` at all and simply starts returning a
+ * populated list — on gender-anchored pitches for a whole round with real voices sitting
+ * unused. The pitch-only commit exists to be replaced exactly once.
+ *
+ * Pure, so the three-step sequence that produced the bug (empty list → local voices → local
+ * plus Google) can be asserted directly, which is not possible from inside the effect.
+ */
+export function planPanelAllocation(
+  stage: AllocationStage,
+  available: SpeechSynthesisVoice[],
+  speakers: PanelSpeaker[],
+): { map: Map<string, PanelVoice>; stage: AllocationStage } | null {
+  // Latched. A later, richer voice list is exactly the input that used to reassign everybody.
+  if (stage === 'real') return null;
+  if (available.length) return { map: allocatePanelVoices(available, speakers), stage: 'real' };
+  // Pitch-only, committed once. Returning null on the repeat visits matters mechanically as
+  // well as audibly: this runs on every 250ms poll tick, and handing React a fresh Map each
+  // time would re-render forever.
+  if (stage === 'pitch-only') return null;
+  return { map: allocatePanelVoices([], speakers), stage: 'pitch-only' };
 }

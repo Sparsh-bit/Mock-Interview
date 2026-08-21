@@ -192,6 +192,13 @@ async def communication_cross_question(request: CrossQuestionRequest, current_us
         topic="Communication",
         last_question=request.prompt_text,
         last_answer=request.transcript,
+        # PASSED EXPLICITLY, EVEN THOUGH IT IS EMPTY HERE. A communication round asks one
+        # prompt and follows up on it once — there is no earlier question to avoid. But
+        # substitution is string.Template.safe_substitute, so omitting the variable would
+        # send the literal text "$already_asked" to the model as part of the brief. The
+        # prompt is written to read an empty block as "nothing to avoid"; this is what makes
+        # that true rather than accidental.
+        already_asked="(this round has asked nothing else)",
     )
     try:
         parsed, _ = await generate_structured(

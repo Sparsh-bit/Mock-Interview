@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
+import { DriveCTA } from '@/components/DriveCTA';
 import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -77,6 +78,15 @@ export default function DashboardPage() {
           point of the number is that it is the reason to come back. */}
       <motion.div variants={fadeUp}>
         <StandingBanner />
+      </motion.div>
+
+      {/* The named drive, above the general nudge and above the participation stats.
+          Somebody sitting a real interview in a few days has one thing they want from this
+          page, and it is not their hours-practised total. It renders nothing at all when the
+          Cognizant track is not in the catalogue or when it has been dismissed, so on any
+          other day this slot collapses and the layout below is unchanged. */}
+      <motion.div variants={fadeUp}>
+        <DriveCTA />
       </motion.div>
 
       {/* Nudge to try a round they haven't done yet (communication / GD) */}

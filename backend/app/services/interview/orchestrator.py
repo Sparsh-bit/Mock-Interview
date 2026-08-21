@@ -4,6 +4,7 @@ import json
 import random
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
@@ -13,6 +14,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.core.exceptions import AIProviderUnavailableError
+from app.data import question_shape
+from app.data import syllabus as syllabus_data
 from app.db.redis import cache_get, cache_set, get_redis
 from app.events.base import InterviewStartedEvent, InterviewStartedPayload
 from app.events.emitter import get_event_emitter
@@ -26,6 +29,7 @@ from app.services.ai.base_provider import CostTier
 from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
+from app.services.interview import focus as focus_service
 from app.services.interview.context import decide_technical
 from app.services.interview.dont_know import said_dont_know
 from app.services.interview.research_lookup import find_research, render_research, slugify
@@ -128,6 +132,146 @@ def _company_topic_block(company: str) -> str:
         f"- **{t.name}** — {t.weight:g}% of the assessment" for t in entry.topics
     )
     return f"{rounds}\n{weights}"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanBrief:
+    """
+    Everything the plan prompt needs to know about WHAT and IN WHAT FORM. One object,
+    built once, because these three answers used to be given by three different places
+    that disagreed.
+
+    `interview_plan.md` renders exactly these three into `$must_cover`, `$question_mix`
+    and `$focus_directive`. Substitution is `safe_substitute`, so a field this class
+    forgot would not raise — the literal text "$question_mix" would be sent to the model
+    as part of the brief. `tests/test_plan_brief.py` renders the real template with the
+    real kwargs and fails on any surviving token, because that is the only way this class
+    can be wrong loudly instead of quietly.
+    """
+
+    #: The subjects, and on the syllabus path the numbered grid of rows.
+    must_cover: str
+    #: How many questions of each FORM. Counts, never proportions.
+    question_mix: str
+    #: What to do with the free-text box.
+    focus_directive: str
+    #: Which shape of interview this is, for the log and for session_metadata.
+    kind: question_shape.InterviewKind
+    #: True when an authored syllabus drove the brief rather than the domain fallback.
+    from_syllabus: bool
+
+
+def _company_tier(company: str) -> str:
+    """
+    The catalogue's tier for this employer, or "" when it is not on the catalogue.
+
+    Only `question_shape.resolve_kind` reads it, and only to answer "is this a mass
+    recruiter, therefore a fresher round". Returning "" for an unknown company is the
+    honest answer and lands that case on the program keywords instead of asserting a tier
+    nobody authored.
+    """
+    from app.services.prep import get_company  # noqa: PLC0415
+
+    slug = slugify(company)
+    entry = get_company(slug) or get_company(slug.replace("-", ""))
+    return getattr(entry, "tier", "") or "" if entry is not None else ""
+
+
+def _plan_brief(
+    *,
+    track_name: str,
+    program: str,
+    company: str,
+    focus: str,
+    is_technical: bool,
+    question_count: int,
+    covered: frozenset[tuple[str, question_shape.Register]] = frozenset(),
+) -> PlanBrief:
+    """
+    THE one answer to "what is this interview about, in what shape, and what did the
+    candidate ask for". Every caller that builds a plan prompt goes through here.
+
+    WHY IT IS ONE FUNCTION. A candidate sat a Cognizant Digital Nurture mock and reported
+    that it asked mostly situational questions and ignored the topics they had typed in.
+    Neither was a bug in any single place. The SUBJECTS came from
+    `_must_cover_block`, which for a Java role read the curated bank — sixteen Java topics
+    with no React and no SQL area at all. The SHAPE came from a bolded sentence in
+    `interview_plan.md` that said two thirds must be scenario-based, unconditionally, for
+    every role. The FOCUS came from one trailing clause in the same file, sitting against
+    two concrete "draw from this list" instructions. Three files, three opinions, and the
+    loudest one won. Splitting the fix across them would have produced a fourth opinion.
+
+    THE SYLLABUS PATH, when one is authored for this (company, program).
+    `syllabus.plan_grid` returns `question_count - 1` numbered rows, each with an area, a
+    form, a difficulty and a subtopic descriptor. A model handed eleven numbered rows
+    cannot drift the mix, because there is no proportion left to negotiate; its remaining
+    freedom is the wording, which is the freedom the candidate wanted it to keep. Note
+    `syllabus.resolve` takes no track name on purpose — the carrier track cannot reach
+    this decision, which structurally closes the custom-setup hole instead of guarding it
+    with a flag somebody can forget.
+
+    THE FALLBACK PATH is today's behaviour, unchanged: `_must_cover_block` for the
+    subjects, refined by the company's catalogue weighting. That path is the fix for a
+    real outage — a sales candidate at Morani Plastics briefed for a CS interview — and it
+    keeps working exactly as it did. What it gains is a shape and a focus directive, which
+    it never had.
+
+    `is_technical` IS TAKEN, NOT DERIVED. It arrives already resolved from the candidate's
+    own explicit answer, falling back to `context.decide_technical`. It used to be computed
+    AFTER this prompt was built and written only to `session_metadata`, so somebody who
+    ticked "non-technical" changed whether a code editor appeared and nothing about what
+    they were asked. Deriving it a second time here would be the second keyword match that
+    caused that class of bug in the first place.
+    """
+    syllabus = syllabus_data.resolve(company, program)
+
+    if syllabus is not None:
+        kind = syllabus_data.kind_for(syllabus)
+        grid = syllabus_data.plan_grid(
+            syllabus,
+            question_count,
+            reserved=focus_service.reserve(syllabus, focus, question_count),
+            covered=covered,
+        )
+        must_cover = syllabus_data.render(syllabus, grid)
+        # The company's own weighting still goes underneath. It is what decides how much
+        # of a Java interview is really DBMS, which for a mass recruiter is a lot.
+        weighting = _company_topic_block(company)
+        if weighting:
+            must_cover = (
+                f"{must_cover}\n\nHow this company weights its assessment overall — use it "
+                f"to shade the emphasis WITHIN the rows above, never to replace a row:"
+                f"\n{weighting}"
+            )
+        return PlanBrief(
+            must_cover=must_cover,
+            # The grid already fixes the form of every row, so the mix block restates the
+            # totals rather than adding a second, competing instruction. Same renderer as
+            # the fallback path, so there is exactly one place that phrases a count.
+            question_mix=question_shape.shape_block(kind, question_count),
+            focus_directive=focus_service.focus_block(
+                focus, question_count, syllabus=syllabus
+            ),
+            kind=kind,
+            from_syllabus=True,
+        )
+
+    from app.data import domains  # noqa: PLC0415
+
+    kind = question_shape.resolve_kind(
+        is_technical=is_technical,
+        domain=domains.resolve(track_name or program, focus),
+        domain_matched=domains.matched(track_name or program, focus),
+        company_tier=_company_tier(company),
+        program=program or track_name,
+    )
+    return PlanBrief(
+        must_cover=_must_cover_block(track_name, program, company),
+        question_mix=question_shape.shape_block(kind, question_count),
+        focus_directive=focus_service.focus_block(focus, question_count, syllabus=None),
+        kind=kind,
+        from_syllabus=False,
+    )
 
 
 def _must_cover_block(track_name: str, program: str, company: str = "") -> str:
@@ -426,6 +570,22 @@ class InterviewOrchestrator:
         # repeat setup skips the plan cache entirely.
         seen_ids, seen_texts = await self._already_asked(user_id)
 
+        # RESOLVED HERE, BEFORE THE BRIEF IS BUILT, AND USED FOR BOTH.
+        #
+        # This used to be computed inline where `session_metadata` is assembled — which is
+        # AFTER the plan prompt has already been sent. So a candidate who explicitly ticked
+        # "non-technical" changed whether a code editor appeared and changed nothing at all
+        # about what they were asked, because the brief had been built before their answer
+        # was consulted. One value, resolved once, feeding both.
+        #
+        # The candidate's own answer wins over the inference: `decide_technical` is keyword
+        # matching over a free-text role and cannot know that "Civil Services" is not a
+        # software job, only that it matches nothing — which it treats as technical, because
+        # a missing editor costs a developer their question.
+        resolved_technical = (
+            is_technical if is_technical is not None else decide_technical(program, focus)
+        )
+
         resume_summary = resume_text.strip() or await self._resume_summary(user_id)
         # Personalised plans are per-candidate and must NOT be shared via the
         # cache. Only generic (company/program/focus) plans are cacheable.
@@ -480,12 +640,32 @@ class InterviewOrchestrator:
             track_name = await self.db.scalar(
                 select(InterviewTrack.name).where(InterviewTrack.id == track_id)
             )
-            must_cover = _must_cover_block(track_name or "", program, company)
+            brief = _plan_brief(
+                track_name=track_name or "",
+                program=program,
+                company=company,
+                focus=focus,
+                is_technical=resolved_technical,
+                question_count=_PLANNED_QUESTION_COUNT,
+            )
+            logger.info(
+                "interview_plan_brief",
+                session_id=str(session.id),
+                kind=str(brief.kind),
+                from_syllabus=brief.from_syllabus,
+            )
 
             messages = self.prompt_builder.chat(
                 system_template="interview_plan",
                 user_content="Design the interview plan now, following the rules and output format.",
-                must_cover=must_cover,
+                must_cover=brief.must_cover,
+                # BOTH OF THESE ARE LOAD-BEARING AND NEITHER FAILS LOUDLY. Substitution is
+                # string.Template.safe_substitute, so omitting one sends the literal text
+                # "$question_mix" to the model inside the brief. See tests/test_plan_brief.py,
+                # which renders this template with these exact kwargs and fails on any
+                # surviving token.
+                question_mix=brief.question_mix,
+                focus_directive=brief.focus_directive,
                 already_asked=(
                     "\n".join(f"- {t}" for t in seen_texts[-40:])
                     if seen_texts
@@ -628,11 +808,7 @@ class InterviewOrchestrator:
             # treats as technical because a missing editor costs a developer their question.
             # An explicit choice removes the guess entirely, which is the whole reason the
             # setup form asks.
-            "is_technical": (
-                is_technical
-                if is_technical is not None
-                else decide_technical(program, focus)
-            ),
+            "is_technical": resolved_technical,
             # Recorded so `context.resolve` knows whether the track means anything. On a
             # custom setup the track is a foreign-key carrier and nothing more — see
             # PlanRequest.custom_setup.
@@ -1263,7 +1439,21 @@ class InterviewOrchestrator:
             and not last_was_cross
         ):
             last_q = await self.db.get(Question, last_answer.question_id)
-            cross = await self._generate_cross_question(last_q, last_answer.content, session.id)
+            cross = await self._generate_cross_question(
+                last_q,
+                last_answer.content,
+                session.id,
+                # WHAT IT MUST NOT ASK AGAIN. This prompt used to receive nothing but the
+                # last question and the last answer, so a cross-question could restate a
+                # planned question still to come in the same interview, or one the candidate
+                # answered in an earlier sitting. `_MAX_CROSS_QUESTIONS` bounded how many
+                # were asked and nothing bounded what they were about.
+                #
+                # The candidate's own history AND the rest of this plan, because both are
+                # repeats to the person in the chair and only one of them is visible to a
+                # session-scoped query.
+                avoid=await self._cross_question_avoid_list(session, remaining),
+            )
             if cross is not None:
                 meta["cross_asked"] = meta.get("cross_asked", 0) + 1
                 meta["cross_question_ids"] = [*meta.get("cross_question_ids", []), str(cross.id)]
@@ -1276,8 +1466,52 @@ class InterviewOrchestrator:
             return None
         return await self.db.get(Question, uuid.UUID(remaining[0]))
 
+    async def _cross_question_avoid_list(
+        self, session: InterviewSession, remaining_ids: list[str]
+    ) -> list[str]:
+        """
+        Question texts a cross-question must not restate, newest-relevant first.
+
+        Two sources, and the second is the one that was missing. The REST OF THIS PLAN,
+        because asking question nine early as a cross-question does not just repeat it —
+        it burns it, and the candidate then meets it again three turns later. And WHAT
+        THIS CANDIDATE HAS ANSWERED BEFORE, across sittings, because a returning candidate
+        recognises a question from last week as readily as one from this hour.
+
+        Bounded at forty. The prompt is already long, an avoid-list is the cheapest part of
+        it to truncate, and a cross-question is generated from the candidate's own last
+        answer — so the realistic collision is with something recent, not with their
+        fortieth-most-recent question.
+        """
+        texts: list[str] = []
+        if remaining_ids:
+            planned = await self.db.scalars(
+                select(Question.content).where(
+                    Question.id.in_([uuid.UUID(qid) for qid in remaining_ids])
+                )
+            )
+            texts.extend(planned)
+        _, seen_texts = await self._already_asked(session.user_id)
+        texts.extend(seen_texts)
+        # Order-preserving dedupe: two sources overlap by design (a planned question the
+        # candidate has already answered is in both) and a list that repeats itself reads
+        # to a model as emphasis.
+        out: list[str] = []
+        seen: set[str] = set()
+        for text in texts:
+            key = " ".join(text.lower().split())
+            if key and key not in seen:
+                seen.add(key)
+                out.append(text)
+        return out[:40]
+
     async def _generate_cross_question(
-        self, last_question: Question | None, last_answer: str, session_id: uuid.UUID
+        self,
+        last_question: Question | None,
+        last_answer: str,
+        session_id: uuid.UUID,
+        *,
+        avoid: list[str] | None = None,
     ) -> Question | None:
         """
         Generate one follow-up probing the candidate's last answer. Best-effort.
@@ -1303,6 +1537,13 @@ class InterviewOrchestrator:
             topic=topic_name,
             last_question=last_question.content,
             last_answer=last_answer,
+            # Never omitted. safe_substitute would put the literal "$already_asked" into
+            # the brief, and the prompt's own header says so.
+            already_asked=(
+                "\n".join(f"- {t}" for t in avoid)
+                if avoid
+                else "(nothing else has been asked yet)"
+            ),
         )
         try:
             parsed, _ = await generate_structured(

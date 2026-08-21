@@ -20,6 +20,12 @@
  * So a TTS outage must be incapable of breaking a discussion. The worst it may do is make
  * one sound worse.
  *
+ * AND IT MAY ONLY DO THAT ONCE. That contract — enhancement, never requirement — is preserved
+ * exactly, but it is now STICKY: the first failure of any kind turns neural speech off for the
+ * rest of the round rather than letting each utterance re-attempt independently. The fallback
+ * is not removed, it is made one-way. See the latch below for why a voice that keeps changing
+ * back is worse than the worse of the two voices.
+ *
  * WHY AUDIO ELEMENTS RATHER THAN THE WEB AUDIO API. All this needs is "play these bytes,
  * tell me when they finish". An <audio> element's `ended` event does exactly that, and does
  * it more reliably than speechSynthesis' `onend` — which is the event the hands-free
@@ -28,7 +34,7 @@
  * gesture.
  */
 
-import { getBrowserApiClient } from '@/lib/api';
+import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { toSpokenForm } from '@/lib/speech/speakable';
 
 /**
@@ -76,16 +82,97 @@ export interface TTSStatus {
  * Asked once per round rather than discovered from a 503 on the first contribution, so a
  * round that is going to use browser voices does so from the start instead of stuttering
  * into it.
+ *
+ * DELIBERATELY NOT EXPORTED. ttsStatusOnce is the only way to ask, because "once per round" has
+ * to be a property of the module rather than a rule each caller remembers — the previous bug
+ * was precisely a caller doing its own probing and its own bookkeeping. A second entry point
+ * here would let someone reintroduce an unmemoized, unlatched probe without touching anything
+ * that looks wrong.
  */
-export async function fetchTTSStatus(): Promise<TTSStatus | null> {
+/**
+ * How long the round is willing to wait to find out whether neural speech is on.
+ *
+ * This number is a DEADLINE, not a timeout guess. The caller awaits the answer before the
+ * first word of the interview is spoken (see ttsStatusOnce), so every millisecond here is a
+ * millisecond of silence a candidate might sit through. Past this point the round proceeds on
+ * browser voices — worse-sounding, but decided, which is the whole point of the fix.
+ *
+ * 2.5s is chosen against what is actually happening in parallel: the first utterance is
+ * already downstream of GET /interview/{id}/next and POST /api/v1/panel/turn, and that second
+ * one is an LLM generation. So on any deploy that is awake this probe has finished long
+ * before it is asked for, and 2.5s only ever bites on a cold backend — which is precisely the
+ * case that used to produce the reported bug.
+ */
+const _STATUS_TIMEOUT_MS = 2_500;
+
+async function fetchTTSStatus(): Promise<TTSStatus | null> {
   try {
-    const res = await getBrowserApiClient().get('/api/v1/tts/status');
+    const res = await getBrowserApiClient().get('/api/v1/tts/status', {
+      /*
+       * NO RETRY, AND OUR OWN TIMEOUT, BOTH DELIBERATE.
+       *
+       * This is a GET, so without `retry: false` it inherits DEFAULT_RETRY_CONFIG — three
+       * attempts, backing off to a 10s ceiling — on top of the client's 30s default timeout.
+       * Against a backend that is cold or 502-ing, that is up to a minute of a request whose
+       * whole job is to answer a yes/no question before anybody speaks. Meanwhile /next and
+       * /panel/turn succeed on an app that woke up in between, the greeting goes out on
+       * browser voices, this finally answers "yes", and every line after it switches to Fish.
+       * That is exactly the reported "the voices changes" — caused by patience, not failure.
+       *
+       * An unanswered probe is not an error worth retrying. It is a "no" for this round.
+       */
+      timeout: _STATUS_TIMEOUT_MS,
+      retry: false,
+    });
     return res.data as TTSStatus;
   } catch {
     // Unreachable, unauthorised, or the route does not exist on this deploy. All mean the
     // same thing to the caller: use the browser.
     return null;
   }
+}
+
+/*
+ * ONE PROBE PER ROUND, AND EVERY CALLER AWAITS THE SAME ANSWER.
+ *
+ * THE BUG THIS EXISTS FOR, reported verbatim: "in the starting of the interview the voices
+ * changes and then it changed again to the old voices."
+ *
+ * The probe used to be fired from an effect in usePanelVoices with its result dropped into a
+ * ref — `void fetchTTSStatus().then((s) => { neuralRef.current = !!s?.enabled })`. Nothing
+ * awaited it. So the interview's first line read that ref while it was still `false`, spoke on
+ * browser voices, and the lines after it — once the probe had landed — spoke on Fish. One
+ * unsynchronised boolean, two different people saying consecutive sentences.
+ *
+ * Memoizing the promise is what makes "asked once" mean asked once even when several call
+ * sites (speakAs, prefetchTurn, the mount effect) all want the answer in the same tick, and
+ * what lets them AWAIT it instead of racing it.
+ *
+ * WHY THIS CANNOT DEADLOCK — the property the caller is relying on when it awaits this
+ * before speaking, so it is worth stating rather than trusting:
+ *
+ *   1. fetchTTSStatus is try/catch → return null. It has no throw path, so this promise can
+ *      never reject and an `await` on it can never propagate an error into the speech chain.
+ *   2. It is raced against a timer that is already running. Even if the underlying fetch
+ *      never settles — a hung socket, a proxy holding the connection open, a service worker
+ *      that swallowed it — the race settles at the cap. "Slow" and "hung" are not the same
+ *      failure, and only the race covers the second one.
+ *   3. The result is memoized, so N awaiters share one settled value: the tenth line of the
+ *      interview pays nothing at all, not even a cache lookup round trip.
+ *
+ * The worst case is therefore bounded at _STATUS_TIMEOUT_MS once per round, and its outcome
+ * is a decision (browser voices, for the whole round) rather than a stall.
+ */
+let _statusPromise: Promise<TTSStatus | null> | null = null;
+
+export function ttsStatusOnce(): Promise<TTSStatus | null> {
+  _statusPromise ??= Promise.race([
+    fetchTTSStatus(),
+    new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), _STATUS_TIMEOUT_MS);
+    }),
+  ]);
+  return _statusPromise;
 }
 
 /**
@@ -113,6 +200,98 @@ export async function fetchTTSStatus(): Promise<TTSStatus | null> {
  */
 const _inflight = new Map<string, Promise<Blob | null>>();
 const _MAX_INFLIGHT = 24;
+
+/*
+ * THE ONE-WAY DEGRADE LATCH.
+ *
+ * The second half of "and then it changed again to the old voices". Once neural speech was on,
+ * every utterance made its own independent attempt, and every kind of failure — a 402 when
+ * Fish's own credit ran out or the daily budget was spent, a 503 when the vendor timed out at
+ * 12s, a client-side timeout — produced a single browser-voiced line and left the decision
+ * untouched. So line N was Fish, line N+1 was the system voice, line N+2 was Fish again. The
+ * candidate is not hearing a degraded panel; they are hearing a different person every other
+ * sentence, mid-question, while trying to answer one.
+ *
+ * There is a specific production shape that makes this deterministic rather than unlucky:
+ * api/v1/tts.py checks the response CACHE before the daily budget, on purpose, so that a hit
+ * stays free. Past the budget, therefore, the fixed question bank still returns 200 neural
+ * audio while unique AI-written panel prose 402s. Neural and browser then alternate line by
+ * line for the rest of the interview, by design, with nothing failing anywhere.
+ *
+ * WHY OSCILLATION IS WORSE THAN EITHER STATE ON ITS OWN. An all-Fish interview sounds like a
+ * panel. An all-browser interview sounds like a screen reader, which is worse but is at least
+ * a consistent, legible thing: one voice, one room, and the candidate stops noticing it inside
+ * a minute. Alternating between them is worse than the worse of the two, because a change of
+ * voice is the cue humans use for a change of SPEAKER. Anil asking a follow-up in a different
+ * voice from the question he just asked reads as a new interviewer joining, so the candidate
+ * spends attention re-identifying the room instead of answering — during the one activity
+ * where their whole attention is the thing being measured. Consistently worse audio costs
+ * quality; inconsistent audio costs comprehension.
+ *
+ * So the FIRST failure of any class closes the round, permanently. One rule, no counters, and
+ * therefore provably non-oscillating: there is no code path that sets this back to false.
+ * Allowing "one transient strike" was considered and rejected — a counter is a second piece of
+ * state that has to be right, and inside a live interview a candidate would rather hear one
+ * consistent voice than a better voice that changes every other line.
+ *
+ * WHAT THIS COSTS, so that whoever reads the spend graph next month is not surprised: because
+ * the server serves cache hits even past the budget, one transient blip now forfeits audio
+ * that has ALREADY BEEN PAID FOR on the fixed question bank for the remainder of the
+ * interview. That is a real regression in value-per-rupee, accepted knowingly under the
+ * consistency contract above. It is not an oversight.
+ */
+let _neuralOff = false;
+
+/** Has this round given up on neural speech? Monotonic within a round. */
+export function neuralOff(): boolean {
+  return _neuralOff;
+}
+
+/**
+ * Give up on neural speech for the rest of the round.
+ *
+ * `budget` is a 402 — a permanent condition until midnight UTC. `vendor` is everything else:
+ * 503, a client timeout, or a 200 carrying no audio. They are deliberately handled
+ * identically, because the difference only matters to a retry policy and there is no retry
+ * here by construction.
+ *
+ * There is no third reason for an unconfigured speaker. usePanelVoices reads
+ * TTSStatus.voices and never asks for a speaker the server has no voice id for, so that case
+ * cannot reach a request at all — it degrades that one speaker from their first line instead
+ * of the whole round, which is what the per-speaker map is for.
+ *
+ * `_inflight` is emptied as part of closing the latch, and that is load-bearing rather than
+ * tidiness: a turn is prefetched three lines at a time, so without this a request that was
+ * already in flight when the latch closed would still resolve with good audio and hand one
+ * neural line to a round that has committed to browser voices — reintroducing the exact
+ * alternation the latch exists to stop, at the worst possible moment.
+ */
+export function degradeNeural(reason: 'budget' | 'vendor'): void {
+  if (_neuralOff) return;
+  _neuralOff = true;
+  _inflight.clear();
+  // Once per round, not once per line. Whoever is reading a candidate's console after a
+  // complaint about the voices needs to see this line and its reason.
+  console.warn(
+    `[tts] neural speech is off for the rest of this round (${reason}); browser voices from here.`,
+  );
+}
+
+/**
+ * Start a new round: forget the probe and the degrade.
+ *
+ * REQUIRED, NOT HYGIENE. `_statusPromise` and `_neuralOff` are module scope, which makes
+ * "round" mean "for as long as this module stays loaded" — and a second interview started by
+ * client-side navigation does not reload it. Without this call, one 402 in one interview
+ * silently puts every later interview in the same tab on browser voices, and the user's report
+ * becomes "the voices are bad now" with nothing in the code having changed. usePanelVoices
+ * calls it when it mounts, which is exactly once per round.
+ */
+export function resetSpeechRound(): void {
+  _statusPromise = null;
+  _neuralOff = false;
+  _inflight.clear();
+}
 
 /**
  * THE WRITTEN LINE IS TURNED INTO THE SPOKEN ONE *HERE*, AND ONLY HERE.
@@ -153,6 +332,9 @@ function _key(speaker: string, spokenText: string, tone?: SpeechTone): string {
  * Pass the line AS WRITTEN. Converting it for the ear is this module's job — see _spoken.
  */
 export function prefetchUtterance(speaker: string, text: string, tone?: SpeechTone): void {
+  // The round has already committed to browser voices. Warming audio it will never play would
+  // bill a metered vendor for nothing.
+  if (_neuralOff) return;
   const spoken = _spoken(text);
   if (!spoken) return;
   const k = _key(speaker, spoken, tone);
@@ -170,6 +352,10 @@ export async function fetchUtterance(
   text: string,
   tone?: SpeechTone,
 ): Promise<Blob | null> {
+  // Checked here as well as in the caller, so there is no ordering of calls that can slip a
+  // neural line into a round that has degraded — including a line whose audio was already
+  // warm when the latch closed.
+  if (_neuralOff) return null;
   const spoken = _spoken(text);
   if (!spoken) return null;
   const k = _key(speaker, spoken, tone);
@@ -205,9 +391,22 @@ async function _fetchNow(
       { timeout: 15_000 },
     );
     const blob = res.data as Blob;
-    return blob && blob.size > 0 ? blob : null;
-  } catch {
-    // 402 (budget spent), 503 (vendor down), or a timeout. Same handling for all three.
+    if (blob && blob.size > 0) return blob;
+    // A 200 with no bytes in it. Rare, and a vendor or proxy fault rather than a budget one —
+    // but still a line that cannot be spoken neurally, so it closes the round like any other.
+    degradeNeural('vendor');
+    return null;
+  } catch (err) {
+    /*
+     * 402 (budget spent), 503 (vendor down), or a timeout — and the status code is READ here
+     * rather than discarded, which it was: this catch used to be a bare `catch { return null }`
+     * that collapsed all three into one indistinguishable null. That is why the caller could
+     * not latch even if it had wanted to; it had no way to tell a permanent condition from a
+     * transient one, and the information was sitting on the ApiError it was throwing away.
+     *
+     * Both reasons latch. They are separated only so the console line says which happened.
+     */
+    degradeNeural(err instanceof ApiError && err.status === 402 ? 'budget' : 'vendor');
     return null;
   }
 }

@@ -17,7 +17,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const post = vi.fn();
-vi.mock('@/lib/api', () => ({ getBrowserApiClient: () => ({ post }) }));
+const get = vi.fn();
+/*
+ * ApiError and `get` are in this mock because the module under test now uses both, and a mock
+ * that omits either fails as a missing-export error rather than as the behaviour under test.
+ *
+ * `get` is fetchTTSStatus, which nothing in THIS file calls — see neural-tts.round.test.ts for
+ * the probe. ApiError is the one that matters: _fetchNow now reads the status code off the error
+ * instead of collapsing 402, 503 and a timeout into one indistinguishable null, which is what
+ * lets a spent budget be named as such in the console. `instanceof` therefore resolves against
+ * whatever class this factory returns, so a bare Error thrown below is correctly treated as a
+ * generic vendor failure rather than a budget one.
+ */
+vi.mock('@/lib/api', () => {
+  class ApiError extends Error {
+    status: number;
+    constructor(status: number, message = `HTTP ${status}`) {
+      super(message);
+      this.status = status;
+    }
+  }
+  return { ApiError, getBrowserApiClient: () => ({ get, post }) };
+});
 
 const blob = (n = 1024) => new Blob([new Uint8Array(n)], { type: 'audio/mpeg' });
 
@@ -91,6 +112,11 @@ describe('prefetchUtterance / fetchUtterance', () => {
   it('a failed prefetch is indistinguishable from one never made', async () => {
     // A warm-up must never be able to break a round. 402 (budget spent), 503 (vendor down)
     // and a timeout all land here, and all three mean "use browser speech".
+    //
+    // They now also mean "for the rest of the round" — the failure closes the degrade latch, so
+    // the round stops re-attempting rather than alternating voices line by line. That property
+    // has its own file (neural-tts.round.test.ts); what is asserted here is only that a failed
+    // prefetch still resolves rather than throwing into the speech chain.
     const m = await import('./neural-tts');
     post.mockRejectedValue(new Error('503'));
     m.prefetchUtterance('Anil', 'Anything.', 'neutral');

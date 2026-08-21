@@ -87,6 +87,13 @@ class TestWhatThePlannerIsTold:
 
     def test_a_java_role_still_gets_the_curated_bank(self):
         # The fix must not cost the role it was built for.
+        #
+        # STILL TRUE OF THIS FUNCTION, NO LONGER THE PATH PRODUCTION TAKES for Cognizant.
+        # `_plan_brief` now prefers an authored syllabus where one exists, because this bank
+        # is sixteen Java topics with no React and no SQL area — which is what a Digital
+        # Nurture candidate reported as "the interview is not covering all the topics". The
+        # bank remains the fallback for every role without a syllabus, so this assertion is
+        # about a live code path; see tests/test_plan_brief.py for what Cognizant now gets.
         brief = _must_cover_block("Digital Nurture — Java FSE", "", "Cognizant")
         assert "Collections framework" in brief
         assert "OOP & class design" in brief
