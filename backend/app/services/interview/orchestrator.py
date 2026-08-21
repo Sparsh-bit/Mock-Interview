@@ -1711,10 +1711,35 @@ class InterviewOrchestrator:
         """
         from app.services.ai import vector_cache  # noqa: PLC0415
 
-        key = f"{track_name} | {difficulty} | {topics_str[:300]}"
+        # THE DIFFICULTY IS THE SCOPE, NOT PART OF THE KEY, AND THAT IS A BUG FIX.
+        #
+        # It used to be one token inside the key string, and the ANN could not tell the bands
+        # apart. Measured with the real topic list this call site passes:
+        #
+        #     easy / medium / hard  ->  worst pairwise similarity 0.9786
+        #     _SIMILARITY_THRESHOLD ->  0.93
+        #
+        # One word in a hundred-odd tokens moves a cosine almost not at all, so the exact-hash
+        # path distinguished the three keys while the vector fallback matched whichever band
+        # happened to be cached first. A candidate escalating easy -> medium -> hard was served
+        # the SAME batch back — indistinguishable from repetition, and the reason escalation
+        # felt like it was not happening. Worse than a miss, because it looks like a hit.
+        #
+        # `scope` is an indexed equality predicate in both the exact and the ANN query (see
+        # vector_cache.lookup), so the bands can no longer reach each other at any similarity.
+        # No threshold change and no schema change: a threshold high enough to separate 0.9786
+        # would also stop "Cognizant GenC" matching "cognizant gen-c", which is the entire
+        # reason this cache is semantic.
+        #
+        # Do not fold the difficulty back into the key. If you are reading this because hit
+        # rates dropped, that is the expected one-off cost of three warm bands instead of one.
+        scope = f"difficulty:{difficulty}"
+        key = f"{track_name} | {topics_str[:300]}"
         seen = {t.strip().lower() for t in asked_texts}
 
-        cached = await vector_cache.lookup(db=self.db, feature="question_bank", key=key)
+        cached = await vector_cache.lookup(
+            db=self.db, feature="question_bank", key=key, scope=scope
+        )
         if cached:
             for q in cached.get("questions") or []:
                 content = str(q.get("content") or "").strip()
@@ -1784,7 +1809,7 @@ class InterviewOrchestrator:
             return None
 
         await vector_cache.store(
-            db=self.db, feature="question_bank", key=key, payload=payload
+            db=self.db, feature="question_bank", key=key, payload=payload, scope=scope
         )
 
         for q in payload["questions"]:

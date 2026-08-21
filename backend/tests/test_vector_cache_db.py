@@ -394,3 +394,85 @@ class TestAFailedCacheStatementDoesNotKillTheRequest:
         monkeypatch.undo()
         kept = await vc.lookup(db, feature="gd_topic_prep", key="keep me")
         assert kept == {"n": 7}
+
+
+class TestTheDifficultyBandsCannotReachEachOther:
+    """
+    "check if the vector databse is also working fine ... this is the only thing we have from
+    which we can reduce the cost ... this must be the strongest part."
+
+    It was working and it was serving the WRONG ROWS, which is worse than not working: a miss
+    costs a generation, a wrong hit costs the candidate their interview escalation and looks
+    like a saving.
+
+    THE MEASUREMENT. `_bank_question` keyed its cache on
+    `f"{track_name} | {difficulty} | {topics_str[:300]}"`. With the topic list that call site
+    actually passes, the three difficulty variants of that string measure:
+
+        worst pairwise similarity   0.9786
+        _SIMILARITY_THRESHOLD       0.93
+
+    One word in a hundred-odd tokens moves a cosine almost not at all. So the exact-hash path
+    told the three keys apart while the ANN fallback matched whichever band was cached first,
+    and a candidate escalating easy -> medium -> hard was served the same five questions back.
+    Indistinguishable from repetition, and the reason escalation felt like it was not
+    happening. `_persist_generated_question` then filed those questions under the REQUESTED
+    difficulty, so a medium question was recorded as hard and fed the adaptive signal and the
+    report.
+
+    THE FIX IS THE SCOPE COLUMN, NOT THE THRESHOLD. `scope` is an indexed equality predicate
+    in both the exact and the ANN query, so the bands cannot reach each other at any
+    similarity. A threshold high enough to separate 0.9786 would also stop "Cognizant GenC"
+    matching "cognizant gen-c" — which is the entire reason this cache is semantic rather than
+    a hash table.
+
+    These tests assert the SCOPING rather than the cosine. Asserting the cosine would re-pin
+    the bug: the whole point is that the similarity no longer matters.
+    """
+
+    async def test_two_scopes_do_not_see_each_others_rows(self, clean_cache):
+        db = clean_cache
+        key = "Digital Nurture — Java FSE | OOP, Collections, Strings"
+        await vc.store(db, feature="question_bank", key=key, payload={"band": "easy"},
+                       scope="difficulty:easy")
+        await db.commit()
+
+        assert await vc.lookup(db, feature="question_bank", key=key,
+                               scope="difficulty:easy") == {"band": "easy"}
+        # THE ONE THAT WOULD HAVE CAUGHT IT.
+        assert await vc.lookup(db, feature="question_bank", key=key,
+                               scope="difficulty:hard") is None
+        assert await vc.lookup(db, feature="question_bank", key=key,
+                               scope="difficulty:medium") is None
+
+    async def test_a_near_identical_key_still_matches_inside_one_scope(self, clean_cache):
+        """
+        The saving must survive the fix. Two spellings of the same setup should still share a
+        row — that is what the cache is FOR, and scoping must not turn it into a hash table.
+        """
+        db = clean_cache
+        await vc.store(db, feature="question_bank",
+                       key="Cognizant GenC | OOP, Collections",
+                       payload={"n": 1}, scope="difficulty:easy")
+        await db.commit()
+        hit = await vc.lookup(db, feature="question_bank",
+                              key="cognizant gen-c | collections, OOP",
+                              scope="difficulty:easy")
+        assert hit == {"n": 1}
+
+    async def test_the_orchestrator_passes_the_scope_at_both_call_sites(self):
+        """
+        Source assertion, because a lookup scoped and a store unscoped is the worst of both:
+        every read misses, every write lands in the global scope, and the cache silently stops
+        saving anything while appearing to work.
+        """
+        import inspect
+
+        from app.services.interview.orchestrator import InterviewOrchestrator
+
+        src = inspect.getsource(InterviewOrchestrator._bank_question)
+        assert 'scope = f"difficulty:{difficulty}"' in src
+        assert src.count("scope=scope") == 2
+        # And the difficulty must be gone from the key, or the scoping buys nothing and the
+        # key space is tripled twice over.
+        assert '{track_name} | {difficulty} |' not in src

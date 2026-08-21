@@ -137,6 +137,23 @@ async def _record_spend(amount: float, scope: str = "") -> None:
         logger.warning("ai_spend_record_failed_counted_locally", amount=amount)
 
 
+def _current_user_is_admin() -> bool:
+    """
+    Is this request's user an admin? Never raises; False when unknown.
+
+    Read from the contextvar core/security.py sets beside the user id, so it needs no change
+    at any generate_structured call site and cannot be forgotten at a new one. False on any
+    failure, so the fallback is to METER — an exemption that fires by accident is a bill
+    nobody chose.
+    """
+    try:
+        from app.services.ai.usage import current_user_is_admin  # noqa: PLC0415
+
+        return bool(current_user_is_admin.get())
+    except Exception:  # noqa: BLE001 — metering must never fail a request
+        return False
+
+
 def _current_user_scope() -> str | None:
     """
     The authenticated user for this request, as a spend scope, or None.
@@ -283,7 +300,22 @@ class AnthropicProvider(BaseAIProvider):
 
         # Then the per-user allowance. Checked SECOND: if the product-wide breaker has
         # tripped, that is the more urgent fact and the one worth logging.
-        if self._user_daily_budget_usd > 0 and (uid := _current_user_scope()) is not None:
+        # ADMINS ARE NOT METERED, for the reason services/billing/credits.py gives for not
+        # metering their credits: it is the only way the product can be operated. Every check
+        # that an interview still works, every reproduction of a reported bug and every demo
+        # runs through the paths a candidate uses. Metering the operator means they spend
+        # their allowance on Tuesday and then test the STANDBY provider for the rest of the
+        # day while believing they are testing the product — which is quieter than a failure
+        # and makes the app look slower and worse than it is.
+        #
+        # The global breaker above still applies to everyone. That one exists to stop a
+        # runaway loop draining the account overnight, and an admin can write a runaway loop
+        # like anybody else.
+        if (
+            self._user_daily_budget_usd > 0
+            and not _current_user_is_admin()
+            and (uid := _current_user_scope()) is not None
+        ):
             user_spent = await _spend_today(uid)
             if user_spent >= self._user_daily_budget_usd:
                 logger.info(

@@ -55,6 +55,30 @@ logger = structlog.get_logger(__name__)
 #: cost was real and unattributed.
 current_user_id: ContextVar[uuid.UUID | None] = ContextVar("ai_usage_user_id", default=None)
 
+#: Whether that user is an admin, for the per-user AI budget to exempt them.
+#:
+#: A SECOND CONTEXTVAR RATHER THAN A DATABASE LOOKUP, because the reader is a provider on the
+#: request's critical path and a provider that queries the users table to decide whether to
+#: bill is a provider that can fail for a reason unrelated to AI. The auth dependency already
+#: has the row in hand, so this costs nothing there and nothing here.
+#:
+#: WHY IT EXISTS AT ALL. services/billing/credits.py exempts admins from credit metering and
+#: states the reason plainly: "it is the only way the product can be operated. Every check of
+#: whether an interview still works, every reproduction of a reported bug, every demo, runs
+#: through the same paths a candidate uses; metering them means the person answering support
+#: tickets runs out of interviews on a Tuesday and starts testing on a spare account."
+#:
+#: The per-user AI BUDGET has exactly that problem and did not exempt anyone. So the operator
+#: testing their own product spent their $1.20, was silently moved to the standby model, and
+#: every interview they ran after that was on a different provider from the one their users
+#: get — which is the worst possible state to test in, because it is quieter than a failure
+#: and it makes the product look slower and worse than it is. Reported as "the responses are
+#: slow and the interview feels boring", diagnosed from a production log line that read
+#: `ai_user_budget_exceeded` immediately before `ai_generate_falling_back`.
+#:
+#: Defaults to False, so anything that forgets to set it is metered rather than exempt.
+current_user_is_admin: ContextVar[bool] = ContextVar("ai_usage_user_is_admin", default=False)
+
 
 def _enabled() -> bool:
     return bool(getattr(settings, "AI_USAGE_LEDGER_ENABLED", False))

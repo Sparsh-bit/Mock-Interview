@@ -347,9 +347,14 @@ async def get_current_user(
     # local import keeps core/ from depending on services/ at module load, so
     # deleting the ledger is a one-line change here.
     with contextlib.suppress(Exception):
-        from app.services.ai.usage import current_user_id  # noqa: PLC0415
+        from app.services.ai.usage import current_user_id, current_user_is_admin  # noqa: PLC0415
 
         current_user_id.set(user.id)
+        # Set here because this is the only place the User ROW is in hand. The per-user AI
+        # budget exempts admins for the reason credits.py spells out — an operator who is
+        # metered runs out mid-support-ticket and starts testing on a spare account, or
+        # worse, keeps testing on the standby model without noticing.
+        current_user_is_admin.set(bool(getattr(user, "is_admin", False)))
 
     return AuthenticatedUser(
         user_id=user.id,
