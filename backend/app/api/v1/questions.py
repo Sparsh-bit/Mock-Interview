@@ -229,39 +229,93 @@ class PracticeQuestionResponse(BaseModel):
 @router.get("/{question_id}", response_model=PracticeQuestionResponse)
 async def get_question(
     question_id: uuid.UUID,
-    current_user: CurrentUser,  # noqa: ARG001 - auth required, identity unused
+    current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Fetch one question by id.
+    Fetch one question by id, for the standalone practice screen.
 
     Declared after the /tracks routes so those static paths are matched first —
     FastAPI resolves in declaration order, and a leading path parameter would
     otherwise swallow them and fail UUID parsing.
 
-    Exists for the standalone practice screen: retrying a coding question must not
-    require an interview session, so the question has to be reachable on its own.
+    TWO GUARDS, BOTH ADDED AFTER A SECURITY AUDIT REPRODUCED THE HOLE LIVE. The
+    endpoint used to take the id and return the row, with `current_user` marked
+    "identity unused" — so being logged in was the only requirement.
+
+    1. THE ANSWER KEY IS NOT SERVED FOR A QUESTION STILL BEING ASKED. The response
+       carries `expected_keywords` and `ideal_answer`, which
+       `GET /interview/{id}/next` deliberately withholds. So a candidate mid-interview
+       could read the question id out of the JSON already in their browser, call this
+       endpoint, and be handed the model answer to the question on their screen. They
+       recite it and the report calls them a hire.
+
+       That is not a data breach — it is their own assessment — which makes it worse
+       in the way that matters here: it does not leak anybody's information, it makes
+       every score this product produces meaningless.
+
+       So the coaching fields are released only once the candidate can no longer
+       benefit: when they have already ANSWERED that question. The practice screen is
+       reached from a finished report, so it keeps working unchanged. The docstring's
+       old premise — "retrying a coding question must not require an interview
+       session" — is still honoured; what changes is that it is now checked rather
+       than assumed.
+
+    2. A SESSION-SCOPED QUESTION IS ONLY VISIBLE TO ITS OWNER. `questions.session_id`
+       is documented as a tenancy boundary in models/question.py because
+       cross-questions quote the candidate's own words verbatim and planned questions
+       name the projects on their resume. Every pool query filters
+       `session_id IS NULL`; this endpoint filtered nothing, so any logged-in user who
+       learned such an id read another candidate's interview content. The audit
+       demonstrated it with a real id.
+
+    Bank questions (`session_id IS NULL`) stay readable by anyone signed in, which is
+    what the practice screen is for.
     """
     from app.models.question import Question, Topic  # noqa: PLC0415
+    from app.models.session import Answer, InterviewSession  # noqa: PLC0415
 
     row = (
         await db.execute(
-            select(Question, Topic.name)
+            select(Question, Topic.name, InterviewSession.user_id)
             .outerjoin(Topic, Question.topic_id == Topic.id)
+            # OUTER, so a bank question with no session still returns a row and the
+            # ownership test below sees NULL rather than dropping the question entirely.
+            .outerjoin(InterviewSession, InterviewSession.id == Question.session_id)
             .where(Question.id == question_id)
         )
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    question, topic_name = row
+    question, topic_name, owner_id = row
+
+    # 404, not 403: a question this user may not see should be indistinguishable from one
+    # that does not exist, or the response becomes an oracle for which ids are real.
+    if question.session_id is not None and owner_id != current_user.user_id:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # Have they already answered it? Only then is the answer key theirs to read.
+    answered = await db.scalar(
+        select(Answer.id)
+        .join(InterviewSession, Answer.session_id == InterviewSession.id)
+        .where(
+            Answer.question_id == question_id,
+            InterviewSession.user_id == current_user.user_id,
+        )
+        .limit(1)
+    )
+    coaching = answered is not None
+
     return PracticeQuestionResponse(
         id=question.id,
         content=question.content,
         question_type=str(question.question_type or "conceptual"),
         difficulty=str(question.difficulty or "medium"),
         topic=topic_name or "General",
-        expected_keywords=list(question.expected_keywords or []),
-        ideal_answer=question.ideal_answer,
+        # Empty and None rather than absent, so the practice screen needs no new branch and
+        # an older bundle cannot crash on a missing field.
+        expected_keywords=list(question.expected_keywords or []) if coaching else [],
+        ideal_answer=question.ideal_answer if coaching else None,
         time_limit_seconds=question.time_limit_seconds,
     )

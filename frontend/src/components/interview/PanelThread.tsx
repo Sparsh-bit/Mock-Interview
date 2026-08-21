@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 
 import type { Interviewer, PanelLine } from '@/hooks/useInterviewPanel';
 import { cn } from '@/lib/utils';
+import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { splitGestures } from '@/lib/speech/gesture';
 
 /**
@@ -175,6 +176,38 @@ export function PanelThread({
       {takingFloor && (
         <div className="flex items-center gap-2.5 px-1 py-1 text-xs text-muted-foreground">
           <Dots /> {takingFloor} is about to speak…
+        </div>
+      )}
+
+      {/* WORK IN PROGRESS, SHOWN WHEN THE THREAD IS NOT EMPTY — which is every question after
+          the first, and was the gap.
+
+          `pending` was only ever read in the `!lines.length` branch above. So the very first
+          question said "The panel is talking…" and every question after it said nothing at
+          all: the candidate submitted an answer, the previous exchange stayed on screen
+          exactly as it was, and the several seconds of scoring, question selection and turn
+          generation had no representation anywhere. Reported as the app feeling stuck, and it
+          is the single cheapest thing to fix about the wait — the wait itself is the same
+          length, and a wait you can see is not the same experience as a wait you cannot.
+
+          Rotating text rather than a static label, via the component the quiz, GD, report and
+          communication screens already use. A line that has said "Analysing your answer…" for
+          eleven seconds starts to read as frozen too; one that moves is the difference between
+          "working" and "hung". `takingFloor` is checked so the two indicators never stack —
+          that one is about a specific person drawing breath and is more specific, so it wins. */}
+      {pending && !takingFloor && (
+        <div className="flex items-center gap-2.5 px-1 py-2 text-xs text-muted-foreground">
+          <Dots />
+          <AIWorkingIndicator
+            messages={[
+              'Analysing your answer…',
+              'Weighing it against the ideal answer…',
+              'Deciding what to ask next…',
+              'The panel is talking it over…',
+            ]}
+            intervalMs={4000}
+            className="text-xs"
+          />
         </div>
       )}
     </div>

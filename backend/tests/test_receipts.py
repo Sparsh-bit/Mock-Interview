@@ -63,6 +63,14 @@ async def ledger():
     payer = uuid.uuid4()
     other = uuid.uuid4()
     try:
+        from app.db.session import engine  # noqa: PLC0415
+        from app.models.base import Base  # noqa: PLC0415
+
+        # See the note in this fixture: test_integration.py drops the schema, so a
+        # test that assumes one is order-dependent and skips instead of running.
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
         async with AsyncSessionFactory() as db:
             # REAL USER ROWS, because credit_events.user_id is a foreign key and the first
             # version of this fixture invented ids. That FK is doing real work — a ledger

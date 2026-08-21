@@ -13,6 +13,8 @@ import { DriveCTA } from '@/components/DriveCTA';
 import { parseIsTechnical } from '@/lib/interview/drive';
 import { FOCUS_SUGGESTIONS, addFocusTerm, focusMentions } from '@/lib/interview/focus';
 import { cn } from '@/lib/utils';
+import { ProgressBar } from '@/components/ui/progress-bar';
+import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 
 export const runtime = 'edge';
 export default function InterviewSetupPage() {
@@ -814,6 +816,36 @@ function InterviewSetup() {
             </>
           )}
         </button>
+        {/* A LOADING BAR FOR THE LONGEST WAIT IN THE PRODUCT.
+            Requested: "try to show a loading bar while building the interview ... so that the
+            user must not feel that something is stucked."
+
+            Building a plan is one AI call with a 110-second ceiling, and until now the only
+            sign of life was a pulsing sparkle inside the button. For a minute-long wait that
+            is not enough — there is no way to tell a working request from a dead tab.
+
+            The bar deliberately never completes: see components/ui/progress-bar.tsx. A bar
+            that fills to 100% and then sits there is worse than none, because a full bar doing
+            nothing reads as broken. 35s as the expected duration is measured against a warm
+            deploy; a cold one takes longer and the curve keeps creeping, which is the honest
+            shape for "taking longer than usual". */}
+        {createPlan.isPending && (
+          <div className="mt-4">
+            <ProgressBar expectedMs={35_000} label="Building your interview" />
+            <div className="mt-2 flex justify-center">
+              <AIWorkingIndicator
+                messages={[
+                  'Reading your resume…',
+                  'Looking up how this company really interviews…',
+                  'Choosing the areas you will be asked about…',
+                  'Writing your questions…',
+                  'Almost there — this one takes a moment…',
+                ]}
+                intervalMs={6000}
+              />
+            </div>
+          </div>
+        )}
         {createPlan.isPending && (
           <p className="mt-3 text-center text-xs text-muted-foreground">
             Crafting questions for your company, program and resume — this usually takes a few

@@ -10,6 +10,8 @@ model.
 
 from __future__ import annotations
 
+import re
+
 import structlog
 
 from app.core.config import settings
@@ -97,6 +99,15 @@ def get_tts_provider() -> TTSProvider:
     raise TTSError(f"unknown or unset TTS_PROVIDER: {name!r}")
 
 
+#: Whitespace anywhere inside a name or an id. See `_voice_map` for why the ends are not enough.
+_WHITESPACE = re.compile(r"\s+")
+
+#: What a Fish voice id looks like: 32 lowercase hex characters. Used to WARN, never to reject —
+#: a future vendor may use a different shape, and breaking a working deployment to satisfy a
+#: regex is the wrong failure. Its job is to turn a silent fallback into a log line.
+_VOICE_ID = re.compile(r"[0-9a-f]{32}")
+
+
 def _voice_map() -> dict[str, str]:
     """
     Speaker name -> vendor voice id, from config.
@@ -107,13 +118,38 @@ def _voice_map() -> dict[str, str]:
     """
     raw = settings.TTS_VOICE_IDS or ""
     out: dict[str, str] = {}
+    rejected: list[str] = []
     for pair in raw.split(","):
         if ":" not in pair:
             continue
         name, _, vid = pair.partition(":")
-        name, vid = name.strip(), vid.strip()
-        if name and vid:
-            out[name.lower()] = vid
+        # ALL internal whitespace removed, not just the ends. `.strip()` alone was not enough
+        # and the gap was invisible: this value is pasted into a host's environment UI, and
+        # Render's is a multi-line textarea that wraps a long line — a newline landing INSIDE a
+        # 32-character id survives strip(), produces an id the vendor rejects, and the speaker
+        # silently falls back to browser speech. Reported as "again the voices are gone" right
+        # after the value was edited, which is exactly when this can happen.
+        name = _WHITESPACE.sub("", name).lower()
+        vid = _WHITESPACE.sub("", vid)
+        if not name or not vid:
+            continue
+        if not _VOICE_ID.fullmatch(vid):
+            # KEPT ANYWAY, and logged loudly. A future vendor may not use 32 hex characters,
+            # so refusing an unrecognised shape would break a working deployment to satisfy a
+            # pattern — but a malformed id must never again fail silently. `configured_voices`
+            # still reports this speaker as configured, and the vendor's own rejection is what
+            # decides; the difference is that now there is a line saying which id was odd.
+            rejected.append(name)
+        out[name] = vid
+    if rejected:
+        logger.error(
+            "tts_voice_id_looks_malformed",
+            speakers=sorted(rejected),
+            hint=(
+                "expected 32 hex characters; check TTS_VOICE_IDS for a line break or a "
+                "truncated paste, which a multi-line environment field can introduce"
+            ),
+        )
     return out
 
 

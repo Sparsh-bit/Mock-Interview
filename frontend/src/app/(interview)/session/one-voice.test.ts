@@ -117,7 +117,24 @@ describe('the pinned question is the one that was asked', () => {
     expect(CODE).toMatch(/\{pinnedQuestion\}/);
   });
 
-  it('attributes it to the interviewer who said it', () => {
-    expect(CODE).toMatch(/askedAloud\.speaker/);
+  it('uses the words the panel actually spoke, not the plan\'s wording', () => {
+    /*
+     * THE ATTRIBUTION LABEL IS GONE, AND THE PINNED TEXT IS THE POINT THAT REMAINS.
+     *
+     * This asserted `askedAloud.speaker`, which rendered as "ANIL ASKED" above the pinned
+     * question. Removed on request, and the request was right: the thread directly above
+     * already shows that line attributed, with the panelist's name on it, so a second
+     * attribution three lines later is the machinery announcing itself. The difficulty badge
+     * went with it — telling a candidate a question is "EASY" before they answer can only do
+     * harm, and it was a planning label that had leaked onto their screen.
+     *
+     * What this test protects is the part that mattered all along: the pinned block shows the
+     * words the panel SPOKE, not the plan's own phrasing. That was the original bug — a
+     * candidate reading a second, differently-worded copy of the question they had just been
+     * asked.
+     */
+    expect(CODE).toMatch(/const pinnedQuestion = askedAloud\?\.text \?\? questionText/);
+    // And the label itself must not come back.
+    expect(CODE).not.toMatch(/\$\{askedAloud\.speaker\} asked/);
   });
 });

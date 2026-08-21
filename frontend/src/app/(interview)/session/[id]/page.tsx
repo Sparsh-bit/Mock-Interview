@@ -1372,7 +1372,12 @@ export default function LiveSessionPage() {
                     // No fallback prop any more: a question the panel could not dress up is
                     // appended to the thread as a line from the lead interviewer, so it
                     // reads as the same interview rather than as the page changing.
-                    pending={panelPending}
+                    // THE WHOLE GAP, not just the panel call. `panelPending` covers writing
+                    // the turn; `preparing` covers submitting the answer and fetching the next
+                    // question, which happen first. Passing only the former left the earliest
+                    // and least explicable part of the wait — right after the candidate presses
+                    // submit — with nothing on screen at all.
+                    pending={panelPending || preparing}
                   />
 
                   {/* The pivot, made explicit.
@@ -1521,33 +1526,29 @@ export default function LiveSessionPage() {
               copy of the thread: only the question itself, only while one is actually open. */}
           {phase === 'asking' && questionText && (
             <div className="flex-shrink-0 rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3">
-              <div className="mb-1.5 flex items-center gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-primary">
-                  {/* Named for what it is. A follow-up is the one question in the interview
-                      that exists BECAUSE of something the candidate said, and until now it
-                      arrived looking exactly like the eleven that did not — so the moment the
-                      panel was most obviously listening was the moment that read as most
-                      scripted. */}
-                  {/* Attributed when the panel spoke it, because "Anil asked" and "on the
-                      table" are different claims and only one of them is true here. */}
-                  {askedAloud
-                    ? `${askedAloud.speaker} asked`
-                    : question?.is_follow_up
-                      ? 'Following up on your answer'
-                      : 'On the table'}
-                </span>
-                {question?.difficulty && (
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    {question.difficulty}
-                  </span>
-                )}
-                {isCoding && (
+              {/* THE LABEL ROW IS GONE — "ANIL ASKED · EASY" — and only the coding marker
+                  survives, because that one changes what the candidate is meant to DO.
+
+                  Removed on request, and the request was right on both halves. "Anil asked"
+                  restates what the thread directly above already shows, attributed, with the
+                  panelist's name on it; a second attribution three lines later is the machinery
+                  announcing itself. And the DIFFICULTY badge should never have been shown to
+                  the person being assessed: telling somebody a question is "EASY" before they
+                  answer it can only do harm. Get it right and you were told it was easy; get it
+                  wrong and you were told you failed an easy one. It is a planning label for the
+                  interview's own bookkeeping, and it leaked onto the candidate's screen.
+
+                  The question TEXT stays. It is pinned outside the scroll container so a long
+                  question does not disappear while somebody is answering it, which is the one
+                  job this block does that the thread cannot. */}
+              {isCoding && (
+                <div className="mb-1.5 flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                     <Code2 className="h-3 w-3" aria-hidden />
                     coding
                   </span>
-                )}
-              </div>
+                </div>
+              )}
               {/* Clamped rather than scrollable. A long question that grows this block pushes
                   the microphone off screen on a laptop, and the full text is always still in
                   the thread above. */}
