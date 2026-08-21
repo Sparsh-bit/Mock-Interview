@@ -3,11 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, Loader2, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
 
 import { useBalance } from '@/hooks/useBilling';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 /**
@@ -116,6 +116,50 @@ export function AppSidebar({ user }: SidebarProps) {
   const isAdmin = useIsAdmin();
   const pathname = usePathname();
 
+  /*
+   * WHICH ITEM THE USER JUST CLICKED, so the click has a visible consequence immediately.
+   *
+   * THE REPORT: "the sidebar options does not respond". They did respond — there was simply
+   * nothing to see. Every page in this group is server-rendered on demand, so a click starts
+   * a network fetch for that segment, and until it lands: the old page is still fully drawn,
+   * and the active pill below is driven by `pathname`, which does not change until the
+   * navigation COMMITS. So for the whole duration of the slowest part of the interaction the
+   * rail looks exactly as it did before the click. On a cold backend that is seconds of an
+   * app that appears dead, and the natural response is to click again.
+   *
+   * `loading.tsx` in this route group fixes the page area. This fixes the rail, which is
+   * where the user is actually looking when they click it.
+   *
+   * WHY NOT `useLinkStatus`. That is the framework's own answer to exactly this and it is
+   * not in Next 15.3.3 — checked, `next/link` does not export it. When this project moves to
+   * a version that has it, this state and its two effects should be deleted in favour of it:
+   * it is per-link and needs no bookkeeping, where this has to know when to stop.
+   *
+   * CLEARED ON THE PATHNAME CHANGING, which is the definition of "the navigation finished".
+   */
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  /*
+   * AND CLEARED ON A TIMER, because "the navigation finished" is not the only way it can end.
+   *
+   * A failed segment fetch, an aborted navigation, a redirect back to the same URL — none of
+   * those change the pathname, so without this the spinner would turn forever on an item the
+   * user is no longer waiting for. A permanent spinner is a worse lie than no spinner: it
+   * says the app is still working on something it has given up on.
+   *
+   * Eight seconds is past any navigation that is going to succeed, including a cold start,
+   * and short enough that a stuck one stops claiming to be in progress.
+   */
+  useEffect(() => {
+    if (!pendingHref) return;
+    const timer = setTimeout(() => setPendingHref(null), 8000);
+    return () => clearTimeout(timer);
+  }, [pendingHref]);
+
   return (
     <motion.aside
       animate={{ width: collapsed ? 72 : 240 }}
@@ -169,6 +213,13 @@ export function AppSidebar({ user }: SidebarProps) {
                     <Link
                       href={href}
                       title={collapsed ? label : undefined}
+                      // Not set when the item is already active: that click starts no
+                      // navigation, so the pathname never changes, so nothing would ever
+                      // clear it except the timeout above — eight seconds of a spinner for
+                      // a page the user is already on.
+                      onClick={() => {
+                        if (!isActive) setPendingHref(href);
+                      }}
                       className={cn(
                         // 30px rows on an 8pt rhythm, rounded-md (10px) because
                         // they sit inside a 12px-padded rail — the nesting rule.
@@ -179,7 +230,17 @@ export function AppSidebar({ user }: SidebarProps) {
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
-                      <Icon className="h-[15px] w-[15px] flex-shrink-0" strokeWidth={1.9} />
+                      {/* The icon becomes a spinner in place. Same box, so nothing in the
+                          rail moves — a layout shift in a nav the user is mid-click on is
+                          how a click lands on the wrong row. */}
+                      {pendingHref === href ? (
+                        <Loader2
+                          className="h-[15px] w-[15px] flex-shrink-0 animate-spin"
+                          strokeWidth={1.9}
+                        />
+                      ) : (
+                        <Icon className="h-[15px] w-[15px] flex-shrink-0" strokeWidth={1.9} />
+                      )}
                       {!collapsed && <span className="truncate">{label}</span>}
                     </Link>
                     {isActive && (

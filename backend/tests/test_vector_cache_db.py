@@ -143,11 +143,46 @@ class TestRoundTrip:
         )
 
     async def test_features_do_not_bleed_into_each_other(self, clean_cache):
+        """
+        One key, two features, and the second must not see the first.
+
+        THIS TEST WAS BROKEN AND PASSING NOTHING. It used to ask for
+        `feature="interview_plan"`, which is not in `CACHEABLE_FEATURES` — so `lookup`
+        correctly RAISED on the allowlist guard instead of returning None, and the test
+        errored rather than failing an assertion. It went unnoticed because it needs a live
+        Postgres and CI runs only lint and typecheck (see CLAUDE.md), so nothing ever
+        executed it.
+
+        The behaviour it was reaching for is real and worth pinning, so it is now written
+        against two features that are BOTH allowlisted. That is the case that could actually
+        bleed: a quiz served a group-discussion motion because they hashed the same phrase.
+        The allowlist guard is a different claim and gets its own test below.
+        """
         db = clean_cache
         await vc.store(db, feature="gd_topic_prep", key="Should AI grade exams", payload={"n": 1})
         await db.commit()
-        # Same key, different feature. A plan must never be served as a quiz.
-        assert await vc.lookup(db, feature="interview_plan", key="Should AI grade exams") is None
+        # Same key, different feature, both cacheable. A GD motion must never be served as
+        # a bank question.
+        assert await vc.lookup(db, feature="question_bank", key="Should AI grade exams") is None
+
+    async def test_a_feature_outside_the_allowlist_is_refused_rather_than_missed(
+        self, clean_cache
+    ):
+        """
+        The guard the test above was accidentally exercising, asserted on purpose.
+
+        `interview_plan` is not cacheable: a plan is built from the candidate's resume and
+        the focus they typed, so serving one to somebody else is the exact tenancy failure
+        migration 010 exists because of. The distinction that matters is REFUSED versus
+        MISSED — a raise is a bug in the caller and has to be fixed; a None is a normal
+        cache miss and would be silently ignored, which is how a non-cacheable feature ends
+        up being cached anyway.
+        """
+        db = clean_cache
+        with pytest.raises(ValueError, match="CACHEABLE_FEATURES"):
+            await vc.lookup(db, feature="interview_plan", key="Should AI grade exams")
+        with pytest.raises(ValueError, match="CACHEABLE_FEATURES"):
+            await vc.store(db, feature="interview_plan", key="k", payload={"n": 1})
 
 
 class TestTheUpdateOnEveryUse:
