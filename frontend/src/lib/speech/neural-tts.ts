@@ -111,7 +111,30 @@ export interface TTSStatus {
  * before it is asked for, and 2.5s only ever bites on a cold backend — which is precisely the
  * case that used to produce the reported bug.
  */
-const _STATUS_TIMEOUT_MS = 2_500;
+const _STATUS_TIMEOUT_MS = 6_000;
+
+/*
+ * 2_500 WAS WRONG, AND IT TURNED THE VOICES OFF ENTIRELY.
+ *
+ * The note above argued the probe "has finished long before it is asked for" on any awake
+ * deploy, so 2.5s would only bite on a cold start. That reasoning was never checked against a
+ * real deploy, and it is false: measured on production, plain `GET /api/v1/health` takes
+ * **1.85 seconds**, and /tts/status does strictly more than health — it constructs the TTS
+ * provider and reads the day's spend out of Redis. So the probe was losing the race routinely,
+ * not exceptionally.
+ *
+ * The symptom was reported as "i cannot hear the fish audio voices, only the default browser
+ * voices", with a funded vendor account, a valid key, correct voice ids and every setting
+ * right — and the vendor dashboard showing ZERO requests. The devtools Network panel is what
+ * named it: `status  (canceled)  0.0 kB  2.50 s`. Cancelled by this timer, every round.
+ *
+ * A NUMBER PICKED FROM AN ARGUMENT ABOUT PARALLELISM RATHER THAN FROM A MEASUREMENT. 6s is
+ * measured: comfortably past 1.85s plus Redis, and still well inside the time the first panel
+ * turn's LLM generation takes, so it cannot add audible delay on a healthy deploy.
+ *
+ * But the timeout is only half the fix — a bigger number would still fail the same way on a
+ * slower day. See `_neuralUnknownIsOptimistic` below for the half that matters.
+ */
 
 async function fetchTTSStatus(): Promise<TTSStatus | null> {
   try {
@@ -172,6 +195,28 @@ async function fetchTTSStatus(): Promise<TTSStatus | null> {
  * is a decision (browser voices, for the whole round) rather than a stall.
  */
 let _statusPromise: Promise<TTSStatus | null> | null = null;
+
+/**
+ * WHAT AN UNANSWERED PROBE MEANS — and it must not mean "no".
+ *
+ * This is the half of the fix that matters, because raising the timeout only moves the cliff.
+ *
+ * Before: a probe that timed out resolved to null, `neuralRef.current` became false, and the
+ * whole round ran on browser voices — permanently, on the strength of one slow request. A
+ * SLOW backend and a backend with NO TTS produced the same outcome, which is wrong: those are
+ * completely different states and only one of them should silence the voices.
+ *
+ * After: an unanswered probe means UNKNOWN, and unknown is optimistic. The round tries neural
+ * for its first line. That is safe precisely because the degrade latch exists — if the vendor
+ * really is unavailable, `/tts/speak` answers 402 or 503 in well under a second (measured:
+ * every current Fish model refuses in ~0.3-0.7s on a keyless account), `degradeNeural` closes
+ * the latch, and every remaining line goes to the browser. So the cost of being wrong is one
+ * short delay on one line; the cost of the old behaviour was every voice in the interview.
+ *
+ * A KNOWN "no" is still respected. When the probe DOES answer and says disabled, nothing is
+ * attempted and no request is wasted — which is what the probe is for.
+ */
+const _neuralUnknownIsOptimistic = true;
 
 export function ttsStatusOnce(): Promise<TTSStatus | null> {
   _statusPromise ??= Promise.race([

@@ -757,9 +757,31 @@ export function usePanelVoices(
   const resolveRoundVoice = useCallback((): Promise<RoundVoicePlan> => {
     planRef.current ??= ttsStatusOnce().then((status) => {
       const listed = Object.entries(status?.voices ?? {});
+      /*
+       * AN UNANSWERED PROBE IS "UNKNOWN", NOT "NO", AND THAT DISTINCTION IS THE WHOLE BUG.
+       *
+       * `!!status?.enabled` collapsed three different states into one. `status` is null both
+       * when the server SAID no and when the probe never came back — and those want opposite
+       * behaviour. A backend that answers "TTS is off" should cost us nothing; a backend that
+       * is merely slow should not cost the candidate every voice in their interview.
+       *
+       * It did. Measured on production, `GET /api/v1/health` takes 1.85s and /tts/status does
+       * more work than health, so the 2.5s probe cap was losing routinely rather than
+       * exceptionally. Devtools showed it exactly: `status (canceled) 0.0 kB 2.50 s`, every
+       * round. Fish's dashboard showed zero requests, because the client — correctly, given
+       * what it believed — never called /speak at all. Funded account, valid key, correct voice
+       * ids, every setting right, and silence.
+       *
+       * So: a KNOWN no is obeyed, and an UNKNOWN is optimistic. Trying is safe because the
+       * degrade latch is already there — if the vendor really is unavailable, /tts/speak
+       * refuses in under a second, `degradeNeural` closes the latch, and the rest of the round
+       * is browser voices with no further attempts. The cost of guessing wrong is one short
+       * delay on one line. The cost of the old guess was the entire interview.
+       */
+      const answered = status !== null;
       const plan: RoundVoicePlan = {
-        neural: !!status?.enabled,
-        provider: status?.enabled ? status.provider : null,
+        neural: answered ? !!status.enabled : true,
+        provider: answered && status.enabled ? status.provider : null,
         /*
          * null, not an empty Set, when the server listed nothing.
          *

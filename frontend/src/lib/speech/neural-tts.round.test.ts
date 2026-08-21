@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -94,7 +97,48 @@ describe('ttsStatusOnce — the probe the first line waits for', () => {
     const [path, config] = get.mock.calls[0];
     expect(path).toBe('/api/v1/tts/status');
     expect(config).toMatchObject({ retry: false });
-    expect(config.timeout).toBeLessThanOrEqual(3_000);
+    /*
+     * THE UPPER BOUND MOVED FROM 3_000 TO 8_000, AND THE OLD ONE WAS THE BUG.
+     *
+     * The cap was 2.5s, argued from parallelism: the probe "has finished long before it is
+     * asked for" on any awake deploy. That was never measured. On production `GET
+     * /api/v1/health` takes 1.85s, and /tts/status does strictly more — it constructs the
+     * provider and reads the day's spend from Redis. So the probe lost the race routinely,
+     * and devtools showed exactly that: `status (canceled) 0.0 kB 2.50 s`, every round, with
+     * the vendor dashboard on zero requests.
+     *
+     * Still bounded, and the bound still matters — an unbounded probe is a stall before the
+     * first word. 8s is the assertion ceiling; the value itself is 6s, which sits past
+     * measured latency and well inside the first panel turn's LLM generation, so it cannot
+     * add audible delay on a healthy deploy.
+     */
+    expect(config.timeout).toBeGreaterThanOrEqual(4_000);
+    expect(config.timeout).toBeLessThanOrEqual(8_000);
+  });
+
+  it('treats an unanswered probe as UNKNOWN rather than as "no neural"', async () => {
+    /*
+     * THE HALF OF THE FIX THAT MATTERS, because a bigger timeout only moves the cliff.
+     *
+     * `!!status?.enabled` collapsed three states into one: the server said no, and the probe
+     * never came back, both produced `false`. Those want opposite behaviour — a backend that
+     * answers "TTS is off" should cost nothing, and a backend that is merely SLOW should not
+     * cost the candidate every voice in their interview. It did.
+     *
+     * Optimism is safe here only because the degrade latch exists: if the vendor really is
+     * unavailable, /tts/speak refuses in well under a second, the latch closes, and the rest
+     * of the round is browser voices with no further attempts. Cost of guessing wrong is one
+     * short delay on one line; cost of the old guess was the whole interview.
+     */
+    const src = readFileSync(
+      join(process.cwd(), 'src/hooks/useSpeech.ts'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    // A known answer is obeyed; an unanswered probe is not read as a refusal.
+    expect(src).toMatch(/const answered = status !== null;/);
+    expect(src).toMatch(/neural: answered \? !!status\.enabled : true/);
+    // And the old collapse must be gone.
+    expect(src).not.toMatch(/neural: !!status\?\.enabled/);
   });
 
   it('resolves at the cap when the request never answers, and never rejects', async () => {
@@ -110,10 +154,13 @@ describe('ttsStatusOnce — the probe the first line waits for', () => {
 
     const settled = vi.fn();
     const p = m.ttsStatusOnce().then(settled);
-    await vi.advanceTimersByTimeAsync(2_400);
+    // Just under the 6s cap: still waiting. The old numbers here were 2_400/600, pinning a
+    // 2.5s cap that was measured to be too tight — production /api/v1/health alone takes 1.85s
+    // and /tts/status does more than health, so the probe was cancelled every round.
+    await vi.advanceTimersByTimeAsync(5_900);
     expect(settled).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(600);
+    await vi.advanceTimersByTimeAsync(200);
     await expect(p).resolves.toBeUndefined();
     expect(settled).toHaveBeenCalledWith(null);
   });
