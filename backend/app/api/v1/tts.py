@@ -197,6 +197,21 @@ class TTSStatus(BaseModel):
     #: So the client can decide whether to even try, and show the round is on browser voices.
     budget_remaining_usd: float
     voices: dict[str, bool]
+    #: WHY it is off, for an ADMIN only. Empty for everybody else and whenever it is on.
+    #:
+    #: THIS EXISTS BECAUSE ITS ABSENCE COST HOURS. `enabled: False` was returned identically
+    #: for four completely different causes — TTS switched off, no API key, a retired model
+    #: name, and a spent daily budget — and the endpoint swallowed the provider's own
+    #: exception message on the way past. So an operator with a funded account, a valid key
+    #: and correct voice ids heard browser speech and had nothing anywhere to read: the
+    #: vendor dashboard showed zero requests because the client, told `enabled: false`, had
+    #: correctly stopped asking.
+    #:
+    #: ADMIN ONLY, and that is not caution for its own sake. "FISH_API_KEY is not set" names
+    #: the vendor and admits a misconfiguration, which is exactly the deployment detail this
+    #: product was told to keep out of the browser. The operator needs it; a candidate must
+    #: not have it. It is also logged server-side regardless, which is where it belongs.
+    reason: str = ""
 
 
 @router.get("/status", summary="Is neural speech available right now?")
@@ -205,17 +220,61 @@ async def tts_status(current_user: CurrentUser) -> TTSStatus:
     Lets the client skip the round trip when TTS is off or spent, rather than learning it
     from a 503 on the first contribution of every round.
     """
-    if not settings.TTS_ENABLED:
-        return TTSStatus(enabled=False, provider=None, budget_remaining_usd=0.0, voices={})
+    # `reason` is filled on every path that returns enabled=False, and shown only to an
+    # admin. See the field's note: four different causes used to be indistinguishable here,
+    # including from the operator.
+    # FROM THE CONTEXTVAR, NOT FROM `current_user`. AuthenticatedUser carries id, supabase_uid
+    # and email and NOT is_admin — every other admin check in this codebase does a separate
+    # `select(User.is_admin)`. A `getattr(current_user, "is_admin", False)` here would
+    # therefore be False for everybody, always, and the reason would be invisible to the one
+    # person who needs it while looking like it worked. The contextvar is set by the auth
+    # dependency on every authenticated request and costs nothing to read.
+    from app.services.ai.usage import current_user_is_admin  # noqa: PLC0415
 
+    is_admin = bool(current_user_is_admin.get())
+
+    def _for(reason: str) -> str:
+        return reason if is_admin else ""
+
+    if not settings.TTS_ENABLED:
+        return TTSStatus(
+            enabled=False,
+            provider=None,
+            budget_remaining_usd=0.0,
+            voices={},
+            reason=_for("TTS_ENABLED is false"),
+        )
+
+    provider_name: str | None = None
+    failure = ""
     try:
-        provider_name: str | None = get_tts_provider().provider_name
-    except TTSError:
-        provider_name = None
+        provider_name = get_tts_provider().provider_name
+    except TTSError as exc:
+        # LOGGED AT ERROR, AND THIS ONE GENUINELY IS ONE. Everywhere else in this codebase a
+        # degradation to browser speech is logged at info, because a spent budget or a vendor
+        # outage is a normal operating state. This is different: TTS_ENABLED is true, so the
+        # operator has asked for neural speech and the provider cannot be built at all. That
+        # is a misconfiguration, it will not fix itself, and every round until it is fixed is
+        # silently worse. It must be loud in the logs.
+        failure = str(exc) or type(exc).__name__
+        logger.error(
+            "tts_provider_unavailable",
+            reason=failure,
+            provider=settings.TTS_PROVIDER,
+            model=settings.FISH_MODEL if settings.TTS_PROVIDER == "fish" else None,
+            hint="TTS_ENABLED is true but no provider could be constructed",
+        )
 
     spent = await tts_spend_today()
     remaining = max(0.0, settings.TTS_DAILY_BUDGET_USD - spent)
     from app.services.tts.factory import configured_voices  # noqa: PLC0415
+
+    if provider_name is not None and remaining <= 0:
+        failure = (
+            f"daily TTS budget spent: ${spent:.4f} of "
+            f"${settings.TTS_DAILY_BUDGET_USD:.2f} (TTS_DAILY_BUDGET_USD)"
+        )
+        logger.info("tts_budget_spent", spent_usd=round(spent, 4))
 
     return TTSStatus(
         enabled=provider_name is not None and remaining > 0,
@@ -224,4 +283,5 @@ async def tts_status(current_user: CurrentUser) -> TTSStatus:
         # Which speakers actually have a voice id configured. A panelist without one falls
         # back to the browser individually, which is better than the whole round doing so.
         voices=configured_voices(),
+        reason=_for(failure),
     )
