@@ -750,7 +750,26 @@ export default function LiveSessionPage() {
       if (!spoke) {
         const lead = interviewers?.[0]?.name ?? 'Interviewer';
         setPanelLines((prev) => [...prev, { speaker: lead, text: questionText, tone: 'asking' }]);
-        if (tts.supported) tts.speak(questionText);
+        /*
+         * SPOKEN THROUGH THE PANEL VOICE, NOT THE BROWSER — and this line is the whole reason
+         * "i can only listen the google default audios" survived four rounds of TTS fixes.
+         *
+         * It was `tts.speak(questionText)`. `tts` is useSpeechSynthesis: the BROWSER
+         * synthesiser, with no path to the vendor at all. So whenever a panel turn came back
+         * empty, the question was read out by Chrome in a Google voice — and because the
+         * neural layer was never asked, the vendor's dashboard showed zero requests. Every
+         * investigation of the TTS layer was looking at code this path does not reach.
+         *
+         * It also explains the voices changing question to question: a turn that succeeded was
+         * spoken by `speakAs` in a real voice, a turn that failed by Chrome. Two speech systems
+         * in one interview, alternating on whether an AI call happened to return.
+         *
+         * `speakAs` is the same call the successful path uses, so the fallback now sounds like
+         * the interview it belongs to. It has its own browser fallback inside it, so nothing is
+         * lost when the vendor genuinely is unavailable — the difference is that the vendor is
+         * now ASKED.
+         */
+        void voicesRef.current.speakAs(lead, questionText, { tone: 'asking' });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

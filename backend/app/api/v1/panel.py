@@ -894,11 +894,28 @@ async def panel_turn(
             # rulebook, so this reads from cache rather than paying for it every time.
             cache_system=True,
         )
-    except AIProviderUnavailableError:
+    except AIProviderUnavailableError as exc:
         # The panel is presentation. If it is unavailable the caller still has the question
         # and puts it to the candidate the old way — a dialogue failure must never cost
         # somebody their interview.
-        logger.warning("panel_turn_unavailable", session_id=str(request.session_id))
+        #
+        # THE REASON IS LOGGED NOW, AND ITS ABSENCE HID THE REAL BUG FOR FOUR ROUNDS. An empty
+        # turn is what makes the client fall back, and until this commit that fallback spoke
+        # through the BROWSER synthesiser — so the visible symptom was "the voices are Google
+        # voices and the vendor shows zero requests", which sent every investigation into the
+        # TTS layer. The TTS layer was fine. This was the failure, and the log line said only
+        # that it had happened.
+        #
+        # Both providers exhausted means every attempt failed; generate.py now logs each
+        # provider's own reason, so this line plus those is enough to say which.
+        logger.warning(
+            "panel_turn_unavailable",
+            session_id=str(request.session_id),
+            stage=request.stage,
+            error_type=type(exc).__name__,
+            error=str(exc) or type(exc).__name__,
+            consequence="client speaks the bare question itself",
+        )
         return PanelTurnResponse(
             turns=[], asked_question=False, pivot_topic=pivot_topic, rating_subject=rating_subject
         )

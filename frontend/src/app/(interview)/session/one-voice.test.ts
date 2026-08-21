@@ -81,10 +81,18 @@ describe('the single-voice fallback and the panel never overlap', () => {
     // Asserted on the BRANCH rather than on one expression, because the fallback now does
     // two things — speak the question, and append it to the thread as a line from the lead
     // interviewer — and pinning the old single-line shape made a correct change look broken.
+    //
+    // UPDATED: the fallback now speaks through `speakAs`, not `tts.speak`. It asserted the
+    // browser synthesiser, and that WAS the bug — `tts` is useSpeechSynthesis and has no path
+    // to the vendor, so an empty panel turn was read out by Chrome in a Google voice while the
+    // vendor's dashboard showed zero requests. This test pinned the defect in place, which is
+    // why it had to be read carefully rather than trusted: it was green throughout.
     const branch = CODE.match(/if\s*\(!spoke\)\s*\{([\s\S]*?)\n {6}\}/);
     expect(branch).toBeTruthy();
-    expect(branch![1]).toMatch(/tts\.supported/);
-    expect(branch![1]).toMatch(/tts\.speak\(questionText\)/);
+    // Still speaks — a panel that cannot talk and a page that then says nothing is a silent
+    // interview, which is worse than a plainer voice. Through the panel voice now.
+    expect(branch![1]).toMatch(/speakAs\(lead, questionText/);
+    expect(branch![1]).not.toMatch(/tts\.speak\(/);
   });
 
   it('a question the panel could not dress up still lands in the thread', () => {
@@ -136,5 +144,43 @@ describe('the pinned question is the one that was asked', () => {
     expect(CODE).toMatch(/const pinnedQuestion = askedAloud\?\.text \?\? questionText/);
     // And the label itself must not come back.
     expect(CODE).not.toMatch(/\$\{askedAloud\.speaker\} asked/);
+  });
+});
+
+describe('a failed panel turn is still spoken by the panel', () => {
+  /*
+   * "still the google voices not the fish audio" — reported four times, after four separate
+   * fixes to the TTS layer. The TTS layer was not the problem.
+   *
+   * The interview has TWO speech systems. `usePanelVoices.speakAs` goes to the vendor and
+   * falls back to the browser inside itself. `useSpeechSynthesis.speak` is browser-only and
+   * has no path to the vendor at all.
+   *
+   * When a panel turn came back empty — an AI failure, both providers exhausted — the client
+   * appended the bare question to the thread and read it out with `tts.speak`. The BROWSER
+   * one. So the candidate heard a Google voice, and because the neural layer was never asked,
+   * the vendor's dashboard showed zero requests: every investigation went looking at the TTS
+   * code, and this path does not reach it.
+   *
+   * It is also the per-question voice change. A turn that succeeded was spoken by the vendor;
+   * a turn that failed by Chrome. Two systems alternating on whether an AI call happened to
+   * return — which no amount of latching inside the neural layer could fix, because the
+   * browser path never entered it.
+   */
+  it('the empty-turn fallback goes through speakAs, not the browser synthesiser', () => {
+    expect(CODE).toMatch(/voicesRef\.current\.speakAs\(lead, questionText/);
+  });
+
+  it('tts.speak is not used to deliver a question at all', () => {
+    // The assertion that keeps it fixed. `tts` still exists for other jobs — cancelling, and
+    // reporting whether anything is speaking — but it must never be what asks a question,
+    // because it cannot reach the vendor.
+    expect(CODE).not.toMatch(/tts\.speak\(questionText\)/);
+  });
+
+  it('the question is still appended to the thread when the panel fails', () => {
+    // The other half of the original fix, which must survive this one: a failed turn must not
+    // blank the conversation or change what the screen looks like.
+    expect(CODE).toMatch(/setPanelLines\(\(prev\) => \[\.\.\.prev, \{ speaker: lead/);
   });
 });
