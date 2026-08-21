@@ -105,6 +105,39 @@ def _cache_key(provider: str, voice_id: str, text: str, tone: str, speed: float)
     return CacheKeys.tts_audio(digest)
 
 
+async def _budget_room() -> tuple[bool, float]:
+    """
+    Is there speech budget left today, and how much?
+
+    ONE FUNCTION FOR BOTH ENDPOINTS, BECAUSE THEY DISAGREED — and the disagreement silently
+    turned neural speech off.
+
+    `TTS_DAILY_BUDGET_USD` is documented as "0 disables the cap", and `/speak` implemented
+    exactly that: `if budget > 0 and spent >= budget`. `/status` did not. It computed
+    `remaining = max(0.0, budget - spent)`, which is 0.0 when the budget is 0, and then
+    reported `enabled = provider is not None and remaining > 0` — so setting the value that
+    means "no limit" made the status endpoint say TTS was unavailable.
+
+    That is worse than either behaviour on its own, because the client asks `/status` ONCE per
+    round and, told no, correctly never calls `/speak` at all. So the endpoint that would have
+    allowed the request was never reached, and the vendor dashboard showed zero requests while
+    the account was funded and every setting looked right. Nothing logged, nothing failed.
+
+    Two endpoints reading one setting two ways is not a bug you fix by making the conditionals
+    match; it is a bug you fix by there being one conditional. Hence this.
+
+    Returns `(has_room, remaining_usd)`. `remaining_usd` is **-1.0 when uncapped**, which is
+    deliberately not a plausible amount of money: a caller that forgets what it means will
+    produce something obviously wrong rather than something quietly wrong, and 0.0 would mean
+    "exhausted" — the exact confusion this function exists to end.
+    """
+    cap = settings.TTS_DAILY_BUDGET_USD
+    spent = await tts_spend_today()
+    if cap <= 0:
+        return True, -1.0
+    return spent < cap, max(0.0, cap - spent)
+
+
 @router.post(
     "/speak",
     dependencies=[Depends(_tts_rate_limit)],
@@ -150,11 +183,11 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
             headers={"X-TTS-Cache": "hit", "Cache-Control": "private, max-age=86400"},
         )
 
-    spent = await tts_spend_today()
-    if settings.TTS_DAILY_BUDGET_USD > 0 and spent >= settings.TTS_DAILY_BUDGET_USD:
+    has_room, _remaining = await _budget_room()
+    if not has_room:
         logger.error(
             "tts_daily_budget_exceeded",
-            spent_usd=round(spent, 4),
+            spent_usd=round(await tts_spend_today(), 4),
             budget_usd=settings.TTS_DAILY_BUDGET_USD,
         )
         # 402 rather than 429: nothing about waiting will help, the budget resets at
@@ -265,11 +298,11 @@ async def tts_status(current_user: CurrentUser) -> TTSStatus:
             hint="TTS_ENABLED is true but no provider could be constructed",
         )
 
-    spent = await tts_spend_today()
-    remaining = max(0.0, settings.TTS_DAILY_BUDGET_USD - spent)
+    has_room, remaining = await _budget_room()
     from app.services.tts.factory import configured_voices  # noqa: PLC0415
 
-    if provider_name is not None and remaining <= 0:
+    if provider_name is not None and not has_room:
+        spent = await tts_spend_today()
         failure = (
             f"daily TTS budget spent: ${spent:.4f} of "
             f"${settings.TTS_DAILY_BUDGET_USD:.2f} (TTS_DAILY_BUDGET_USD)"
@@ -277,7 +310,7 @@ async def tts_status(current_user: CurrentUser) -> TTSStatus:
         logger.info("tts_budget_spent", spent_usd=round(spent, 4))
 
     return TTSStatus(
-        enabled=provider_name is not None and remaining > 0,
+        enabled=provider_name is not None and has_room,
         provider=provider_name,
         budget_remaining_usd=round(remaining, 4),
         # Which speakers actually have a voice id configured. A panelist without one falls

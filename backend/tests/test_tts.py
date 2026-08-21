@@ -341,3 +341,89 @@ class TestPerSpeakerPace:
         from app.services.tts.base import prosody_for
 
         assert prosody_for("asking", "Riya")["volume"] == 0.0
+
+
+class TestZeroMeansNoCapEverywhere:
+    """
+    `TTS_DAILY_BUDGET_USD=0` is documented as "0 disables the cap". Two endpoints read it two
+    ways, and the disagreement silently turned neural speech off.
+
+    /speak implemented the documentation: `if budget > 0 and spent >= budget`.
+    /status did not: `remaining = max(0.0, budget - spent)` is 0.0 when the budget is 0, and it
+    then reported `enabled = provider is not None and remaining > 0` — so the value meaning
+    "no limit" made the status endpoint say speech was unavailable.
+
+    THAT IS WORSE THAN EITHER BEHAVIOUR ALONE. The client asks /status ONCE per round and, told
+    no, correctly never calls /speak. So the endpoint that would have allowed the request was
+    never reached: the vendor dashboard showed zero requests while the account was funded, the
+    key was active and every setting looked right. Nothing failed and nothing logged.
+
+    Fixed by there being ONE conditional rather than two that agree — `_budget_room()`. Making
+    the two conditionals match would have left the next person free to change one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_zero_budget_leaves_room(self, monkeypatch):
+        from app.api.v1 import tts
+
+        monkeypatch.setattr(tts.settings, "TTS_DAILY_BUDGET_USD", 0.0)
+        has_room, remaining = await tts._budget_room()
+        assert has_room is True
+        # -1.0, not 0.0. Zero means exhausted, and conflating the two is the bug.
+        assert remaining == -1.0
+
+    @pytest.mark.asyncio
+    async def test_a_negative_budget_is_treated_as_no_cap_too(self, monkeypatch):
+        # Nobody should set this, but `<= 0` rather than `== 0` means a typo'd minus sign fails
+        # towards working speech rather than towards silence.
+        from app.api.v1 import tts
+
+        monkeypatch.setattr(tts.settings, "TTS_DAILY_BUDGET_USD", -5.0)
+        has_room, _ = await tts._budget_room()
+        assert has_room is True
+
+    @pytest.mark.asyncio
+    async def test_a_real_cap_still_caps(self, monkeypatch):
+        from app.api.v1 import tts
+
+        monkeypatch.setattr(tts.settings, "TTS_DAILY_BUDGET_USD", 5.0)
+        monkeypatch.setattr(tts, "tts_spend_today", _fixed_spend(0.0))
+        has_room, remaining = await tts._budget_room()
+        assert has_room is True
+        assert remaining == 5.0
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_cap_reports_no_room_and_zero_left(self, monkeypatch):
+        from app.api.v1 import tts
+
+        monkeypatch.setattr(tts.settings, "TTS_DAILY_BUDGET_USD", 5.0)
+        monkeypatch.setattr(tts, "tts_spend_today", _fixed_spend(5.0))
+        has_room, remaining = await tts._budget_room()
+        assert has_room is False
+        assert remaining == 0.0
+
+    def test_both_endpoints_go_through_the_one_helper(self):
+        """
+        THE ASSERTION THAT KEEPS THEM AGREED. Two matching conditionals are one edit away from
+        disagreeing again; one function cannot.
+        """
+        import inspect
+
+        from app.api.v1 import tts
+
+        speak = inspect.getsource(tts.speak)
+        status = inspect.getsource(tts.tts_status)
+        assert "_budget_room()" in speak
+        assert "_budget_room()" in status
+        # And neither may compare the setting itself any more.
+        for src in (speak, status):
+            code = "\n".join(line.split("#", 1)[0] for line in src.splitlines())
+            assert "TTS_DAILY_BUDGET_USD >" not in code
+            assert "TTS_DAILY_BUDGET_USD -" not in code
+
+
+def _fixed_spend(value: float):
+    async def _spend() -> float:
+        return value
+
+    return _spend

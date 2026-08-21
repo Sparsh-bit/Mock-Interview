@@ -71,6 +71,14 @@ export const BROWSER_TONE: Record<SpeechTone, { rate: number; pitch: number }> =
 export interface TTSStatus {
   enabled: boolean;
   provider: string | null;
+  /**
+   * Dollars of speech budget left today, or **-1 when there is no cap**.
+   *
+   * Not zero for uncapped: zero means exhausted, and conflating the two is precisely the bug
+   * that turned neural speech off while the account was funded — `/status` read
+   * `TTS_DAILY_BUDGET_USD=0` (documented as "no cap") as "nothing left" and reported disabled,
+   * so this client never called `/speak` at all. Informational only; trust `enabled`.
+   */
   budget_remaining_usd: number;
   /** Which speakers have a voice configured. A missing one falls back individually. */
   voices: Record<string, boolean>;
