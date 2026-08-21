@@ -270,6 +270,28 @@ class Settings(BaseSettings):
     FEATURE_ANALYTICS: bool = True
 
     # ── Rate limiting ─────────────────────────────────────────────────────
+    #: Seconds a LIVE question may spend waiting on the AI before the interview serves a
+    #: cached or banked one instead.
+    #:
+    #: THIS EXISTS BECAUSE THERE WAS NO LIMIT AT ALL. Plan generation has had a 110s budget
+    #: for a long time; per-question generation had none, and the GLM client's own read
+    #: timeout is 180 seconds. So a slow provider mid-interview could leave a candidate
+    #: looking at nothing for three minutes, with no way to tell whether the software had
+    #: died. Reported as "when the api gets slower or takes time to respond then try to pick
+    #: up some questions from the vector database that will not break the flow".
+    #:
+    #: 18 SECONDS, and the number is a judgement about the room rather than about the vendor.
+    #: A generated question is better than a banked one — it is aimed at what the candidate
+    #: just revealed — so this should not be so tight that it throws away good questions for
+    #: a provider having a slow second. But an interviewer who goes silent for twenty seconds
+    #: has already broken the illusion, and past that point a *worse but immediate* question
+    #: is the better product. The fallback is not a failure state: the bank and the shared
+    #: pool are real questions for this role.
+    #:
+    #: Raising this trades interview fluency for question quality; lowering it trades the
+    #: other way and leans harder on the cache. Zero disables the budget, which restores the
+    #: old unbounded behaviour and is not recommended.
+    INTERVIEW_QUESTION_AI_BUDGET_SECONDS: float = 18.0
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20

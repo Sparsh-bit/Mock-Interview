@@ -1910,8 +1910,24 @@ class InterviewOrchestrator:
 
         # Best-effort: generation failing (both providers) is not fatal — the
         # caller falls back to DB selection — so we swallow the unavailable error.
+        #
+        # AND IT IS NOW BOUNDED IN WALL-CLOCK TIME, which it was not.
+        #
+        # `create_plan` has had a 110s budget since it was written. This path had NONE, and
+        # the GLM client's own read timeout is 180 seconds — so a slow provider mid-interview
+        # could leave a candidate looking at a blank panel for three minutes with no way to
+        # tell whether the software had died. A plan generation happens while somebody watches
+        # a "preparing your interview" screen and can afford to be slow; a question happens in
+        # the middle of a conversation and cannot.
+        #
+        # ON TIMEOUT THE INTERVIEW CONTINUES, IT DOES NOT FAIL. Returning None puts the caller
+        # on the same path a provider outage already used: the shared pool first, then the
+        # bank. Those are real questions for this role, so the candidate gets a slightly less
+        # personal question instead of a silence — which is the trade the timeout exists to
+        # make. The one thing that must never happen here is waiting.
+        budget = settings.INTERVIEW_QUESTION_AI_BUDGET_SECONDS
         try:
-            parsed, _ = await generate_structured(
+            call = generate_structured(
                 GeneratedQuestion,
                 messages,
                 # Generous headroom: the reasoning model spends tokens
@@ -1923,7 +1939,20 @@ class InterviewOrchestrator:
                 cost_tier=CostTier.BALANCED,
                 context="question_generation",
             )
+            parsed, _ = await (asyncio.wait_for(call, timeout=budget) if budget > 0 else call)
         except AIProviderUnavailableError:
+            return None
+        except TimeoutError:
+            # Logged at INFO, not warning. A slow provider is a normal operating condition and
+            # the interview handled it exactly as designed; logging a designed-for degradation
+            # as a fault makes a healthy system look broken. The RATE of this is the useful
+            # signal — a few a day is the cache doing its job, a spike is a provider problem.
+            logger.info(
+                "question_generation_timed_out",
+                session_id=str(session.id),
+                budget_seconds=budget,
+                falling_back_to="shared pool or bank",
+            )
             return None
 
         topic = await self._get_or_create_topic(session.track_id, parsed.topic_name)
