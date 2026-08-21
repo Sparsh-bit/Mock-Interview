@@ -203,6 +203,54 @@ export function useSpeechRecognition() {
   // Timing state for pause detection (refs so handlers see live values).
   const lastActivityRef = useRef<number>(0);
   const wordCountRef = useRef<number>(0);
+  /*
+   * THE WORDS THE ENGINE HAS HEARD BUT NOT YET COMMITTED, kept in a ref so the two places
+   * that end a session can rescue them.
+   *
+   * THE REPORTED BUG: "the mic is also not accepting the correct answers the words are not
+   * perfectly been registered". Nothing was mishearing anything. `transcript` only ever grew
+   * from results the engine marked `isFinal`, and BOTH ways a session ends threw the
+   * un-finalised tail away:
+   *
+   *   1. Chrome ends a recognition session on its own, `continuous = true` notwithstanding.
+   *      `onend` restarts it — that part was already fixed — but whatever was mid-phrase and
+   *      still interim at that moment simply vanished. Mid-answer, unpredictably, a clause
+   *      would be missing.
+   *   2. `stop()`, which is what runs when the candidate finishes and submits. The last
+   *      thing they said is the most likely thing to still be interim, so the END of almost
+   *      every answer was at risk — the most visible loss of all, and the one that reads as
+   *      "it did not register what I said".
+   *
+   * A ref rather than reading the `interim` state, because both call sites run in callbacks
+   * that would close over a stale render's value.
+   */
+  const interimRef = useRef<string>('');
+
+  /**
+   * Move whatever the engine has heard but not finalised into the transcript.
+   *
+   * Called from the only two places a session can end: `onend`, which fires when Chrome
+   * closes the session on its own, and `stop()`, which fires when the candidate submits.
+   * Both used to discard the tail — see `interimRef` for what that cost.
+   *
+   * IDEMPOTENT, because both can happen in quick succession: `stop()` commits and then the
+   * engine's own `onend` arrives a moment later. Clearing the ref as the first act means the
+   * second call finds nothing and does nothing, so a phrase cannot be added twice.
+   *
+   * Runs the same `correctTechnicalTerms` pass and the same word-count bookkeeping as the
+   * final-result path, deliberately: a rescued phrase must be indistinguishable in the stored
+   * answer from one the engine happened to finalise, or "HashMap" would come out as "hash
+   * map" only when the session ended mid-sentence.
+   */
+  const commitInterim = useCallback(() => {
+    const pending = interimRef.current.trim();
+    interimRef.current = '';
+    setInterim('');
+    if (!pending) return;
+    const clean = correctTechnicalTerms(pending);
+    wordCountRef.current += clean.split(/\s+/).filter(Boolean).length;
+    setTranscript((prev) => (prev ? prev + ' ' : '') + clean);
+  }, []);
 
   useEffect(() => {
     const Ctor = getRecognitionCtor();
@@ -269,6 +317,11 @@ export function useSpeechRecognition() {
           setConfidence(confidenceSumRef.current / confidenceCountRef.current);
         }
       }
+      // Mirrored into the ref so `commitInterim` can rescue it. Assigned rather than
+      // appended: `interimChunk` is recomputed from `e.resultIndex` every event and is
+      // already the whole uncommitted tail, so appending would duplicate every word as the
+      // phrase grows.
+      interimRef.current = interimChunk;
       setInterim(interimChunk);
     };
     /**
@@ -313,6 +366,10 @@ export function useSpeechRecognition() {
      * InvalidStateError because the engine has not finished tearing down.
      */
     rec.onend = () => {
+      // BEFORE ANYTHING ELSE. The session is over, so whatever is still interim will never
+      // be finalised by this engine — and the restart below begins a fresh results list that
+      // knows nothing about it. Committing first is the only moment those words exist.
+      commitInterim();
       if (!wantListeningRef.current) {
         setListening(false);
         return;
@@ -339,7 +396,12 @@ export function useSpeechRecognition() {
       rec.onspeechstart = null;
       try { rec.stop(); } catch { /* already stopped */ }
     };
-  }, []);
+    // `commitInterim` is declared with an empty dependency list, so its identity never
+    // changes and this effect still runs exactly once — the recogniser is not rebuilt. Listed
+    // rather than suppressed because the lint rule is right: `onend` calls it, and if it ever
+    // did gain a dependency, silencing this is how the handler would end up holding a stale
+    // one and rescuing words into a transcript nobody is reading.
+  }, [commitInterim]);
 
   const start = useCallback(() => {
     if (!recognitionRef.current || listening) return;
@@ -360,13 +422,20 @@ export function useSpeechRecognition() {
     // to stop.
     wantListeningRef.current = false;
     if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+    // THE TAIL OF THE ANSWER, rescued before the engine is told to stop. This is the call
+    // the candidate triggers by finishing and submitting, so the last thing they said is the
+    // most likely thing to still be interim — which made the END of almost every answer the
+    // part at risk of never being recorded.
+    commitInterim();
     recognitionRef.current?.stop();
     setListening(false);
-  }, []);
+  }, [commitInterim]);
 
   const reset = useCallback(() => {
     setTranscript('');
     setInterim('');
+    // Or a rescued tail from the previous question would be prepended to the next answer.
+    interimRef.current = '';
     setPauses([]);
     setError(null);
     setConfidence(null);
