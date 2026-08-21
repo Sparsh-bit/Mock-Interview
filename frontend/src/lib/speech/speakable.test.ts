@@ -83,3 +83,51 @@ describe('toSpokenForm', () => {
     expect(toSpokenForm('')).toBe('');
   });
 });
+
+describe('stage directions are performed, not pronounced', () => {
+  /*
+   * "i cannot see the panaelist laugh and a sort of smile and all the gestures that the
+   * normal human do in an interview".
+   *
+   * The panel was already laughing. Rule 5 of prompts/interview_panel.md instructs it to and
+   * gives the exact format — "*(laughs)* No, fair enough.", "*(both laugh)*" — so the model
+   * was doing as it was told. Nothing translated the marker, so the vendor received the
+   * literal string and a panelist SAID THE WORD "laughs" where a human would have laughed.
+   *
+   * That is worse than no laughter: it is uncanny, and it lands at exactly the moments meant
+   * to make the panel feel like people.
+   */
+  it('drops the asterisk-wrapped form the prompt asks for', () => {
+    expect(toSpokenForm('*(laughs)* No, fair enough.')).toBe('No, fair enough.');
+    expect(toSpokenForm('*(both laugh)* Okay, next one.')).toBe('Okay, next one.');
+  });
+
+  it('drops the bare form too, because the model omits the asterisks', () => {
+    expect(toSpokenForm('(laughs) Right, moving on.')).toBe('Right, moving on.');
+    expect(toSpokenForm('(chuckles) Fair.')).toBe('Fair.');
+    expect(toSpokenForm('(smiles) Go on.')).toBe('Go on.');
+  });
+
+  it('NEVER strips real parenthetical speech', () => {
+    // The line that makes this safe. An unrestricted `(...)` strip would silently delete
+    // content the candidate needs to hear — and a question missing its qualifier is a
+    // different question.
+    expect(toSpokenForm('The JDK (which includes the compiler) is what you need.')).toContain(
+      'which includes the compiler',
+    );
+    expect(toSpokenForm('Explain the difference (briefly is fine).')).toContain('briefly is fine');
+  });
+
+  it('leaves the spoken words either side intact and tidy', () => {
+    // The laugh becomes a real pause where the marker was, which is what the surrounding
+    // words already carry. No double spaces, no space before the full stop.
+    expect(toSpokenForm('Ha — okay. *(laughs)* That is one way to put it.')).toBe(
+      'Ha — okay. That is one way to put it.',
+    );
+  });
+
+  it('is still idempotent', () => {
+    const once = toSpokenForm('*(laughs)* Tell me about HashMap.');
+    expect(toSpokenForm(once)).toBe(once);
+  });
+});

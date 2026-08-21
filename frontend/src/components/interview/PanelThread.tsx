@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 
 import type { Interviewer, PanelLine } from '@/hooks/useInterviewPanel';
 import { cn } from '@/lib/utils';
+import { splitGestures } from '@/lib/speech/gesture';
 
 /**
  * The room, as a conversation — components/interview/PanelThread.tsx
@@ -141,7 +142,29 @@ export function PanelThread({
                 </span>
               )}
             </p>
-            <p className="text-[15px] leading-relaxed">{line.text}</p>
+            {/* THE LINE, WITH ITS STAGE DIRECTIONS PERFORMED RATHER THAN PRINTED.
+                This used to render `line.text` straight into the paragraph, so a candidate
+                read the literal characters `*(laughs)*` mid-conversation — raw markup at
+                exactly the moment the panel was written to feel human. The voice had the
+                same bug from the other side and said the word "laughs"; see
+                lib/speech/speakable.ts. One parser feeds both, so the screen and the ear
+                cannot disagree about what counts as a gesture. */}
+            <p className="text-[15px] leading-relaxed">
+              {splitGestures(line.text).map((part, p) =>
+                part.kind === 'gesture' ? (
+                  <span
+                    key={`g-${p}`}
+                    className="mx-0.5 italic text-muted-foreground/80"
+                    // Read out as the aside it is, rather than as part of the sentence.
+                    aria-label={`${part.text}`}
+                  >
+                    {part.text}
+                  </span>
+                ) : (
+                  <span key={`s-${p}`}>{p > 0 ? ' ' : ''}{part.text}</span>
+                ),
+              )}
+            </p>
           </motion.div>
         );
       })}

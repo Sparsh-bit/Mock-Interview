@@ -101,6 +101,37 @@ export function toSpokenForm(text: string): string {
   if (!text) return text;
   let out = text;
 
+  /*
+   * STAGE DIRECTIONS ARE PERFORMED, NOT PRONOUNCED.
+   *
+   * THE REPORT: "i cannot see the panaelist laugh and a sort of smile and all the gestures
+   * that the normal human do in an interview". The panel was already laughing — rule 5 of
+   * prompts/interview_panel.md instructs it to, and gives the exact format: "*(laughs)* No,
+   * fair enough.", "*(both laugh)*". The model was obeying.
+   *
+   * Nothing translated the marker. So the vendor received the literal string `*(laughs)*` and
+   * a panelist SAID THE WORD "laughs" — or read the asterisks as punctuation — where a human
+   * would have laughed. That is worse than no laughter at all: it is uncanny, and it is why
+   * the panel reads as a machine at exactly the moments meant to make it read as people.
+   *
+   * REMOVED RATHER THAN CONVERTED, deliberately. Fish's marker syntax is model-specific and
+   * undocumented for the voices this product uses, so emitting a guess would risk the same
+   * failure in a new costume — a voice reading out whatever token we invented. Removing it
+   * leaves a real pause where the laugh was, which the surrounding words already carry
+   * ("Ha — okay, that's one way to put it" is funny without an annotation), and it is
+   * verifiable today whereas a marker cannot be tested without vendor credit.
+   *
+   * ONLY THE ASTERISK-WRAPPED FORM, plus a short allowlist of the bare forms the model
+   * actually produces. An unrestricted `\(...\)` strip would silently delete real
+   * parenthetical speech — "the JDK (which includes the compiler)" is content a candidate
+   * needs to hear, not an aside.
+   */
+  out = out.replace(/\*\(([^)]{0,40})\)\*/g, ' ');
+  out = out.replace(
+    /\((?:both\s+)?(?:laughs?|laughing|chuckles?|chuckling|smiles?|smiling|grins?|sighs?|pauses?)\)/gi,
+    ' ',
+  );
+
   // Code fences and inline backticks are read out as "backtick backtick backtick java",
   // which is nonsense in the ear. The candidate can see the code; the voice should talk
   // about it rather than recite its punctuation.
