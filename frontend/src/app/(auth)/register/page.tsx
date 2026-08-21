@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { passwordRules } from '@/lib/auth/password';
 import { Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { getBrowserApiClient } from '@/lib/api';
@@ -17,14 +18,19 @@ import { Button } from '@/components/ui/button';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 
 export const runtime = 'edge';
+/*
+ * The password rules come from lib/auth/password.ts rather than living here.
+ *
+ * They used to be written out in this file, which was fine while this was the only form that
+ * set a password. It stopped being fine when the reset-completion form was added: two copies
+ * of a rule drift, and the drift here has a direction that matters. If reset were laxer than
+ * registration, "forgot password" would be a documented route to a weaker password than this
+ * form accepts — a bypass rather than an inconsistency. One definition, imported by both.
+ */
 const schema = z.object({
   full_name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Enter a valid email address'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Include at least one uppercase letter')
-    .regex(/[0-9]/, 'Include at least one number'),
+  password: passwordRules,
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",

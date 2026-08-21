@@ -84,12 +84,29 @@ async def generate_structured(
                         cache_system=cache_system,
                     )
                 )
-            except ProviderError:
+            except ProviderError as exc:
+                # THE REASON, NOT JUST THE FACT. This logged the context, the provider and the
+                # attempt number and nothing about what went wrong — so a production warning
+                # read "anthropic failed" and left no way to tell a missing API key from a
+                # rate limit from a wrong model name from an outage. All four look identical
+                # in the logs and want completely different responses, and the interview
+                # silently continues on the fallback provider meanwhile, so nothing else
+                # surfaces it either.
+                #
+                # Reported from a live Render log: an `ai_generate_provider_error` for
+                # `interview_plan` on `anthropic`, immediately followed by
+                # `ai_generate_falling_back`, with no reason recorded anywhere. Same class of
+                # defect as the Fish client raising ReadTimeout with an empty message.
+                #
+                # The exception TYPE is included as well as its text because a provider SDK
+                # can raise with an empty string — the type is then the only diagnostic left.
                 logger.warning(
                     "ai_generate_provider_error",
                     context=context,
                     provider=provider.provider_name,
                     attempt=attempt,
+                    error_type=type(exc).__name__,
+                    error=str(exc) or type(exc).__name__,
                 )
                 continue
 
