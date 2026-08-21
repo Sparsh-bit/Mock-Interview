@@ -20,6 +20,19 @@ logger = structlog.get_logger(__name__)
 _provider: TTSProvider | None = None
 
 
+#: Fish backends that no longer answer. Sending one produces a HANG rather than an error.
+#:
+#: This exists because the difference matters enormously. A wrong-but-live model returns 402
+#: or 400 in under a second and the client falls back cleanly. A retired one leaves the
+#: request open until the client gives up, so the cost of the mistake is a timeout on every
+#: single line instead of one fast refusal — and `httpx` reports it as `ReadTimeout('')`,
+#: with an empty message, so nothing in the logs names the cause.
+#:
+#: Add to this list rather than only changing the default: the default protects a fresh
+#: checkout, and this protects the deployments whose environment still carries the old value.
+_RETIRED_FISH_MODELS: frozenset[str] = frozenset({"s2.1-pro-free", "s2.1-pro", "speech-1.4"})
+
+
 def get_tts_provider() -> TTSProvider:
     """
     The configured provider, built once.
@@ -49,10 +62,36 @@ def get_tts_provider() -> TTSProvider:
     if name == "fish":
         from app.services.tts.fish import FishAudioProvider  # noqa: PLC0415
 
-        _provider = FishAudioProvider(
-            api_key=settings.FISH_API_KEY, model=settings.FISH_MODEL
-        )
-        logger.info("tts_provider_created", provider="fish", model=settings.FISH_MODEL)
+        model = (settings.FISH_MODEL or "").strip()
+        if model in _RETIRED_FISH_MODELS:
+            # REFUSED AT CONSTRUCTION, not per request, and this is the fix for a reported
+            # bug rather than defensive habit.
+            #
+            # 's2.1-pro-free' was Fish's free backend and the default in this repo. It has
+            # been retired, and a retired Fish backend does not answer with an error — it
+            # does not answer at all. The connect and the TLS handshake succeed and then the
+            # request sits there; measured at 35s and at 60s with no response. So every panel
+            # line waited out the 12s client timeout in silence and then fell back to browser
+            # speech, which is what "the voice is changing to the older voices" was.
+            #
+            # A refusal here turns that into the honest state: TTS is unavailable, the status
+            # endpoint says so, and the round runs on browser voices from its FIRST line
+            # rather than switching partway through. Consistently worse beats intermittently
+            # broken — the whole point of the degrade latch on the client.
+            #
+            # NOT a startup raise, deliberately. A hard failure would take the backend down
+            # for a deployment whose env still carries the old value, and TTS is an
+            # enhancement — losing it must never cost anybody their interview.
+            raise TTSError(
+                f"FISH_MODEL={model!r} is a retired Fish backend. It does not return an "
+                "error, it never responds, so every line would wait out the client timeout "
+                "before falling back. Set FISH_MODEL to a current model — 's1', "
+                "'speech-1.6', 'speech-1.5' or 's1-mini' — and top up API credit at "
+                "fish.audio/app/developer, which Fish bills separately from platform credit."
+            )
+
+        _provider = FishAudioProvider(api_key=settings.FISH_API_KEY, model=model)
+        logger.info("tts_provider_created", provider="fish", model=model)
         return _provider
 
     raise TTSError(f"unknown or unset TTS_PROVIDER: {name!r}")

@@ -321,16 +321,31 @@ class Settings(BaseSettings):
         ),
     )
     FISH_MODEL: str = Field(
-        default="s2.1-pro-free",
+        default="s1",
         description=(
             "Fish synthesis backend, sent as a HEADER rather than a body field.\n\n"
-            "'s2.1-pro-free' is the free tier and is the default because it is what actually "
-            "works on a new account: the paid backends return HTTP 402 until API credit is "
-            "added, and Fish bills API credit separately from platform credit, so an account "
-            "can look funded and still be refused. Verified live — s2.1-pro-free returns real "
-            "audio on a zero-credit key in ~3.5s.\n\n"
-            "Move to 's1' or 'speech-1.6' once credit is topped up if the free tier rate-limits "
-            "under real traffic."
+            "IT WAS 's2.1-pro-free' AND THAT VALUE NOW HANGS. The note here used to say the "
+            "free tier 'returns real audio on a zero-credit key in ~3.5s', which was true when "
+            "it was written and is not true any more — retested live and 's2.1-pro-free' does "
+            "not answer at all: the TCP connect and the TLS handshake succeed and then the "
+            "request sits until the client gives up. Measured at 35s and at 60s with no "
+            "response either time.\n\n"
+            "THAT IS WORSE THAN A REFUSAL, AND IT IS WHY THE VOICES WERE REPORTED AS "
+            "'CHANGING TO THE OLDER VOICES'. Every real backend answers HTTP 402 in under a "
+            "second, which the client turns into an immediate, permanent fall back to browser "
+            "speech. A retired backend that hangs instead makes the first line of an interview "
+            "wait out the 12s timeout in silence before falling back — so the panel starts on "
+            "one voice and finishes on another, and nothing in the logs says why, because "
+            "httpx raises ReadTimeout with an EMPTY message.\n\n"
+            "'s1' is Fish's current model. Verified live: it answers in under a second. On a "
+            "key with no API credit that answer is a 402, which is the honest state of the "
+            "account rather than a hang — and API credit is billed SEPARATELY from platform "
+            "credit at fish.audio/app/developer, so a funded-looking subscription can still be "
+            "refused. 'speech-1.6', 'speech-1.5' and 's1-mini' all also answer in under a "
+            "second and are equally valid here.\n\n"
+            "Never set this to a backend that has been retired. A wrong value that 402s costs "
+            "one round of browser voices; a wrong value that hangs costs a timeout per "
+            "interview and looks like an intermittent bug."
         ),
     )
     ELEVENLABS_API_KEY: str = Field(default="", description="Server-side only. Never sent to the browser.")

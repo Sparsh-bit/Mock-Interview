@@ -6,6 +6,15 @@ __pycache__/
 venv/
 .env
 .env.local
+# ANY sibling of .env, not just the two named forms.
+#
+# A backup made before editing .env — `.env.bak`, `.env.2026-08-22`, `.env.old` — holds every
+# secret the real file does, and `git add -A` picks it up because only the exact names above
+# were ignored. That happened: a `.env.bak.<timestamp>` written by a one-line edit landed in a
+# commit and was caught by GitHub's push protection on an Anthropic key, which is the only
+# reason it did not reach the remote. A pattern is the fix; remembering is not.
+.env.*
+!.env.example
 dist/
 build/
 .DS_Store

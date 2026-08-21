@@ -159,6 +159,10 @@ class PlanBrief:
     kind: question_shape.InterviewKind
     #: True when an authored syllabus drove the brief rather than the domain fallback.
     from_syllabus: bool
+    #: How many CROSS rows the plan itself carries. The live cross-question injector
+    #: subtracts this from the shape's allocation so the two cannot stack — see
+    #: `_live_cross_budget`.
+    cross_planned: int
 
 
 def _company_tier(company: str) -> str:
@@ -175,6 +179,52 @@ def _company_tier(company: str) -> str:
     slug = slugify(company)
     entry = get_company(slug) or get_company(slug.replace("-", ""))
     return getattr(entry, "tier", "") or "" if entry is not None else ""
+
+
+def _live_cross_budget(meta: dict, question_count: int, is_technical: bool) -> int:
+    """
+    How many cross-questions may still be injected LIVE during this interview.
+
+    THE REPORT: "not on every question ask the cross question make sure that the interview
+    must feel real". They were right, and the cause was two features that each behaved
+    correctly and had never been told about each other.
+
+    `question_shape` allocates the cross-questions as part of the interview's shape — three
+    of eleven rows for a campus fundamentals round — and the plan grid places them. That was
+    the fix for an interview that asked mostly situations. Separately, and for much longer,
+    `_next_planned_question` has injected a live cross-question every third answer up to
+    `INTERVIEW_MAX_CROSS_QUESTIONS`, which is four, ADDING questions rather than replacing
+    planned ones.
+
+    Nobody subtracted. Measured: three planned plus four live is SEVEN cross-questions out of
+    sixteen questions asked. Nearly half the interview was "and what about the case where
+    that stops being true", which is exactly the interrogation the candidate described. Each
+    half was defensible; the sum was not.
+
+    THE ALLOCATION IS THE TOTAL. That is the rule, and it puts the decision back in the one
+    module that owns question shape instead of in two places that disagree. Whatever the plan
+    already carries is subtracted from it.
+
+    THE FLOOR IS ONE, AND IT IS DELIBERATE. A live cross-question is not interchangeable with
+    a planned one: it can quote what the candidate actually just said, and a planned row
+    written before they spoke cannot. So even a plan that has already spent the whole
+    allocation keeps one reactive follow-up, because the reactive kind is the better kind and
+    an interview with none of them feels like a form being read out.
+
+    Non-technical rounds get none. A sales or consulting screen's shape has no CROSS register
+    at all — following a rule into its edge case is a fundamentals move — and `allocation`
+    returns zero for it, so the floor must not smuggle one back in.
+    """
+    allocated = question_shape.allocation(
+        question_shape.InterviewKind.CAMPUS_FUNDAMENTALS
+        if is_technical
+        else question_shape.InterviewKind.ROLE_SCENARIO,
+        question_count,
+    ).get(question_shape.Register.CROSS, 0)
+    if allocated <= 0:
+        return 0
+    planned = int(meta.get("cross_planned") or 0)
+    return max(1, allocated - planned)
 
 
 def _candidate_focus_block(session: InterviewSession) -> str:
@@ -266,6 +316,9 @@ def _plan_brief(
                 f"\n{weighting}"
             )
         return PlanBrief(
+            cross_planned=sum(
+                1 for slot in grid if slot.register is question_shape.Register.CROSS
+            ),
             must_cover=must_cover,
             # The grid already fixes the form of every row, so the mix block restates the
             # totals rather than adding a second, competing instruction. Same renderer as
@@ -288,6 +341,9 @@ def _plan_brief(
         program=program or track_name,
     )
     return PlanBrief(
+        # The domain path has no grid, so it plans no cross-questions and the whole
+        # allocation is left to the live injector.
+        cross_planned=0,
         must_cover=_must_cover_block(track_name, program, company),
         question_mix=question_shape.shape_block(kind, question_count),
         focus_directive=focus_service.focus_block(focus, question_count, syllabus=None),
@@ -608,6 +664,12 @@ class InterviewOrchestrator:
             is_technical if is_technical is not None else decide_technical(program, focus)
         )
 
+        # Set when a brief is built below. Zero on a plan-cache HIT, which is the honest
+        # answer rather than a guess: a cached plan's grid is not in hand here, so the live
+        # injector falls back to the full allocation. It cannot over-ask — the allocation IS
+        # the total — it can only under-credit a cached plan that already had cross rows.
+        brief_cross_planned = 0
+
         resume_summary = resume_text.strip() or await self._resume_summary(user_id)
         # Personalised plans are per-candidate and must NOT be shared via the
         # cache. Only generic (company/program/focus) plans are cacheable.
@@ -670,6 +732,7 @@ class InterviewOrchestrator:
                 is_technical=resolved_technical,
                 question_count=_PLANNED_QUESTION_COUNT,
             )
+            brief_cross_planned = brief.cross_planned
             logger.info(
                 "interview_plan_brief",
                 session_id=str(session.id),
@@ -838,6 +901,9 @@ class InterviewOrchestrator:
             "topics": topics,
             "planned_question_ids": planned_ids,
             "cross_question_ids": [],
+            # How many cross-questions the PLAN already contains, so the live injector can
+            # subtract them. Written at plan time because the grid only exists here.
+            "cross_planned": brief_cross_planned,
             "approved": False,
             "cross_asked": 0,
         }
@@ -1457,7 +1523,19 @@ class InterviewOrchestrator:
             and last_answer is not None
             and answered_count > 0
             and answered_count % 3 == 0
-            and meta.get("cross_asked", 0) < _MAX_CROSS_QUESTIONS
+            # SHAPE-AWARE, not a flat four. `_MAX_CROSS_QUESTIONS` is kept as the ceiling
+            # this can never exceed, but the real limit is the interview's own allocation
+            # minus whatever the plan already carries — otherwise the planned cross rows and
+            # these stack into seven of sixteen questions. See `_live_cross_budget`.
+            and meta.get("cross_asked", 0)
+            < min(
+                _MAX_CROSS_QUESTIONS,
+                _live_cross_budget(
+                    meta,
+                    _PLANNED_QUESTION_COUNT,
+                    bool(meta.get("is_technical", True)),
+                ),
+            )
             and not last_was_cross
         ):
             last_q = await self.db.get(Question, last_answer.question_id)

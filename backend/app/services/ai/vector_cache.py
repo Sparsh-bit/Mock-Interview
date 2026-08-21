@@ -41,6 +41,8 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from sqlalchemy import text
@@ -314,6 +316,58 @@ def _require_cacheable(feature: str) -> None:
         )
 
 
+@asynccontextmanager
+async def _isolated(db: AsyncSession, *, what: str) -> AsyncIterator[None]:
+    """
+    Run cache SQL so that its failure cannot poison the caller's transaction.
+
+    THIS IS THE BUG BEHIND "the report was not able to get generated ... error in
+    generating the report", and it is the most consequential thing in this file.
+
+    Every public function here already caught `Exception` and degraded to a miss, and the
+    docstrings said "never raises. A cache that can fail a request is worse than no cache."
+    That was believed and it was false, because CATCHING A PYTHON EXCEPTION DOES NOT UN-ABORT
+    A POSTGRES TRANSACTION. Once a statement errors, Postgres refuses every subsequent
+    statement on that connection until the transaction ends:
+
+        asyncpg.exceptions.InFailedSQLTransactionError:
+            current transaction is aborted, commands ignored until end of transaction block
+
+    And `get_db` opens ONE session per request and holds it for the whole request. So a
+    single failed cache statement did not cost a cache miss — it killed every query that came
+    after it in that request. For report generation that is the report read, the score reads,
+    the persist and the commit: the candidate finishes an interview and gets an error and an
+    empty page, and the log blames whichever innocent query ran next.
+
+    The comment on `lookup`'s except block claimed this case was covered — "this also covers
+    'migration 014 has not been run yet', so deploying the code before the migration costs
+    money rather than breaking every feature that consults the cache". Exactly backwards. A
+    missing column made every cache-consulting request fail outright, which is the widest
+    possible blast radius from the smallest possible cause. That is how a best-effort cache
+    took down report generation.
+
+    A SAVEPOINT is the fix, and nothing else is. `begin_nested()` issues `SAVEPOINT`, and on
+    an exception SQLAlchemy issues `ROLLBACK TO SAVEPOINT` — which returns the transaction to
+    a usable state rather than merely reporting that it is not. The caller's work before this
+    point survives, the caller's work after it proceeds, and the cache genuinely becomes what
+    it always claimed to be: an optimisation that cannot fail a request.
+
+    Deliberately swallows everything, including the savepoint rollback failing. If the
+    connection is so broken that a rollback cannot be issued, the caller's next statement will
+    say so far more usefully than a traceback from inside a cache.
+    """
+    try:
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested(), db.begin_nested():
+            yield
+    except Exception:
+        logger.warning("ai_cache_operation_failed", operation=what, exc_info=True)
+
+
 async def lookup(
     db: AsyncSession,
     *,
@@ -338,64 +392,70 @@ async def lookup(
     """
     _require_cacheable(feature)
     try:
-        # Exact match. UPDATE ... RETURNING so the hit is counted and the payload read
-        # in one round trip, with no read-then-write race.
-        row = (
-            await db.execute(
-                text(
-                    """
-                    UPDATE ai_cache
-                       SET hit_count = hit_count + 1, last_used_at = now()
-                     WHERE feature = :feature AND scope = :scope AND key_hash = :kh
-                    RETURNING payload
-                    """
-                ),
-                {"feature": feature, "scope": scope, "kh": key_hash(key)},
-            )
-        ).first()
-        if row is not None:
-            logger.debug("ai_cache_hit_exact", feature=feature, key=key[:80])
-            return dict(row[0])
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested():
+            # Exact match. UPDATE ... RETURNING so the hit is counted and the payload read
+            # in one round trip, with no read-then-write race.
+            row = (
+                await db.execute(
+                    text(
+                        """
+                        UPDATE ai_cache
+                           SET hit_count = hit_count + 1, last_used_at = now()
+                         WHERE feature = :feature AND scope = :scope AND key_hash = :kh
+                        RETURNING payload
+                        """
+                    ),
+                    {"feature": feature, "scope": scope, "kh": key_hash(key)},
+                )
+            ).first()
+            if row is not None:
+                logger.debug("ai_cache_hit_exact", feature=feature, key=key[:80])
+                return dict(row[0])
 
-        # Near match. The subquery does the ANN search; the UPDATE counts the hit.
-        vec = embed(key)
-        if not any(vec):
+            # Near match. The subquery does the ANN search; the UPDATE counts the hit.
+            vec = embed(key)
+            if not any(vec):
+                return None
+            row = (
+                await db.execute(
+                    text(
+                        """
+                        UPDATE ai_cache
+                           SET hit_count = hit_count + 1, last_used_at = now()
+                         WHERE id = (
+                                 SELECT id FROM ai_cache
+                                  WHERE feature = :feature
+                                    AND scope = :scope
+                                    AND embedding IS NOT NULL
+                                    AND embedding <=> CAST(:vec AS vector) <= :maxd
+                                  ORDER BY embedding <=> CAST(:vec AS vector)
+                                  LIMIT 1
+                               )
+                        RETURNING payload, cache_key
+                        """
+                    ),
+                    {
+                        "feature": feature,
+                        "scope": scope,
+                        "vec": _as_pgvector(vec),
+                        "maxd": _MAX_DISTANCE,
+                    },
+                )
+            ).first()
+            if row is not None:
+                logger.info(
+                    "ai_cache_hit_similar",
+                    feature=feature,
+                    wanted=key[:80],
+                    served=str(row[1])[:80],
+                )
+                return dict(row[0])
             return None
-        row = (
-            await db.execute(
-                text(
-                    """
-                    UPDATE ai_cache
-                       SET hit_count = hit_count + 1, last_used_at = now()
-                     WHERE id = (
-                             SELECT id FROM ai_cache
-                              WHERE feature = :feature
-                                AND scope = :scope
-                                AND embedding IS NOT NULL
-                                AND embedding <=> CAST(:vec AS vector) <= :maxd
-                              ORDER BY embedding <=> CAST(:vec AS vector)
-                              LIMIT 1
-                           )
-                    RETURNING payload, cache_key
-                    """
-                ),
-                {
-                    "feature": feature,
-                    "scope": scope,
-                    "vec": _as_pgvector(vec),
-                    "maxd": _MAX_DISTANCE,
-                },
-            )
-        ).first()
-        if row is not None:
-            logger.info(
-                "ai_cache_hit_similar",
-                feature=feature,
-                wanted=key[:80],
-                served=str(row[1])[:80],
-            )
-            return dict(row[0])
-        return None
 
     except Exception:
         # Degrade to a miss. Notably this also covers "migration 014 has not been run
@@ -427,47 +487,53 @@ async def store(
     """
     _require_cacheable(feature)
     try:
-        await db.execute(
-            text(
-                """
-                INSERT INTO ai_cache
-                       (feature, cache_key, key_hash, scope, payload, embedding,
-                        hit_count, last_used_at)
-                VALUES (:feature, :ck, :kh, :scope, CAST(:payload AS jsonb),
-                        CAST(:vec AS vector), 0, now())
-                ON CONFLICT (feature, key_hash) DO UPDATE
-                    SET payload = EXCLUDED.payload, last_used_at = now()
-                """
-            ),
-            {
-                "feature": feature,
-                # Bounded to the column width. The full key is not needed to serve a
-                # hit — the hash and the vector do that — it is for debugging.
-                "ck": (key or "")[:500],
-                "kh": key_hash(key),
-                "scope": scope,
-                "payload": json.dumps(payload),
-                "vec": _as_pgvector(embed(key)),
-            },
-        )
-        logger.debug("ai_cache_stored", feature=feature, key=key[:80])
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO ai_cache
+                           (feature, cache_key, key_hash, scope, payload, embedding,
+                            hit_count, last_used_at)
+                    VALUES (:feature, :ck, :kh, :scope, CAST(:payload AS jsonb),
+                            CAST(:vec AS vector), 0, now())
+                    ON CONFLICT (feature, key_hash) DO UPDATE
+                        SET payload = EXCLUDED.payload, last_used_at = now()
+                    """
+                ),
+                {
+                    "feature": feature,
+                    # Bounded to the column width. The full key is not needed to serve a
+                    # hit — the hash and the vector do that — it is for debugging.
+                    "ck": (key or "")[:500],
+                    "kh": key_hash(key),
+                    "scope": scope,
+                    "payload": json.dumps(payload),
+                    "vec": _as_pgvector(embed(key)),
+                },
+            )
+            logger.debug("ai_cache_stored", feature=feature, key=key[:80])
 
-        # Trim opportunistically. Railway runs one service and there is no scheduler, so
-        # if eviction is not driven from the write path it never happens at all — which is
-        # how a cache becomes a slow disk-space outage. (It was documented as
-        # "called opportunistically after a store" and then never called: caught by
-        # noticing evict_lru had no callers.)
-        #
-        # Every _EVICT_EVERY writes rather than every write, because a DELETE with an
-        # OFFSET subquery is far more expensive than the INSERT it follows and the table
-        # cannot overshoot its cap by more than that many rows.
-        global _writes_since_evict
-        _writes_since_evict += 1
-        if _writes_since_evict >= _EVICT_EVERY:
-            _writes_since_evict = 0
-            removed = await evict_lru(db, feature=feature)
-            if removed:
-                logger.info("ai_cache_evicted", feature=feature, removed=removed)
+            # Trim opportunistically. Railway runs one service and there is no scheduler, so
+            # if eviction is not driven from the write path it never happens at all — which is
+            # how a cache becomes a slow disk-space outage. (It was documented as
+            # "called opportunistically after a store" and then never called: caught by
+            # noticing evict_lru had no callers.)
+            #
+            # Every _EVICT_EVERY writes rather than every write, because a DELETE with an
+            # OFFSET subquery is far more expensive than the INSERT it follows and the table
+            # cannot overshoot its cap by more than that many rows.
+            global _writes_since_evict
+            _writes_since_evict += 1
+            if _writes_since_evict >= _EVICT_EVERY:
+                _writes_since_evict = 0
+                removed = await evict_lru(db, feature=feature)
+                if removed:
+                    logger.info("ai_cache_evicted", feature=feature, removed=removed)
     except Exception:
         logger.warning("ai_cache_store_failed", feature=feature, exc_info=True)
 
@@ -481,23 +547,29 @@ async def evict_lru(db: AsyncSession, *, feature: str) -> int:
     is a slow disk-space outage rather than a fast one.
     """
     try:
-        # CursorResult exposes rowcount; the AsyncSession's declared Result type does
-        # not, so this is narrowed rather than ignored.
-        result: CursorResult = await db.execute(  # type: ignore[assignment]
-            text(
-                """
-                DELETE FROM ai_cache
-                 WHERE id IN (
-                         SELECT id FROM ai_cache
-                          WHERE feature = :feature
-                          ORDER BY last_used_at DESC
-                         OFFSET :keep
-                       )
-                """
-            ),
-            {"feature": feature, "keep": _MAX_ROWS_PER_FEATURE},
-        )
-        return result.rowcount or 0
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested():
+            # CursorResult exposes rowcount; the AsyncSession's declared Result type does
+            # not, so this is narrowed rather than ignored.
+            result: CursorResult = await db.execute(  # type: ignore[assignment]
+                text(
+                    """
+                    DELETE FROM ai_cache
+                     WHERE id IN (
+                             SELECT id FROM ai_cache
+                              WHERE feature = :feature
+                              ORDER BY last_used_at DESC
+                             OFFSET :keep
+                           )
+                    """
+                ),
+                {"feature": feature, "keep": _MAX_ROWS_PER_FEATURE},
+            )
+            return result.rowcount or 0
     except Exception:
         logger.warning("ai_cache_evict_failed", feature=feature, exc_info=True)
         return 0
@@ -512,32 +584,38 @@ async def stats(db: AsyncSession) -> list[dict]:
     and should be reconsidered rather than left to accumulate rows.
     """
     try:
-        rows = await db.execute(
-            text(
-                """
-                SELECT feature,
-                       count(*)                    AS entries,
-                       coalesce(sum(hit_count), 0) AS hits,
-                       count(*) FILTER (WHERE hit_count = 0) AS never_hit,
-                       max(last_used_at)           AS last_used
-                  FROM ai_cache
-                 GROUP BY feature
-                 ORDER BY hits DESC
-                """
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested():
+            rows = await db.execute(
+                text(
+                    """
+                    SELECT feature,
+                           count(*)                    AS entries,
+                           coalesce(sum(hit_count), 0) AS hits,
+                           count(*) FILTER (WHERE hit_count = 0) AS never_hit,
+                           max(last_used_at)           AS last_used
+                      FROM ai_cache
+                     GROUP BY feature
+                     ORDER BY hits DESC
+                    """
+                )
             )
-        )
-        return [
-            {
-                "feature": r.feature,
-                "entries": int(r.entries),
-                "hits": int(r.hits),
-                "never_hit": int(r.never_hit),
-                # Generations avoided x roughly what that feature costs is the saving;
-                # the caller joins this against the cost ledger to price it.
-                "last_used": r.last_used.isoformat() if r.last_used else None,
-            }
-            for r in rows
-        ]
+            return [
+                {
+                    "feature": r.feature,
+                    "entries": int(r.entries),
+                    "hits": int(r.hits),
+                    "never_hit": int(r.never_hit),
+                    # Generations avoided x roughly what that feature costs is the saving;
+                    # the caller joins this against the cost ledger to price it.
+                    "last_used": r.last_used.isoformat() if r.last_used else None,
+                }
+                for r in rows
+            ]
     except Exception:
         logger.warning("ai_cache_stats_failed", exc_info=True)
         return []
@@ -562,20 +640,26 @@ async def storage(db: AsyncSession) -> dict:
     admin panel, and a missing migration should grey out a figure rather than 500 the page.
     """
     try:
-        row = (
-            await db.execute(
-                text(
-                    """
-                    SELECT pg_total_relation_size('ai_cache')      AS total_bytes,
-                           pg_relation_size('ai_cache')            AS table_bytes,
-                           count(*)                                AS rows,
-                           coalesce(sum(hit_count), 0)             AS hits,
-                           count(DISTINCT feature)                 AS features
-                      FROM ai_cache
-                    """
+        # SAVEPOINT, so a failure here rolls back only this cache
+        # statement and leaves the caller's transaction usable. See
+        # _isolated above for what happened without it: one bad cache
+        # query aborted the whole request's transaction, and report
+        # generation died on the innocent query that ran next.
+        async with db.begin_nested():
+            row = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT pg_total_relation_size('ai_cache')      AS total_bytes,
+                               pg_relation_size('ai_cache')            AS table_bytes,
+                               count(*)                                AS rows,
+                               coalesce(sum(hit_count), 0)             AS hits,
+                               count(DISTINCT feature)                 AS features
+                          FROM ai_cache
+                        """
+                    )
                 )
-            )
-        ).one()
+            ).one()
     except Exception:
         logger.warning("ai_cache_storage_failed", exc_info=True)
         return {

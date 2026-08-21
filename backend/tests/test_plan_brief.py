@@ -34,7 +34,7 @@ from __future__ import annotations
 import pytest
 
 from app.data import question_shape
-from app.services.interview.orchestrator import _plan_brief
+from app.services.interview.orchestrator import _live_cross_budget, _plan_brief
 
 #: The interview the whole change exists for. Track name and program both given, as the
 #: setup form now sends them — the program chip used to set only the track id, so the wire
@@ -287,3 +287,62 @@ class TestTheResumeIsExaminedAndNotJustRead:
         text = self._text()
         assert "## What the candidate asked for" in text
         assert "## The candidate's resume" in text
+
+
+class TestTheCrossQuestionsDoNotStack:
+    """
+    "not on every questionn ask the cross question make sure that the interview must feel
+    real".
+
+    Two features, each correct, that had never been told about each other. `question_shape`
+    allocates cross-questions as part of the interview's shape and the plan grid places them —
+    three of eleven rows for a campus round. Separately, and for much longer,
+    `_next_planned_question` injected a live cross-question every third answer up to
+    INTERVIEW_MAX_CROSS_QUESTIONS, which is four, ADDING questions rather than replacing
+    planned ones.
+
+    Nobody subtracted. Three planned plus four live is SEVEN cross-questions out of sixteen
+    asked — nearly half the interview spent on "and where does that stop being true". Each
+    half was defensible and the sum was an interrogation.
+    """
+
+    # Imported inside the class as a STATICMETHOD, not a bare assignment. A plain
+    # `budget = _live_cross_budget` becomes a bound method, so `self.budget(meta, 12, True)`
+    # passes the test instance as `meta` — which silently made three of these assert against
+    # a class object instead of a dict.
+    budget = staticmethod(_live_cross_budget)
+
+    def test_a_plan_that_already_spent_the_allocation_gets_one_reactive_follow_up(self):
+        # One, not zero. A live cross-question can quote what the candidate actually just
+        # said; a row written before they spoke cannot. That kind is the better kind, and an
+        # interview with none of them reads like a form being read out.
+        assert self.budget({"cross_planned": 3}, 12, True) == 1
+
+    def test_a_plan_with_no_cross_rows_gets_the_whole_allocation(self):
+        # The fallback and domain paths build no grid, so they plan none and the live
+        # injector owns all of them. Same total either way, which is the point.
+        expected = question_shape.allocation(
+            question_shape.InterviewKind.CAMPUS_FUNDAMENTALS, 12
+        )[question_shape.Register.CROSS]
+        assert self.budget({"cross_planned": 0}, 12, True) == expected
+
+    def test_the_total_never_exceeds_the_shape_allocation(self):
+        allocated = question_shape.allocation(
+            question_shape.InterviewKind.CAMPUS_FUNDAMENTALS, 12
+        )[question_shape.Register.CROSS]
+        for planned in range(allocated + 1):
+            total = planned + self.budget({"cross_planned": planned}, 12, True)
+            # The floor of one can push a fully-spent plan one over, and that is the single
+            # deliberate exception — documented in the helper.
+            assert total <= allocated + 1
+
+    def test_a_non_technical_round_gets_none_at_all(self):
+        # A sales or consulting screen's shape has no CROSS register — following a rule into
+        # its edge case is a fundamentals move — so the floor of one must not smuggle one in.
+        assert self.budget({"cross_planned": 0}, 12, False) == 0
+
+    def test_a_missing_or_junk_count_does_not_crash_a_live_interview(self):
+        # session_metadata is JSONB written by several code paths and read mid-interview.
+        # An older session predating this field must not raise on the next question.
+        assert self.budget({}, 12, True) >= 1
+        assert self.budget({"cross_planned": None}, 12, True) >= 1

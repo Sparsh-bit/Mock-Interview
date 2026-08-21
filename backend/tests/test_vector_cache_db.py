@@ -306,3 +306,91 @@ class TestEvictionAndStats:
         await db.commit()
         assert await vc.evict_lru(db, feature="gd_topic_prep") == 0
         assert await db.scalar(text("SELECT count(*) FROM ai_cache")) == 1
+
+
+class TestAFailedCacheStatementDoesNotKillTheRequest:
+    """
+    "the recent cognizant interview i gave the report was not able to get generated it is
+    showing noting and error in genrating the report".
+
+    THE MECHANISM, WHICH IS NOT WHAT THE CODE BELIEVED. Every public function in
+    vector_cache.py caught `Exception` and degraded to a miss, and said so: "Never raises. A
+    cache that can fail a request is worse than no cache." That was believed and it was
+    false, because catching a Python exception does not un-abort a Postgres transaction. After
+    any failed statement Postgres refuses every subsequent one on that connection:
+
+        InFailedSQLTransactionError: current transaction is aborted,
+        commands ignored until end of transaction block
+
+    `get_db` opens ONE session per request and holds it for the whole request. So a single bad
+    cache statement did not cost a cache miss — it killed every query that ran after it in
+    that request. During report generation that is the report read, the scores, the persist
+    and the commit. The candidate finishes an interview and gets an error and a blank page,
+    and the log blames whichever innocent query happened to run next.
+
+    `lookup`'s own comment claimed the opposite: that a missing migration "costs money rather
+    than breaking every feature that consults the cache". Exactly backwards — it broke every
+    such request outright, which is the widest blast radius from the smallest cause.
+
+    THE TRIGGER USED HERE IS A REAL ONE. A wrong-width vector is what happens whenever
+    `embed()` and the column's `vector(512)` disagree — a dimension change, a half-applied
+    migration, an older row's function. Postgres rejects it, which is the honest behaviour;
+    the bug was never the rejection, it was what the rejection took down with it.
+    """
+
+    async def test_the_caller_can_still_query_after_the_cache_fails(
+        self, clean_cache, monkeypatch
+    ):
+        db = clean_cache
+
+        # Work done BEFORE the cache call must survive it.
+        await vc.store(db, feature="gd_topic_prep", key="before", payload={"n": 1})
+        await db.commit()
+
+        # Now make the next cache statement fail the way a real dimension mismatch does.
+        monkeypatch.setattr(vc, "embed", lambda key: [0.1] * 8)
+
+        # Must not raise — that contract held before and still holds.
+        assert (
+            await vc.lookup(db, feature="gd_topic_prep", key="anything at all") is None
+        )
+
+        # THE ASSERTION THAT WOULD HAVE CAUGHT IT. Before the savepoint this raised
+        # InFailedSQLTransactionError, and in a real request every statement after the cache
+        # call raised it too — which is what the candidate saw as "error generating the
+        # report".
+        survived = await db.execute(text("select 1"))
+        assert survived.scalar() == 1
+
+        # And the caller can still do real work, not merely a trivial select.
+        assert await vc.lookup(db, feature="gd_topic_prep", key="before") is not None
+
+    async def test_a_failed_store_does_not_take_the_request_with_it(
+        self, clean_cache, monkeypatch
+    ):
+        db = clean_cache
+        monkeypatch.setattr(vc, "embed", lambda key: [0.1] * 8)
+
+        await vc.store(db, feature="question_bank", key="k", payload={"n": 1})
+
+        survived = await db.execute(text("select 1"))
+        assert survived.scalar() == 1
+
+    async def test_work_committed_before_the_failure_is_not_rolled_back(
+        self, clean_cache, monkeypatch
+    ):
+        """
+        A savepoint rollback must undo the cache statement and nothing else. Rolling back the
+        whole transaction would be a different way of losing the report — the candidate's
+        answers would go with it.
+        """
+        db = clean_cache
+        await vc.store(db, feature="gd_topic_prep", key="keep me", payload={"n": 7})
+        await db.commit()
+
+        monkeypatch.setattr(vc, "embed", lambda key: [0.1] * 8)
+        await vc.lookup(db, feature="gd_topic_prep", key="whatever")
+
+        monkeypatch.undo()
+        kept = await vc.lookup(db, feature="gd_topic_prep", key="keep me")
+        assert kept == {"n": 7}

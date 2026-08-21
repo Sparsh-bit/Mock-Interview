@@ -125,7 +125,21 @@ class FishAudioProvider:
                     },
                 )
         except httpx.HTTPError as exc:
-            raise TTSError(f"fish request failed: {exc}") from exc
+            # THE CLASS NAME, NOT JUST str(exc). httpx raises ReadTimeout with an EMPTY
+            # message, so this line used to read "fish request failed: " and say nothing at
+            # all — which is what a retired model backend produces, and it cost a long
+            # diagnosis to work out that a hang rather than a refusal was the problem. The
+            # type is the entire diagnostic here: ConnectError means the network, ReadTimeout
+            # means the vendor accepted the request and never answered.
+            reason = str(exc) or type(exc).__name__
+            logger.warning(
+                "fish_request_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model=self._model,
+                timeout_s=self._timeout,
+            )
+            raise TTSError(f"fish request failed: {reason}") from exc
 
         if resp.status_code == 402:
             # Distinct from every other failure and verified against the live API. Fish bills
