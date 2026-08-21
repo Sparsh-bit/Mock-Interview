@@ -171,3 +171,52 @@ describe('the drive date is content, not logic', () => {
     expect(labelled).toBe(DRIVE_LABEL);
   });
 });
+
+describe('finding the track when the slug is not what this build expects', () => {
+  /*
+   * "i cannot see the poster of 24th august interview for cognizant".
+   *
+   * The card renders nothing when `findDriveTrack` returns null, and it returns null on any
+   * miss — which is right when there genuinely is no Digital Nurture track, and silent and
+   * wrong when there is one under an older slug. A database that has carried this project
+   * for a while can hold a row created before the catalogue seeding existed; the current
+   * `java-fse` pin in seed_db only governs rows the current seeder wrote.
+   *
+   * The failure had no symptom at all: no card, no console line, nothing to look at. These
+   * pin the fallback, and — more importantly — pin what it must NOT do.
+   */
+  const cognizant = { name: 'Cognizant', slug: 'cognizant' };
+
+  it('still finds the track when the slug is an older one', () => {
+    const tracks = [
+      { id: 't1', name: 'Digital Nurture — Java FSE', slug: 'cognizant-digital-nurture-java-fse', company: cognizant },
+    ];
+    expect(findDriveTrack(tracks)?.id).toBe('t1');
+  });
+
+  it('prefers the pinned slug when both are somehow present', () => {
+    const tracks = [
+      { id: 'old', name: 'Digital Nurture — Java FSE', slug: 'cognizant-digital-nurture', company: cognizant },
+      { id: 'new', name: 'Digital Nurture — Java FSE', slug: 'java-fse', company: cognizant },
+    ];
+    expect(findDriveTrack(tracks)?.id).toBe('new');
+  });
+
+  it('never falls back to a different Cognizant programme', () => {
+    // A card that says Digital Nurture and builds a GenC Next plan is worse than no card:
+    // different research, different syllabus key, different interview. This is the same
+    // class of bug that once greeted a sales candidate as an Accenture ASE.
+    const tracks = [
+      { id: 'gn', name: 'GenC Next', slug: 'genc-next', company: cognizant },
+      { id: 'gp', name: 'GenC Pro', slug: 'genc-pro', company: cognizant },
+    ];
+    expect(findDriveTrack(tracks)).toBeNull();
+  });
+
+  it('never reaches into another company', () => {
+    const tracks = [
+      { id: 'x', name: 'Digital Nurture — Java FSE', slug: 'java-fse', company: { name: 'Infosys', slug: 'infosys' } },
+    ];
+    expect(findDriveTrack(tracks)).toBeNull();
+  });
+});

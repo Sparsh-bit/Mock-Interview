@@ -106,9 +106,39 @@ export interface DriveTrackShape {
 export function findDriveTrack<T extends DriveTrackShape>(
   tracks: readonly T[] | undefined | null,
 ): T | null {
+  const rows = tracks ?? [];
+  const exact = rows.find(
+    (t) => t.company.slug === DRIVE_COMPANY_SLUG && t.slug === DRIVE_TRACK_SLUG,
+  );
+  if (exact) return exact;
+
+  /*
+   * FALLBACK BY NAME, WITHIN COGNIZANT ONLY.
+   *
+   * The slug is the right primary key and `java-fse` is pinned by
+   * `seed_db._LEGACY_TRACK_SLUGS` precisely so it cannot move. But that pin protects rows
+   * the CURRENT seeder wrote, and a database that has been carrying this project for a
+   * while may hold a Cognizant Digital Nurture row created before the catalogue seeding
+   * existed, under whatever slug that older code chose. There is no way to tell from here,
+   * and the failure is completely silent: `findDriveTrack` returns null, the component
+   * renders nothing, and the student who came here on the morning of the drive sees no card
+   * and no reason for its absence.
+   *
+   * So the slug miss falls back to the track NAME, and the name is a strong signal —
+   * "Digital Nurture" appears on exactly one Cognizant program in the catalogue, and the
+   * company slug is checked first, so this cannot reach into another recruiter's tracks.
+   *
+   * What it deliberately does NOT do is widen to "any Cognizant track". GenC, GenC Next and
+   * GenC Pro are different interviews with different research and a different syllabus key,
+   * and a card that says Digital Nurture and builds a GenC Next plan is worse than no card
+   * — it is the class of bug that once greeted a sales candidate as an Accenture ASE.
+   * Returning null when no Digital Nurture row exists remains the correct answer.
+   */
   return (
-    (tracks ?? []).find(
-      (t) => t.company.slug === DRIVE_COMPANY_SLUG && t.slug === DRIVE_TRACK_SLUG,
+    rows.find(
+      (t) =>
+        t.company.slug === DRIVE_COMPANY_SLUG &&
+        t.name.toLowerCase().includes('digital nurture'),
     ) ?? null
   );
 }
