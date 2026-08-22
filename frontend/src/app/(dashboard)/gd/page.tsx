@@ -272,6 +272,21 @@ export default function GDPage() {
   const holdRef = useRef(0);
   const firingRef = useRef(false);
   /**
+   * The round is over — scoring has started or finished.
+   *
+   * DECLARED HERE, WITH THE OTHER TICK REFS, and it used to live next to
+   * `endDiscussion` further down. Moved because the 1s tick has to read it, and a `const`
+   * declared below the effect that closes over it is a use-before-declaration error.
+   *
+   * It guards two things now. It always stopped the time-up effect firing twice. It also
+   * stops the panel CONTINUING while the discussion is being scored: `endDiscussion` only
+   * sets `phase` to 'results' in its success callback, so for the whole ten-to-twenty seconds
+   * of evaluation the phase is still 'discussion' — the tick kept running, kept queueing
+   * turns, and the panel kept talking over the results screen appearing. Reported as "after
+   * generating the report in gd the speakers are not stopping".
+   */
+  const endingRef = useRef(false);
+  /**
    * Is a panelist mid-contribution? The countdown must not run while they are.
    *
    * A turn is one or two contributions of one to three sentences — 50-70 spoken
@@ -450,6 +465,11 @@ export default function GDPage() {
     if (phase !== 'discussion') return;
 
     const id = setInterval(() => {
+      // The round is being scored, or has been. Nothing should advance: not the clock, and
+      // above all not the panel. `phase` is still 'discussion' throughout evaluation because
+      // it only flips on success, so this ref is the only thing that knows.
+      if (endingRef.current) return;
+
       const s = stateRef.current;
 
       setTimeLeft((t) => Math.max(0, t - 1));
@@ -484,13 +504,23 @@ export default function GDPage() {
     return () => clearInterval(id);
   }, [phase, stt.listening, draft, firePanelTurn]);
 
-  // Guards against the time-up effect firing twice (and against ending a round
-  // that's already being scored).
-  const endingRef = useRef(false);
-
   const endDiscussion = useCallback(() => {
     if (endingRef.current) return;
     endingRef.current = true;
+    /*
+     * SILENCE THE ROOM FIRST. The round is over the moment this is called.
+     *
+     * This did neither of these things, and the missing `cancelAll` is the reported bug: any
+     * contribution still playing — or already fetched and queued behind it — carried on
+     * through the whole evaluation and over the top of the results screen. The unmount
+     * cleanup at the bottom of this component catches navigating AWAY; it does nothing for
+     * discussion -> results, which does not unmount anything.
+     *
+     * The mic goes too. Leaving it live means the recogniser keeps transcribing into a draft
+     * for a discussion that has already been scored.
+     */
+    panelVoices.cancelAll();
+    if (stt.listening) stt.stop();
     evaluate.mutate(
       { topic, history: stateRef.current.history, ignored_questions: stateRef.current.ignored },
       {
@@ -501,7 +531,9 @@ export default function GDPage() {
         },
       }
     );
-  }, [evaluate, topic]);
+    // panelVoices and stt are stable hook objects; listed so the lint rule is satisfied
+    // honestly rather than suppressed.
+  }, [evaluate, topic, panelVoices, stt]);
 
   // Time's up — score it automatically, the way a real round gets called.
   useEffect(() => {
