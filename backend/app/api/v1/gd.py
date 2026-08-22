@@ -552,8 +552,12 @@ async def gd_prepare(
             cost_tier=CostTier.BALANCED,
             context="gd_topic_prep",
         )
-    except AIProviderUnavailableError:
-        logger.warning("gd_prepare_unavailable_using_raw_topic")
+    except AIProviderUnavailableError as exc:
+        logger.warning(
+            "gd_prepare_unavailable_using_raw_topic",
+            error_type=type(exc).__name__,
+            error=str(exc) or type(exc).__name__,
+        )
         return GDPrepareResponse(
             statement=request.topic.strip(),
             framing="",
@@ -669,9 +673,18 @@ async def gd_turn(
         # nobody would ever see.
         budget = settings.GD_TURN_AI_BUDGET_SECONDS
         turn, _ = await (asyncio.wait_for(call, timeout=budget) if budget > 0 else call)
-    except AIProviderUnavailableError:
+    except AIProviderUnavailableError as exc:
         # Non-fatal: return an empty turn so the candidate can keep going.
-        logger.warning("gd_turn_unavailable")
+        #
+        # THE REASON IS RECORDED, and its absence is what hid the interview's equivalent bug
+        # for four rounds. An empty turn is indistinguishable at the client from "the panel had
+        # nothing to say", so without the cause here a failing provider looks like a UI problem.
+        logger.warning(
+            "gd_turn_unavailable",
+            error_type=type(exc).__name__,
+            error=str(exc) or type(exc).__name__,
+            consequence="no contribution this tick; the discussion continues",
+        )
         return GDTurnResponse(contributions=[])
     except TimeoutError:
         # INFO, not warning. The round handled this exactly as designed and the discussion

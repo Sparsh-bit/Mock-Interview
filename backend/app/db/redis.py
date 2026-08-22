@@ -236,6 +236,18 @@ class CacheKeys:
         return f"tts:audio:{digest}"
 
     @staticmethod
+    def panel_turn(session_id: str, digest: str) -> str:
+        """
+        A written panel turn, keyed by session plus a hash of the stage and the question.
+
+        SCOPED TO THE SESSION, always. A turn quotes the candidate's own last answer and names
+        their projects, so it is exactly the kind of content vector_cache's CACHEABLE_FEATURES
+        allowlist exists to keep out of a shared pool. This key can never be reached from
+        another session even if two candidates are asked a byte-identical question.
+        """
+        return f"panel:turn:{session_id}:{digest}"
+
+    @staticmethod
     def rate_limit_read(user_id: str) -> str:
         """
         Plain authenticated reads — standing, profile, stats.

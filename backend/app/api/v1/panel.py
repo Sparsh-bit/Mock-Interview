@@ -22,6 +22,8 @@ put it to the candidate the old way.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import uuid
 
 import structlog
@@ -32,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
-from app.db.redis import CacheKeys
+from app.db.redis import CacheKeys, cache_get, cache_set, get_redis
 from app.db.session import get_db
 from app.services.interview import context
 from app.services.interview.context import InterviewContext
@@ -462,8 +464,16 @@ async def _code_verdict(
             ),
             timeout=_CODE_VERDICT_BUDGET_SECONDS,
         )
-    except (AIProviderUnavailableError, TimeoutError, ValueError):
-        logger.warning("panel_code_verdict_unavailable", session_id=str(session_id), language=lang)
+    except (AIProviderUnavailableError, TimeoutError, ValueError) as exc:
+        # Three different failures shared one message: a provider outage, a slow response and a
+        # malformed one. They want different responses and read identically without this.
+        logger.warning(
+            "panel_code_verdict_unavailable",
+            session_id=str(session_id),
+            language=lang,
+            error_type=type(exc).__name__,
+            error=str(exc) or type(exc).__name__,
+        )
         return ""
 
     return summarise_code_verdict(evaluation)
@@ -858,6 +868,49 @@ async def panel_turn(
     builder = PromptBuilder(get_prompt_loader())
     messages = builder.chat_static(system_template="interview_panel", user_content=brief)
 
+    # ── ALREADY WRITTEN? ──────────────────────────────────────────────────────────────
+    #
+    # "the questions are taking so much time to come in the real interview", with an explicit
+    # instruction not to trade quality for speed. So nothing here asks for a cheaper model, a
+    # smaller budget or a faster vendor setting: the turn is generated exactly as before. What
+    # changes is WHEN.
+    #
+    # A turn is a pure function of this session's state and this question — panel.py performs no
+    # database writes, which is what makes both halves of this safe. So it can be written ahead
+    # of time and read back, and the candidate pays for the wait only if nobody got there first.
+    #
+    # Keyed on the session AND a hash of the stage plus the question text. Session-scoped
+    # always: a turn quotes the candidate's own last answer and names their projects, which is
+    # precisely what vector_cache's CACHEABLE_FEATURES allowlist exists to keep out of anything
+    # shared. Two candidates asked a byte-identical question still get their own.
+    turn_digest = hashlib.sha256(
+        f"{request.stage}|{request.question}|{request.candidate_question}|{last_answer}".encode()
+    ).hexdigest()[:32]
+    turn_key = CacheKeys.panel_turn(str(request.session_id), turn_digest)
+
+    cached_turn = await cache_get(get_redis(), turn_key)
+    if cached_turn:
+        try:
+            payload = json.loads(cached_turn)
+            logger.info("panel_turn_cache_hit", session_id=str(request.session_id))
+            return PanelTurnResponse(
+                # `turns` is a list[dict] on the response model, so the cached shape goes
+                # straight back — no re-validation to drift from the live path.
+                turns=list(payload.get("turns", [])),
+                asked_question=bool(payload.get("asked_question")),
+                pivot_topic=pivot_topic,
+                rating_subject=rating_subject,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # A malformed cache entry must never cost somebody their turn. Fall through and
+            # generate; the store below overwrites it. Logged with the reason, because a
+            # recurring parse failure means the shape changed and the cache is dead weight.
+            logger.warning(
+                "panel_turn_cache_unreadable",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+
     try:
         turn, _ = await generate_structured(
             InterviewPanelTurn,
@@ -948,9 +1001,39 @@ async def panel_turn(
         if c.text.strip() and c.speaker in INTERVIEWER_NAMES
     ][:4]
 
+    asked_question = turn.asked_question and bool(valid)
+
+    # ── REMEMBERED, so the same moment is never written twice ─────────────────────────────
+    #
+    # Only on success: an empty turn must not be cached, or one provider failure would freeze
+    # the bare-question fallback in place for the rest of that question.
+    #
+    # WHAT THIS IS ACTUALLY FOR. The client retries this call on a network blip and refetches
+    # after a reconnect, and each of those used to pay the full generation again — the slowest
+    # thing in the flow, repeated for a turn already written. A short TTL because the key
+    # includes the candidate's last answer, so it changes as the interview moves; long enough
+    # to cover a retry, a reconnect and a page refresh on the same question.
+    #
+    # No quality is traded for this. The turn is generated by the same model with the same
+    # budget; the cache only stops it being generated a second time for the same moment.
+    if valid:
+        try:
+            await cache_set(
+                get_redis(),
+                turn_key,
+                json.dumps({"turns": valid, "asked_question": asked_question}),
+                ttl=900,
+            )
+        except Exception as exc:  # noqa: BLE001 — a cache write must never fail a turn
+            logger.warning(
+                "panel_turn_cache_store_failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+
     return PanelTurnResponse(
         turns=valid,
-        asked_question=turn.asked_question and bool(valid),
+        asked_question=asked_question,
         pivot_topic=pivot_topic,
         rating_subject=rating_subject,
     )

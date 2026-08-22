@@ -1655,7 +1655,17 @@ class InterviewOrchestrator:
                 cost_tier=CostTier.BALANCED,
                 context="cross_question",
             )
-        except AIProviderUnavailableError:
+        except AIProviderUnavailableError as exc:
+            # SILENT BEFORE THIS, and a silently absent cross-question is exactly the class of
+            # thing that gets reported as "i cannot see the cross questions" and investigated in
+            # the wrong place. Returning None is correct — the caller treats no cross-question as
+            # a normal turn — but the reason belongs in the log.
+            logger.info(
+                "cross_question_unavailable",
+                session_id=str(session_id),
+                error_type=type(exc).__name__,
+                error=str(exc) or type(exc).__name__,
+            )
             return None
 
         q = Question(
@@ -1940,7 +1950,17 @@ class InterviewOrchestrator:
                 context="question_generation",
             )
             parsed, _ = await (asyncio.wait_for(call, timeout=budget) if budget > 0 else call)
-        except AIProviderUnavailableError:
+        except AIProviderUnavailableError as exc:
+            # The provider is gone and the caller falls through to the pool and the bank. Which
+            # provider and why is the difference between "the vendor is down" and "our key is
+            # wrong", and both used to look like this line.
+            logger.info(
+                "question_generation_unavailable",
+                session_id=str(session.id),
+                error_type=type(exc).__name__,
+                error=str(exc) or type(exc).__name__,
+                falling_back_to="shared pool or bank",
+            )
             return None
         except TimeoutError:
             # Logged at INFO, not warning. A slow provider is a normal operating condition and

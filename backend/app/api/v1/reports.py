@@ -186,7 +186,21 @@ def _classify_failure(exc: BaseException) -> str:
             BudgetExceededError,
             UserBudgetExceededError,
         )
-    except Exception:  # noqa: BLE001
+    except Exception as import_exc:  # noqa: BLE001
+        # NAMED import_exc, NOT exc. `exc` is this function's PARAMETER — the exception being
+        # classified — and binding the same name here shadows it, then Python deletes the name
+        # at the end of the except block, so every read below it fails. mypy caught it; a test
+        # would not have, because this branch only runs if the billing import itself breaks.
+        #
+        # The log matters because this function decides WHY a report could not be scored, and
+        # it used to lose the one piece of evidence that answers that. The returned reason is
+        # what the candidate sees; this line is what the operator sees, and they are not the
+        # same audience.
+        logger.warning(
+            "report_scoring_reason_undetermined",
+            error_type=type(import_exc).__name__,
+            error=str(import_exc)[:300] or type(import_exc).__name__,
+        )
         return _REASON_PROVIDER
 
     # AIProviderUnavailableError wraps the last provider error; check the chain.
@@ -777,9 +791,22 @@ async def generate_report(
         # Waiting counts against the same wall-clock budget as generating, deliberately:
         # a candidate who has been queued for 50 seconds is better served the honest
         # unscored placeholder with a retry than a request that hangs past the gateway.
-        async with _report_slots:
-            ai_report, last_raw_content = await asyncio.wait_for(
-                generate_structured(
+        #
+        # AND IT DID NOT, WHICH IS THE BUG THIS COMMENT DESCRIBED AND THE CODE CONTRADICTED.
+        # `async with _report_slots` sat OUTSIDE the `wait_for`, so only GENERATING was
+        # bounded; acquiring a slot was not bounded by anything. With four slots at ~21s a
+        # report, the fifth caller waited ~21s, the ninth ~42s, and a queue of a dozen —
+        # exactly what a cohort finishing their interviews together produces — sailed past the
+        # client's 120s timeout with no response at all. Reported as "Report Unavailable —
+        # Request timed out after 120000ms".
+        #
+        # Both are inside the timeout now, so the budget means what the comment always said:
+        # queue time plus generation time. A request that cannot be served inside it returns
+        # the honest unscored placeholder with a retry, which is a far better answer than a
+        # dead two-minute wait, and it is the behaviour every other branch here already has.
+        async def _generate_within_budget():
+            async with _report_slots:
+                return await generate_structured(
                     ReportGeneratorResponse,
                     messages,
                     # Output is 5x the price of input and this is the largest
@@ -825,9 +852,13 @@ async def generate_report(
                     # never read one back.
                     cache_system=True,
                     context="report_generation",
-                ),
-                timeout=report_ai_budget_seconds(),
-            )
+                )
+
+        # ONE timeout over BOTH the queue and the generation. See the note above.
+        ai_report, last_raw_content = await asyncio.wait_for(
+            _generate_within_budget(),
+            timeout=report_ai_budget_seconds(),
+        )
     except (AIProviderUnavailableError, TimeoutError) as exc:
         unscored_reason = _classify_failure(exc)
         logger.warning(
