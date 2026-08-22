@@ -722,6 +722,54 @@ async def my_payments(
     Purchases and grants both appear, distinguished by `kind`: a candidate who redeemed a
     100%-off code should see it on their history as something they received, not as a gap.
     Consumptions are excluded — this is what you paid, not what you spent.
+
+    `payer` is returned ALONGSIDE the rows rather than repeated on each of them. A receipt has
+    to name who it was issued to or it is not a receipt, and it is the same person for every
+    row by construction — the query is scoped to `current_user`. Repeating an identity that
+    cannot vary would invite a caller to read it per row and trust it, which is the shape of
+    the bug the scoping above exists to prevent.
+
+    ── WHY A FAILED PAYMENT IS NOT ON THIS LIST ────────────────────────────────────────────
+
+    Asked for directly: "the payment failed must also show in the payment history section."
+    It cannot yet, and the reason is not this endpoint. NOTHING ANYWHERE RECORDS A FAILED OR
+    ABANDONED PAYMENT ATTEMPT. This was established by reading every place one could be:
+
+      * `POST /billing/checkout` opens the Razorpay order and returns it to the browser. It
+        persists nothing at all — there is no orders table, so an attempt that never completes
+        leaves no trace that it was ever started.
+      * `POST /billing/verify` answers `{"status": "pending"}` for an authorised-but-uncaptured
+        payment and raises for a bad signature. It writes in neither case; the only row it ever
+        creates is the grant for a payment that DID capture.
+      * `POST /billing/webhook` drops everything that is not a capture. `items_from_payment`
+        returns None for any other status — "failed is not money at all" — and the endpoint
+        answers 200 so Razorpay stops retrying. A `payment.failed` delivery is acknowledged
+        and forgotten.
+      * The browser is the only party that learns a payment failed, through
+        `rzp.on('payment.failed')` in lib/billing/razorpay-checkout.ts, and it tells the
+        candidate rather than the server.
+      * `autopay.record_attempt` keeps `autopay_failures` and `autopay_last_attempt_at` on
+        `user_plans`. That is a THROTTLE COUNTER, not history: no amount, no item, no row per
+        attempt, and nothing to show. It is also always zero in production today, because
+        `try_top_up` has no caller yet.
+      * No model and none of the twenty migrations define a payment-attempt or order table.
+
+    SO THERE IS NOTHING HONEST TO RENDER, and this endpoint will not invent it. A fabricated
+    row on a page about somebody's money is worse than the gap it fills: a candidate who was
+    never charged reading "payment failed — ₹249" has been told something false about their
+    bank account, and support has no record to check it against.
+
+    WHAT IT WOULD TAKE, so the next person does not have to re-derive it. One append-only
+    attempt record, written from the two places that already know — the `pending` and
+    signature-failure branches of `/billing/verify`, plus the webhook's non-capture branch —
+    and read here as a second source unioned into the list below.
+
+    NOT AS ZERO-DELTA ROWS ON `credit_events`. That is the tempting shortcut because it needs
+    no migration, and it is wrong twice: the table is defined as movements of entitlement, so a
+    non-movement is a lie about what the row means; and every `SUM(delta)` and every count over
+    that table would silently start including attempts that bought nothing. `audit_logs` is the
+    existing append-only event log with a `user_id` and a JSONB payload, and it is the right
+    home for "this was attempted and did not complete".
     """
     rows = (
         await db.execute(
@@ -748,6 +796,13 @@ async def my_payments(
                 # their support and ours all index by, so inventing a prettier one would mean
                 # a candidate quoting a number nobody can look up.
                 "receipt": r.payment_ref or f"free-{str(r.id)[:8]}",
+                # THE ORDER THE PAYMENT SETTLED AGAINST, surfaced because it was already
+                # being stored and thrown away. It is the second identifier Razorpay's
+                # dashboard indexes by, and the one that still resolves when a candidate has
+                # a bank statement showing a debit and no payment id to quote — which is
+                # exactly the conversation a receipt exists to shorten. Empty for a free
+                # grant, which never had an order because Razorpay cannot open one below ₹1.
+                "order_id": str(detail.get("order_id") or ""),
                 "item_id": detail.get("item_id") or "",
                 "item_name": item.name if item else (detail.get("item_id") or "Credit"),
                 "feature": r.feature,
@@ -761,7 +816,13 @@ async def my_payments(
                 "paid": bool(r.payment_ref),
             }
         )
-    return {"payments": out}
+    return {
+        "payments": out,
+        # Who the receipts belong to. Taken from the verified token, never from the request,
+        # for the same reason the query is: the one thing a receipt must not do is name
+        # somebody other than the person the payment came from.
+        "payer": {"email": current_user.email},
+    }
 
 
 @router.post(

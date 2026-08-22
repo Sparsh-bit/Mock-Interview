@@ -298,6 +298,43 @@ async def consume(
         )
         raise CreditsExhaustedError(feature, used_trial)
 
+    # ── WAS THIS ONE FREE, OR PAID FOR? RECORDED, BECAUSE NOTHING ELSE CAN ANSWER IT LATER ──
+    #
+    # The product rule is "a free interview's report is payable; a purchased interview's report
+    # is included". The price is `plans.DRIVE_REPORT_PRICE_PAISE` and is deliberately not
+    # restated here — an earlier draft of this comment said ₹49, which is the price of the
+    # `interview_1` item and NOT of the report unlock, and plans.py carries a section titled
+    # "WHY ₹50 AND NOT ₹49" explaining that the two numbers differ on purpose. A price copied
+    # into a comment is a price that drifts from the constant the server actually charges.
+    #
+    # Deciding free-or-paid at report time is impossible from the ledger alone: a
+    # consumption row is a `-1` and says nothing about which pot it came out of, and
+    # `remaining = trial_allowance + net` is a single number that has already blended them.
+    #
+    # It IS knowable here, and only here. Consumption draws on the trial allowance first — that
+    # is what `trial_allowance(feature) + net` means — so this consumption is free exactly when
+    # fewer than `trial_allowance` have been consumed before it. One count, at the only moment
+    # the answer exists.
+    #
+    # Stored in `detail`, which is JSONB, so this needs no migration and no model change. The
+    # column's own comment says it is "room for anything the dispute needs later without a
+    # migration"; this is that.
+    #
+    # THE READER MUST FAIL OPEN. A row written before this existed carries no `paid_with`, and
+    # an unknown value has to mean "do not charge for the report" — never "charge". Locking a
+    # report somebody has already paid for is the worst outcome available here, and it would
+    # land on every interview taken before this deploy.
+    consumed_before = await db.scalar(
+        select(func.count())
+        .select_from(CreditEvent)
+        .where(
+            CreditEvent.user_id == user_id,
+            CreditEvent.feature == feature,
+            CreditEvent.kind == KIND_CONSUME,
+        )
+    )
+    paid_with = "trial" if (consumed_before or 0) < trial_allowance(feature) else "credit"
+
     db.add(
         CreditEvent(
             created_at=datetime.now(UTC),
@@ -306,7 +343,9 @@ async def consume(
             kind=KIND_CONSUME,
             delta=-1,
             session_id=session_id,
-            detail=detail,
+            # Merged rather than replaced: callers pass their own context here and none of it
+            # should be lost to this addition.
+            detail={**(detail or {}), "paid_with": paid_with},
         )
     )
     await db.flush()

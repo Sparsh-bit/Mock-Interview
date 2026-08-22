@@ -7,6 +7,8 @@ import { Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, L
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ShareMenu } from '@/components/report/ShareMenu';
+import { DriveReportPaywall } from '@/components/billing/DriveReportPaywall';
+import { readReportLock } from '@/lib/billing/drive-report';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
@@ -180,6 +182,45 @@ export default function ReportDetailPage() {
           </div>
         </Card>
       </motion.div>
+    );
+  }
+
+  /*
+   * THE PAYWALL, AND WHY IT IS A RETURN RATHER THAN A PROP.
+   *
+   * On the Cognizant Digital Nurture 24 August drive the interview is free and the report is
+   * ₹50. The gate is on DELIVERY, not on generation: the report below was still generated and
+   * stored exactly as it always is, and the server simply sent less of it. So there is nothing
+   * to hide field by field — the dimension scores, the per-question analysis, the roadmap and
+   * the study resources were never in this response. Everything after this point renders what
+   * arrived, which is why returning early is the honest shape: a `locked` prop threaded
+   * through the sections below would be twelve chances to leak one of them, and every one of
+   * those chances would have to stay correct forever.
+   *
+   * `readReportLock` FAILS OPEN and is the only thing on the frontend that decides this. Any
+   * response that is not unambiguously a locked drive report — every other track, every
+   * report generated before the gate existed, and anything malformed enough that the predicate
+   * cannot decide — falls straight through to the full report. A locked report shown to
+   * somebody who owes nothing is the worst outcome available here and it would land on
+   * students who are mid-placement-season, so the ambiguous case is always "deliver".
+   *
+   * Unlocking is `refetch()` for the same reason: the report was never not there.
+   */
+  const lock = readReportLock(report);
+  if (lock) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-6 pb-12">
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back to Dashboard
+        </button>
+        {/* No ShareMenu and no Detailed Analysis link: neither is something to offer for a
+            report the candidate has not seen yet, and a share link to a locked report is a
+            link to a paywall with somebody else's name on it. */}
+        <DriveReportPaywall lock={lock} onUnlocked={() => void refetch()} />
+      </div>
     );
   }
 

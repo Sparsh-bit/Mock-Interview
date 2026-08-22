@@ -167,6 +167,33 @@ describe('panelist names are pronounced, not mangled', () => {
     expect(toSpokenForm('Riyadh')).toBe('Riyadh');
   });
 
+  it('no respelling contains a hyphen or a filler syllable', () => {
+    /*
+     * THE RULE THAT CAUGHT MY OWN MISTAKE, so it cannot happen again.
+     *
+     * Anil was first respelled "Uh-neel", which renders as "Thanks uh… neel": a synthesiser
+     * reads "Uh" as a hesitation filler and a hyphen as a pause, so the panel sounded like it
+     * had forgotten the name — worse than the mispronunciation it replaced.
+     *
+     * A respelling has to survive being read by something that knows nothing about why it is
+     * spelled that way. Asserted on the OUTPUT rather than on the table, so any future entry is
+     * covered whether or not somebody remembers this comment.
+     */
+    const FILLERS = /^(uh|um|er|ah|hmm|eh)\b/i;
+    for (const name of ['Anil', 'Priya', 'Riya', 'Arjun', 'Meera']) {
+      const spoken = toSpokenForm(name);
+      expect(spoken, `${name} -> ${spoken}`).not.toContain('-');
+      expect(FILLERS.test(spoken), `${name} -> ${spoken} starts with a filler`).toBe(false);
+      // And it must be a single word: a space is a pause too.
+      expect(spoken.trim().split(/\s+/), `${name} -> ${spoken}`).toHaveLength(1);
+    }
+  });
+
+  it('says Aneel, not the AY-nil engines default to', () => {
+    expect(toSpokenForm('Thanks Anil.')).toBe('Thanks Aneel.');
+    expect(toSpokenForm("That's Anil's question")).toBe("That's Aneel's question");
+  });
+
   it('is still idempotent over names', () => {
     const once = toSpokenForm('Riya and Priya');
     expect(toSpokenForm(once)).toBe(once);

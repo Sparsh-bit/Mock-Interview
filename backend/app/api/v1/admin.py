@@ -21,6 +21,14 @@ EVERY MUTATION IS AUDITED. Changing someone's access is the kind of action that
 gets questioned later, so each one writes an `audit_logs` row naming the actor,
 the target, the before and after. The table is append-only by design.
 
+THERE IS ONE BULK PERSONAL-DATA READ IN HERE AND IT IS TREATED AS ONE. `GET /marketing`
+returns every candidate's email address in a single response, because the owner mails those
+people by hand and a mail merge needs the whole list rather than the page you happen to be
+on. It is gated by the same `AdminUser` dependency as everything else, it has its own
+rate-limit bucket so an export loop cannot eat the budget the deactivate button needs, and it
+carries counts and flags only — never an answer, a transcript, a report or a score. Read the
+long comment above `_MARKETING_MAX_ROWS` before adding a field to it.
+
 THE COST COLUMN IS TEMPORARY DATA IN A PERMANENT PAGE. Per-user spend is read
 from `ai_usage`, which is scheduled for deletion once credits ship — see
 docs/TEMPORARY-token-counter.md. The queries degrade to zero rather than failing when
@@ -46,10 +54,18 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import AdminUser
 from app.db.redis import CacheKeys
 from app.db.session import get_db
-from app.models.session import InterviewSession
+from app.models.billing import CreditEvent
+from app.models.report import Report
+from app.models.session import InterviewSession, SessionStatus
 from app.models.system import AuditLog
 from app.models.user import Profile, User
-from app.services.billing.plans import get_item
+from app.services.billing.credits import KIND_PURCHASE
+from app.services.billing.plans import (
+    FEATURE_LABELS,
+    FEATURES,
+    get_item,
+    trial_allowance,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -780,3 +796,486 @@ async def admin_revenue(
         "by_day": sorted(by_day.values(), key=lambda b: b["day"]),
         "by_item": sorted(by_item.values(), key=lambda b: b["paise"], reverse=True),
     }
+
+
+# ─── Marketing list ───────────────────────────────────────────────────────────
+#
+# "i want the activity and what is left in each user id as the information for me to mail
+# them for marketing."
+#
+# WHAT THIS IS FOR, BECAUSE IT DECIDES WHAT IS IN IT. The owner writes the emails himself,
+# by hand, to a few hundred campus students at a time. So this is not an analytics screen —
+# it is the input to a mail merge. Every column below exists because it changes the sentence
+# he would write to that person, and anything that does not was left out:
+#
+#   * WHAT IS LEFT (per feature) — "you still have a free interview waiting" is a different
+#     email from "your free interview is used up, here is what one more costs", and sending
+#     the wrong one of those two is the fastest way to be unsubscribed.
+#   * SESSIONS STARTED vs COMPLETED — somebody who started and never finished is the largest
+#     recoverable group there is, and they need "come back and finish", not an offer.
+#   * WHETHER A REPORT EXISTS — with the drive report paywall live, "you sat the interview
+#     and your personalised report is ready" is the single highest-intent email in the
+#     product. It is only true of people who have a report.
+#   * WHETHER THEY HAVE EVER PAID — a customer gets thanked and told what is next; a
+#     non-customer gets an offer. Mixing those up insults both.
+#   * LAST ACTIVITY — nobody mails a list without knowing who has gone cold.
+#
+# WHAT IS DELIBERATELY NOT HERE. No rupee total per user: that would be a second revenue
+# figure computed a second way, and `/admin/revenue` is the one that reconciles with the
+# Razorpay dashboard — two numbers for one question is how neither gets trusted. No content
+# of any kind: not an answer, not a transcript, not a report, not a score, not an IP. This
+# endpoint returns COUNTS AND FLAGS about accounts the admin screen already lists by email,
+# and nothing about what anybody said in an interview. That boundary is asserted by
+# `test_admin_marketing.py::TestNoNewDisclosure`, which pins the exact key set of a row so
+# that widening it has to be a deliberate act rather than a convenient one.
+#
+# WHY IT IS A SEPARATE ENDPOINT FROM /users RATHER THAN SIX MORE COLUMNS ON IT. /users is
+# the access-control screen — it exists to deactivate somebody and to grant admin, and it is
+# already a wide table. These are different questions asked at a different time, and the
+# export below has to cover everybody at once rather than the page you happen to be on.
+# The two share every rule they have in common by calling the same helpers.
+
+
+#: The whole list, in one response, up to this many accounts.
+#:
+#: NOT PAGINATED, AND THAT IS THE POINT. The list is destined for a mail merge, so the export
+#: has to be the whole thing; a paginated table plus a "download" that silently covered only
+#: page one would be worse than no export at all. Serving every row once and letting the
+#: browser search, filter and write the CSV from exactly the rows it is showing means there
+#: is one set of rows and no way for the table and the file to disagree.
+#:
+#: The cap is a bound on a response, not a product limit: at the size this product is (a few
+#: hundred accounts) it is never reached, and if it ever is, `truncated` says so out loud and
+#: names how many were left off rather than quietly shortening the list. Truncation keeps the
+#: NEWEST accounts, because a list this size is being mailed about a drive that is imminent.
+_MARKETING_MAX_ROWS = 2000
+
+
+#: One export is one page load. A limit here is not about cost — the queries are five grouped
+#: aggregates — it is that this is the only endpoint in the product that returns every
+#: candidate's email address in one response, so an authenticated admin token in a loop (or a
+#: stolen one) should not be able to pull the whole user base repeatedly without tripping.
+#: Its own Redis bucket, derived from the admin namespace, so it cannot eat the budget that
+#: the deactivate button needs in an incident.
+_marketing_read_rate_limit = rate_limiter(
+    limit=20,
+    window_seconds=60,
+    key_builder=lambda user_id: f"{CacheKeys.rate_limit_admin(user_id)}:marketing",
+    action="reading the marketing list",
+)
+
+
+class MarketingRow(BaseModel):
+    """
+    One account, as much as is needed to write it an email and no more.
+
+    `remaining` is keyed by feature id; the labels and the column order come from
+    `MarketingListResponse.features` so the browser never hard-codes either.
+    """
+
+    user_id: uuid.UUID
+    email: str
+    full_name: str | None
+    joined_at: datetime
+    is_active: bool
+    is_admin: bool
+    #: Operator account: not metered at all, so `remaining` is meaningless for it. Surfaced
+    #: as a flag rather than as a big number for the same reason `credits.Balance` does it —
+    #: "2 interviews left" quoted at your own admin in a marketing email is embarrassing,
+    #: and a countdown that never moves looks like a broken meter.
+    unlimited: bool
+    #: feature id → how many of it this account may still start. See `_remaining_by_user`.
+    remaining: dict[str, int]
+    #: INTERVIEW sessions, which is what the `sessions` column on `/admin/users` counts too.
+    #: Group discussions and communication drills live in their own tables and are deliberately
+    #: not folded in here: one number covering three different products would make the
+    #: started-versus-completed pair meaningless, and the two admin screens would then disagree
+    #: about how many sessions the same person has had. What is left of the other two features
+    #: is in `remaining`, which is where entitlement questions belong.
+    sessions_started: int
+    sessions_completed: int
+    #: Reports that exist for this account. A report is the thing the drive paywall sells, so
+    #: "has one" and "has none" are two different emails.
+    reports: int
+    #: The most recent of: a session, a report, a ledger entry. None means they have done
+    #: nothing at all since signing up, which is itself a segment.
+    last_active_at: datetime | None
+    ever_paid: bool
+    last_paid_at: datetime | None
+    #: One of `_SEGMENTS`. Exactly one per row — see `_segment_of`.
+    segment: str
+
+
+class MarketingSegment(BaseModel):
+    segment: str
+    label: str
+    #: What to say to this group. Copy, not configuration — it is here so the legend in the
+    #: UI and the reasoning in this file cannot drift apart.
+    pitch: str
+    count: int
+
+
+class MarketingFeature(BaseModel):
+    feature: str
+    label: str
+
+
+class MarketingListResponse(BaseModel):
+    generated_at: datetime
+    #: Every account matching the filters, before the cap.
+    total: int
+    returned: int
+    #: True when `total` exceeded `_MARKETING_MAX_ROWS` and the oldest accounts were left off.
+    truncated: bool
+    features: list[MarketingFeature]
+    segments: list[MarketingSegment]
+    users: list[MarketingRow]
+
+
+#: THE SEGMENTS, IN PRECEDENCE ORDER, AND THE ORDER IS THE DESIGN.
+#:
+#: A row gets exactly one segment because the point of the column is to answer "which of my
+#: five emails does this person get". A row that matched three segments would need the owner
+#: to break the tie by hand for every address, which is the work this column exists to remove.
+#:
+#: Precedence runs most-committed first, and each rule is written as "what is the truest thing
+#: about this person today":
+#:
+#:   customer        — they have paid us money. That outranks everything else: whatever else
+#:                     is true, you do not send an offer to somebody who has just bought.
+#:   report_waiting  — a report exists and they have never paid. With the drive paywall live
+#:                     this is the money segment: the work is done, the report is generated
+#:                     and stored, and one ₹50 unlock stands between them and it.
+#:   finished_no_report
+#:                   — completed a session but no report exists. Something did not finish, or
+#:                     they left before it generated. Support-shaped, not sales-shaped, and
+#:                     mailing it an offer would be asking for money for a thing they cannot
+#:                     see yet.
+#:   dropped_off     — started at least one session, completed none. The biggest recoverable
+#:                     group in any product like this, and the cheapest to recover: they have
+#:                     already decided to try.
+#:   never_started   — signed up and did nothing. Still holding their whole free trial, so
+#:                     the email is "your free interview is still here", never a price.
+#:
+#: `pitch` is the one-line reason each group is being mailed, kept beside the rule rather than
+#: in a document, because a segment whose purpose has been forgotten is a segment that quietly
+#: starts receiving the wrong email.
+_SEGMENTS: tuple[tuple[str, str, str], ...] = (
+    ("customer", "Paid before", "Thank them, and tell them what is next."),
+    (
+        "report_waiting",
+        "Report ready, unpaid",
+        "Their personalised report is generated and locked — the ₹50 unlock.",
+    ),
+    (
+        "finished_no_report",
+        "Finished, no report",
+        "Something did not complete. Ask what happened before selling anything.",
+    ),
+    ("dropped_off", "Started, never finished", "Come back and finish the interview you began."),
+    ("never_started", "Signed up, never started", "Their free interview is still waiting."),
+)
+
+
+def _segment_of(row_ever_paid: bool, reports: int, completed: int, started: int) -> str:
+    """
+    The one segment this account belongs to.
+
+    Pure, and takes only the four facts it needs, so the precedence documented on `_SEGMENTS`
+    can be tested exhaustively without a database. Derived entirely from fields the row
+    already carries, which is what makes it impossible for the segment to disagree with the
+    columns beside it.
+    """
+    if row_ever_paid:
+        return "customer"
+    if reports > 0:
+        return "report_waiting"
+    if completed > 0:
+        return "finished_no_report"
+    if started > 0:
+        return "dropped_off"
+    return "never_started"
+
+
+async def _remaining_by_user(
+    db: AsyncSession, user_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, int]]:
+    """
+    What every one of these accounts has left, per metered feature.
+
+    THIS IS `credits.remaining_for`'S ARITHMETIC, NOT A SECOND OPINION. That function is
+    `max(0, trial_allowance(feature) + SUM(delta))` over `credit_events` grouped by feature,
+    and so is this, line for line — the trial numbers themselves come from
+    `plans.trial_allowance`, so there is no second copy of an allowance anywhere. It is
+    written out here for exactly one reason: `remaining_for` answers for ONE user, and
+    calling it per row is the N+1 that turns this page into a timeout the week it has real
+    accounts on it. This is the set-wide form of the same query — one grouped statement for
+    the whole list, however long the list is.
+
+    A NUMBER QUOTED AT A CUSTOMER MUST MATCH THE ONE ON THEIR DASHBOARD, so the agreement is
+    not left to the two functions looking similar: `test_admin_marketing.py` runs both
+    against the same real ledger rows and asserts they return the same integer for every
+    user and every feature. If someone changes how entitlement is counted, that test fails
+    here rather than an admin promising somebody an interview they do not have.
+
+    The honest long-term home for this is a bulk function in `services/billing/credits.py`
+    that `remaining_for` itself delegates to; that file is out of scope for this change, so
+    the equivalence is pinned by test instead of by construction.
+
+    Admins are not metered at all (`credits.consume` returns before it looks at any balance),
+    so their numbers here are meaningless and the row carries `unlimited` to say so rather
+    than a figure that would be quoted at them.
+    """
+    if not user_ids:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(
+                CreditEvent.user_id,
+                CreditEvent.feature,
+                func.coalesce(func.sum(CreditEvent.delta), 0),
+            )
+            .where(CreditEvent.user_id.in_(user_ids))
+            .group_by(CreditEvent.user_id, CreditEvent.feature)
+        )
+    ).all()
+
+    net: dict[uuid.UUID, dict[str, int]] = {}
+    for uid, feature, total in rows:
+        net.setdefault(uid, {})[feature] = int(total or 0)
+
+    return {
+        uid: {
+            # Identical to credits.remaining_for: the trial is a constant added at read time,
+            # never rows, and the sum is already net of consumption because `delta` is signed.
+            feature: max(0, trial_allowance(feature) + net.get(uid, {}).get(feature, 0))
+            for feature in FEATURES
+        }
+        for uid in user_ids
+    }
+
+
+async def _activity_by_user(
+    db: AsyncSession, user_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dict]:
+    """
+    Sessions, reports and payment history for these accounts — three grouped queries, total.
+
+    NOT ONE QUERY PER USER, and not a relationship load either. Per-user aggregates in a loop
+    is precisely how an admin table with a few hundred rows on it starts timing out, and it
+    does so gradually, so it reads as "the admin page is slow lately" rather than as a bug
+    with a cause. Each statement below is one aggregate over one table for the whole list.
+
+    `count(*) FILTER (WHERE ...)` rather than a second query for the completed count: the
+    started/completed pair is only meaningful read together, and two queries could be answered
+    either side of a session finishing, which would show more completions than starts.
+    """
+    if not user_ids:
+        return {}
+
+    out: dict[uuid.UUID, dict] = {
+        uid: {
+            "sessions_started": 0,
+            "sessions_completed": 0,
+            "last_session_at": None,
+            "reports": 0,
+            "last_report_at": None,
+            "ledger_at": None,
+            "purchases": 0,
+            "last_paid_at": None,
+        }
+        for uid in user_ids
+    }
+
+    sessions = (
+        await db.execute(
+            select(
+                InterviewSession.user_id,
+                func.count(),
+                func.count().filter(InterviewSession.status == SessionStatus.COMPLETED.value),
+                func.max(InterviewSession.created_at),
+            )
+            .where(InterviewSession.user_id.in_(user_ids))
+            .group_by(InterviewSession.user_id)
+        )
+    ).all()
+    for uid, started, completed, last_at in sessions:
+        out[uid]["sessions_started"] = int(started or 0)
+        out[uid]["sessions_completed"] = int(completed or 0)
+        out[uid]["last_session_at"] = last_at
+
+    reports = (
+        await db.execute(
+            select(Report.user_id, func.count(), func.max(Report.created_at))
+            .where(Report.user_id.in_(user_ids))
+            .group_by(Report.user_id)
+        )
+    ).all()
+    for uid, n, last_at in reports:
+        out[uid]["reports"] = int(n or 0)
+        out[uid]["last_report_at"] = last_at
+
+    # WHY THE LEDGER IS READ FOR ACTIVITY AND NOT JUST FOR MONEY. `credit_events` is written
+    # when somebody starts anything metered, so its latest row is a real activity timestamp —
+    # and for a user whose sessions were deleted it may be the only one left.
+    #
+    # PAYMENT IS A COUNT OF `purchase` ROWS, NOT A SUM OF ANYTHING. Deliberately: a boolean
+    # ("have they ever paid") and a MAX ("when") are both immune to the double-grant that
+    # `/admin/revenue` has to dedupe against with DISTINCT ON, because counting one payment
+    # twice cannot change either answer. That is why this can read the ledger directly
+    # without carrying a copy of the revenue query's dedup rule around. `grant` rows are
+    # excluded on purpose — a 100%-off code and support goodwill are product given away, and
+    # somebody who has never actually paid must not be mailed as a customer.
+    ledger = (
+        await db.execute(
+            select(
+                CreditEvent.user_id,
+                func.max(CreditEvent.created_at),
+                func.count().filter(CreditEvent.kind == KIND_PURCHASE),
+                func.max(CreditEvent.created_at).filter(CreditEvent.kind == KIND_PURCHASE),
+            )
+            .where(CreditEvent.user_id.in_(user_ids))
+            .group_by(CreditEvent.user_id)
+        )
+    ).all()
+    for uid, last_at, purchases, last_paid in ledger:
+        out[uid]["ledger_at"] = last_at
+        out[uid]["purchases"] = int(purchases or 0)
+        out[uid]["last_paid_at"] = last_paid
+
+    return out
+
+
+def _latest(*values: datetime | None) -> datetime | None:
+    """
+    The most recent of several timestamps, ignoring the missing ones.
+
+    Written out rather than `max(filter(None, ...))` because these come from three different
+    tables and any of them can be NULL, and `max()` over an empty sequence raises — on an
+    account that has done nothing, which is the commonest row in a marketing list.
+    """
+    known = [v for v in values if v is not None]
+    return max(known) if known else None
+
+
+@router.get(
+    "/marketing",
+    response_model=MarketingListResponse,
+    summary="Per-account activity and remaining entitlement, for mailing",
+    dependencies=[Depends(_marketing_read_rate_limit)],
+)
+async def marketing_list(
+    current_user: AdminUser,
+    q: str | None = Query(None, max_length=200, description="Match on email or name."),
+    active: bool | None = Query(None, description="Filter by account state."),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> MarketingListResponse:
+    """
+    Everybody, what they have left, what they have done, and which email they should get.
+
+    ADMIN ONLY, THROUGH THE SAME GUARD AS EVERY OTHER ROUTE IN THIS FILE. `AdminUser` is the
+    dependency, so a non-admin gets a 403 before a line of this function runs and a
+    deactivated admin gets one before that — `get_current_admin_user` depends on
+    `get_current_user`, which is where `is_active` is enforced. This is the one endpoint that
+    returns every candidate's email address in a single response, so it gets no exceptions to
+    that and its own rate-limit bucket.
+
+    `q` and `active` are the same two filters, with the same names and the same meaning, as
+    `GET /admin/users`. Same rule, same spelling, so an admin who has learned one screen has
+    learned this one.
+    """
+    # Accounts first, newest signups first. The aggregates below are keyed off exactly this
+    # set of ids, so the whole response is constant in the number of queries however many
+    # accounts come back.
+    stmt = (
+        select(User.id, User.email, User.is_active, User.is_admin, User.created_at, Profile.full_name)
+        .outerjoin(Profile, Profile.user_id == User.id)
+    )
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(or_(User.email.ilike(like), Profile.full_name.ilike(like)))
+    if active is not None:
+        stmt = stmt.where(User.is_active.is_(active))
+
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+
+    rows = (
+        await db.execute(stmt.order_by(User.created_at.desc()).limit(_MARKETING_MAX_ROWS))
+    ).all()
+    ids = [r.id for r in rows]
+
+    remaining = await _remaining_by_user(db, ids)
+    activity = await _activity_by_user(db, ids)
+
+    users: list[MarketingRow] = []
+    for r in rows:
+        a = activity.get(r.id, {})
+        ever_paid = int(a.get("purchases") or 0) > 0
+        users.append(
+            MarketingRow(
+                user_id=r.id,
+                email=r.email,
+                full_name=r.full_name,
+                joined_at=r.created_at,
+                is_active=r.is_active,
+                is_admin=r.is_admin,
+                unlimited=r.is_admin,
+                remaining=remaining.get(r.id, {f: trial_allowance(f) for f in FEATURES}),
+                sessions_started=int(a.get("sessions_started") or 0),
+                sessions_completed=int(a.get("sessions_completed") or 0),
+                reports=int(a.get("reports") or 0),
+                last_active_at=_latest(
+                    a.get("last_session_at"), a.get("last_report_at"), a.get("ledger_at")
+                ),
+                ever_paid=ever_paid,
+                last_paid_at=a.get("last_paid_at"),
+                segment=_segment_of(
+                    ever_paid,
+                    int(a.get("reports") or 0),
+                    int(a.get("sessions_completed") or 0),
+                    int(a.get("sessions_started") or 0),
+                ),
+            )
+        )
+
+    # Most recently active first, and never-active last rather than first. This is the order
+    # somebody mails in: the person who was here yesterday is the person most likely to open
+    # it. Sorted here rather than in SQL because "last active" is the latest of three
+    # different tables' timestamps, and ordering on that in the database would mean joining
+    # all three into the paging query for a list that is already bounded and in memory.
+    users.sort(key=lambda u: (u.last_active_at is not None, u.last_active_at or u.joined_at), reverse=True)
+
+    counts = {seg: 0 for seg, _label, _pitch in _SEGMENTS}
+    for u in users:
+        counts[u.segment] = counts.get(u.segment, 0) + 1
+
+    logger.info(
+        # Not an `audit_logs` row, deliberately. That table's admin slice is what
+        # `GET /admin/audit` renders, and it exists to make access changes easy to find; one
+        # entry per page load of this screen would bury them, which is the exact failure that
+        # endpoint's docstring warns about. Who pulled the list is recorded here instead, with
+        # the same actor id and a count, where an operational question can be answered without
+        # drowning the access trail.
+        "admin_marketing_list_read",
+        actor=str(current_user.user_id),
+        returned=len(users),
+        total=total,
+    )
+
+    return MarketingListResponse(
+        generated_at=datetime.now(UTC),
+        total=total,
+        returned=len(users),
+        truncated=total > len(users),
+        # The browser renders the columns the server names, in this order, with these labels.
+        # `FEATURE_LABELS` is the product's own copy for these features — the same dict the
+        # 402 paywall message is built from — so a feature cannot be called one thing to a
+        # candidate and another to the person mailing them.
+        features=[MarketingFeature(feature=f, label=FEATURE_LABELS.get(f, f)) for f in FEATURES],
+        segments=[
+            MarketingSegment(segment=seg, label=label, pitch=pitch, count=counts.get(seg, 0))
+            for seg, label, pitch in _SEGMENTS
+        ],
+        users=users,
+    )

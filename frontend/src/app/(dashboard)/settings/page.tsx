@@ -3,7 +3,7 @@
 import { useAuth } from '@/hooks/useAuth';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Lock, Shield, Check } from 'lucide-react';
+import { Bell, Lock, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -35,7 +35,6 @@ export default function SettingsPage() {
     });
   };
 
-  const apiEndpoint = process.env.NEXT_PUBLIC_API_URL || 'not configured';
 
   const handlePasswordReset = async () => {
     if (!user?.email) return;
@@ -114,25 +113,27 @@ export default function SettingsPage() {
           </Card>
         </motion.div>
 
-        {/* Environment Info */}
-        <motion.div variants={fadeUp}>
-          <Card className="space-y-2 p-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-emerald/10 text-accent-emerald-ink">
-                <Shield className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold">System Information</h3>
-                <p className="text-xs text-muted-foreground">Connected API backend environment</p>
-              </div>
-            </div>
-            <div className="space-y-1 border-t border-border/40 pt-4 text-xs text-muted-foreground">
-              <p><strong>API Endpoint:</strong> {apiEndpoint}</p>
-              <p><strong>Account ID:</strong> {user?.id}</p>
-              <p><strong>Email:</strong> {user?.email}</p>
-            </div>
-          </Card>
-        </motion.div>
+        {/* THE "SYSTEM INFORMATION" CARD IS GONE, and the API endpoint is why.
+
+            It printed the backend's full host on the settings page of every candidate who ever
+            opened it. That one line hands a stranger the host, the platform and — from the URL
+            shape — the hosting tier: a starting point for probing, and it tells the reader more
+            about the deployment than about their own account. Removed on request, and it should
+            never have shipped to a candidate. The URL is deliberately not repeated here.
+
+            The account id and email went with it rather than being kept in a slimmer card. The
+            email is already in the header and on the profile page, and a raw UUID is not
+            something a candidate can act on — it was there because the card was built for
+            debugging and then left on a page users see. A support flow that genuinely needs an
+            id should surface it deliberately, not as a by-product of an environment readout.
+
+            `apiEndpoint` was deleted with it rather than left unused: a variable holding that
+            value is an invitation to render it again.
+
+            Earlier in this session the same class of leak was removed from the data-error
+            component, which disclosed a hosting tier and a spin-up window, and from two
+            pricing-page toasts that named the payment provider and admitted the integration was
+            unfinished. This was the last one rendering on a user-facing screen. */}
       </div>
     </motion.div>
   );

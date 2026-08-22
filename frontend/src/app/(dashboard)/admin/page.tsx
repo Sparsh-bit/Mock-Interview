@@ -23,12 +23,14 @@
  * showing a row of zeroes that look like real measurements.
  */
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   CheckCircle2,
   ChevronRight,
+  Mail,
   Search,
   Shield,
   ShieldOff,
@@ -39,7 +41,7 @@ import { toast } from 'sonner';
 import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
@@ -187,6 +189,19 @@ export default function AdminPage() {
         eyebrow="Admin"
         title="Users"
         description="Who is using the product, what they cost, and who can get in."
+        actions={
+          /* This page is access control — deactivate an account, grant admin. "What has this
+             person got left and what should I mail them" is a different question asked at a
+             different moment, so it is a different screen rather than six more columns on an
+             already-wide table. The link is here because this is where an admin starts. */
+          <Link
+            href="/admin/marketing"
+            className={cn(buttonVariants({ variant: 'secondary', size: 'sm' }))}
+          >
+            <Mail className="h-3.5 w-3.5" />
+            Mailing list
+          </Link>
+        }
       />
 
       {o && (

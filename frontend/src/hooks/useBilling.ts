@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getBrowserApiClient } from '@/lib/api';
+import type { PaymentsResponse } from '@/lib/billing/receipt';
+
 
 /**
  * The store, the balance and the appeal — hooks/useBilling.ts
@@ -244,29 +246,36 @@ export function useVerifyPayment() {
   });
 }
 
-/** Every payment on this account, newest first. Read off the credit ledger. */
+/**
+ * Every payment on this account, newest first. Read off the credit ledger.
+ *
+ * RETURNS THE WHOLE ENVELOPE, not just the rows. It used to unwrap `.payments` here, which
+ * meant the payer's identity that the endpoint returns alongside them was thrown away at the
+ * one place it could still be read — and a receipt that does not name who it was issued to is
+ * a number on a page.
+ *
+ * BOTH SURFACES SHARE THIS ONE QUERY. The history list and the printable receipt at
+ * /account/receipt/[paymentId] read the same cache entry, and the receipt selects from it with
+ * `findPayment` rather than fetching one payment by id. That is deliberate: an endpoint taking
+ * a payment id is an endpoint that can be handed somebody else's, and selecting out of a list
+ * the server already scoped to the authenticated caller cannot show another account's payment
+ * however the id is guessed. It also means the receipt can never disagree with the row it was
+ * opened from, because there is only one copy of the answer.
+ */
 export function usePayments() {
   return useQuery({
     queryKey: ['billing', 'payments'],
     queryFn: async () => {
       const res = await getBrowserApiClient().get('/api/v1/billing/payments');
-      return (res.data as { payments: PaymentRecord[] }).payments;
+      return res.data as PaymentsResponse;
     },
   });
 }
 
-export interface PaymentRecord {
-  id: string;
-  at: string;
-  /** The Razorpay payment id — the number their support and ours both index by. */
-  receipt: string;
-  item_id: string;
-  item_name: string;
-  feature: string;
-  quantity: number;
-  amount_paise: number;
-  amount_rupees: number;
-  offer: string;
-  kind: string;
-  paid: boolean;
-}
+/*
+ * The payment row and envelope shapes live in lib/billing/receipt.ts, next to the functions
+ * that turn them into words. Re-exported here so a component importing a payment row does not
+ * have to know which of the two modules holds the type, and so the previous import path keeps
+ * working.
+ */
+export type { PaymentRecord, PaymentsResponse, Payer } from '@/lib/billing/receipt';

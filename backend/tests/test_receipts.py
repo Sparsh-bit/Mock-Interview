@@ -217,3 +217,117 @@ class TestWhatAPayerMustNeverSee:
         # would be reported as "billing is broken".
         db, _, other = ledger
         assert await _receipts(db, other) == []
+
+
+async def _response(db, user_id):
+    """
+    The WHOLE payload, not just the rows.
+
+    `_receipts` above reaches straight into `["payments"]`, which is right for the assertions
+    it serves and cannot see the sibling keys. A receipt has to name who it was issued to, so
+    the tests for that need the envelope.
+    """
+    from app.api.v1.billing import my_payments
+
+    return await my_payments(_FakeUser(user_id), db)  # type: ignore[arg-type]
+
+
+class TestWhatMakesItAReceipt:
+    """
+    The fields a candidate can actually do something with.
+
+    "the recipt of the payment must also be availble for the user." A row on a list is not a
+    receipt. A receipt is something they can keep, print and quote when they ask why ₹249 left
+    their account — which means it has to carry the identifiers the other side of that
+    conversation indexes by, and it has to say whose payment it was.
+    """
+
+    async def test_the_order_id_is_carried_through_for_support(self, ledger):
+        """
+        The order id was already being STORED and then dropped on the way out.
+
+        It is the second identifier Razorpay's dashboard resolves, and the one that still works
+        when the candidate has a bank statement showing a debit and no payment id to quote.
+        That is precisely the conversation a receipt exists to shorten, so throwing it away
+        made the receipt weaker than the data behind it.
+        """
+        db, payer, _ = ledger
+        await _event(
+            db, payer,
+            payment_ref="pay_WithOrder",
+            detail={"item_id": "interview_5", "amount_paise": 24900, "order_id": "order_Abc123"},
+        )
+        [r] = await _receipts(db, payer)
+        assert r["order_id"] == "order_Abc123"
+
+    async def test_a_free_grant_has_no_order_id_and_that_is_not_a_missing_field(self, ledger):
+        # Razorpay cannot open an order below ₹1, so a 100%-off code never had one — see the
+        # free branch of /billing/checkout. Empty string rather than null so the receipt view
+        # renders one shape for every row instead of branching on absence.
+        db, payer, _ = ledger
+        await _event(db, payer, kind=KIND_GRANT, payment_ref=None,
+                     detail={"item_id": "interview_1", "offer": "LAUNCH100"})
+        [r] = await _receipts(db, payer)
+        assert r["order_id"] == ""
+
+    async def test_the_receipt_names_the_account_it_was_issued_to(self, ledger):
+        # An unaddressed receipt is a number on a page. This comes from the verified token,
+        # not from the request — the same reason the row query is scoped that way.
+        db, payer, _ = ledger
+        await _event(db, payer, payment_ref="pay_Named")
+        body = await _response(db, payer)
+        assert body["payer"]["email"] == f"{payer}@example.test"
+
+    async def test_the_identity_is_not_repeated_onto_every_row(self, ledger):
+        """
+        One payer per response, stated once.
+
+        Copying it onto each row would be an identity a caller could read per row and trust
+        per row — and a row-level identity is the thing that eventually gets populated from
+        something other than the token. It cannot vary here, so it is not offered as if it
+        could.
+        """
+        db, payer, _ = ledger
+        await _event(db, payer, payment_ref="pay_One")
+        [r] = await _receipts(db, payer)
+        assert "email" not in r
+        assert "@" not in " ".join(str(v) for v in r.values())
+
+
+class TestTheFailedPaymentGap:
+    """
+    Nothing records a failed attempt, and this endpoint must not pretend otherwise.
+
+    "the payment failed must also show in the payment history section." It cannot yet: no
+    order row is persisted at checkout, /billing/verify writes nothing on its `pending` and
+    bad-signature branches, the webhook drops every non-capture, and `autopay_failures` is a
+    throttle counter with no amount or item on it. The endpoint's docstring records where each
+    of those was checked.
+
+    These tests pin the DIRECTION that gap must be closed in, because the shortcut is
+    available and attractive and would corrupt the ledger.
+    """
+
+    async def test_an_attempt_written_as_a_zero_delta_ledger_row_is_not_a_payment(self, ledger):
+        """
+        THE SHORTCUT THIS FORBIDS. Recording attempts as `credit_events` rows with `delta=0`
+        needs no migration, which is exactly why somebody will try it — and `credit_events` is
+        defined as movements of entitlement, so a non-movement is a lie about what the row
+        means and lands inside every `SUM(delta)` and every count over that table.
+
+        If it is written anyway, it must not surface here as a ₹0 payment the candidate never
+        made. The kinds filter is what holds that, so this asserts the filter rather than
+        trusting it.
+        """
+        db, payer, _ = ledger
+        await _event(db, payer, kind="attempt", delta=0, payment_ref=None,
+                     detail={"item_id": "interview_5", "error": "card declined"})
+        assert await _receipts(db, payer) == []
+
+    async def test_a_real_purchase_beside_it_is_still_delivered(self, ledger):
+        # Guards the guard: an over-broad filter that returned nothing at all would make the
+        # test above pass while hiding every genuine receipt.
+        db, payer, _ = ledger
+        await _event(db, payer, kind="attempt", delta=0, payment_ref=None)
+        await _event(db, payer, payment_ref="pay_Real", detail={"amount_paise": 4900})
+        assert [r["receipt"] for r in await _receipts(db, payer)] == ["pay_Real"]

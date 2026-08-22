@@ -124,8 +124,27 @@ const NAME_SOUNDS: Array<[RegExp, string]> = [
   // Longest first: "Priya" contains "riya".
   [/\bPriya\b/g, 'Preeya'],
   [/\bRiya\b/g, 'Reeya'],
-  // Read as "AY-nil" by several engines; the name is ah-NEEL.
-  [/\bAnil\b/g, 'Uh-neel'],
+  /*
+   * ANIL: "Aneel", NOT "Uh-neel". The hyphenated version was my first attempt and it made
+   * things worse, which is the whole lesson here.
+   *
+   * Reported as the panel "not taking the names of Priya and Anil correct", and rendering the
+   * spoken form showed why: "Thanks Uh-neel." A synthesiser reads "Uh" as a HESITATION FILLER
+   * and a hyphen as a PAUSE, so it says "Thanks uh… neel" — a stammer in the middle of a
+   * greeting, which is worse than the original mispronunciation because it sounds like the
+   * speaker forgot the name.
+   *
+   * TWO RULES FOR EVERY RESPELLING IN THIS TABLE, learned from that:
+   *   NO HYPHENS. They are read as pauses, not as syllable hints.
+   *   NO SYLLABLE THAT IS ALSO AN ENGLISH FILLER — uh, um, er, ah, hmm. A respelling has to
+   *   survive being read by something that knows nothing about why it is spelled that way.
+   * A test asserts both, because the mistake is invisible in the table and only audible in the
+   * room.
+   *
+   * "Aneel" is one word, has no filler syllable, and puts the stress where the name has it:
+   * ah-NEEL rather than the AY-nil several engines default to.
+   */
+  [/\bAnil\b/g, 'Aneel'],
   /*
    * ARJUN AND MEERA WERE PASS-THROUGH, WHICH MEANT THEY WERE NEVER FIXED.
    *
