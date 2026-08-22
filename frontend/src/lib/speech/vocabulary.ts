@@ -171,8 +171,12 @@ const RULES: Rule[] = [
   rule('react js', 'React'),
   rule('node js', 'Node.js'),
   rule('git hub', 'GitHub'),
-  rule('rest controller', 'RestController'),
-  rule('auto wired', 'Autowired'),
+  // WITH the at-sign. These are annotations and that is how they appear in code, so it is
+  // how a transcript and a report should quote them. Updated in place rather than by adding
+  // a second rule for the same spoken term — two rules for one term is the duplication this
+  // file's ordering rules exist to avoid, and the later one would silently never fire.
+  rule('rest controller', '@RestController'),
+  rule('auto wired', '@Autowired'),
   rule('bean factory', 'BeanFactory'),
   rule('application context', 'ApplicationContext'),
 
@@ -202,6 +206,144 @@ const RULES: Rule[] = [
  * product's users are on older iPhones — a regex that throws at parse time would take the
  * whole correction pass down with it. Capture groups and $1 do the same job everywhere.
  */
+/*
+ * ── REACT, SQL AND SPRING ──────────────────────────────────────────────────────────────────
+ *
+ * THE LIST ABOVE WAS BUILT FOR A JAVA-ONLY INTERVIEW, and the interview is not Java-only any
+ * more. `app/data/syllabus.py` now covers React and frontend, SQL and data modelling, and
+ * Spring Boot and REST, because that is what a Cognizant Digital Nurture candidate is actually
+ * asked. Every term in those three areas was going into the transcript however the recogniser
+ * happened to hear it.
+ *
+ * That is not cosmetic. The transcript is what gets SCORED, and it is what the panel quotes back
+ * in a follow-up. A candidate who says "useState" correctly and has it recorded as "use state"
+ * has their answer marked against a keyword list that will not match it, and may then be asked
+ * about a term they never used. Reported as "the mic still it is not getting what i am saying".
+ *
+ * ORDERED LONGEST-FIRST WITHIN EACH GROUP, for the reason stated at the top of RULES: a
+ * component of a multi-word term must never match before the whole term. "use effect" has to be
+ * tried before "effect", "inner join" before "join", "group by" before "by".
+ *
+ * WHAT IS DELIBERATELY ABSENT. No rule that rewrites an ordinary English word on its own —
+ * "state", "props", "join", "table", "key", "view" all appear in normal speech and a bare rule
+ * for any of them would corrupt sentences that were transcribed correctly. Every entry below is
+ * either multi-word, an initialism spelled out letter by letter, or a word that is not English.
+ * The bar is: could this pattern fire on a sentence that had nothing wrong with it? If yes, it
+ * is not here.
+ */
+
+// ── React ─────────────────────────────────────────────────────────────────────────────────
+const REACT_RULES: Rule[] = [
+  // Hooks. Said as two words almost every time, and the camel case is the whole name.
+  rule('use state', 'useState'),
+  rule('use effect', 'useEffect'),
+  rule('use ref', 'useRef'),
+  rule('use memo', 'useMemo'),
+  rule('use callback', 'useCallback'),
+  rule('use context', 'useContext'),
+  rule('use reducer', 'useReducer'),
+  rule('usestate', 'useState'),
+  rule('useeffect', 'useEffect'),
+  rule('useref', 'useRef'),
+  // The DOM, and the one thing every React question asks about.
+  rule('virtual dom', 'virtual DOM'),
+  rule('virtual d o m', 'virtual DOM'),
+  rule('real dom', 'real DOM'),
+  rule('d o m', 'DOM'),
+  rule('j s x', 'JSX'),
+  rule('jsx', 'JSX'),
+  // Lifecycle and rendering.
+  rule('re render', 're-render'),
+  rule('re rendering', 're-rendering'),
+  rule('reconcil iation', 'reconciliation'),
+  rule('single page application', 'single-page application'),
+  rule('s p a', 'SPA'),
+];
+
+// ── SQL and data modelling ────────────────────────────────────────────────────────────────
+const SQL_RULES: Rule[] = [
+  // Clauses. Multi-word only — a bare "by", "join" or "table" would wreck ordinary sentences.
+  rule('group by', 'GROUP BY'),
+  rule('order by', 'ORDER BY'),
+  rule('inner join', 'INNER JOIN'),
+  rule('left join', 'LEFT JOIN'),
+  rule('right join', 'RIGHT JOIN'),
+  rule('left outer join', 'LEFT OUTER JOIN'),
+  rule('right outer join', 'RIGHT OUTER JOIN'),
+  rule('full outer join', 'FULL OUTER JOIN'),
+  rule('cross join', 'CROSS JOIN'),
+  rule('self join', 'SELF JOIN'),
+  // Keys and constraints.
+  // Normalisation — asked by name, and the recogniser splits the ordinals.
+  rule('one n f', '1NF'),
+  rule('two n f', '2NF'),
+  rule('three n f', '3NF'),
+  rule('normali sation', 'normalisation'),
+  rule('de normali sation', 'denormalisation'),
+  // Ranking and aggregates, which the second-highest-salary question always reaches for.
+  rule('dense rank', 'DENSE_RANK'),
+  rule('dense underscore rank', 'DENSE_RANK'),
+  rule('row number', 'ROW_NUMBER'),
+  rule('group concat', 'GROUP_CONCAT'),
+  // The other database, and the way "SQL" gets heard.
+  rule('no sequel', 'NoSQL'),
+  rule('nosql', 'NoSQL'),
+  rule('no s q l', 'NoSQL'),
+  rule('my sequel', 'MySQL'),
+  rule('post gre sql', 'PostgreSQL'),
+  rule('postgre sql', 'PostgreSQL'),
+  rule('a c i d', 'ACID'),
+  rule('b s o n', 'BSON'),
+];
+
+// ── Spring Boot and REST ──────────────────────────────────────────────────────────────────
+const SPRING_RULES: Rule[] = [
+  // Annotations, said without the at-sign. Written WITH it, because that is how they appear in
+  // code and how the report should quote them back.
+  rule('spring boot application', '@SpringBootApplication'),
+  rule('get mapping', '@GetMapping'),
+  rule('post mapping', '@PostMapping'),
+  rule('put mapping', '@PutMapping'),
+  rule('delete mapping', '@DeleteMapping'),
+  rule('request mapping', '@RequestMapping'),
+  rule('request body', '@RequestBody'),
+  rule('path variable', '@PathVariable'),
+  rule('request param', '@RequestParam'),
+  rule('component scan', '@ComponentScan'),
+  // The concepts these questions are really about.
+  rule('spring container', 'Spring container'),
+  rule('application properties', 'application.properties'),
+  rule('server port', 'server.port'),
+  rule('d t o', 'DTO'),
+  rule('m v c', 'MVC'),
+  // HTTP verbs and status codes, which a REST question always asks by name.
+  rule('state less', 'stateless'),
+  rule('idem potent', 'idempotent'),
+];
+
+// ── OOP words the recogniser splits, which the Java list did not cover ────────────────────
+const OOP_RULES: Rule[] = [
+  rule('in heritance', 'inheritance'),
+  rule('a b straction', 'abstraction'),
+  rule('ab straction', 'abstraction'),
+  rule('abs traction', 'abstraction'),
+  rule('poly morphic', 'polymorphic'),
+  rule('en capsulate', 'encapsulate'),
+  rule('con structor', 'constructor'),
+  rule('de structor', 'destructor'),
+  rule('inter face', 'interface'),
+  rule('method over loading', 'method overloading'),
+  rule('method over riding', 'method overriding'),
+  rule('compile time polymorphism', 'compile-time polymorphism'),
+  rule('run time polymorphism', 'runtime polymorphism'),
+  rule('big o', 'Big O'),
+  rule('o of n', 'O(n)'),
+  rule('o of one', 'O(1)'),
+  rule('o of log n', 'O(log n)'),
+  rule('o of n square', 'O(n²)'),
+  rule('o of n squared', 'O(n²)'),
+];
+
 const MISHEARD: Rule[] = [
   // fields — "keep the feels private", "instance feels"
   {
@@ -280,6 +422,32 @@ const MISHEARD: Rule[] = [
  * matters because the hook corrects each finalised chunk as it arrives and the
  * caller may correct the whole thing again before submitting.
  */
+/**
+ * Every rule set, in the order they must run.
+ *
+ * RULES first because it holds the multi-word Java exceptions that would otherwise be broken up
+ * by a component rule. The area lists then run longest-first within themselves — see the note
+ * above REACT_RULES. Flattened once at module load rather than concatenated per call: this runs
+ * on every final speech result, several times a second while somebody is talking.
+ */
+const ALL_RULES: Rule[] = [
+  /*
+   * AREA RULES FIRST, and the order is load-bearing rather than tidy.
+   *
+   * Every rule in these four lists is multi-word or a spelled-out initialism, and RULES contains
+   * short single-word rules that would otherwise consume their components. Two real collisions
+   * proved it: `rule('sequel', 'SQL')` fired before "no sequel" could match, turning "no sequel
+   * database" into "no SQL database"; and the file's stated principle at the top of RULES —
+   * "multi-word exceptions first, or their components would match instead" — is exactly this,
+   * applied across the lists instead of only within one.
+   */
+  ...REACT_RULES,
+  ...SQL_RULES,
+  ...SPRING_RULES,
+  ...OOP_RULES,
+  ...RULES,
+];
+
 export function correctTechnicalTerms(text: string): string {
   if (!text) return text;
   let out = text;
@@ -290,7 +458,7 @@ export function correctTechnicalTerms(text: string): string {
   for (const { pattern, replacement } of MISHEARD) {
     out = out.replace(pattern, replacement);
   }
-  for (const { pattern, replacement } of RULES) {
+  for (const { pattern, replacement } of ALL_RULES) {
     out = out.replace(pattern, replacement);
   }
   return out;

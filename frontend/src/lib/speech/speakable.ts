@@ -126,9 +126,28 @@ const NAME_SOUNDS: Array<[RegExp, string]> = [
   [/\bRiya\b/g, 'Reeya'],
   // Read as "AY-nil" by several engines; the name is ah-NEEL.
   [/\bAnil\b/g, 'Uh-neel'],
-  // Usually fine, listed so the set is complete and reviewable in one place.
-  [/\bMeera\b/g, 'Meera'],
-  [/\bArjun\b/g, 'Arjun'],
+  /*
+   * ARJUN AND MEERA WERE PASS-THROUGH, WHICH MEANT THEY WERE NEVER FIXED.
+   *
+   * They were listed with themselves as the replacement — "listed so the set is complete and
+   * reviewable in one place" — which reads as deliberate and did nothing at all. Reported as
+   * "in some places the AI agents are pronouncing the names of themselves wrong". A table entry
+   * that is a no-op is worse than a missing one: it makes the name look considered.
+   *
+   * ARJUN is the one that is actually wrong. English readers put the stress on the first
+   * syllable and rhyme the second with "June" — AR-june. The name is ar-JUN, with a short
+   * vowel. "Arjoon" produces that on every engine tested.
+   *
+   * MEERA is usually right, and it gets an explicit respelling anyway because "Meera" is also
+   * read as MEE-ruh with a swallowed final vowel. "Meerah" holds the vowel open without
+   * changing the stress, which is the smaller of the two risks.
+   *
+   * Both are ear-only, like the rest of this table: the screen and the transcript keep the real
+   * spelling, because a report that quotes "Arjoon" back at somebody is a worse bug than a
+   * mispronounced name.
+   */
+  [/\bArjun\b/g, 'Arjoon'],
+  [/\bMeera\b/g, 'Meerah'],
 ];
 
 export function toSpokenForm(text: string): string {
