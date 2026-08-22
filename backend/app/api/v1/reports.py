@@ -902,12 +902,32 @@ async def generate_report(
         # shared tier is what makes cost per user FALL as the user base grows.
         roadmap = [item.model_dump() for item in ai_report.improvement_roadmap]
         try:
-            roadmap = await attach_to_roadmap(db, roadmap)
-        except Exception:
+            # BOUNDED, and it was not. This loops over every roadmap item calling `resolve`,
+            # which on a cache miss makes another AI call — so eight uncached topics meant
+            # eight sequential generations AFTER the report's own 85s budget was already
+            # spent. Nothing capped the total, so the client's 120s timeout arrived first and
+            # the candidate saw "Report Unavailable" for a report the server was still
+            # assembling. Capping the AI call alone did not fix it because this was never
+            # inside that cap.
+            roadmap = await asyncio.wait_for(
+                attach_to_roadmap(db, roadmap),
+                timeout=settings.REPORT_RESOURCE_BUDGET_SECONDS,
+            )
+        except (Exception, TimeoutError) as exc:  # noqa: BLE001
             # Never at the cost of the report. An item still carries its topic, score gap
             # and study-hours estimate without resources, which is most of its value; a
             # report that failed to save has none of it.
-            logger.warning("roadmap_resource_attach_failed", session_id=str(session_id))
+            #
+            # A partial roadmap is not lost work either: `resolve` writes each topic it did
+            # finish into the shared cache, so the next candidate to need that topic gets it
+            # instantly. This report pays the discovery; every later one benefits.
+            logger.warning(
+                "roadmap_resource_attach_failed",
+                session_id=str(session_id),
+                error_type=type(exc).__name__,
+                error=str(exc) or type(exc).__name__,
+                budget_seconds=settings.REPORT_RESOURCE_BUDGET_SECONDS,
+            )
 
         report = Report(
             session_id=session_id,

@@ -111,3 +111,54 @@ class TestTheSemaphoreIsInsideTheTimeout:
         # a provider rate-limit storm.
         assert reports._REPORT_CONCURRENCY >= 1
         assert "_report_slots" in _generate_report_source()
+
+
+class TestEverythingSlowIsBounded:
+    """
+    CAPPING THE AI CALL WAS NOT ENOUGH, and this is the second half of the same 120-second
+    timeout.
+
+    `attach_to_roadmap` loops over every roadmap item calling `resolve`, which on a cache miss
+    makes ANOTHER AI call. So a report with eight uncached topics paid eight sequential
+    generations AFTER its own 85-second budget had already been spent. Nothing bounded the
+    total, so the client's 120-second timeout arrived first and the candidate saw "Report
+    Unavailable" for a report the server was still assembling.
+
+    The lesson is the one this session keeps repeating: bounding the slow thing you already know
+    about does not bound the request. Every await after it has to be bounded too, or the budget
+    is a budget for one step rather than for the response.
+    """
+
+    def test_the_resource_attachment_has_a_budget(self):
+        import inspect
+
+        src = inspect.getsource(reports.generate_report)
+        block = src[src.index("attach_to_roadmap") - 600 : src.index("attach_to_roadmap") + 400]
+        assert "asyncio.wait_for" in block
+        assert "REPORT_RESOURCE_BUDGET_SECONDS" in block
+
+    def test_a_resource_timeout_still_saves_the_report(self):
+        """
+        The whole reason a tight budget is safe here: resources are the least valuable part of
+        the response, and the block's own comment says so. A report without them still carries
+        every topic, score gap and study-hours estimate.
+        """
+        import inspect
+
+        src = inspect.getsource(reports.generate_report)
+        after = src[src.index("attach_to_roadmap") :]
+        assert "TimeoutError" in after[:800]
+        # And the report object is still constructed afterwards.
+        assert "report = Report(" in after
+
+    def test_the_two_budgets_together_fit_inside_the_client_timeout(self):
+        """
+        The arithmetic that matters, asserted rather than assumed — which is exactly what was
+        missing when the AI budget was set in isolation and the request still overran.
+        """
+        from app.core.config import settings
+
+        worst_case = reports.report_ai_budget_seconds() + settings.REPORT_RESOURCE_BUDGET_SECONDS
+        # The client gives up at 120s; leave real headroom for auth, the transcript build and
+        # the writes at either end.
+        assert worst_case <= 100.0, worst_case

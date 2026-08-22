@@ -312,6 +312,22 @@ class Settings(BaseSettings):
     #: tick asks again. A missing contribution is invisible in a conversation between three
     #: people; a twelve-second silence is not.
     GD_TURN_AI_BUDGET_SECONDS: float = 12.0
+    #: Seconds the study-resource attachment may spend before the report is saved without it.
+    #:
+    #: THIS WAS UNBOUNDED AND IT IS WHY REPORTS STILL TIMED OUT AT 120s AFTER THE AI CALL WAS
+    #: CAPPED. `attach_to_roadmap` loops over every roadmap item and calls `resolve`, which on a
+    #: cache miss makes ANOTHER AI call — so a report with eight uncached topics paid eight
+    #: sequential generations AFTER its own 85-second budget had already been spent. Nothing
+    #: bounded the total, so the client's 120-second timeout arrived first and the candidate saw
+    #: "Report Unavailable" for a report the server was still assembling.
+    #:
+    #: 10 seconds, because this is the least valuable part of the response. The block's own
+    #: comment already says so: "An item still carries its topic, score gap and study-hours
+    #: estimate without resources, which is most of its value; a report that failed to save has
+    #: none of it." A warm cache returns in milliseconds, so this only ever bites the first
+    #: report to ask for a given topic — and those writes are shared, so the next candidate
+    #: benefits from work this one abandoned.
+    REPORT_RESOURCE_BUDGET_SECONDS: float = 10.0
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
