@@ -50,14 +50,27 @@ class TestTheGeneratedPathDemandsTheFullCount:
     def test_the_validator_checks_the_count_not_just_emptiness(self):
         # Pinned in source: this is a one-line predicate that reads as harmless and was the
         # entire bug. `bool(q.questions)` accepts three questions when five were requested.
+        #
+        # The predicate now guards `want` — the size of ONE BATCH — because generation was
+        # split into concurrent batches so that a full-size quiz can be produced inside the
+        # client's timeout. The invariant is unchanged and is arguably stronger: every batch
+        # must deliver its whole share, and the batch sizes are rounded UP to cover the
+        # requested count (see `per_batch`), so the count is still a requirement rather than a
+        # suggestion. What must never come back is a check on emptiness.
         import pathlib
 
         src = (pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/quiz.py").read_text()
-        assert "is_valid=lambda q: len(q.questions) >= request.count" in src
+        assert "is_valid=lambda q: len(q.questions) >= want" in src
         assert "is_valid=lambda q: bool(q.questions)" not in src
+        # The batches must add up to at least what was asked for, or the count is a suggestion
+        # again — this time by arithmetic rather than by a loose predicate.
+        assert "per_batch = math.ceil(request.count / batch_count)" in src
 
     def test_an_over_delivery_is_trimmed_rather_than_served(self):
+        # Now trimmed after the batches are merged and deduped, rather than off a single
+        # response. Over-delivery is the NORMAL case with batching — the sizes round up — so
+        # this trim carries more weight than it used to, not less.
         import pathlib
 
         src = (pathlib.Path(__file__).resolve().parent.parent / "app/api/v1/quiz.py").read_text()
-        assert "quiz.questions[: request.count]" in src
+        assert "picked = picked[: request.count]" in src

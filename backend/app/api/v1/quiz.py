@@ -13,7 +13,9 @@ POST /quiz/{quiz_id}/submit — grade the candidate's selected options and retur
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import random
 import uuid
 from typing import Literal, TypedDict
@@ -23,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-from app.core.exceptions import AIProviderUnavailableError
+from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import cache_delete, cache_get, cache_set, get_redis
@@ -146,6 +148,34 @@ def _bank_fill(need: int, exclude: list[str] | None = None) -> list[_PickedQuest
     return random.sample(pool, min(need, len(pool)))
 
 
+def _topic_slices(topics_str: str, batches: int) -> list[str]:
+    """
+    Deal the topic list round-robin into `batches` hands, as comma-separated strings.
+
+    WHY THE BATCHES MUST NOT SHARE A PROMPT. Identical prompts produce heavily overlapping
+    questions — during measurement the same first question came back on every run — so three
+    concurrent batches given the whole topic list would return three near-copies. Dedupe would
+    then discard most of them and the curated bank would fill a gap the AI had already been
+    paid for: slower, more expensive, and a worse quiz than not batching at all.
+
+    ROUND-ROBIN RATHER THAN CONTIGUOUS BLOCKS, so each batch gets a spread across the whole
+    list rather than one end of it. Topic lists here are ordered roughly by theme (Java OOP,
+    Collections, ... then Spring, REST, MVC), so contiguous slicing would hand one batch every
+    core-language topic and another every framework topic — and a candidate whose framework
+    batch timed out would get a quiz with no Spring in it at all. Interleaving means every
+    batch is representative, so losing one costs breadth evenly rather than a whole subject.
+
+    Falls back to the FULL list for every batch when there are fewer topics than batches.
+    Slicing three topics into three hands gives each batch a single topic and asks it for seven
+    questions on it, which is a narrower quiz than the candidate asked for; overlapping prompts
+    with dedupe is the better failure here.
+    """
+    topics = [t.strip() for t in topics_str.split(",") if t.strip()]
+    if batches <= 1 or len(topics) < batches:
+        return [topics_str] * max(1, batches)
+    return [", ".join(topics[i::batches]) for i in range(batches)]
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -190,71 +220,171 @@ async def start_quiz(
     company = (request.company or "").strip() or "a general tech company (Cognizant Digital Nurture style)"
     focus = (request.topic or "").strip() or "(no specific topic — use the track's default topic areas below)"
 
-    messages = builder.chat(
-        system_template="quiz_generator",
-        user_content="Generate the quiz now, following the rules and output format.",
-        track_name=track_name,
-        topics=topics_str,
-        count=str(request.count),
-        company=company,
-        focus=focus,
-    )
+    # ── GENERATED IN PARALLEL BATCHES, BECAUSE LATENCY IS OUTPUT-TOKEN-BOUND ──────────
+    #
+    # MEASURED, not assumed: 5 questions took 8.9s, 7 took 11.0s, and 20 did not finish
+    # inside 20s at all. The wall-clock of one call scales with how many questions it is
+    # asked to write, so a single request for the maximum count cannot be served inside any
+    # budget the browser will wait for — the client aborts at 30s. Raising the budget could
+    # not fix that; there is no room above 30 to raise it into.
+    #
+    # Splitting the count into concurrent batches makes the wall-clock the cost of the
+    # LARGEST batch instead of the sum, so a 20-question quiz costs about what a 7-question
+    # one does. This is what makes a full-size quiz actually generate rather than always
+    # falling through to the bank.
+    #
+    # THE TOPICS ARE DEALT OUT BETWEEN THE BATCHES, and that is not an optimisation — it is
+    # required for correctness. Identical prompts produce heavily overlapping questions (the
+    # same first question came back on every run during measurement), so three batches given
+    # the same topic list would return three near-copies and dedupe would throw most of them
+    # away, leaving the bank to fill a gap that the AI had been paid for. A distinct slice per
+    # batch makes them cover different ground, which is also a better quiz.
+    batch_max = int(settings.QUIZ_BATCH_MAX_QUESTIONS or request.count) or request.count
+    batch_count = max(1, math.ceil(request.count / batch_max))
+    per_batch = math.ceil(request.count / batch_count)
+    slices = _topic_slices(topics_str, batch_count)
 
-    # Budget tokens to the quiz size (~300 tokens/question + buffer). Tries the
-    # primary then fallback provider, retrying each.
-    #
-    # THE VALIDITY CHECK IS ON THE COUNT, NOT ON EMPTINESS, and that is the fix for "I
-    # selected 5 questions and only 3 came".
-    #
-    # It used to be `bool(q.questions)`. A model asked for five questions and returning three
-    # therefore passed validation on the first attempt, and the candidate silently got a
-    # shorter quiz than the one they configured — with the score reported out of the number
-    # that arrived, so nothing on screen indicated anything had gone wrong. Models undershoot
-    # a requested count routinely; nothing else in the pipeline was checking, so the request
-    # was effectively a suggestion.
-    #
-    # Requiring the full count makes a short generation a retry instead of a result. Asking
-    # for MORE than the count is fine and is trimmed below — an over-delivery is not a defect.
-    max_tokens = min(300 * request.count + 600, 8000)
-    try:
+    async def _generate_batch(topics_for_batch: str, want: int) -> list:
+        """One batch. Raises whatever `generate_structured` raises; the caller isolates it."""
+        # Budget tokens to the BATCH size (~300 tokens/question + buffer), not to the whole
+        # quiz — the point of batching is that no single call writes the full count.
+        messages = builder.chat(
+            system_template="quiz_generator",
+            user_content="Generate the quiz now, following the rules and output format.",
+            track_name=track_name,
+            topics=topics_for_batch,
+            count=str(want),
+            company=company,
+            focus=focus,
+        )
+        # THE VALIDITY CHECK IS ON THE COUNT, NOT ON EMPTINESS, and that is the fix for "I
+        # selected 5 questions and only 3 came".
+        #
+        # It used to be `bool(q.questions)`. A model asked for five questions and returning
+        # three therefore passed validation on the first attempt, and the candidate silently
+        # got a shorter quiz than the one they configured — with the score reported out of the
+        # number that arrived, so nothing on screen indicated anything had gone wrong. Models
+        # undershoot a requested count routinely; nothing else in the pipeline was checking,
+        # so the request was effectively a suggestion.
+        #
+        # Requiring the full count makes a short generation a retry instead of a result.
+        # Asking for MORE is fine and is trimmed below — over-delivery is not a defect.
         quiz, _ = await generate_structured(
             QuizGeneration,
             messages,
-            max_tokens=max_tokens,
+            max_tokens=min(300 * want + 600, 8000),
             attempts_per_provider=2,
-            is_valid=lambda q: len(q.questions) >= request.count,
+            is_valid=lambda q: len(q.questions) >= want,
             cost_tier=CostTier.BALANCED,
             context="quiz_generation",
         )
-        # Trimmed to exactly what was asked for. A model that returns eight when asked for
-        # five is not an error, but serving eight is still not honouring the request.
-        picked: list[_PickedQuestion] = [
-            {
-                "question": q.question,
-                "options": list(q.options),
-                "correct_index": q.correct_index,
-                "explanation": q.explanation,
-                "topic": q.topic,
-                "difficulty": q.difficulty,
-            }
-            for q in quiz.questions[: request.count]
-        ]
-    except AIProviderUnavailableError:
-        # TIGHTENING THE VALIDITY CHECK MUST NOT TURN A SHORT QUIZ INTO NO QUIZ.
+        return list(quiz.questions)
+
+    # ── BOUNDED, BECAUSE THE CLIENT IS ────────────────────────────────────────────────
+    #
+    # `generate_structured` has no deadline of its own: it loops every provider twice, and the
+    # fallback provider's read timeout is 180 seconds. The browser aborts at 30
+    # (DEFAULT_TIMEOUT_MS, not overridden for this call), so an unbounded server always lost
+    # that race — the candidate saw "request timeout" while this endpoint was still generating
+    # a quiz that could no longer be delivered to anyone.
+    #
+    # `asyncio.wait` RATHER THAN `wait_for(gather(...))`, deliberately. A `wait_for` around a
+    # `gather` cancels every batch when the deadline hits, so one slow batch would discard the
+    # two that already succeeded and the candidate would get an all-bank quiz despite most of
+    # it having been generated. `wait` hands back whatever finished, and the batches that did
+    # not are simply cancelled — a partly-generated quiz topped up from the bank is strictly
+    # better than either extreme.
+    tasks = [
+        asyncio.create_task(_generate_batch(topic_slice, per_batch)) for topic_slice in slices
+    ]
+    try:
+        done, pending = await asyncio.wait(
+            tasks, timeout=settings.QUIZ_GENERATION_BUDGET_SECONDS or None
+        )
+    except asyncio.CancelledError:
+        # THE CANDIDATE CLOSED THE TAB, AND THE BATCHES WOULD HAVE KEPT GENERATING.
         #
-        # Requiring the full count means a model that keeps undershooting now exhausts its
-        # retries and raises, where before it returned three questions and the endpoint
-        # happily served them. Letting that propagate would trade a quiz that is too short
-        # for a 503, which is a worse product for the same underlying vendor flakiness.
-        #
-        # So the curated bank fills in instead. It needs no AI, it is the same shape, and it
-        # is already the source for the /bank/start endpoint — a candidate who asked for five
-        # questions gets five questions.
-        logger.warning("quiz_generation_short_falling_back_to_bank", count=request.count)
-        picked = []
+        # `create_task` schedules independently of the awaiting coroutine, so cancelling this
+        # request does NOT cancel them: without this, every abandoned /quiz/start left four AI
+        # calls running to completion, billed, for a quiz nobody would ever see — and a
+        # candidate impatiently refreshing would multiply that. Re-raised after cleanup because
+        # the request really is cancelled; only the orphans are ours to tidy.
+        for task in tasks:
+            task.cancel()
+        raise
+    for task in pending:
+        task.cancel()
+
+    generated: list = []
+    failures = 0
+    for task in tasks:
+        if task not in done:
+            continue
+        try:
+            generated.extend(task.result())
+        except Exception as exc:
+            # ISOLATED PER BATCH. One provider failure or one malformed batch must not cost the
+            # candidate the batches that worked; the shortfall is filled from the bank below,
+            # which is the same fallback a total outage has always used.
+            #
+            # BROAD ON PURPOSE, BUT NEVER SILENT. Anything a batch can raise —
+            # AIProviderUnavailableError, a validation failure, a schema surprise — has the same
+            # correct response here, and letting an unanticipated one escape would turn a
+            # recoverable partial quiz into a 500. So it is caught and LOGGED with its type,
+            # because a broad catch that says nothing is how a real bug hides for months.
+            # `CancelledError` is a BaseException and so is not caught: the batches this loop
+            # cancelled on timeout are skipped above rather than reported as failures.
+            failures += 1
+            logger.warning(
+                "quiz_batch_failed",
+                error_type=type(exc).__name__,
+                error=str(exc) or type(exc).__name__,
+            )
+
+    # Deduped across batches before trimming, so a question that two batches both happened to
+    # write does not consume two of the candidate's slots. Normalised on text because the
+    # duplicate that matters is the one a human would recognise, not a byte-identical string.
+    picked: list[_PickedQuestion] = []
+    seen: set[str] = set()
+    for q in generated:
+        key = q.question.strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        picked.append({
+            "question": q.question,
+            "options": list(q.options),
+            "correct_index": q.correct_index,
+            "explanation": q.explanation,
+            "topic": q.topic,
+            "difficulty": q.difficulty,
+        })
+    # Trimmed to exactly what was asked for. Batches round UP to cover the count, so an
+    # over-delivery is the normal case rather than a model quirk.
+    picked = picked[: request.count]
 
     if len(picked) < request.count:
-        picked.extend(_bank_fill(request.count - len(picked), exclude=[p["question"] for p in picked]))
+        # TIGHTENING THE VALIDITY CHECK MUST NOT TURN A SHORT QUIZ INTO NO QUIZ.
+        #
+        # The curated bank fills in: it needs no AI, it is the same shape, and it is already
+        # the source for the /bank/start endpoint — a candidate who asked for five questions
+        # gets five questions.
+        #
+        # Logged with the budget and the batch shape so a spike of these reads as "the vendor
+        # is slow" rather than "the quiz feature is broken". Those are different operational
+        # problems and only one of them is ours.
+        logger.warning(
+            "quiz_generation_short_falling_back_to_bank",
+            count=request.count,
+            generated=len(picked),
+            batches=batch_count,
+            timed_out=len(pending),
+            failed=failures,
+            budget_seconds=settings.QUIZ_GENERATION_BUDGET_SECONDS,
+        )
+        picked.extend(
+            _bank_fill(request.count - len(picked), exclude=[p["question"] for p in picked])
+        )
 
     if not picked:
         raise HTTPException(

@@ -328,6 +328,98 @@ class Settings(BaseSettings):
     #: report to ask for a given topic — and those writes are shared, so the next candidate
     #: benefits from work this one abandoned.
     REPORT_RESOURCE_BUDGET_SECONDS: float = 10.0
+    #: Seconds quiz generation may spend on the AI before the curated bank serves the quiz.
+    #:
+    #: REPORTED AS "the quizes is also not generating the request timeout error is comming",
+    #: and the arithmetic made it inevitable. NOTHING bounded the server: `generate_structured`
+    #: loops every provider with `attempts_per_provider=2`, and the fallback provider's read
+    #: timeout is 180 seconds (provider_factory.py) — so one slow vendor could hold a single
+    #: /quiz/start for minutes. The BROWSER gives up at 30 seconds (`DEFAULT_TIMEOUT_MS` in
+    #: frontend/src/lib/api/client.ts, which the quiz call does not override). The client
+    #: therefore always lost the race and showed a timeout while the server was still building
+    #: a quiz nobody would ever receive.
+    #:
+    #: THE FALLBACK EXISTED AND COULD NOT REACH. `/quiz/start` already drops to the curated
+    #: bank — 97 questions across 16 topics, no vendor, no network — but only on
+    #: `AIProviderUnavailableError`. A provider that is SLOW rather than broken never raises
+    #: that, so the one path that would have saved the request was unreachable in exactly the
+    #: situation it was written for. Bounding the wait is what connects them.
+    #:
+    #: 20 SECONDS, chosen against the client's 30 and not against the model's comfort. It
+    #: leaves ten seconds of headroom for the bank fill, the DB write and the network, so the
+    #: candidate gets a complete quiz well before the browser would have given up. A quiz is
+    #: also the most forgiving feature to fall back on: bank questions are curated, already
+    #: served by /quiz/bank/start, and indistinguishable in shape from generated ones — the
+    #: candidate loses freshness, not a quiz, and never sees an error.
+    #:
+    #: Zero disables the budget, restoring the old unbounded behaviour. Do not.
+    QUIZ_GENERATION_BUDGET_SECONDS: float = 20.0
+    #: Most questions one AI call may be asked to write before the quiz is split into
+    #: concurrent batches.
+    #:
+    #: MEASURED, because this is a latency law rather than a preference: 5 questions took 8.9s,
+    #: 7 took 11.0s, and 20 did not finish inside 20 seconds at all. Wall-clock scales with how
+    #: many questions a single call has to write, so the maximum quiz size (20) could not be
+    #: served inside any budget the browser will wait for — and since the client aborts at 30s,
+    #: there was no room to raise the budget into either.
+    #:
+    #: Batching makes the wait the cost of the LARGEST batch instead of the sum, so a
+    #: 20-question quiz costs about what a 7-question one does and actually gets generated
+    #: rather than always falling through to the curated bank.
+    #:
+    #: 5, measured against the real provider on a full-size quiz: at a batch max of 7 a
+    #: 20-question quiz took 15.0s of the 20s budget, and at 5 it took 11.9s. Both produce the
+    #: whole quiz from the AI with zero duplicates, but the second leaves 8 seconds of headroom
+    #: rather than 5 — enough for a retry inside `generate_structured` when one batch trips the
+    #: validity check, and enough that a slower-than-usual afternoon degrades to a partial bank
+    #: fill instead of losing the generated quiz entirely.
+    #:
+    #: Not smaller than that: each batch is a separate billed call with its own overhead, and
+    #: below about five questions the per-call cost starts to dominate latency that is already
+    #: comfortably inside the budget.
+    #:
+    #: Zero means "never batch", restoring the single-call behaviour that could not serve a
+    #: full-size quiz inside the client's timeout at all.
+    QUIZ_BATCH_MAX_QUESTIONS: int = 5
+    #: Seconds resume analysis may spend on the AI before the upload is stored with whatever
+    #: it managed to produce.
+    #:
+    #: REPORTED AS "in some cases the resume skills and projects are not been able to fetch"
+    #: and "make sure that the resume uploading also works faster". Both symptoms came out of
+    #: the same call, and the measurement is unambiguous. Three runs of `analyse_resume` over a
+    #: realistic two-page resume (27 skills, 4 projects) against the live providers:
+    #:
+    #:      run 1  118.7s  27 skills,  1 project,  0 priority topics
+    #:      run 2  214.5s  AIProviderUnavailableError — nothing at all
+    #:      run 3  135.9s  21 skills,  0 projects,  0 priority topics
+    #:
+    #: EVERY attempt came back `stop_reason=max_tokens` / `finish_reason=length`. The single
+    #: call asked for 20 skills and 6 projects in one JSON object under a 2600-token ceiling
+    #: that the answer never once fit inside, so the JSON arrived cut off mid-array, the
+    #: parser rejected it whole, and `generate_structured` re-ran it — twice per provider,
+    #: across two providers, four truncated calls at ~$0.045 each. The endpoint's ceiling was
+    #: hardcoded at 45s at the call site, so in production none of that was ever waited out:
+    #: the upload sat for the full 45 seconds and then stored text_only. That is the "some
+    #: cases" — a thin resume fits in 2600 tokens and works, a rich one can never fit and
+    #: always fails.
+    #:
+    #: The call is now two concurrent halves (skills+experience, projects+focus) asking only
+    #: for fields something actually reads, so the wall-clock is the larger half rather than
+    #: the sum and neither half is anywhere near its ceiling. Measured after: ~10s for both.
+    #:
+    #: 35 SECONDS. Roughly 3x the measured wall-clock, which is headroom for a retry inside
+    #: `generate_structured` on one half plus a slow afternoon — and still leaves the upload
+    #: (storage write and DB insert, now overlapped with the analysis) far inside a managed
+    #: host's ~100s gateway cut and the browser's 120s for this call (`useUploadResume`
+    #: overrides the 30s default). Sitting inside the gateway matters more than it looks: a
+    #: gateway 502 carries no CORS headers and reaches the browser as an opaque CORS error
+    #: rather than as a timeout.
+    #:
+    #: Expiry is NOT a failure. `asyncio.wait` is used rather than `wait_for(gather(...))`, so
+    #: whichever half finished is kept and stored; the extracted text is stored either way and
+    #: still personalises the interview. Zero disables the budget, restoring the unbounded
+    #: behaviour that made this a 3.5-minute request. Do not.
+    RESUME_ANALYSIS_BUDGET_SECONDS: float = 35.0
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
