@@ -22,7 +22,12 @@ from app.services.resume import (
     looks_like_a_resume,
     normalise_whitespace,
 )
-from app.services.resume.extractor import MAX_RESUME_CHARS
+from app.services.resume.extractor import (
+    _MAX_UNREADABLE_SHARE,
+    MAX_RESUME_CHARS,
+    resume_marker_count,
+    unreadable_share,
+)
 
 PDF_MIME = "application/pdf"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -137,6 +142,157 @@ class TestRejectsUnusableFiles:
             extract_text(_docx_bytes("Resume"), DOCX_MIME, filename="cv.docx")
         assert exc.value.reason == "no_text_layer"
         assert "scan" in str(exc.value).lower()
+
+
+class TestTextThatExistsButCannotBeUsed:
+    """
+    THE THIRD ROOT CAUSE OF "the resume skills and projects are not been able to
+    fetch", and the one no amount of AI-side hardening can reach: the analyser was
+    being handed text with nothing in it to find.
+
+    Every file in this class CLEARED the 200-character floor and was stored as a
+    successfully-read resume. Both analysis halves then correctly found no skills
+    and no projects in it, four billed retries later, and the candidate was told
+    "your resume was read successfully, but the detailed skill analysis could not be
+    completed" — which is both false and unactionable when what they are holding is
+    a phone scan. Each must now fail at extraction, with a message that names the
+    file to upload instead.
+    """
+
+    def test_a_scan_whose_only_text_is_scanner_furniture_is_rejected(self):
+        """
+        MEASURED, and the reason the 200-character floor is not enough on its own. A
+        phone-scanned resume is not always a page of pure images: the scanner app
+        stamps its own furniture into a text layer, and four pages of it is 307
+        characters of "Scanned by CamScanner / Page 3 of 8 / IMG_0411.jpg" — clear
+        of the floor, and containing not one word of the candidate's resume.
+        """
+        furniture = "\n".join(
+            f"Scanned by CamScanner  Page {n} of 8  2026-08-22  IMG_{n * 137:04d}.jpg  "
+            "www.camscanner.com"
+            for n in range(1, 5)
+        )
+        assert len(furniture) > 200, "the point of this case is that it clears the floor"
+
+        with pytest.raises(ResumeExtractionError) as exc:
+            extract_text(_docx_bytes(furniture), DOCX_MIME, filename="scan.docx")
+        assert exc.value.reason == "no_resume_content"
+        # It has to tell them WHICH file to upload instead, or the error is as much
+        # of a dead end as the success message it replaced.
+        assert "scan" in str(exc.value).lower()
+        assert "original" in str(exc.value).lower()
+
+    def test_a_broken_text_layer_is_rejected_rather_than_analysed(self):
+        """
+        A PDF whose fonts carry no usable ToUnicode CMap extracts to a wall of
+        U+FFFD. 560 characters of it clears every length check there is and looks,
+        to every component downstream, exactly like a successfully read resume.
+        """
+        mojibake = ("\ufffd" * 400) + " \ufffd\ufffd\ufffd " * 40
+
+        with pytest.raises(ResumeExtractionError) as exc:
+            extract_text(_docx_bytes(mojibake), DOCX_MIME, filename="cv.docx")
+        assert exc.value.reason == "text_unreadable"
+        assert "re-export" in str(exc.value).lower() or "export" in str(exc.value).lower()
+
+    def test_control_codes_are_unreadable_too(self):
+        """
+        The other shape a broken CMap takes. Asserted on the helper rather than
+        through a DOCX because python-docx refuses to write control characters at
+        all — they only ever arrive from a PDF.
+        """
+        assert unreadable_share("\x01\x02\x03\x04" * 50 + "resume") > _MAX_UNREADABLE_SHARE
+        assert unreadable_share(RESUME_BODY) == 0.0
+
+    def test_one_stray_glyph_does_not_cost_a_candidate_their_resume(self):
+        """
+        The tolerance is not zero on purpose: a single bad ligature in an otherwise
+        perfect export must not be a rejection.
+        """
+        text = RESUME_BODY.replace("Java Full Stack", "Java Full\ufffdStack")
+        assert unreadable_share(text) < _MAX_UNREADABLE_SHARE
+        assert "Spring Boot" in extract_text(
+            _docx_bytes(text), DOCX_MIME, filename="cv.docx"
+        )
+
+
+class TestTheGateDoesNotRejectRealResumes:
+    """
+    THE OTHER HALF OF THE JUDGEMENT, and the reason the marker bar for rejection is
+    zero rather than the two `looks_like_a_resume` wants. Refusing a candidate's
+    actual resume is a worse failure than analysing a thin one, so each of these is
+    a resume the gate was measured rejecting — or nearly rejecting — before it was
+    tightened. They must all pass.
+    """
+
+    def test_a_terse_resume_with_no_standard_headings_is_accepted(self):
+        """
+        297 characters, and it never writes the words "skills", "projects" or
+        "experience" — it just lists them. An earlier version of the gate (fewer
+        than two markers) rejected this, which would have been a candidate unable to
+        upload their own CV.
+        """
+        text = extract_text(
+            _docx_bytes(
+                "RAHUL KUMAR\n"
+                "rahul@example.com | +91 90000 00000\n"
+                "B.E. Computer Science, Anna University, 2027\n"
+                "Java, Python, SQL, HTML, CSS, Git\n"
+                "Library Management System - Java Swing desktop app with MySQL backend\n"
+                "Weather App - fetches OpenWeather API data, shows a 5-day forecast\n"
+                "NPTEL Programming in Java (Elite)"
+            ),
+            DOCX_MIME,
+            filename="cv.docx",
+        )
+        assert "Java Swing" in text
+
+    def test_a_resume_not_written_in_english_is_accepted(self):
+        """
+        `unreadable_share` counts unmappable glyphs, NOT unfamiliar ones. Every
+        script is readable text; a resume in Devanagari must be unaffected.
+        """
+        text = extract_text(
+            _docx_bytes(
+                "राहुल कुमार\n"
+                "शिक्षा: बी.टेक कंप्यूटर विज्ञान, 2027\n"
+                "कौशल: Java, Python, SQL, Spring Boot, Docker\n"
+                "परियोजना: पुस्तकालय प्रबंधन प्रणाली — Java Swing और MySQL\n"
+                "internship at Acme Corp, backend developer, six months"
+            ),
+            DOCX_MIME,
+            filename="cv.docx",
+        )
+        assert "Spring Boot" in text
+
+    def test_the_rejection_bar_is_stricter_than_the_soft_signal(self):
+        """
+        The two thresholds this file's judgement rests on, pinned as a relationship
+        rather than as values. `looks_like_a_resume` (soft, logged) wants two
+        markers; the hard rejection wants zero. Collapsing them back into one — the
+        obvious "reuse the helper" simplification — is what rejected a real CV.
+        """
+        one_marker = "B.E. Computer Science, Anna University, 2027. Java, Python, SQL."
+        assert resume_marker_count(one_marker) == 1
+        assert looks_like_a_resume(one_marker) is False  # soft signal: only logged
+        # …and yet it must survive extraction, because one marker is still a signal.
+        assert resume_marker_count(one_marker) > 0
+
+        furniture = "Scanned by CamScanner  Page 3 of 8  IMG_0411.jpg"
+        assert resume_marker_count(furniture) == 0
+
+    def test_a_substantial_document_is_never_rejected_for_its_headings(self):
+        """
+        Past 1200 characters the marker check is not consulted at all, so an
+        academic CV whose headings are all "Publications" and "Positions Held" gets
+        the benefit of the doubt and reaches the analyser.
+        """
+        prose = (
+            "Rahul Kumar has worked with Java, Spring and PostgreSQL on an ordering "
+            "platform and a chat tool, and has published two papers. "
+        ) * 10
+        assert len(prose) > 1200
+        assert "PostgreSQL" in extract_text(_docx_bytes(prose), DOCX_MIME, filename="cv.docx")
 
 
 class TestContentTypeFallback:

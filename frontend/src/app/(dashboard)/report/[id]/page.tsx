@@ -229,10 +229,15 @@ export default function ReportDetailPage() {
   return (
     <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.08)} className="mx-auto max-w-5xl space-y-8 pb-12">
       {/* Top nav / controls */}
-      <motion.div variants={fadeUp} className="flex items-center justify-between">
+      {/* Wraps. "Back to Dashboard" + "Detailed Analysis" + the share/print pair is roughly
+          420px of controls in the 288px a 320px phone gives this page — unwrapped, the share
+          menu (and with it the only way to get a shareable link or a PDF) sat off the right
+          edge of a shell that does not scroll sideways. The inner group already wrapped; it
+          was this outer row that could not. */}
+      <motion.div variants={fadeUp} className="flex flex-wrap items-center justify-between gap-3">
         <button
           onClick={() => router.push('/dashboard')}
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground sm:min-h-0"
         >
           <ChevronLeft className="h-4 w-4" /> Back to Dashboard
         </button>
@@ -242,7 +247,7 @@ export default function ReportDetailPage() {
               generated per question, on request. */}
           <button
             onClick={() => router.push(`/report/${sessionId}/analysis`)}
-            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/20"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/20 sm:min-h-0"
           >
             <ListChecks className="h-3.5 w-3.5" />
             Detailed Analysis
@@ -261,8 +266,11 @@ export default function ReportDetailPage() {
       <motion.div variants={fadeUp}>
         <Card className="relative overflow-hidden p-6">
           <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
-            <div>
-              <div className="mb-3 flex items-center gap-3">
+            {/* `min-w-0` so the summary paragraph can narrow instead of widening the column,
+                and the badge row wraps: a readiness pill plus "Evaluated on 22/08/2026" is
+                about 245px against the 240px this card has at 320px. */}
+            <div className="min-w-0">
+              <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <Badge variant={readiness.variant}>{readiness.label}</Badge>
                 <span className="text-xs text-muted-foreground">
                   Evaluated on {new Date(report.created_at).toLocaleDateString()}
@@ -483,9 +491,9 @@ export default function ReportDetailPage() {
             <div className="space-y-4">
               {Object.entries(report.topic_scores).map(([topic, score]) => (
                 <div key={topic} className="space-y-1.5">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span>{topic}</span>
-                    <span className="text-primary">{score}/100</span>
+                  <div className="flex justify-between gap-3 text-xs font-semibold">
+                    <span className="min-w-0 break-words">{topic}</span>
+                    <span className="shrink-0 text-primary">{score}/100</span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                     <motion.div
@@ -512,8 +520,8 @@ export default function ReportDetailPage() {
             <div className="space-y-4">
               {report.question_analysis.map((qa, idx) => (
                 <div key={idx} className="space-y-2 rounded-xl border border-border/50 bg-surface/50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="flex-1 text-sm font-semibold">{qa.question}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 flex-1 break-words text-sm font-semibold">{qa.question}</p>
                     <span className="whitespace-nowrap text-xs font-bold text-primary">{qa.score}/10</span>
                   </div>
                   <span className="inline-block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -548,7 +556,7 @@ export default function ReportDetailPage() {
             <div className="space-y-4">
               {report.improvement_roadmap.map((item, idx) => (
                 <div key={idx} className="space-y-3 rounded-xl border border-border/50 bg-surface/50 p-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <span className="text-xs font-bold uppercase text-primary">Priority #{item.priority}</span>
                     <span className="text-xs text-muted-foreground">Est. {item.study_hours_estimate} hrs study</span>
                   </div>
@@ -574,11 +582,15 @@ export default function ReportDetailPage() {
                             href={resourceHref(res)}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-primary/20"
+                            // `shrink-0` on both glyphs: the title between them is allowed
+                            // to wrap, and a flex row shrinks every item that will let it —
+                            // without it the two 12px icons collapsed to slivers on a narrow
+                            // card instead of the title taking a second line.
+                            className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-md border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-primary/20 sm:min-h-0"
                           >
-                            <BookOpen className="h-3 w-3" />
-                            {res.title}
-                            <ExternalLink className="h-3 w-3 opacity-60" />
+                            <BookOpen className="h-3 w-3 shrink-0" />
+                            <span className="min-w-0 break-words">{res.title}</span>
+                            <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                           </a>
                         ))}
                       </div>

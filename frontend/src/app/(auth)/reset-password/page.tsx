@@ -94,11 +94,35 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6">
+    <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-10 sm:px-6">
+      {/*
+        `min-h-dvh`, AND THE VERTICAL PADDING, ARE BOTH ABOUT THE ON-SCREEN KEYBOARD.
+
+        This was `flex min-h-screen items-center justify-center`. `min-h-screen` is
+        `min-height: 100vh`, and on mobile Safari and Chrome `vh` is the viewport measured with
+        the browser chrome HIDDEN — a height the user is not currently looking at. So the box is
+        taller than the visible area, and `items-center` then centres the form in the box rather
+        than in the screen: the card sits lower than it looks like it should, and its bottom edge
+        — the submit button — lands under the address bar. It is reachable by scrolling, because
+        a floor can only grow, but the user has to discover that.
+
+        With the keyboard open it stops being cosmetic. The visual viewport loses roughly half
+        its height and `100vh` does not change, so nothing reflows: the browser scrolls the
+        focused field into view and the button below it stays under the keyboard. `100dvh` is the
+        DYNAMIC viewport — it shrinks when the keyboard opens, the container shrinks with it, and
+        the form re-centres inside the part of the screen the user can actually see. On desktop
+        `dvh` and `vh` are identical, so nothing moves there.
+
+        The padding is the other half. Once the content is taller than the container — a short
+        landscape phone, or 200% browser zoom — centring stops applying and the content simply
+        starts at the top; without `py-*` the heading butts against the very top of the scroll
+        area with nothing above it. It is a floor plus padding, so it can never clip: the
+        container grows to the content and the page scrolls.
+      */}
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm">
         <Link
           href="/"
-          className="mb-10 block font-mono text-sm font-semibold tracking-tight transition-opacity hover:opacity-70"
+          className="mb-6 block font-mono text-sm font-semibold tracking-tight transition-opacity hover:opacity-70 sm:mb-10"
         >
           InterviewOS
         </Link>
@@ -118,7 +142,7 @@ export default function ResetPasswordPage() {
             </p>
             <Link
               href="/forgot-password"
-              className="mt-6 inline-flex rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"
+              className="mt-6 inline-flex min-h-11 items-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground"
             >
               Send a new link
             </Link>

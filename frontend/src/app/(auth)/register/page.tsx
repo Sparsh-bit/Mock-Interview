@@ -78,9 +78,12 @@ export default function RegisterPage() {
 
   if (done) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-6">
+      <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-10 sm:px-6">
         <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm text-center">
-          <Card className="border-accent-emerald/20 p-10">
+          {/* p-10 was 80px of the 288px available at 320px, leaving a 208px column that
+              broke this three-line sentence into eight lines. Only the phone step is
+              tightened; `sm:p-10` keeps the original card from 640px up. */}
+          <Card className="border-accent-emerald/20 p-6 sm:p-10">
             <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-accent-emerald-ink" />
             <h2 className="mb-2 text-xl font-semibold">Check your email</h2>
             <p className="text-sm text-muted-foreground">
@@ -95,17 +98,43 @@ export default function RegisterPage() {
     );
   }
 
+  /*
+   * `min-h-dvh` rather than `min-h-screen`: `vh` is the viewport with the browser chrome
+   * hidden, so a 100vh box is taller than what a phone actually shows and `items-center` then
+   * centres this form below the visible middle — with the keyboard open, the "Create free
+   * account" button ends up behind it. `dvh` shrinks with the keyboard so the form re-centres
+   * in the part of the screen that is really there. Both are FLOORS, so on the taller content
+   * this page has the container simply grows and the page scrolls; neither can clip. Identical
+   * to `vh` on desktop.
+   */
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
+    <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-10 sm:px-6 sm:py-12">
       <motion.div
         initial="hidden"
         animate="visible"
         variants={staggerContainer(0.1)}
         className="grid w-full max-w-4xl items-center gap-8 md:grid-cols-2"
       >
-        {/* Left — perks */}
-        <motion.div variants={fadeUp} className="hidden space-y-6 md:block">
-          <Link href="/" className="flex items-center gap-2">
+        {/* Left on desktop, BELOW THE FORM on a phone — and no longer `hidden`.
+
+            THIS PANEL WAS `hidden md:block`, so every visitor on a phone — which is most of
+            them — was shown a bare password form and never told what the free account
+            actually gets them. That is not a responsive layout, it is the argument for
+            signing up being deleted at the width where it matters most. Reported as "make
+            sure that nothing must be hidden specially on all the pages", and this was the
+            one place in these pages where content was genuinely gone rather than cramped.
+
+            The reason it was hidden is real, though: on a phone this column would push the
+            form itself below the fold, and the form is what the page is for. `order` solves
+            that without deleting anything — the form comes first in the single-column stack
+            and the perks read as the reassurance underneath it, while `md:order-1` restores
+            the designed left-hand position the moment there are two columns to put it in.
+
+            The wordmark inside it stays `md:flex` only. It is not content being hidden: the
+            same link is rendered directly above the form below (`md:hidden`), so on a phone
+            the logo is on the page exactly once instead of twice. */}
+        <motion.div variants={fadeUp} className="order-2 space-y-6 md:order-1">
+          <Link href="/" className="hidden items-center gap-2 md:flex">
             <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
           </Link>
           <div>
@@ -120,16 +149,20 @@ export default function RegisterPage() {
           </div>
           <ul className="space-y-3">
             {PERKS.map((perk) => (
-              <li key={perk} className="flex items-center gap-3 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-accent-emerald-ink" />
-                {perk}
+              // items-start, not items-center: at 320px every one of these perks wraps to
+              // three lines, and a vertically centred tick then floats beside the middle
+              // line instead of marking the item. min-w-0 lets the text wrap rather than
+              // set the row's width.
+              <li key={perk} className="flex items-start gap-3 text-sm text-muted-foreground">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-accent-emerald-ink" />
+                <span className="min-w-0">{perk}</span>
               </li>
             ))}
           </ul>
         </motion.div>
 
-        {/* Right — form */}
-        <motion.div variants={fadeUp}>
+        {/* Right on desktop, FIRST on a phone — see the ordering note on the panel above. */}
+        <motion.div variants={fadeUp} className="order-1 md:order-2">
           <Link href="/" className="mb-6 flex items-center gap-2 md:hidden">
             <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
           </Link>
@@ -170,14 +203,25 @@ export default function RegisterPage() {
                     id="password"
                     type={showPassword ? 'text' : 'password'}
                     autoComplete="new-password"
-                    className="pr-10"
+                    className="pr-12"
                     error={errors.password?.message}
                     {...register('password')}
                   />
+                  {/* A 44x44 box rather than a bare 16px glyph, which was a tap target a
+                      quarter of the minimum size sitting on top of the input's own text —
+                      so a miss moved the caret instead of revealing the password. `pr-12`
+                      on the field reserves the space so they cannot overlap.
+
+                      `top-1` rather than the old `top-[22px]`: that magic offset was
+                      measured against this field's height at `text-sm`, and the field is
+                      now 16px on phones (see floating-label-input.tsx — under 16px iOS
+                      zooms the whole page on focus), which moved the glyph off centre. A
+                      44px box pinned near the top of a 52-56px field is centred enough at
+                      both sizes and does not depend on the font size at all. */}
                   <button
                     type="button"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-3 top-[22px] text-muted-foreground"
+                    className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground"
                     onClick={() => setShowPassword((v) => !v)}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

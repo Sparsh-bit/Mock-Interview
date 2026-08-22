@@ -166,7 +166,10 @@ export function ResumeUploadCard() {
         >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{resume.filename}</p>
+              {/* `break-all`, not `truncate`. A filename is a single unbreakable token and
+                  it is the only thing telling the candidate WHICH resume is on file — cutting
+                  it off withholds exactly the information they opened this card for. */}
+              <p className="break-all text-sm font-semibold">{resume.filename}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {formatSize(resume.file_size_bytes)} · uploaded{' '}
                 {new Date(resume.created_at).toLocaleDateString()}

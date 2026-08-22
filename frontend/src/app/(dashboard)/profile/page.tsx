@@ -80,7 +80,7 @@ export default function ProfilePage() {
               visible above the fold. */}
           <div className="grid items-stretch gap-6 lg:grid-cols-[1.15fr_1fr]">
             {/* ── Left: the details ─────────────────────────────────────── */}
-            <Card className="order-2 space-y-6 p-8 lg:order-1">
+            <Card className="order-2 space-y-6 p-5 sm:p-8 lg:order-1">
               <div className="grid gap-6 sm:grid-cols-2">
               <FloatingLabelInput
                   label="Full Name"
@@ -183,13 +183,28 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                <h3 className="mt-6 w-full truncate text-xl font-semibold">
+                {/*
+                  WRAPPED, NOT TRUNCATED, and the email is why.
+
+                  Both of these were `w-full truncate`, which is the identity panel of the
+                  profile page silently cutting off the two things that identify you. An
+                  email is one unbreakable token, so it needs `break-all` rather than
+                  `break-words` — `break-words` only breaks BETWEEN words and there are none
+                  in "firstname.lastname@somecollege.ac.in", so it would have carried on
+                  overflowing. A name can break at spaces, so `break-words` is right there and
+                  keeps whole words intact.
+
+                  Truncating an email is not a cosmetic choice here: this is the only place
+                  the account's address is shown on this page, and a candidate checking they
+                  are signed in as the right person could not read it.
+                */}
+                <h3 className="mt-6 w-full break-words text-xl font-semibold">
                   {formData.full_name || user?.email?.split('@')[0]}
                 </h3>
-                <p className="w-full truncate text-xs text-muted-foreground">{user?.email}</p>
+                <p className="w-full break-all text-xs text-muted-foreground">{user?.email}</p>
 
                 {formData.target_company && (
-                  <span className="mt-3 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold text-primary">
+                  <span className="mt-3 max-w-full break-words rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold text-primary">
                     Targeting {formData.target_company}
                   </span>
                 )}

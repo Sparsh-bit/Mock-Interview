@@ -223,7 +223,7 @@ export default function StandingPage() {
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                         <p
                           className={cn(
                             'text-sm font-semibold',
@@ -306,9 +306,13 @@ function Stat({
 }) {
   return (
     <div className="bg-card p-5">
+      {/* This grid is `grid-cols-2` at every width, so each cell is ~104px of content on a
+          320px phone. "PERCENTILE" at uppercase + tracking-wider is about 95px of that, and
+          without `min-w-0`/`shrink-0` the label refused to shrink and squashed the icon
+          instead of wrapping. */}
       <div className="flex items-center gap-1.5 text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 break-words text-[10px] font-semibold uppercase tracking-wider">{label}</span>
       </div>
       <p className="mt-1.5 font-mono text-2xl font-bold tabular-nums">{value}</p>
       <p className="mt-0.5 text-[10px] text-muted-foreground/70">{hint}</p>
@@ -320,8 +324,8 @@ function TierCard({ tier }: { tier: TierProgress }) {
   const rate = tier.attempted > 0 ? tier.cleared / tier.attempted : 0;
   return (
     <div className="rounded-xl border border-border/60 bg-surface-elevated p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="text-xs font-bold uppercase tracking-wider">{tier.label}</p>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+        <p className="min-w-0 break-words text-xs font-bold uppercase tracking-wider">{tier.label}</p>
         <span className="font-mono text-[10px] tabular-nums text-muted-foreground/70">
           {tier.clear_bar}+ to clear
         </span>

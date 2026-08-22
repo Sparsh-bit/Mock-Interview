@@ -82,11 +82,14 @@ export function FeatureNudge() {
         <button
           onClick={dismiss}
           aria-label="Dismiss"
-          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground"
+          // 40px square and pulled to the corner: `p-1` around a 16px glyph is a 24px tap
+          // target, and the content padding below has to clear whatever this occupies or the
+          // heading runs underneath an absolutely positioned button painted over it.
+          className="absolute right-2 top-2 flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
-        <div className="flex items-start gap-4 pr-6">
+        <div className="flex items-start gap-4 pr-10">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-indigo text-white">
             <Icon className="h-5 w-5" />
           </div>

@@ -40,15 +40,32 @@ export function StatCard({
   return (
     <motion.div variants={fadeUp} className={className}>
       <Card hoverable className="h-full p-4">
+        {/*
+          `min-w-0` ON THE LABEL AND `shrink-0` ON THE TILE, and this tile is the reason it
+          matters more here than anywhere else: it is rendered inside `grid-cols-2` on the
+          dashboard, /analytics, /ai-usage and three admin pages, so on a 320px phone each
+          one gets about 138px — 106px of content once `p-4` is taken off, and 58px once the
+          36px icon and its gap are.
+
+          A flex item defaults to `min-width: auto`, meaning "never narrower than my longest
+          unbreakable word". "QUESTIONS" at text-xs with `tracking-wider` is about 72px, so
+          the label refused to shrink past 58px, the flex row grew wider than the card, and
+          the card grew wider than its grid track — which is a horizontal scrollbar on the
+          whole page from a label. Without `shrink-0` the flex row solves it the other way
+          instead and squashes the 36px icon into an oval.
+
+          `break-words` is the other half: `min-w-0` permits the shrink, and only a break
+          opportunity lets the text actually reflow into the narrower box.
+        */}
         <div className="mb-4 flex items-start justify-between gap-3">
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          <span className="min-w-0 break-words text-xs font-medium uppercase tracking-wider text-muted-foreground">
             {label}
           </span>
-          <IconTile color={color} size="sm">
+          <IconTile color={color} size="sm" className="shrink-0">
             {icon}
           </IconTile>
         </div>
-        <p className="text-2xl font-medium tabular-nums tracking-[-0.03em]">{value}</p>
+        <p className="break-words text-2xl font-medium tabular-nums tracking-[-0.03em]">{value}</p>
         {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
       </Card>
     </motion.div>

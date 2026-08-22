@@ -154,8 +154,23 @@ export function ShareMenu({
         </Button>
       </div>
 
+      {/*
+        CAPPED TO THE VIEWPORT, because `right-0` plus a fixed width puts the LEFT edge
+        wherever it lands.
+
+        The panel is 19rem = 304px and is anchored to the trigger's right edge, which on a
+        320px phone sits at about x=288. 288 - 304 = -16, so the first 16px of the panel —
+        the left edge of the "Copy" row and of the first share button — was off-screen, and
+        an absolutely positioned element cannot be scrolled back into view: the shell clips
+        it and no scrollbar appears anywhere.
+
+        `max-w-[calc(100vw-2rem)]` is the whole fix. It is a ceiling on WIDTH, not height,
+        so it cannot hide anything vertically, and it leaves 1rem of clearance either side.
+        Above a ~336px viewport it never applies, so the designed panel is unchanged on
+        every other screen.
+      */}
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[19rem] rounded-xl border border-border bg-surface-elevated p-4 shadow-xl print:hidden">
+        <div className="absolute right-0 z-50 mt-2 w-[19rem] max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface-elevated p-4 shadow-xl print:hidden">
           {/* Sharing state first. A link that 404s because sharing is off is the
               most confusing possible outcome, so it cannot be silent. */}
           <div className="mb-3 flex items-start gap-2 rounded-lg border border-border/60 bg-secondary/40 p-3">

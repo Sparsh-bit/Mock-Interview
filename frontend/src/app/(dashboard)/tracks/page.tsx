@@ -48,14 +48,18 @@ export default function TracksPage() {
             <motion.div variants={fadeUp}>
               <Card hoverable className="flex h-full flex-col justify-between p-6">
                 <div>
-                  <div className="mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+                  {/* `min-w-0` down the whole chain, plus `shrink-0` on the icon tile.
+                      "Cognizant Technology Solutions" beside a status pill is wider than the
+                      248px this card has at 320px, and without the chain the name pushed the
+                      pill off the card edge instead of wrapping. */}
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
                         <Code2 className="h-5 w-5 text-primary" />
                       </div>
-                      <div>
-                        <h3 className="text-base font-semibold">{track.company.name}</h3>
-                        <p className="text-xs text-muted-foreground">{track.name}</p>
+                      <div className="min-w-0">
+                        <h3 className="break-words text-base font-semibold">{track.company.name}</h3>
+                        <p className="break-words text-xs text-muted-foreground">{track.name}</p>
                       </div>
                     </div>
                     <Badge variant="warning">Active</Badge>

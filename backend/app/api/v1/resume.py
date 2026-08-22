@@ -283,15 +283,11 @@ async def upload_resume(
         is_primary=True,
         parsed_text=resume_text,
         parsing_error=parsing_error,
-        # THREE STATES, BECAUSE THERE ARE THREE THINGS THAT HAPPEN. "completed"
-        # requires BOTH halves — it used to require only that `analysis` was
-        # non-None, and since every field of ResumeAnalysisResponse has a default,
-        # an empty analysis satisfied that and the candidate was told their resume
-        # was fully analysed when nothing had been extracted from it. "partial" is
-        # the half-and-half case, "text_only" is readable-but-unanalysed.
-        parsing_status=(
-            "completed" if outcome.complete else "partial" if analysis else "text_only"
-        ),
+        # Three states — completed / partial / text_only. The decision lives on the
+        # outcome rather than here, because it is the claim this endpoint makes to
+        # the candidate about their own upload and it was the false one: see
+        # ResumeAnalysisOutcome.parsing_status.
+        parsing_status=outcome.parsing_status,
         parsed_skills=[s.name for s in analysis.skills] if analysis else None,
         parsed_projects=(
             [p.model_dump(mode="json") for p in analysis.projects] if analysis else None

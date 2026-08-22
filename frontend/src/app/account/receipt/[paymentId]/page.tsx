@@ -88,31 +88,37 @@ export default function ReceiptPage() {
   const status = statusLabel(payment);
 
   return (
-    <div className="min-h-screen bg-background px-6 py-10 print:py-0">
+    <div className="min-h-screen bg-background px-4 py-10 sm:px-6 print:py-0">
       <div className="mx-auto max-w-2xl">
         {/* Everything in this bar is an action, so none of it belongs on paper. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4 print:hidden">
           <Link
             href="/pricing"
-            className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex min-h-11 items-center gap-2 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-3.5 w-3.5" /> Payment history
           </Link>
           <button
             onClick={() => window.print()}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-secondary"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-secondary"
           >
             <Download className="h-3.5 w-3.5" /> Print or save as PDF
           </button>
         </div>
 
-        <div className="rounded-2xl border border-border bg-surface p-8 print:border-0 print:p-0">
+        {/* p-5 below 640px. At 320px the old flat `p-8` spent 64px of a 288px viewport on
+            padding, leaving a 192px column — and the widest thing on this page is a Razorpay
+            payment id, which at 192px breaks across three lines. */}
+        <div className="rounded-2xl border border-border bg-surface p-5 sm:p-8 print:border-0 print:p-0">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-6">
             <div className="flex items-center gap-2">
               <Code2 className="h-5 w-5 text-primary" aria-hidden />
               <span className="font-bold">InterviewOS</span>
             </div>
-            <div className="text-right">
+            {/* `text-right` only once there are two columns. This is a `flex-wrap` row, so at
+                320px the Receipt/Paid block drops onto its own full-width line and
+                right-aligning it there leaves it floating away from the label it belongs to. */}
+            <div className="text-left sm:text-right">
               <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                 <Receipt className="h-3.5 w-3.5" aria-hidden /> Receipt
               </p>
@@ -139,7 +145,7 @@ export default function ReceiptPage() {
           <div className="py-6">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-medium">{payment.item_name}</p>
+                <p className="break-words text-sm font-medium">{payment.item_name}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {quantityLabel(payment)} added to this account
                   {payment.offer ? ` · code ${payment.offer}` : ''}
@@ -187,14 +193,41 @@ export default function ReceiptPage() {
  * `mono` for the identifiers, because a payment id or an order id is something somebody will
  * read out over a phone or paste into a message, and proportional digits make a run of
  * characters harder to transcribe without a mistake.
+ *
+ * HOW IT WRAPS IS DECIDED BY THE VALUE, NOT BY `mono`, and that distinction is the whole reason
+ * this receipt did not fit on a phone.
+ *
+ * `break-words` (`overflow-wrap: break-word`) breaks inside a word only as a last resort, and it
+ * cannot help at all with the values on this page. Three of the four are SINGLE TOKENS with
+ * nowhere to break: a Razorpay payment id (`pay_S1a2B3c4D5e6F7`), an order id, and the payer's
+ * email — 20 to 30 characters with not one space in them. Inside the two-column grid at 320px
+ * each was wider than its own track, so the track stretched, the card stretched, and the page
+ * itself scrolled sideways. On the one document in this product whose entire purpose is numbers
+ * somebody will copy off a phone.
+ *
+ * `break-all` permits a break at any character, so the token wraps to the column instead of
+ * setting the column's width. It is chosen by asking whether the value has any whitespace to
+ * break at, rather than off the `mono` flag — those are two different questions and conflating
+ * them was wrong in both directions: the email needs breaking and is not mono, and a formatted
+ * date is mono-adjacent prose that `break-all` would hyphenate mid-word for no reason.
+ *
+ * `min-w-0` on the wrapper is the other half of it. Without it the grid item refuses to be
+ * narrower than its own content, and the wrapping rules inside are never consulted at all.
  */
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  const unbreakable = !/\s/.test(value.trim());
   return (
     <div className="min-w-0">
       <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </dt>
-      <dd className={`mt-1 break-words text-sm ${mono ? 'font-mono' : ''}`}>{value}</dd>
+      <dd
+        className={`mt-1 text-sm ${unbreakable ? 'break-all' : 'break-words'} ${
+          mono ? 'font-mono' : ''
+        }`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
@@ -202,13 +235,13 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
 /** Nothing to show, said in a way that tells the reader whether to retry or to leave. */
 function Empty({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mx-auto max-w-md px-6 py-20 text-center">
+    <div className="mx-auto max-w-md px-4 py-16 text-center sm:px-6 sm:py-20">
       <Receipt className="mx-auto mb-4 h-8 w-8 text-muted-foreground" aria-hidden />
       <h1 className="text-lg font-semibold text-foreground">{title}</h1>
       <p className="mt-2 text-sm text-muted-foreground">{body}</p>
       <Link
         href="/pricing"
-        className="mt-6 inline-block text-sm font-medium text-primary hover:underline"
+        className="mt-6 inline-flex min-h-11 items-center text-sm font-medium text-primary hover:underline"
       >
         Back to payment history
       </Link>

@@ -22,6 +22,19 @@ import { cn } from '@/lib/utils';
  *
  * The label floats when the field has focus OR content — content matters, or the label drops
  * back over the user's own text the moment they tab away.
+ *
+ * `text-base sm:text-sm`, IN THAT ORDER, IS NOT A STYLE CHOICE. iOS Safari zooms the page in
+ * whenever a form field with a font size under 16px takes focus. It cannot be turned off, and
+ * suppressing it with `user-scalable=no` would break pinch-zoom for everybody. On the signup
+ * form the consequence was concrete: tapping "Full name" scaled the viewport up, the page became
+ * wider than the screen, and "Create free account" was pushed off to the right — so the user had
+ * to scroll sideways, with the keyboard covering the bottom of the screen, to submit. Safari does
+ * not zoom back out on blur either, so every field after the first was entered on a magnified,
+ * horizontally clipped page. 16px is exactly the threshold; the design's 14px returns from 640px
+ * up, where no browser does this.
+ *
+ * This is the same fix, for the same reason, as components/ui/input.tsx. The two have to agree:
+ * this form uses both.
  */
 export interface FloatingLabelInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'placeholder'> {
@@ -67,7 +80,7 @@ const FloatingLabelInput = forwardRef<HTMLInputElement, FloatingLabelInputProps>
             // Top padding leaves room for the floated label; without it the label lands on
             // the text.
             className={cn(
-              'peer w-full rounded-xl border bg-surface-elevated px-4 pb-2 pt-6 text-sm',
+              'peer w-full rounded-xl border bg-surface-elevated px-4 pb-2 pt-6 text-base sm:text-sm',
               'outline-none transition-colors placeholder:text-transparent',
               error
                 ? 'border-destructive/50 focus:border-destructive'

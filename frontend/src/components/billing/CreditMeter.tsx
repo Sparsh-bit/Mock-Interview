@@ -65,7 +65,7 @@ export function CreditMeter({ className }: { className?: string }) {
 
   return (
     <Card variant="flat" padding="md" className={cn('space-y-4', className)}>
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div>
           <p className="text-sm font-medium text-foreground">
             {data.trial_started ? 'Your balance' : 'Your free trial'}
@@ -89,7 +89,7 @@ export function CreditMeter({ className }: { className?: string }) {
           return (
             <li key={f.feature} className="space-y-1.5">
               <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="capitalize text-muted-foreground">{f.label}</span>
+                <span className="min-w-0 break-words capitalize text-muted-foreground">{f.label}</span>
                 <span
                   className={cn(
                     'font-medium tabular-nums',

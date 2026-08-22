@@ -121,6 +121,34 @@ class ResumeAnalysisOutcome:
         """True only when both halves returned something usable."""
         return self.skills_ok and self.projects_ok
 
+    @property
+    def parsing_status(self) -> str:
+        """
+        The value stored on ResumeFile.parsing_status, and the claim the UI makes to
+        the candidate about their own upload.
+
+        A NAMED PROPERTY BECAUSE THIS IS THE SENTENCE THAT WAS FALSE. It used to be
+        `"completed" if analysis else "text_only"` inline at the endpoint, and since
+        every field of ResumeAnalysisResponse has a default, an analysis object with
+        nothing in it satisfied that test — so the profile card said "Read and
+        analysed. Your interviews will ask about these projects and skills by name"
+        over zero skills and zero projects. Three states, because three different
+        things happen:
+
+          "completed"  both halves landed. The only state that may claim a full
+                       analysis, and it requires the HALVES to have succeeded rather
+                       than the merged object to be non-empty — a fresher with no
+                       projects on their resume is complete, not partial.
+          "partial"    one half landed. Real and usable: skills without projects
+                       still personalise an interview, and the candidate is told
+                       which half is missing rather than being told nothing is.
+          "text_only"  neither landed. The resume text is stored and still
+                       personalises the interview; the structured analysis is not.
+        """
+        if self.complete:
+            return "completed"
+        return "partial" if self.analysis is not None else "text_only"
+
     def candidate_message(self) -> str | None:
         """
         What to tell the candidate, or None when the analysis is complete.
