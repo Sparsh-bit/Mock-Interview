@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DRIVE_REPORT_DEADLINE_LABEL,
-  DRIVE_REPORT_ITEM_ID,
-  DRIVE_REPORT_OFFER_DEADLINE,
-  DRIVE_REPORT_PRICE_PAISE,
+  REPORT_UNLOCK_DEADLINE_LABEL,
+  REPORT_UNLOCK_ITEM_ID,
+  REPORT_UNLOCK_OFFER_DEADLINE,
+  REPORT_UNLOCK_PRICE_PAISE,
   countdown,
   formatCountdown,
   readReportLock,
   rupees,
-} from './drive-report';
+} from './report-unlock';
 
 /**
  * The drive report paywall, pinned.
@@ -17,48 +17,48 @@ import {
  * Vitest runs in the `node` environment in this workspace (no jsdom), so the paywall itself
  * cannot be mounted — but the paywall is markup. What can actually cost something is in the
  * module these tests cover, and it is asymmetric: showing the full report to somebody who has
- * not paid costs ₹50, and showing a paywall to somebody who owes nothing costs a student their
+ * not paid costs ₹49, and showing a paywall to somebody who owes nothing costs a student their
  * report on the morning of a placement drive. So most of this file is about the second one.
  */
 
-/** The shape the server sends for a locked drive report, in full. */
+/** The shape the server sends for a locked report, in full. */
 const LOCKED = {
   locked: true,
-  price_paise: 5000,
-  unlock_item_id: 'drive_report_1',
+  lock_price_paise: 4900,
+  lock_item_id: 'report_unlock_1',
   offer_deadline: '2026-08-24T10:00:00+05:30',
   overall_score: 68,
-  question_count: 12,
+  lock_question_count: 12,
 };
 
 describe('readReportLock — the locked case', () => {
   it('reads the whole contract off a locked response', () => {
     expect(readReportLock(LOCKED)).toEqual({
-      itemId: 'drive_report_1',
-      pricePaise: 5000,
+      itemId: 'report_unlock_1',
+      pricePaise: 4900,
       deadline: Date.parse('2026-08-24T10:00:00+05:30'),
       overallScore: 68,
       questionCount: 12,
     });
   });
 
-  it('₹50 is 5000 paise', () => {
+  it('₹49 is 4900 paise', () => {
     // Razorpay bills in paise and every price in this repo is an integer. A rupee figure
     // reaching this field would be a hundredfold undercharge.
-    expect(DRIVE_REPORT_PRICE_PAISE).toBe(5000);
-    expect(rupees(DRIVE_REPORT_PRICE_PAISE)).toBe('₹50');
+    expect(REPORT_UNLOCK_PRICE_PAISE).toBe(4900);
+    expect(rupees(REPORT_UNLOCK_PRICE_PAISE)).toBe('₹49');
   });
 
   it('the item id matches the one the server can resolve', () => {
-    // Mirrors `DRIVE_REPORT_ITEM.id` in backend/app/services/billing/plans.py. Wrong here
+    // Mirrors `REPORT_UNLOCK_ITEM.id` in backend/app/services/billing/plans.py. Wrong here
     // means a 404 at checkout — loud and immediate, which is the failure mode we want.
-    expect(DRIVE_REPORT_ITEM_ID).toBe('drive_report_1');
+    expect(REPORT_UNLOCK_ITEM_ID).toBe('report_unlock_1');
   });
 
   it('prefers the item id the server names over the built-in one', () => {
     // So the item can move without a frontend deploy.
-    expect(readReportLock({ ...LOCKED, unlock_item_id: 'drive_report_2' })?.itemId).toBe(
-      'drive_report_2',
+    expect(readReportLock({ ...LOCKED, lock_item_id: 'report_unlock_2' })?.itemId).toBe(
+      'report_unlock_2',
     );
   });
 });
@@ -104,7 +104,7 @@ describe('readReportLock — it fails open', () => {
     /*
      * The one way this paywall could take money for nothing: an unscored report has no
      * dimension scores, no per-question analysis and no roadmap to sell — only an explanation
-     * of what went wrong and a Generate-again button. Charging ₹50 to read a failure, to the
+     * of what went wrong and a Generate-again button. Charging ₹49 to read a failure, to the
      * student whose report just failed, is not a trade-off worth having.
      */
     for (const reason of ['user_quota', 'service_limit', 'timeout', 'provider_unavailable']) {
@@ -133,23 +133,23 @@ describe('readReportLock — a locked response with holes in it', () => {
    * What is being pinned is that the screen can always be RENDERED: never "₹NaN", never a
    * price below what Razorpay will accept, never a broken countdown.
    */
-  it('falls back to ₹50 when the price is missing or unusable', () => {
-    for (const price_paise of [undefined, null, 0, -1, 'free', 99, 12.5, NaN, Infinity]) {
-      const lock = readReportLock({ ...LOCKED, price_paise });
-      expect(lock?.pricePaise).toBe(DRIVE_REPORT_PRICE_PAISE);
+  it('falls back to ₹49 when the price is missing or unusable', () => {
+    for (const lock_price_paise of [undefined, null, 0, -1, 'free', 99, 12.5, NaN, Infinity]) {
+      const lock = readReportLock({ ...LOCKED, lock_price_paise });
+      expect(lock?.pricePaise).toBe(REPORT_UNLOCK_PRICE_PAISE);
     }
   });
 
   it('rejects a price under Razorpay’s one-rupee floor', () => {
     // 99 paise is not a cheap unlock, it is an order the gateway refuses to create.
-    expect(readReportLock({ ...LOCKED, price_paise: 99 })?.pricePaise).toBe(5000);
-    expect(readReportLock({ ...LOCKED, price_paise: 100 })?.pricePaise).toBe(100);
+    expect(readReportLock({ ...LOCKED, lock_price_paise: 99 })?.pricePaise).toBe(4900);
+    expect(readReportLock({ ...LOCKED, lock_price_paise: 100 })?.pricePaise).toBe(100);
   });
 
   it('falls back to the built-in deadline when the server’s is unparseable', () => {
     for (const offer_deadline of [undefined, null, '', 'soon', 12345, {}]) {
       expect(readReportLock({ ...LOCKED, offer_deadline })?.deadline).toBe(
-        DRIVE_REPORT_OFFER_DEADLINE,
+        REPORT_UNLOCK_OFFER_DEADLINE,
       );
     }
   });
@@ -164,7 +164,7 @@ describe('readReportLock — a locked response with holes in it', () => {
   it('accepts a zero score and zero questions as real values', () => {
     // Somebody who answered nothing has a real report with a real zero in it. Treating 0 as
     // missing would blank the one number the teaser exists to show.
-    const lock = readReportLock({ ...LOCKED, overall_score: 0, question_count: 0 });
+    const lock = readReportLock({ ...LOCKED, overall_score: 0, lock_question_count: 0 });
     expect(lock?.overallScore).toBe(0);
     expect(lock?.questionCount).toBe(0);
   });
@@ -198,17 +198,17 @@ describe('the lock carries no part of the report', () => {
 
 describe('rupees', () => {
   it('shows whole rupees without decimals', () => {
-    expect(rupees(5000)).toBe('₹50');
+    expect(rupees(4900)).toBe('₹49');
     expect(rupees(100)).toBe('₹1');
     expect(rupees(0)).toBe('₹0');
   });
 
   it('shows the paise when a coupon produces them', () => {
-    // A 5%-off code on ₹50 charges ₹47.50. Rounding that to "₹48" would print a figure the
+    // A 15%-off code on ₹49 charges ₹41.65. Rounding that to "₹42" would print a figure the
     // card statement disagrees with, which is small enough to look like a bug and big enough
     // to be one.
+    expect(rupees(4165)).toBe('₹41.65');
     expect(rupees(4750)).toBe('₹47.50');
-    expect(rupees(4999)).toBe('₹49.99');
   });
 });
 
@@ -219,15 +219,15 @@ describe('the countdown is copy, and it goes quiet', () => {
     // 10 am IST on the 24th, not 10 am UTC. A naive parse would expire the copy five and a
     // half hours early — at 04:30 on the morning it matters most.
     expect(deadline).toBe(Date.parse('2026-08-24T04:30:00Z'));
-    expect(DRIVE_REPORT_OFFER_DEADLINE).toBe(deadline);
+    expect(REPORT_UNLOCK_OFFER_DEADLINE).toBe(deadline);
   });
 
   it('the label and the timestamp are the same fact', () => {
     // They are two literals on purpose (formatting a date differs between the Cloudflare edge
     // runtime and the browser, and that lands as a hydration mismatch inside the one sentence
     // that must never look broken). Two literals drift, so this is the pin.
-    expect(DRIVE_REPORT_DEADLINE_LABEL).toContain('24 August');
-    expect(DRIVE_REPORT_DEADLINE_LABEL).toContain('10 am');
+    expect(REPORT_UNLOCK_DEADLINE_LABEL).toContain('24 August');
+    expect(REPORT_UNLOCK_DEADLINE_LABEL).toContain('10 am');
   });
 
   it('breaks the remaining time into days, hours, minutes and seconds', () => {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The drive report paywall, as wired — components/billing/drive-report-paywall.test.ts
+ * The drive report paywall, as wired — components/billing/report-unlock-paywall.test.ts
  *
  * WHY THIS IS A SOURCE-TEXT TEST. Vitest runs in the `node` environment in this workspace
  * (see frontend/vitest.config.ts), so a component that renders framer-motion cannot be
@@ -21,12 +21,12 @@ import { describe, expect, it } from 'vitest';
  *   · and somebody who has already paid never being shown the price a second time.
  *
  * The behavioural half — what locks, what fails open, what the countdown says — is in
- * src/lib/billing/drive-report.test.ts against real functions.
+ * src/lib/billing/report-unlock.test.ts against real functions.
  */
 
 const ROOT = process.cwd();
 const PAYWALL = readFileSync(
-  join(ROOT, 'src/components/billing/DriveReportPaywall.tsx'),
+  join(ROOT, 'src/components/billing/ReportUnlockPaywall.tsx'),
   'utf8',
 );
 const REPORT_PAGE = readFileSync(
@@ -42,7 +42,7 @@ const PAGE_CODE = strip(REPORT_PAGE);
 describe('the report page gates delivery', () => {
   it('decides with the one shared predicate rather than its own check', () => {
     expect(PAGE_CODE).toMatch(/readReportLock\(report\)/);
-    expect(PAGE_CODE).toMatch(/from '@\/lib\/billing\/drive-report'/);
+    expect(PAGE_CODE).toMatch(/from '@\/lib\/billing\/report-unlock'/);
     // No second opinion. A locally re-derived "is this the drive" would disagree with the
     // server the first time a track was renamed, and would paywall the wrong candidate.
     expect(PAGE_CODE).not.toMatch(/cognizant/i);
@@ -57,7 +57,7 @@ describe('the report page gates delivery', () => {
      * to stay correct forever.
      */
     const gate = PAGE_CODE.indexOf('readReportLock(report)');
-    const paywall = PAGE_CODE.indexOf('<DriveReportPaywall');
+    const paywall = PAGE_CODE.indexOf('<ReportUnlockPaywall');
     const firstReportField = PAGE_CODE.indexOf('report.executive_summary');
     expect(gate).toBeGreaterThan(-1);
     expect(paywall).toBeGreaterThan(gate);
@@ -76,7 +76,7 @@ describe('the report page gates delivery', () => {
     const gate = PAGE_CODE.indexOf('const lock = readReportLock(report)');
     const afterGate = PAGE_CODE.indexOf('const readiness =');
     const locked = PAGE_CODE.slice(gate, afterGate);
-    expect(locked).toContain('<DriveReportPaywall');
+    expect(locked).toContain('<ReportUnlockPaywall');
     expect(locked).not.toContain('ShareMenu');
     expect(locked).not.toContain('Detailed Analysis');
   });

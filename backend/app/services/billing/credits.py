@@ -301,7 +301,7 @@ async def consume(
     # ── WAS THIS ONE FREE, OR PAID FOR? RECORDED, BECAUSE NOTHING ELSE CAN ANSWER IT LATER ──
     #
     # The product rule is "a free interview's report is payable; a purchased interview's report
-    # is included". The price is `plans.DRIVE_REPORT_PRICE_PAISE` and is deliberately not
+    # is included". The price is `plans.REPORT_UNLOCK_PRICE_PAISE` and is deliberately not
     # restated here — an earlier draft of this comment said ₹49, which is the price of the
     # `interview_1` item and NOT of the report unlock, and plans.py carries a section titled
     # "WHY ₹50 AND NOT ₹49" explaining that the two numbers differ on purpose. A price copied
@@ -359,6 +359,17 @@ async def grant(
     *,
     kind: str = KIND_PURCHASE,
     payment_ref: str | None = None,
+    #: WHICH SESSION THIS GRANT BELONGS TO, for entitlement that is not a stock.
+    #:
+    #: Every other purchasable thing here is a stock: buy five interviews, spend them on any
+    #: five sessions. A report unlock is not — it belongs to ONE session's report and is
+    #: meaningless anywhere else. `consume` has always taken this; `grant` did not, so a
+    #: per-session entitlement could be sold and then not be recordable against the thing it
+    #: was sold for. Found by a test that tried to grant one and could not.
+    #:
+    #: Optional and defaulting to None, so every existing caller — the webhook, the verify
+    #: endpoint, admin goodwill — is unchanged and keeps writing a stock grant.
+    session_id: uuid.UUID | None = None,
     detail: dict | None = None,
 ) -> bool:
     """
@@ -428,6 +439,7 @@ async def grant(
             kind=kind,
             delta=quantity,
             payment_ref=payment_ref,
+            session_id=session_id,
             detail=detail,
         )
     )

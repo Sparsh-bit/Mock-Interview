@@ -1,10 +1,17 @@
 /**
- * The Cognizant drive report paywall, as pure functions — lib/billing/drive-report.ts
+ * The report paywall, as pure functions — lib/billing/report-unlock.ts
  *
- * WHAT IS BEING SOLD AND WHAT IS NOT. On the Cognizant Digital Nurture 24 August drive the
- * interview itself is free — that is the whole offer, and the paywall must keep saying so or
- * it reads as a bait. What costs ₹50 is the personalised report: the four competency scores,
- * the per-question breakdown, the roadmap and the study resources. One session, one unlock.
+ * WHAT IS BEING SOLD AND WHAT IS NOT. Every FREE interview on this product is free the whole
+ * way through — the questions, the panel, the voice, the follow-ups. Nothing about taking it
+ * costs anything, and the paywall must keep saying so or it reads as a bait. What costs ₹49 is
+ * the personalised report on a free interview: the four competency scores, the per-question
+ * breakdown, the roadmap and the study resources. One session, one unlock.
+ *
+ * A PURCHASED INTERVIEW'S REPORT IS INCLUDED, ALWAYS. Somebody who paid for an interview has
+ * already paid for its report; charging twice for one session would be indefensible. The
+ * server decides which is which off the credit ledger — whether that session was drawn from
+ * the free trial or from bought credit — and this module only ever reads the answer. See
+ * backend/app/services/billing/report_access.py.
  *
  * GATE THE DELIVERY, NOT THE GENERATION — and this module is the browser half of that. The
  * report is generated and stored exactly as it always was; the server reduces the RESPONSE
@@ -22,29 +29,29 @@
  * IT FAILS OPEN, AND THAT IS THE MOST IMPORTANT SENTENCE IN THIS FILE. Read
  * `readReportLock` before changing anything here. A locked report shown to somebody who owes
  * nothing is the worst outcome available on this product and it lands on students who are
- * mid-placement-season today; a full report shown to somebody who has not paid costs ₹50.
+ * mid-placement-season today; a full report shown to somebody who has not paid costs ₹49.
  * Those are not comparable, so every ambiguous case resolves to "deliver".
  */
 
 /**
  * The item id the unlock is bought as.
  *
- * MIRRORS `DRIVE_REPORT_ITEM.id` in backend/app/services/billing/plans.py, and it is a
+ * MIRRORS `REPORT_UNLOCK_ITEM.id` in backend/app/services/billing/plans.py, and it is a
  * mirror rather than a decision: the server resolves the item from this id and prices it
  * from its own catalogue, so a wrong value here produces a 404 at checkout — loud, immediate,
  * and impossible to confuse with a wrong charge. The browser naming a PRICE would be the
  * dangerous version of this, and it never does; see `openCheckout`, which sends only ids.
  *
  * It is a fallback, not the primary source: `readReportLock` prefers whatever
- * `unlock_item_id` the locked response names, so the server can move the item without a
+ * `lock_item_id` the locked response names, so the server can move the item without a
  * frontend deploy. This constant is what keeps the button working if that field is absent.
  */
-export const DRIVE_REPORT_ITEM_ID = 'drive_report_1';
+export const REPORT_UNLOCK_ITEM_ID = 'report_unlock_1';
 
 /**
- * ₹50 in paise, because Razorpay bills in paise and every price in this repo is an integer.
+ * ₹49 in paise, because Razorpay bills in paise and every price in this repo is an integer.
  *
- * ALSO A FALLBACK, ALSO NOT A DECISION. The locked response carries `price_paise` and that
+ * ALSO A FALLBACK, ALSO NOT A DECISION. The locked response carries `lock_price_paise` and that
  * figure wins whenever it is present and sane. This literal exists for one reason: a locked
  * screen must never be able to print "₹NaN" or "₹0" at the moment it is asking somebody for
  * money. Because the CHARGE is always resolved server-side from the item id — see
@@ -52,7 +59,7 @@ export const DRIVE_REPORT_ITEM_ID = 'drive_report_1';
  * here can misprint copy and can never mischarge a card. That asymmetry is why duplicating
  * the number is acceptable when duplicating a rule would not be.
  */
-export const DRIVE_REPORT_PRICE_PAISE = 5_000;
+export const REPORT_UNLOCK_PRICE_PAISE = 4_900;
 
 /*
  * THE OFFER DEADLINE IS URGENCY COPY. IT IS NOT A FEATURE FLAG.
@@ -77,8 +84,8 @@ export const DRIVE_REPORT_PRICE_PAISE = 5_000;
  * differently on the Cloudflare edge runtime than in the browser, and that difference lands
  * as a hydration mismatch inside the one sentence that must never look broken.
  */
-export const DRIVE_REPORT_OFFER_DEADLINE = Date.parse('2026-08-24T10:00:00+05:30');
-export const DRIVE_REPORT_DEADLINE_LABEL = '10 am on 24 August';
+export const REPORT_UNLOCK_OFFER_DEADLINE = Date.parse('2026-08-24T10:00:00+05:30');
+export const REPORT_UNLOCK_DEADLINE_LABEL = '10 am on 24 August';
 
 /**
  * What the browser knows about a locked report.
@@ -91,7 +98,7 @@ export const DRIVE_REPORT_DEADLINE_LABEL = '10 am on 24 August';
  * dev-tools poking at a locked report reveals what was paid for.
  */
 export interface ReportLock {
-  /** The item to check out. Server-named where possible; see DRIVE_REPORT_ITEM_ID. */
+  /** The item to check out. Server-named where possible; see REPORT_UNLOCK_ITEM_ID. */
   itemId: string;
   /** What the unlock costs before any coupon, in paise. */
   pricePaise: number;
@@ -128,7 +135,7 @@ function parseDeadline(raw: unknown): number {
     const parsed = Date.parse(raw);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return DRIVE_REPORT_OFFER_DEADLINE;
+  return REPORT_UNLOCK_OFFER_DEADLINE;
 }
 
 /**
@@ -138,15 +145,15 @@ function parseDeadline(raw: unknown): number {
  * neither one re-implements any part of it, because a second predicate is a second answer and
  * the two would disagree on exactly the responses that are hardest to reason about.
  *
- * IT DOES NOT DECIDE WHOSE REPORT IS PAYWALLED, and must never learn to. Which sessions are
- * the Cognizant Digital Nurture drive, and who has already paid for one, is decided once, on
- * the server, against the credit ledger. This function only reads the answer. A browser-side
- * guess at "is this the drive interview" would paywall somebody's Accenture practice run the
- * first time a track was renamed.
+ * IT DOES NOT DECIDE WHOSE REPORT IS PAYWALLED, and must never learn to. Whether a session was
+ * a free interview or a bought one — and whether its report has already been unlocked — is
+ * decided once, on the server, against the credit ledger. This function only reads the answer.
+ * A browser-side guess at "was this one free" would paywall a report somebody had already paid
+ * for the moment a track was renamed or a plan changed.
  *
  * WHY `=== true` AND NOT A TRUTHINESS CHECK. Everything that is not unambiguously the lock
- * flag must deliver the report: `undefined` (today's server, before the gate ships, and every
- * report that is not the drive), `null`, `0`, `''`, `'false'`, and — the one that motivated
+ * flag must deliver the report: `undefined` (an older server, and every report on a
+ * purchased interview), `null`, `0`, `''`, `'false'`, and — the one that motivated
  * writing it this way — the string `'false'`, which is truthy in JavaScript and would lock
  * every report the moment some serialiser stringified a boolean. Strict equality against
  * `true` has exactly one input that locks anything.
@@ -172,7 +179,7 @@ export function readReportLock(report: unknown): ReportLock | null {
      * exist yet: there are no dimension scores, no per-question analysis and no roadmap to
      * unlock, only an explanation and a Generate-again button.
      *
-     * Asking ₹50 for that is the one way this paywall could take money for nothing, and it
+     * Asking ₹49 for that is the one way this paywall could take money for nothing, and it
      * would happen at the worst possible moment — a student whose report failed to generate,
      * being asked to pay to read the failure. So an unscored response falls through to the
      * page below, which already explains what happened and offers the retry.
@@ -183,17 +190,17 @@ export function readReportLock(report: unknown): ReportLock | null {
      */
     if (typeof r.unscored_reason === 'string' && r.unscored_reason.trim() !== '') return null;
 
-    const itemId = typeof r.unlock_item_id === 'string' ? r.unlock_item_id.trim() : '';
+    const itemId = typeof r.lock_item_id === 'string' ? r.lock_item_id.trim() : '';
 
     return {
-      itemId: itemId || DRIVE_REPORT_ITEM_ID,
+      itemId: itemId || REPORT_UNLOCK_ITEM_ID,
       // At least one rupee: Razorpay refuses an order below 100 paise, so a smaller figure
       // is not a cheap unlock, it is an unbuyable one. Falling back to the real price keeps
       // the button working instead of opening a sheet the gateway will reject.
-      pricePaise: wholeAtLeast(r.price_paise, 100) ?? DRIVE_REPORT_PRICE_PAISE,
+      pricePaise: wholeAtLeast(r.lock_price_paise, 100) ?? REPORT_UNLOCK_PRICE_PAISE,
       deadline: parseDeadline(r.offer_deadline),
       overallScore: finiteNumber(r.overall_score),
-      questionCount: wholeAtLeast(r.question_count, 0),
+      questionCount: wholeAtLeast(r.lock_question_count, 0),
     };
   } catch {
     // Fail open. See the docstring: an undecidable response is a delivered report.

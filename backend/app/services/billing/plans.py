@@ -52,18 +52,17 @@ rather than to try one more thing.
 
 ## `ITEMS` IS THE SHELF, NOT THE WHOLE CATALOGUE
 
-There is one purchasable thing that is deliberately NOT in `ITEMS`: `DRIVE_REPORT_ITEM`,
-the ₹50 unlock for the Cognizant Digital Nurture drive report. Read its comment before
-adding anything else off-shelf, because the distinction is easy to get wrong in both
-directions.
+There is one purchasable thing that is deliberately NOT in `ITEMS`: `REPORT_UNLOCK_ITEM`,
+the ₹49 unlock for a free interview's report. Read its comment before adding anything else
+off-shelf, because the distinction is easy to get wrong in both directions.
 
 `ITEMS` is what `GET /billing/items` renders — the pricing page. Everything on it is a
-stock of a metered feature you can buy in advance and spend later. The drive report unlock
-is not that: it belongs to one session's report, it is offered at the paywall on that
-report and nowhere else, and a tile advertising it to somebody who has never sat that
-interview would be an offer they cannot use.
+stock of a metered feature you can buy in advance and spend later. The report unlock is not
+that: it belongs to one session's report, it is offered at the paywall on that report and
+nowhere else, and a tile advertising it to somebody with no locked report would be an offer
+they cannot use.
 
-`_BY_ID` still holds it, so `get_item("drive_report_1")` resolves. That single line is what
+`_BY_ID` still holds it, so `get_item("report_unlock_1")` resolves. That single line is what
 lets the entire existing payment machinery sell it with no changes anywhere:
 `/billing/checkout` prices it server-side, `razorpay.create_order` puts its id in the
 order notes, `items_from_payment` and `/billing/verify` check the amount against
@@ -94,17 +93,17 @@ FEATURE_LABELS: dict[str, str] = {
     "interview": "mock interviews",
     "gd": "group discussions",
     "communication": "communication drills",
-    # NOT A METERED FEATURE — see DRIVE_REPORT_FEATURE below for why it is absent from
+    # NOT A METERED FEATURE — see REPORT_UNLOCK_FEATURE below for why it is absent from
     # `Feature`, `FEATURES` and `TRIAL_ALLOWANCE` and present here.
     #
     # It is here because these two dicts are pure COPY, read by anything that has a ledger
     # feature string and needs a sentence: `CreditsExhaustedError` builds its 402 message
     # from them, and the admin marketing view lists ledger rows per account. Both would
-    # otherwise print the raw identifier — "You have no drive_report left" — and the comment
+    # otherwise print the raw identifier — "You have no report_unlock left" — and the comment
     # on the singular dict below says exactly why that must not happen. A label costs
     # nothing and cannot change an allowance; `get_balance` iterates `FEATURES`, not this,
     # so nothing new appears on anybody's balance meter.
-    "drive_report": "personalised reports",
+    "report_unlock": "personalised reports",
 }
 
 #: Singular, for "buy 1 more ___" copy. Kept beside the plural so a new feature cannot ship
@@ -113,7 +112,7 @@ FEATURE_LABELS_SINGULAR: dict[str, str] = {
     "interview": "mock interview",
     "gd": "group discussion",
     "communication": "communication drill",
-    "drive_report": "personalised report",
+    "report_unlock": "personalised report",
 }
 
 #: THE TRIAL. One of everything, once, for the lifetime of the account.
@@ -207,14 +206,18 @@ ITEMS: tuple[Item, ...] = (
     ),
 )
 
-# ─── The drive report unlock ──────────────────────────────────────────────────
+# ─── The report unlock ────────────────────────────────────────────────────────
 #
-# ₹50 to see the personalised report and study material for the Cognizant Digital Nurture
-# 24 August drive. The interview itself stays free; only the report is paid. The gate lives
-# in services/billing/drive_report.py — this file only says what the thing is and what it
-# costs, exactly as it does for everything else.
+# ₹49 to see the personalised report and study material for a FREE interview. The interview
+# itself stays free; only its report is paid. A PURCHASED interview's report is included in
+# what was bought — charging twice for one session would be indefensible — so the unlock only
+# ever applies to a session drawn from the free trial.
+#
+# The gate lives in services/billing/report_access.py, which decides free-vs-bought off the
+# credit ledger and fails open on every path. This file only says what the thing is and what
+# it costs, exactly as it does for everything else.
 
-#: The ledger `feature` string for a drive report unlock.
+#: The ledger `feature` string for a report unlock.
 #:
 #: A DISTINCT STRING RATHER THAN A FOURTH `Feature`, AND THIS IS THE LOAD-BEARING CHOICE IN
 #: THE WHOLE PAYWALL. `Feature` is a `Literal` of three and `FEATURES` is a tuple of the
@@ -223,7 +226,7 @@ ITEMS: tuple[Item, ...] = (
 #:   1. `FEATURES` IS THE BALANCE METER. `credits.get_balance` loops it and builds one
 #:      `FeatureBalance` per entry, which `GET /billing/me` returns and the dashboard
 #:      renders. A fourth entry would put "0 personalised reports left" on every account in
-#:      the product, including the overwhelming majority who will never sit this drive. That
+#:      the product, including everybody who has never left a report locked. That
 #:      is a broken-looking meter for a thing that is not a stock: an unlock belongs to ONE
 #:      session's report, not to a wallet you draw down.
 #:
@@ -233,7 +236,7 @@ ITEMS: tuple[Item, ...] = (
 #:      touched — no new key, no reordering, nothing for a reviewer to have to reason about.
 #:      A test asserts all three literally. Widening the Literal would have meant arguing
 #:      that a new member changes nothing, which is a weaker thing to have to argue.
-#:      `trial_allowance("drive_report")` therefore returns 0 through the documented
+#:      `trial_allowance("report_unlock")` therefore returns 0 through the documented
 #:      unknown-feature path, which is correct: there is no free personalised report, and a
 #:      report that is free once is a report the paywall never charges for.
 #:
@@ -244,24 +247,26 @@ ITEMS: tuple[Item, ...] = (
 #:      `String(32)`. Nothing needed widening for this to be recordable — which is also why
 #:      NO MIGRATION IS INVOLVED.
 #:
-#: What is given up is that mypy cannot spot a typo'd "drive_reprot" at a call site. That is
+#: What is given up is that mypy cannot spot a typo'd "report_unlok" at a call site. That is
 #: bought back by there being exactly one literal — this constant — and every caller
 #: importing it.
-DRIVE_REPORT_FEATURE = "drive_report"
+REPORT_UNLOCK_FEATURE = "report_unlock"
 
-#: ₹50, in paise, because Razorpay bills in paise and every price in this repo is an integer.
+#: ₹49, in paise, because Razorpay bills in paise and every price in this repo is an integer.
 #:
-#: WHY ₹50 AND NOT ₹49. Every other price here ends in 9, and this one deliberately does not:
-#: it is not a shelf price competing with a ₹39 alternative, it is a number said out loud to
-#: a student in a placement queue — "fifty rupees for your report" — and a round number reads
-#: as a fee rather than as a marketing figure. It is also comfortably above the ₹100-paise
-#: Razorpay floor with room for a coupon to take a large bite without producing an order the
-#: gateway refuses.
+#: MATCHING WHAT AN INTERVIEW COSTS, deliberately. `interview_1` is 4_900 and this sits beside
+#: it in the candidate's head: the interview they just took for free is worth ₹49, and so is
+#: understanding how they did in it. A price of its own invention reads as a made-up number;
+#: one that matches the product's own price reads as the product's price. Set by the owner —
+#: "i want the same interview price their the 49 rupees not 50".
 #:
-#: AGAINST COST: the interview and its report together are ~₹13 of AI (see the table above),
-#: and on this drive the interview half is given away. So ₹50 covers the whole session with
-#: room for payment fees, and the report is the half a candidate actually wants to keep.
-DRIVE_REPORT_PRICE_PAISE = 5_000
+#: AGAINST COST: an interview and its report together are ~₹13 of AI (see the table above),
+#: and on a free interview the interview half is given away. So ₹49 covers the whole session
+#: with room for payment fees, and the report is the half a candidate actually wants to keep.
+#:
+#: Comfortably above the 100-paise Razorpay floor, with room for a coupon to take a large bite
+#: without producing an order the gateway refuses.
+REPORT_UNLOCK_PRICE_PAISE = 4_900
 
 #: The unlock, as a normal purchasable `Item` — deliberately NOT in `ITEMS`.
 #:
@@ -272,13 +277,13 @@ DRIVE_REPORT_PRICE_PAISE = 5_000
 #: does not advertise a report to somebody who has no session to unlock.
 #:
 #: `quantity=1` and it means one unlock, spendable on one session. Somebody who buys two —
-#: two drive attempts, two reports — gets two, and the ledger says which session each was
+#: two free interviews, two reports — gets two, and the ledger says which session each was
 #: spent on.
-DRIVE_REPORT_ITEM = Item(
-    id="drive_report_1",
-    feature=DRIVE_REPORT_FEATURE,
+REPORT_UNLOCK_ITEM = Item(
+    id="report_unlock_1",
+    feature=REPORT_UNLOCK_FEATURE,
     quantity=1,
-    price_paise=DRIVE_REPORT_PRICE_PAISE,
+    price_paise=REPORT_UNLOCK_PRICE_PAISE,
     name="Unlock your personalised report",
     tagline="Your full scorecard, the per-question breakdown and the study plan.",
 )
@@ -288,7 +293,7 @@ DRIVE_REPORT_ITEM = Item(
 #: and this is the one line where they differ; conflating them is how an unlisted item
 #: becomes unbuyable (checkout 404s on its own id) or a session-scoped item becomes a tile on
 #: the pricing page.
-_BY_ID: dict[str, Item] = {i.id: i for i in (*ITEMS, DRIVE_REPORT_ITEM)}
+_BY_ID: dict[str, Item] = {i.id: i for i in (*ITEMS, REPORT_UNLOCK_ITEM)}
 
 
 def get_item(item_id: str | None) -> Item | None:

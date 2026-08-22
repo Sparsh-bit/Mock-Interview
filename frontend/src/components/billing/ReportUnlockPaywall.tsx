@@ -3,7 +3,16 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { BookOpen, Clock, ListChecks, Lock, Receipt, Sparkles, Tag } from 'lucide-react';
+import {
+  BookOpen,
+  Clock,
+  ListChecks,
+  Lock,
+  MessageSquareQuote,
+  Receipt,
+  Sparkles,
+  Tag,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -16,30 +25,41 @@ import { useCheckout, useQuote, useVerifyPayment, type StoreItem } from '@/hooks
 import { ApiError } from '@/lib/api/errors';
 import { describeOffer } from '@/lib/billing/describe-offer';
 import {
-  DRIVE_REPORT_DEADLINE_LABEL,
+  REPORT_UNLOCK_DEADLINE_LABEL,
   countdown,
   formatCountdown,
   rupees,
   type ReportLock,
-} from '@/lib/billing/drive-report';
+} from '@/lib/billing/report-unlock';
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
-import { DRIVE_EYEBROW } from '@/lib/interview/drive';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 
 /**
- * The drive report paywall — components/billing/DriveReportPaywall.tsx
+ * The report paywall — components/billing/ReportUnlockPaywall.tsx
  *
- * WHAT THE CANDIDATE IS LOOKING AT. They have just finished the free Cognizant Digital
- * Nurture interview, their report exists, and this screen stands between them and it. So the
- * first thing it does is say what they already got for nothing, because a paywall that opens
- * with a price reads as a bait-and-switch and this one genuinely is not: the interview — panel,
- * coding round, scoring — was free, and ₹50 buys the personalised report and study material
- * that come out of it.
+ * WHAT THE CANDIDATE IS LOOKING AT. They have just finished a FREE interview, their report
+ * exists, and this screen stands between them and it. So the first thing it does is say what
+ * they already got for nothing, because a paywall that opens with a price reads as a
+ * bait-and-switch and this one genuinely is not: the interview — panel, coding round, scoring
+ * — was free, and ₹49 buys the personalised report and study material that come out of it.
+ *
+ * IT NEVER RENDERS ON A PURCHASED INTERVIEW. A bought interview's report is included in what
+ * was bought, so the server never marks one locked and the report page never reaches this
+ * component. Nothing here needs to check that, and nothing here should learn to — see
+ * `readReportLock`.
+ *
+ * IT IS ALLOWED TO SELL, AND THE SELLING HAS TO BE TRUE. Every claim on this screen names a
+ * field that is actually in the withheld response: the per-question analysis, the four
+ * competency scores, the roadmap with its resources, and — the one that matters most to
+ * somebody who has just answered badly and knows it — `ideal_answer_summary`, the answer the
+ * panel was listening for, per question. That is why the copy can promise "what you should
+ * have said" without overselling: it is a real column in a real table. If a claim here ever
+ * stops mapping to a field in ReportResponse, the claim is the thing that is wrong.
  *
  * IT IS NOT THE ENFORCEMENT. The server reduced the response before it reached the browser;
  * this renders what is left. Nothing here can be clicked, disabled or edited into revealing a
  * dimension score, because no dimension score was sent — see `ReportLock` in
- * lib/billing/drive-report.ts, whose smallness is the actual security property. A paywall that
+ * lib/billing/report-unlock.ts, whose smallness is the actual security property. A paywall that
  * is also the enforcement is one `curl` away from not existing, which is the same reason
  * hooks/useBilling.ts opens with that sentence.
  *
@@ -50,7 +70,7 @@ import { fadeUp, staggerContainer } from '@/lib/motion';
  * then asks Razorpay whether the money actually moved; and the entitlement is granted against
  * the credit ledger by the webhook. This component chose none of that and duplicates none of
  * it — it is the pricing page's flow pointed at one off-shelf item
- * (`plans.DRIVE_REPORT_ITEM`), which is exactly why that item was defined as a normal `Item`.
+ * (`plans.REPORT_UNLOCK_ITEM`), which is exactly why that item was defined as a normal `Item`.
  *
  * WHAT IS GENUINELY DIFFERENT FROM THE PRICING PAGE, and therefore why the sequence is here
  * rather than shared: the coupon is quoted against a KNOWN item, so the exact total can be
@@ -61,7 +81,7 @@ import { fadeUp, staggerContainer } from '@/lib/motion';
 /**
  * The item's copy, local, and allowed to differ in wording from the receipt.
  *
- * `plans.DRIVE_REPORT_ITEM.name` is what appears in payment history and on the Razorpay
+ * `plans.REPORT_UNLOCK_ITEM.name` is what appears in payment history and on the Razorpay
  * statement, because that is the row the ledger wrote. This is what appears on a screen that
  * has already said "report" three times, so it says what is IN the report instead of naming
  * it again. They describe the same purchase; only one of them is a receipt.
@@ -69,11 +89,27 @@ import { fadeUp, staggerContainer } from '@/lib/motion';
 const UNLOCK_NAME = 'Your personalised report';
 const UNLOCK_TAGLINE = 'Full scorecard, per-question breakdown and study plan.';
 
-/** What ₹50 actually buys, itemised. Vague value is what makes a paywall feel like a toll. */
+/**
+ * What ₹49 actually buys, itemised.
+ *
+ * VAGUE VALUE IS WHAT MAKES A PAYWALL FEEL LIKE A TOLL, so each line names a specific thing
+ * that is in the response the server withheld, and the first line is the one candidates
+ * actually want: the answer that was being listened for, next to the one they gave. Every
+ * entry here maps to a field on ReportResponse — `question_analysis[].ideal_answer_summary`,
+ * `dimension_scores`, `performance_percentile`, `improvement_roadmap`. Adding a line that
+ * maps to nothing turns honest copy into a lie, so don't.
+ */
 const INCLUDED: Array<{ icon: typeof ListChecks; text: string }> = [
-  { icon: ListChecks, text: 'Every question scored, with what your answer was missing' },
-  { icon: Sparkles, text: 'Your four competency scores and where you sit against the track' },
-  { icon: BookOpen, text: 'A study plan with resources, ordered by what will move you most' },
+  {
+    icon: MessageSquareQuote,
+    text: 'What you should have said — the answer the panel was listening for, next to yours, question by question',
+  },
+  { icon: ListChecks, text: 'Every answer scored, with the exact gap that cost you the marks' },
+  {
+    icon: Sparkles,
+    text: 'Your four competency scores, and the percentile you would land in against this track',
+  },
+  { icon: BookOpen, text: 'A study plan with resources, ordered by what will move your score most' },
 ];
 
 /** The quote fields this screen uses. Structural, so no hook types have to change. */
@@ -87,7 +123,7 @@ interface Quoted {
   value: number;
 }
 
-export interface DriveReportPaywallProps {
+export interface ReportUnlockPaywallProps {
   lock: ReportLock;
   /**
    * Ask the page to refetch the report.
@@ -99,7 +135,7 @@ export interface DriveReportPaywallProps {
   onUnlocked: () => void;
 }
 
-export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps) {
+export function ReportUnlockPaywall({ lock, onUnlocked }: ReportUnlockPaywallProps) {
   const { session } = useAuth();
   const quote = useQuote();
   const checkout = useCheckout();
@@ -164,7 +200,7 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
    */
   const unlockItem: StoreItem = {
     id: lock.itemId,
-    feature: 'drive_report',
+    feature: 'report_unlock',
     quantity: 1,
     price_rupees: Math.round(listPaise / 100),
     price_paise: listPaise,
@@ -334,10 +370,15 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
           <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Badge variant="primary">{DRIVE_EYEBROW}</Badge>
+                {/* NOT THE DRIVE'S NAME. This screen used to carry the Cognizant Digital
+                    Nurture eyebrow, from when the paywall was that one drive's. It is now
+                    every free interview's, so a company name here would brand somebody's
+                    unrelated practice run as a drive they never sat. What is true of all of
+                    them is that the interview was free — so that is what the chip says. */}
+                <Badge variant="primary">Free interview</Badge>
                 {/* URGENCY COPY ONLY. When the deadline passes this chip disappears and
                     nothing else on this screen changes — same price, same coupon field, same
-                    unlock. See lib/billing/drive-report.ts for why that rule is absolute. */}
+                    unlock. See lib/billing/report-unlock.ts for why that rule is absolute. */}
                 {ticking && (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-amber/30 bg-accent-amber-soft px-2.5 py-1 text-xs font-semibold tabular-nums text-accent-amber-ink">
                     <Clock className="h-3 w-3" aria-hidden />
@@ -358,6 +399,26 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
                 nothing. The personalised report and study material are{' '}
                 <strong className="font-semibold text-foreground">{rupees(listPaise)}</strong>,
                 once, for this session.
+              </p>
+
+              {/* THE ONE SENTENCE THAT HAS TO LAND, and it is an argument rather than an
+                  advertisement. A score on its own changes nothing: a candidate who reads
+                  "68/100" and walks away has learnt that they are somewhere in the middle,
+                  which they already suspected. What changes the next interview is knowing
+                  WHICH answer lost the marks and what the panel wanted instead — and that is
+                  precisely the part behind this wall. Saying so is fair; the report really
+                  does contain it, per question.
+
+                  Phrased against their own session, with their own numbers, because "unlock
+                  your detailed report" is a category and "the 3 answers that cost you the
+                  most" is their morning. The count comes from the server. */}
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-foreground/90">
+                You know your score. You don&apos;t yet know{' '}
+                <strong className="font-semibold">which answers cost you the marks</strong> —
+                or what the panel was waiting to hear instead.{' '}
+                {lock.questionCount === null
+                  ? 'That is what the report tells you, question by question.'
+                  : `That is what the report tells you, for all ${lock.questionCount} of them.`}
               </p>
             </div>
 
@@ -452,7 +513,7 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') applyCode();
                   }}
-                  placeholder="CDN50"
+                  placeholder="ENTER CODE"
                   // Uppercased as they type, because the server stores and compares
                   // uppercase. Seeing the code in the form it will actually be checked in
                   // avoids the "but I typed it correctly" class of support message.
@@ -536,7 +597,7 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
                   at length against. Gated on `ticking` so it goes quiet with the chip
                   instead of standing there advertising a morning that has passed. */}
               {ticking
-                ? ` Unlock it before your ${DRIVE_REPORT_DEADLINE_LABEL} slot so you can revise from it.`
+                ? ` Unlock it before your ${REPORT_UNLOCK_DEADLINE_LABEL} slot so you can revise from it.`
                 : ''}
             </p>
           </Card>
@@ -559,4 +620,4 @@ export function DriveReportPaywall({ lock, onUnlocked }: DriveReportPaywallProps
   );
 }
 
-export default DriveReportPaywall;
+export default ReportUnlockPaywall;

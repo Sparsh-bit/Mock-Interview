@@ -284,6 +284,41 @@ class TestReportEndpoints:
         db_session.add(track)
         await db_session.commit()
 
+        # ── THIS USER HAS BOUGHT AN INTERVIEW, and that is now load-bearing for this test.
+        #
+        # A FREE interview's report is paywalled (₹49) and a PURCHASED interview's is included —
+        # see services/billing/report_access.py. Without this grant the interview below is drawn
+        # from the trial allowance, the report comes back LOCKED, and every content assertion in
+        # this test fails on an empty `readiness_level`. Which is the gate working correctly.
+        #
+        # Granting credit rather than asserting the locked shape, because this test is about
+        # whether report GENERATION works end to end — PromptBuilder, the prompt, the provider,
+        # the parser, the Pydantic model. The paywall has its own tests in
+        # tests/test_report_access.py, where a free interview locking its report is the assertion
+        # rather than an obstacle. One test, one subject.
+        # The trial is spent FIRST — `remaining = trial_allowance + net` — so simply granting
+        # credit is not enough: this user's next interview would still be their free one and
+        # still be paywalled. They have to look like somebody who used the free one and then
+        # bought, which is exactly who the full report is for.
+        from app.services.billing.credits import consume as _consume
+        from app.services.billing.credits import grant as _grant
+        from app.services.billing.plans import trial_allowance
+
+        me = await async_client.get("/api/v1/auth/me", headers=auth_headers)
+        assert me.status_code == 200, me.text
+        user_id = uuid.UUID(me.json()["id"])
+
+        for _ in range(trial_allowance("interview")):
+            await _consume(db_session, user_id, "interview")
+        await _grant(
+            db_session,
+            user_id,
+            "interview",
+            1,
+            payment_ref=f"pay_test_{uuid.uuid4().hex[:12]}",
+        )
+        await db_session.commit()
+
         start_resp = await async_client.post(
             "/api/v1/interview/start",
             json={"track_id": str(track.id)},
