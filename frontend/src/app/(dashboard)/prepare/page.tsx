@@ -253,6 +253,18 @@ export default function PreparePage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSelected(null)}
+              // NAMED, BECAUSE ITS LABEL IS HIDDEN ON THE SCREENS THAT NEED IT MOST.
+              //
+              // The chevron-only back button is the right call on a phone — the convention is
+              // universal and the word costs room in a sticky bar that is already tight. But
+              // below `sm` the span is `hidden`, and `hidden` removes an element from the
+              // accessibility tree as well as from the layout. So on exactly the narrow screens
+              // where the text disappears, a screen reader was left announcing an unlabelled
+              // button, and the only way back to the company list was unnameable.
+              //
+              // `aria-label` rather than un-hiding the text: the visual decision was correct,
+              // and an accessible name does not have to be the visible one.
+              aria-label="Back to companies"
               className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               <ChevronLeft className="h-4 w-4" />

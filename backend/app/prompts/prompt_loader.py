@@ -49,7 +49,7 @@ class PromptLoader:
         Load a prompt template by name (filename without extension).
 
         Args:
-            name: Template name, e.g. "interviewer", "resume_analyzer"
+            name: Template name, e.g. "interviewer", "report_generator"
 
         Returns:
             Raw template string (variables not yet substituted).

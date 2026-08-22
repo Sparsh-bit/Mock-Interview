@@ -155,8 +155,15 @@ describe('wide content scrolls itself and never widens the page', () => {
       lines.forEach((line, i) => {
         if (!/<table[^>]*min-w-\[/.test(line)) return;
         // The wrapper is normally the immediately preceding element; allow a few lines of
-        // attributes between them.
-        const above = lines.slice(Math.max(0, i - 4), i).join('\n');
+        // attributes between them. NON-BLANK lines only, for the same reason as the
+        // accessible-name rule below: comment-stripping leaves empty lines behind, and a
+        // window measured in raw lines is defeated by any explanation written above the
+        // wrapper — which, in this codebase, is most of them.
+        const above = lines
+          .slice(0, i)
+          .filter((l) => l.trim() !== '')
+          .slice(-4)
+          .join('\n');
         if (!/overflow-x-auto|overflow-auto|overflow-x-scroll/.test(above)) {
           offenders.push(`${path}:${i + 1}`);
         }
@@ -218,5 +225,61 @@ describe('the app shell can never clip what it contains', () => {
     const shell = FILES.find((f) => f.path === 'app/(dashboard)/layout.tsx')!;
     const body = withoutComments(shell.code);
     expect(body).toMatch(/h-\[100dvh\]/);
+  });
+});
+
+describe('a control whose label is hidden still has a name', () => {
+  /**
+   * `hidden` REMOVES AN ELEMENT FROM THE ACCESSIBILITY TREE, not just from the layout. So the
+   * common and perfectly reasonable pattern of collapsing a button to its icon on narrow
+   * screens — `<Icon /><span className="hidden sm:inline">Companies</span>` — leaves a screen
+   * reader announcing an unlabelled button on exactly the screens where the visual label is
+   * gone. The visual decision is usually right; what is missing is an accessible name.
+   *
+   * The fix is `aria-label` (or `title`) on the control, NOT un-hiding the text: those labels
+   * are hidden because the bar they sit in has no room, and forcing them back would trade a
+   * naming problem for an overflow one.
+   *
+   * Deliberately narrow: it only fires when a hidden label sits inside a control that has no
+   * other accessible name, which is the case that actually strands somebody.
+   */
+  it('every collapsed label belongs to a control with an accessible name', () => {
+    const offenders: string[] = [];
+    for (const { path, code } of FILES) {
+      const body = withoutComments(code);
+      const lines = body.split('\n');
+      lines.forEach((line, i) => {
+        if (!/className="hidden (?:sm|md|lg|xl):(?:inline|block|flex|inline-block)"/.test(line)) {
+          return;
+        }
+        /*
+         * Walk back to the opening tag of the control this label sits in, counting only
+         * NON-BLANK lines.
+         *
+         * This detail is the difference between a working rule and a vacuous one, and it was
+         * caught by mutation-testing rather than by reading: `withoutComments` replaces each
+         * comment line with an empty one, so in a file with a fourteen-line explanation above
+         * a button the opening tag falls outside any fixed line window and the rule silently
+         * matches nothing. This codebase comments heavily by design, so a window measured in
+         * raw lines would have been reliably defeated by exactly the files most worth checking.
+         */
+        const region = lines
+          .slice(0, i + 1)
+          .filter((l) => l.trim() !== '')
+          .slice(-14)
+          .join('\n');
+        const isControl = /<(?:button|a|Link|Button)\b/.test(region);
+        if (!isControl) return;
+        if (!/aria-label=|title=|aria-labelledby=/.test(region)) {
+          offenders.push(`${path}:${i + 1}`);
+        }
+      });
+    }
+    expect(
+      offenders,
+      'a control that collapses to an icon needs aria-label or title: `hidden` drops the ' +
+        'label from the accessibility tree too, so the control becomes unnameable on exactly ' +
+        'the narrow screens where its text is hidden',
+    ).toEqual([]);
   });
 });

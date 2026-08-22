@@ -9,9 +9,9 @@ corresponding prompt template under app/prompts/ — keep them in sync.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AnswerEvaluation(BaseModel):
@@ -310,7 +310,41 @@ class CodingEvaluation(BaseModel):
 # ─── Resume analysis ──────────────────────────────────────────────────────────
 
 
-class ResumeSkill(BaseModel):
+class _NullMeansUnset(BaseModel):
+    """
+    Treat an explicit `null` from the model as "this field was not stated".
+
+    MEASURED, on the very first run after the analysis was split. The projects half
+    came back complete and well inside its token ceiling
+    (`finish_reason=end_turn`, 1063 of 2000 tokens) and was thrown away anyway:
+
+        ai_response_validation_failed
+        loc=('projects', 0, 'role')  msg='Input should be a valid string'  input=None
+
+    The resume did not say what the candidate's role on that project was, so the
+    model wrote `"role": null` — which is the most natural possible thing for it to
+    write, and exactly what our own prompt means by an omitted field. Pydantic
+    rejects None for a `str` field, so four nulls in one otherwise perfect response
+    invalidated the whole billed call. It cost that run 10 seconds and a retry
+    (18.9s against 8.6s for the runs that did not hit it), and had the retry drawn
+    another null the projects half would have been lost outright — arriving as the
+    reported "projects are not been able to fetch" with nothing in the logs but a
+    validation warning.
+
+    Dropping the key rather than coercing it lets the field's own default apply, so
+    there is one definition of "unset" instead of two. Fields already declared
+    `X | None = None` are unaffected: their default is None either way.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_nulls(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {key: value for key, value in data.items() if value is not None}
+        return data
+
+
+class ResumeSkill(_NullMeansUnset):
     """
     One skill claimed on the resume, with how strongly it was claimed.
 
@@ -337,7 +371,7 @@ class ResumeSkill(BaseModel):
     proficiency_level: Literal["beginner", "intermediate", "advanced", "expert"] = "intermediate"
 
 
-class ResumeProject(BaseModel):
+class ResumeProject(_NullMeansUnset):
     """A project described on the resume — the richest source of real questions."""
 
     name: str
@@ -350,7 +384,7 @@ class ResumeProject(BaseModel):
     relevance_to_track: Literal["high", "medium", "low"] = "medium"
 
 
-class ResumeExperience(BaseModel):
+class ResumeExperience(_NullMeansUnset):
     """Overall shape of the candidate's experience."""
 
     total_years: float = 0.0
@@ -359,7 +393,7 @@ class ResumeExperience(BaseModel):
     domain: str = ""
 
 
-class ResumeInterviewFocus(BaseModel):
+class ResumeInterviewFocus(_NullMeansUnset):
     """
     How the interview should be steered for this candidate.
 
@@ -375,7 +409,7 @@ class ResumeInterviewFocus(BaseModel):
     personalization_notes: str = ""
 
 
-class ResumeQuality(BaseModel):
+class ResumeQuality(_NullMeansUnset):
     """
     Feedback on the resume itself.
 
@@ -391,7 +425,7 @@ class ResumeQuality(BaseModel):
     concerns: list[str] = Field(default_factory=list)
 
 
-class ResumeSkillsHalf(BaseModel):
+class ResumeSkillsHalf(_NullMeansUnset):
     """
     What app/prompts/resume_analyzer_skills.md returns.
 
@@ -408,14 +442,14 @@ class ResumeSkillsHalf(BaseModel):
     experience: ResumeExperience = Field(default_factory=ResumeExperience)
 
 
-class ResumeProjectsHalf(BaseModel):
+class ResumeProjectsHalf(_NullMeansUnset):
     """What app/prompts/resume_analyzer_projects.md returns. See ResumeSkillsHalf."""
 
     projects: list[ResumeProject] = Field(default_factory=list)
     interview_focus: ResumeInterviewFocus = Field(default_factory=ResumeInterviewFocus)
 
 
-class ResumeAnalysisResponse(BaseModel):
+class ResumeAnalysisResponse(_NullMeansUnset):
     """
     The merged resume analysis: ResumeSkillsHalf + ResumeProjectsHalf.
 

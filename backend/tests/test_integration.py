@@ -49,8 +49,29 @@ async def _app_lifespan():
 
 @pytest.fixture(scope="session", autouse=True)
 async def _setup_schema():
-    """Create all tables once for the entire test session."""
+    """
+    Create all tables once for the entire test session, and leave the database able to
+    do it again next time.
+
+    THE EXTENSION IS THE WHOLE REASON THIS IS MORE THAN TWO LINES.
+
+    `ai_cache` has a pgvector column, so creating it requires the `vector` extension. The
+    teardown below drops the entire schema, and `DROP SCHEMA public CASCADE` takes the
+    extension with it — extensions live in a schema. So this fixture used to leave the test
+    database in a state where the NEXT run could not create `ai_cache` at all, and every test
+    touching the vector cache failed with `relation "ai_cache" does not exist`.
+
+    That made it a landmine rather than a bug: the run that broke the database passed, and the
+    run that paid for it was the one after. Diagnosing it from the failing run is misleading,
+    because by then the only evidence is a table that is simply absent — which reads like a
+    missing migration, not like something the suite did to itself.
+
+    So the extension is ensured BEFORE create_all and re-created AFTER the drop. Both are
+    IF NOT EXISTS / idempotent, so this is safe on a fresh database, on a database that was
+    migrated by Alembic, and on one left behind by a previous run of this file.
+    """
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     # Drop the whole schema rather than Base.metadata.drop_all: if the DB was
@@ -60,15 +81,50 @@ async def _setup_schema():
     async with engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA public CASCADE"))
         await conn.execute(text("CREATE SCHEMA public"))
+        # Put back what the CASCADE took with it. Without this the next run cannot create
+        # `ai_cache`, and the failure surfaces a whole run later than the cause.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
 
 @pytest.fixture
 async def db_session():
-    """Provide a clean database session for each test."""
-    # Truncate all tables before each test for isolation
+    """
+    Provide a clean database session for each test.
+
+    EVERY TABLE, DISCOVERED RATHER THAN LISTED, and that change fixed a real order-dependent
+    failure rather than tidying anything.
+
+    This used to truncate a hand-written list of seventeen tables. Eleven others were never
+    truncated at all — including `credit_events` and `user_plans`, which is where the damage
+    was: whether a report is paywalled is derived from the credit ledger, so rows left behind
+    by any other test module decided whether THIS module's report tests saw a locked report or
+    a full one. `test_generate_report_real_ai` passed alone and failed in the suite, which is
+    the signature of exactly this, and the same leakage moved `test_payment_idempotency`
+    around too.
+
+    A hand-maintained list cannot hold: the omissions were all tables added after the list was
+    written (billing, offers, activity, prep, ratings), and nothing about adding a table
+    prompts anybody to come back here. Asking the database which tables exist means the next
+    one is covered on the day it is created.
+
+    `information_schema` rather than `Base.metadata`, because the point is to clear what is
+    ACTUALLY in the database — including anything a migration created that no model declares,
+    which is a real case here (see the `vector` note in `_setup_schema`). One statement, so
+    CASCADE resolves every FK order for us instead of us maintaining a dependency ordering.
+    """
     async with engine.begin() as conn:
-        # Truncate in reverse dependency order
-        await conn.execute(text("TRUNCATE TABLE system_prompts, audit_logs, reports, scores, answers, voice_transcripts, interview_sessions, resume_files, follow_up_questions, questions, subtopics, topics, question_categories, interview_tracks, companies, profiles, users RESTART IDENTITY CASCADE"))
+        rows = await conn.execute(
+            text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+                # Alembic's bookkeeping is not test data. Truncating it would make a migrated
+                # test database look un-migrated to the next thing that checked.
+                "AND tablename <> 'alembic_version'"
+            )
+        )
+        tables = [r[0] for r in rows]
+        if tables:
+            quoted = ", ".join(f'"{t}"' for t in tables)
+            await conn.execute(text(f"TRUNCATE TABLE {quoted} RESTART IDENTITY CASCADE"))
 
     async with AsyncSessionFactory() as session:
         yield session

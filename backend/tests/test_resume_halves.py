@@ -170,3 +170,132 @@ async def test_an_ai_failure_never_raises_out_of_the_analyser(monkeypatch):
         out = await _run(monkeypatch, skills=boom, projects=boom)
         assert out.analysis is None
         assert out.complete is False
+
+
+# ── What the candidate is TOLD happened ──────────────────────────────────────────────────
+#
+# The isolation above keeps the data. These keep the claim about it honest, which is the other
+# half of the reported bug: the profile card read "Read and analysed — your interviews will ask
+# about these projects and skills by name" over an upload with zero skills and zero projects,
+# because the status was `"completed" if analysis else "text_only"` and an analysis object with
+# nothing in it is still an object.
+
+
+async def test_a_lost_half_is_reported_as_partial_not_completed(monkeypatch):
+    """A resume with skills but no projects must not claim a full analysis."""
+    out = await _run(monkeypatch, skills=_skills_half(), projects=RuntimeError("provider down"))
+    assert out.parsing_status == "partial"
+    assert out.complete is False
+    # And the candidate is told which half is missing, in words they can act on.
+    assert "project" in (out.candidate_message() or "").lower()
+
+
+async def test_losing_both_halves_is_text_only(monkeypatch):
+    out = await _run(
+        monkeypatch, skills=RuntimeError("down"), projects=RuntimeError("down")
+    )
+    assert out.parsing_status == "text_only"
+    assert out.analysis is None
+
+
+async def test_both_halves_landing_is_the_only_completed(monkeypatch):
+    out = await _run(monkeypatch, skills=_skills_half(), projects=_projects_half())
+    assert out.parsing_status == "completed"
+    assert out.candidate_message() is None, "a complete analysis must not carry an error"
+
+
+async def test_a_resume_that_genuinely_lists_no_projects_is_still_completed(monkeypatch):
+    """
+    THE NUANCE THAT DECIDES WHERE THE CHECK GOES. Plenty of first-year resumes have no
+    projects on them, and the analyser answering "none, and here is what to ask instead" is a
+    correct and complete answer — so completeness is keyed on the two HALVES having succeeded,
+    never on the merged object being non-empty. Keying it on emptiness would tell those
+    candidates their resume failed to analyse every single time they uploaded it.
+    """
+    empty_projects = ResumeProjectsHalf(
+        projects=[], interview_focus=ResumeInterviewFocus(priority_topics=["Java Collections"])
+    )
+    out = await _run(monkeypatch, skills=_skills_half(), projects=empty_projects)
+    assert out.parsing_status == "completed"
+    assert out.analysis is not None and out.analysis.projects == []
+
+
+async def test_an_empty_analysis_can_never_be_called_completed():
+    """
+    THE REPORTED BUG, PINNED DIRECTLY. This is the exact outcome the old code produced from a
+    model that returned `{}` — a non-None analysis with nothing in it — and the exact input on
+    which it said "completed".
+    """
+    from app.services.ai.schemas import ResumeAnalysisResponse
+
+    empty = analyser_mod.ResumeAnalysisOutcome(
+        analysis=ResumeAnalysisResponse(), skills_ok=False, projects_ok=False
+    )
+    assert empty.parsing_status != "completed"
+    assert empty.candidate_message() is not None
+
+
+# ── "not stated" must not cost a whole billed call ───────────────────────────────────────────
+
+
+async def test_a_null_for_an_unstated_field_does_not_invalidate_the_response():
+    """
+    MEASURED ON THE FIRST RUN AFTER THE SPLIT, and the last way a good half was still being
+    thrown away. The projects half came back complete and well inside its token ceiling, and
+    was rejected anyway:
+
+        loc=('projects', 0, 'role')  msg='Input should be a valid string'  input=None
+
+    The resume did not say what the candidate's role on that project was, so the model wrote
+    `"role": null` — which is what our own prompt means by an omitted field. Four nulls in one
+    otherwise perfect response invalidated the entire call: it cost that run 10 seconds and a
+    retry (18.9s against 8.6s), and a second unlucky null would have lost the projects half
+    outright, surfacing as exactly the reported "projects are not been able to fetch".
+    """
+    from app.services.ai.schemas import ResumeProjectsHalf as Projects
+    from app.services.ai.schemas import ResumeSkillsHalf as Skills
+
+    half = Projects.model_validate(
+        {
+            "projects": [
+                {
+                    "name": "Distributed Task Scheduler",
+                    "description": None,
+                    "technologies": None,
+                    "role": None,
+                    "scale_indicators": None,
+                }
+            ],
+            "interview_focus": {"priority_topics": ["Kafka"], "personalization_notes": None},
+        }
+    )
+    # Null becomes the field's own default, so there is one definition of "unset".
+    assert half.projects[0].name == "Distributed Task Scheduler"
+    assert half.projects[0].role == ""
+    assert half.projects[0].technologies == []
+    assert half.interview_focus.personalization_notes == ""
+
+    # And the same on the other half, where a null year is the common case.
+    skills = Skills.model_validate(
+        {"skills": [{"name": "Java", "years_experience": None, "confidence": None}]}
+    )
+    assert skills.skills[0].name == "Java"
+    assert skills.skills[0].confidence == "inferred"
+
+
+async def test_a_null_analysis_still_reaches_the_interview_context():
+    """
+    The end of that path: a project whose role was null must still produce a usable line for
+    the interviewer prompt rather than a crash or the literal word "None".
+    """
+    from app.services.ai.schemas import ResumeAnalysisResponse
+
+    analysis = ResumeAnalysisResponse.model_validate(
+        {
+            "projects": [{"name": "Sched", "role": None, "technologies": ["Kafka"]}],
+            "skills": [{"name": "Java", "confidence": "explicit"}],
+        }
+    )
+    context = analyser_mod.build_interview_context(analysis, "raw resume text")
+    assert "Sched" in context
+    assert "None" not in context
