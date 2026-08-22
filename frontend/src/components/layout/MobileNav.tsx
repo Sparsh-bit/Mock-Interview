@@ -34,6 +34,14 @@ import { cn } from '@/lib/utils';
  *   * IT CLOSES ON NAVIGATION. Obvious in hindsight, invisible until you tap a link and the
  *     drawer stays open over the page you just asked for.
  */
+/**
+ * The drawer's DOM id, so the hamburger's `aria-controls` can name it.
+ *
+ * Exported rather than written out at both ends: an `aria-controls` whose value does not match
+ * a real id is a promise to assistive technology that nothing in the build would ever check.
+ */
+export const MOBILE_NAV_ID = 'mobile-nav';
+
 export interface MobileNavItem {
   href: string;
   label: string;
@@ -134,6 +142,7 @@ export function MobileNav({ open, onClose, groups, triggerRef }: MobileNavProps)
 
           <motion.div
             ref={panelRef}
+            id={MOBILE_NAV_ID}
             role="dialog"
             aria-modal="true"
             aria-label="Main navigation"

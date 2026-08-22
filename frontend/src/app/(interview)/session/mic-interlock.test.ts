@@ -181,7 +181,12 @@ describe('the layout does not move under the candidate', () => {
      * An explicit max-height is what makes the scroll real. Asserted on both, because the
      * two paths are edited independently and only one of them was ever noticed.
      */
-    const capped = [...CODE.matchAll(/max-h-\[\d+vh\][^"']*overflow-y-auto|overflow-y-auto[^"']*max-h-\[\d+vh\]|max-h-\[\d+vh\][^"']*resize-none|resize-none[^"']*max-h-\[\d+vh\]/g)];
+    // `d?vh` because the cap was later moved from `vh` to `dvh`. That change is CORRECT and
+    // must not be reverted to satisfy this matcher: `vh` is the viewport height with the
+    // browser chrome hidden, so a vh cap is measured against a taller box than the phone
+    // actually shows. The requirement asserted here is unchanged — both inputs are capped and
+    // therefore scroll — only the unit the cap is expressed in has improved.
+    const capped = [...CODE.matchAll(/max-h-\[\d+d?vh\][^"']*overflow-y-auto|overflow-y-auto[^"']*max-h-\[\d+d?vh\]|max-h-\[\d+d?vh\][^"']*resize-none|resize-none[^"']*max-h-\[\d+d?vh\]/g)];
     expect(capped.length).toBeGreaterThanOrEqual(2);
     // And neither may go back to growing with its content.
     expect(CODE).not.toMatch(/min-h-\[96px\] w-full flex-1 overflow-y-auto/);

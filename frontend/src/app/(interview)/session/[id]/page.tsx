@@ -1204,18 +1204,57 @@ export default function LiveSessionPage() {
      * 100dvh rather than 100vh: on mobile Safari and Chrome, vh is the height with the
      * browser chrome HIDDEN, so a 100vh page is permanently taller than the visible area and
      * the bottom of it — the mic — sits under the address bar. dvh tracks the real viewport.
+     *
+     * ── AND AN ESCAPE HATCH BELOW 700px OF HEIGHT ───────────────────────────────────────
+     *
+     * REPORTED: "in the zoomed screens the submit answer button in the interview is also
+     * been hidden". Pinning the app to the viewport is right until the viewport is smaller
+     * than the layout's own floor, and then it is the bug. `h-[100dvh]` is a HARD height and
+     * `overflow-hidden` means anything past it is not scrolled to — it does not exist. The
+     * floor is about 692px (the arithmetic is in tailwind.config.ts next to the `short`
+     * screen), and the last thing past it is the button row.
+     *
+     * Browser zoom is what produces those viewports. Zoom does not make CSS pixels smaller,
+     * it makes the window hold fewer of them, so a 900px window is a 450px viewport at 200%
+     * — and a candidate who has zoomed in to read the question is precisely the candidate
+     * who then cannot submit their answer. A phone in landscape (844x390) is under the floor
+     * with no zoom at all.
+     *
+     * So below 700px tall the page stops being an app pinned to the viewport and becomes a
+     * page: `h-auto min-h-[100dvh] overflow-visible`, and each pane hands back its own
+     * scrolling (`short:overflow-visible`) so what you get is ONE ordinary page scroll with
+     * nothing clipped, rather than a scrollable page full of panes that are still clipping.
+     * Everything is reachable, in exchange for the mic no longer being pinned — which is the
+     * right trade, because a mic that does not move and a Submit button that does not exist
+     * is not a trade at all.
+     *
+     * Above 700px NOTHING CHANGES. `short` is a raw max-height media query, so every desktop
+     * and every ordinary laptop window keeps exactly the pinned layout it has today.
      */
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-background">
-      {/* Header */}
-      <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-border/50 bg-surface/60 px-6 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <span className="relative flex h-2.5 w-2.5">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-background short:h-auto short:min-h-[100dvh] short:overflow-visible">
+      {/* Header.
+          THE TITLE TRUNCATES AND THE BUTTON DOES NOT SHRINK, and that ordering is the whole
+          point of the classes here. This row was `justify-between` with `px-6` and nothing
+          allowed to give: at 320px — the narrowest phone, and also what 400% zoom makes of a
+          1280px window — "Live Interview Session" plus the "N answered" chip plus "End
+          Interview" needs about 296px of the 272px available, and the root above is
+          `overflow-hidden`, so the overflow was not a horizontal scrollbar. It was the End
+          Interview button being cut off the right edge — the one control mic-interlock.test.ts
+          calls the universal escape, gone at the one size where a candidate is most likely to
+          be stuck.
+          `min-w-0` on the group is what lets `truncate` engage on the title (a flex item's
+          automatic minimum size is its content, so without it the text refuses to shrink and
+          pushes its siblings out instead), and the title is the right thing to sacrifice: it
+          is decoration, and the button is a way out. */}
+      <header className="flex h-16 flex-shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-surface/60 px-4 backdrop-blur-md sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-coral opacity-60" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent-coral" />
           </span>
-          <span className="text-sm font-semibold tracking-tight">Live Interview Session</span>
+          <span className="truncate text-sm font-semibold tracking-tight">Live Interview Session</span>
           {answered > 0 && (
-            <span className="ml-1 rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+            <span className="ml-1 flex-shrink-0 whitespace-nowrap rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
               {answered} answered
             </span>
           )}
@@ -1230,9 +1269,9 @@ export default function LiveSessionPage() {
             panelVoices.cancelAll();
             completeSession.mutate(sessionId);
           }}
-          className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
+          className="flex flex-shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
         >
-          <StopCircle className="h-4 w-4" /> End Interview
+          <StopCircle className="h-4 w-4 flex-shrink-0" /> End Interview
         </button>
       </header>
 
@@ -1250,7 +1289,7 @@ export default function LiveSessionPage() {
         <div
           role="status"
           aria-live="polite"
-          className="flex flex-shrink-0 items-center gap-3 border-b border-accent-amber/30 bg-accent-amber/10 px-6 py-2.5"
+          className="flex flex-shrink-0 items-center gap-3 border-b border-accent-amber/30 bg-accent-amber/10 px-4 py-2.5 sm:px-6"
         >
           <WifiOff className="h-4 w-4 flex-shrink-0 text-accent-amber" aria-hidden />
           <p className="text-xs leading-relaxed text-foreground">
@@ -1281,8 +1320,16 @@ export default function LiveSessionPage() {
           phone-first. Stacking them would be worse than tabs: the compiler would sit two
           screens below the question it belongs to, and the video below that, so a candidate
           would be scrolling during an interview. Tabs keep each pane full-height and one
-          thumb away. Above lg they disappear and all three are simply on screen. */}
-      <div className="flex flex-shrink-0 items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden">
+          thumb away. Above lg they disappear and all three are simply on screen.
+
+          STICKY UNDER `short:`, and only there. Below 700px tall the page scrolls as a page
+          (see the root above), and a pane switcher that scrolls away is a navigation the
+          candidate has to scroll back up to find — on a coding question, where the answer
+          lives in the Compiler pane, that is the difference between a tab and a dead end. It
+          takes an opaque background at the same time, because a translucent bar over
+          scrolling text is unreadable. Pinned above `short`, where nothing scrolls past it
+          anyway, so this is invisible on desktop. */}
+      <div className="flex flex-shrink-0 items-center gap-1 border-b border-border/50 bg-surface/40 p-2 lg:hidden short:sticky short:top-0 short:z-30 short:bg-surface">
         {([
           { id: 'talk', label: 'Interview', icon: MessageSquare },
           // Filtered, not disabled. A tab that leads to a pane the interview does not have
@@ -1340,7 +1387,18 @@ export default function LiveSessionPage() {
         <motion.div
           variants={fadeUp}
           className={cn(
-            'glass flex min-h-0 flex-col rounded-2xl border-border/50 p-4 sm:p-5',
+            // `overflow-y-auto` is the belt to the `short:` braces, and it earns its place in
+            // the band the breakpoint does not cover. The 692px floor in tailwind.config.ts is
+            // the floor with NO banners up; the offline strip, the "we cannot hear you" alert
+            // and the sworn-words notice are 60-90px each, so at 750px tall with two of them
+            // showing this pane's content exceeds it again while still being above `short`.
+            // Without this the surplus was clipped by the root and the button row went with
+            // it; with it the pane scrolls and everything in it stays reachable.
+            //
+            // Released under `short:`, where the page itself is the scroller — a pane that
+            // keeps its own scrollbar inside a scrolling page is two nested scroll areas over
+            // the same content, and on a touch screen the wrong one always takes the gesture.
+            'glass flex min-h-0 flex-col overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5 short:overflow-visible',
             mobilePane === 'talk' ? 'flex' : 'hidden lg:flex',
           )}
         >
@@ -1367,7 +1425,11 @@ export default function LiveSessionPage() {
           {/* The thread scrolls; the answer controls below it do not. During an interview the
               thing you must always be able to reach is the microphone, and a mic button that
               scrolls off after a long code review is a mic button that is not there. */}
-          <div className="mb-4 min-h-0 flex-1 overflow-y-auto pr-1">
+          {/* `short:overflow-visible` releases the thread's own scrollbar when the page has
+              become the scroller. It keeps `flex-1 min-h-0`, which in a content-sized column
+              simply resolves to the thread's own height — so under `short:` the whole
+              conversation is in the page scroll rather than in a 100px window inside it. */}
+          <div className="mb-4 min-h-0 flex-1 overflow-y-auto pr-1 short:overflow-visible">
             {/* NO AnimatePresence AND NO CHANGING KEY.
                 Both were destroying the conversation. `mode="wait"` unmounts the current
                 child before mounting the next, and the key included `phase` — so every move
@@ -1624,10 +1686,27 @@ export default function LiveSessionPage() {
                 placeholder="Type your answer here as if you were speaking to an interviewer…"
                 /* Capped for the same reason as the voice transcript below — `flex-1` in a
                    content-sized parent grows instead of scrolling, and a long typed answer
-                   pushed Submit off the bottom. A textarea scrolls natively once bounded. */
-                className="ease-out-expo max-h-[22vh] min-h-[96px] w-full resize-none overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none"
+                   pushed Submit off the bottom. A textarea scrolls natively once bounded.
+
+                   dvh, NOT vh, for the same reason the root is: this is a CEILING, and a
+                   ceiling measured against the viewport-with-the-chrome-hidden is about 10%
+                   taller than intended on a phone — 10% of the height the button row needs.
+
+                   AND THE FLOOR COMES DOWN ON A SHORT VIEWPORT, because a floor and a ceiling
+                   that cross is a box that has stopped responding at all. 22dvh falls below
+                   96px at roughly 437px of viewport height, and from there the min-height
+                   wins: everything around this box keeps compressing and this one does not,
+                   which is precisely what pushes the button row out. 64px still shows three
+                   lines at this leading, and the box scrolls, so nothing is lost but slack. */
+                className="ease-out-expo max-h-[22dvh] min-h-[96px] w-full resize-none overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed transition-shadow focus:border-primary/40 focus:shadow-glow focus:outline-none short:min-h-[64px]"
               />
-              <div className="mt-3 flex items-center justify-between gap-3">
+              {/* WRAPS. `justify-between` with three inflexible children and no wrap is a
+                  row that grows past its box rather than reflowing, and the box it grows past
+                  is inside an `overflow-hidden` root — so at 320px, or at 200% zoom on a
+                  laptop, "Submit & Next" left the right-hand edge and there was no scrollbar
+                  to bring it back. Wrapping costs one extra line at those sizes and keeps the
+                  only control that ends the question on screen. */}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                 <span className="text-xs text-muted-foreground/70">
                   {wordCount} {wordCount === 1 ? 'word' : 'words'}
                 </span>
@@ -1790,11 +1869,15 @@ export default function LiveSessionPage() {
                 the moment a candidate who had just given a long answer wanted to press it.
 
                 An explicit max-height makes the scroll real: the transcript scrolls inside
-                itself and the controls below it never move. In vh so it adapts to a laptop
-                and a large monitor, and paired with min-h so a one-word answer does not
-                collapse the box to nothing.
+                itself and the controls below it never move. In dvh — a ceiling in plain vh is
+                measured against the viewport with the browser chrome hidden, so on a phone it
+                is about 10% taller than it reads here, and that 10% comes out of the space the
+                button row needs — and paired with min-h so a one-word answer does not collapse
+                the box to nothing. The floor drops to 64px on a short viewport, because a
+                floor that cannot come down while the ceiling keeps falling is a box that has
+                stopped responding: 22dvh passes under 96px at about 437px of viewport height.
               */}
-              <div className="min-h-[96px] max-h-[22vh] w-full overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed">
+              <div className="min-h-[96px] max-h-[22dvh] w-full overflow-y-auto rounded-xl border border-border/50 bg-surface-elevated p-4 text-sm leading-relaxed short:min-h-[64px]">
                 <DeliveryTranscript
                   text={answer}
                   pauses={stt.pauses}
@@ -1802,7 +1885,11 @@ export default function LiveSessionPage() {
                 />
               </div>
 
-              <div className="flex w-full items-center justify-between gap-3">
+              {/* WRAPS, for the reason given on the typing row above — and more urgently
+                  here, because this row is the widest in the app: a sentence-long "Trouble
+                  with the mic?" link, Clear, and Submit & Next need about 400px and a 320px
+                  phone gives this pane about 250px. */}
+              <div className="flex w-full flex-wrap items-center justify-between gap-3">
                 {/* Suppressed while the banner is up: two escape hatches four
                     inches apart read as panic, not help. */}
                 {!stt.error && !micSilent ? (
@@ -1856,7 +1943,12 @@ export default function LiveSessionPage() {
         <motion.div
           variants={fadeUp}
           className={cn(
-            'glass min-h-0 overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5',
+            // `short:overflow-visible` hands the scrolling back to the page below 700px tall.
+            // This pane holds a 320px editor, a stdin box and three buttons — comfortably more
+            // than a zoomed viewport — and a pane that keeps its own scrollbar inside a page
+            // that is already scrolling is two scroll areas over the same content, where a
+            // touch gesture goes to whichever one the browser guesses.
+            'glass min-h-0 overflow-y-auto rounded-2xl border-border/50 p-4 sm:p-5 short:overflow-visible',
             mobilePane === 'code' ? 'block' : 'hidden lg:block',
           )}
         >
@@ -1897,7 +1989,7 @@ export default function LiveSessionPage() {
         <motion.div
           variants={fadeUp}
           className={cn(
-            'min-h-0 overflow-y-auto',
+            'min-h-0 overflow-y-auto short:overflow-visible',
             mobilePane === 'you' ? 'block' : 'hidden lg:block',
           )}
         >

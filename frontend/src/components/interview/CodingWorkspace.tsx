@@ -141,8 +141,12 @@ export function CodingWorkspace({
       {roleLabel && (
         <p className="text-[11px] leading-snug text-muted-foreground">{roleLabel}</p>
       )}
-      {/* Language tabs */}
-      <div className="flex items-center gap-1 rounded-full bg-secondary p-1 w-fit">
+      {/* Language tabs.
+          `flex-wrap` and `max-w-full`: this is a pill group with `w-fit`, which means it sizes
+          to its content and ignores the width it has been given. Four languages at `px-4` need
+          more than a 320px phone leaves this pane, and the pane sits under an
+          `overflow-hidden` root — so the last tab was cut off rather than scrolled to. */}
+      <div className="flex max-w-full flex-wrap items-center gap-1 rounded-full bg-secondary p-1 w-fit">
         {LANGUAGES.map((l) => (
           <button
             key={l.id}
@@ -158,11 +162,19 @@ export function CodingWorkspace({
         ))}
       </div>
 
-      {/* Editor */}
+      {/* Editor.
+          THE HEIGHT IS A CEILING WITH A DYNAMIC TERM, not a flat 320px. Browser zoom does not
+          shrink CSS pixels, it shrinks how many of them the window holds — so at 200% zoom a
+          flat 320px editor is most of the viewport and at 400% it is more than all of it, with
+          the Run and Submit buttons below it pushed out of the pane. `min()` keeps the 320px
+          this was designed at on any ordinary screen and lets it give way on a short one, where
+          CodeMirror scrolls internally as it always has. dvh rather than vh because it is a
+          ceiling, and a ceiling in vh is measured against the viewport with the phone's browser
+          chrome hidden. */}
       <div className="overflow-hidden rounded-2xl border border-border">
         <CodeMirror
           value={code}
-          height="320px"
+          height="min(320px, 45dvh)"
           theme={githubLight}
           extensions={extensions}
           editable={!disabled}
@@ -196,8 +208,13 @@ export function CodingWorkspace({
         </p>
       )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-3">
+      {/* Actions.
+          WRAPS, because this is the row that loses "Submit for Evaluation". Run Code, Review my
+          code and Submit for Evaluation need about 460px side by side; at 320px this pane has
+          roughly 250px, and the root of the session page is `overflow-hidden`, so the third
+          button did not move to a scrollable overflow — it was cut off. On a coding question
+          that button IS the answer, and the candidate had no way to press it. */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="secondary"
           onClick={() =>

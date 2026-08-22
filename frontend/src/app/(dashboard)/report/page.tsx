@@ -78,16 +78,31 @@ function ActivityRow({ a }: { a: ActivityItem }) {
 
   return (
     <div className="rounded-xl border border-border bg-surface-elevated shadow-elev-1">
+      {/*
+        WRAPS BELOW sm, because four fixed things do not fit in 256px.
+
+        The row is: a 40px tile, the title block, the score, and either a "View" link or a
+        chevron. On a 320px phone that leaves about 36px for the title block — and the
+        meta line inside it (the activity type plus a full date-and-time) has a min-content
+        width of roughly 110px, so it OVERFLOWED the block it lives in and drew straight
+        over the score beside it. `min-w-0` alone cannot fix that: it lets the block shrink,
+        which is precisely what puts its contents on top of the neighbour.
+
+        So the score and the action move to their own line below sm (`basis` on the title
+        block forces the break), and stay inline from sm up where there is room.
+      */}
       <button
         onClick={() => hasDetail && setOpen((o) => !o)}
-        className="flex w-full items-center gap-4 p-4 text-left"
+        className="flex w-full flex-wrap items-center gap-x-4 gap-y-3 p-4 text-left"
       >
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${meta.tint}`}>
           <Icon className="h-5 w-5" />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{a.title}</p>
-          <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1 basis-[calc(100%-3.5rem)] sm:basis-0">
+          {/* `break-words`, not `truncate`. A truncated title is hidden content, and these
+              titles are the only thing distinguishing one round from another. */}
+          <p className="break-words text-sm font-semibold">{a.title}</p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
             <span className="font-medium uppercase tracking-wide">{meta.label}</span>
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3" />
@@ -101,7 +116,7 @@ function ActivityRow({ a }: { a: ActivityItem }) {
             </span>
           </div>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <p className="text-[10px] uppercase text-muted-foreground">Score</p>
           <p className="text-lg font-bold">
             {Math.round(a.score)}<span className="text-xs text-muted-foreground">/100</span>
@@ -111,12 +126,13 @@ function ActivityRow({ a }: { a: ActivityItem }) {
           <Link
             href={`/report/${sessionId}`}
             onClick={(e) => e.stopPropagation()}
-            className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
+            // min-h-11: 44px, because at py-2 this was a 30px-tall tap target on a phone.
+            className="ml-auto inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20 sm:ml-2 sm:min-h-0"
           >
             <FileText className="h-3.5 w-3.5" /> View
           </Link>
         ) : hasDetail ? (
-          <ChevronDown className={`ml-2 h-4 w-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown className={`ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform sm:ml-2 ${open ? 'rotate-180' : ''}`} />
         ) : null}
       </button>
 
@@ -215,8 +231,8 @@ export default function ReportsListPage() {
               className="flex flex-col justify-between rounded-xl border border-border bg-surface-elevated p-5 shadow-elev-1 transition-shadow hover:shadow-elev-2"
             >
               <div>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-bold text-primary uppercase">{sess.company_name}</span>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 break-words text-xs font-bold uppercase text-primary">{sess.company_name}</span>
                   <span
                     className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold border ${
                       sess.status === 'completed'
@@ -227,8 +243,8 @@ export default function ReportsListPage() {
                     {sess.status}
                   </span>
                 </div>
-                <h3 className="font-semibold text-base">{sess.track_name}</h3>
-                <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                <h3 className="break-words text-base font-semibold">{sess.track_name}</h3>
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3.5 w-3.5" />
                     {sess.started_at
@@ -258,7 +274,7 @@ export default function ReportsListPage() {
                 )}
               </div>
 
-              <div className="mt-6 pt-4 border-t border-border/40 flex items-center justify-between">
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-4">
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase">Overall Score</p>
                   <p className="text-xl font-bold text-foreground">
@@ -267,7 +283,8 @@ export default function ReportsListPage() {
                 </div>
                 <Link
                   href={sess.status === 'completed' ? `/report/${sess.id}` : `/session/${sess.id}`}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary px-4 py-2 text-xs font-bold transition-colors"
+                  // 44px minimum: a 30px-tall link is under the touch-target floor.
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary/10 px-4 py-2 text-xs font-bold text-primary transition-colors hover:bg-primary/20 sm:min-h-0"
                 >
                   {sess.status === 'completed' ? (
                     <>

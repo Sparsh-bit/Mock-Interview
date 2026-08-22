@@ -665,7 +665,7 @@ export default function GDPage() {
         )}
 
         <motion.div variants={fadeUp}>
-          <Card className="space-y-5 p-8">
+          <Card className="space-y-5 p-5 sm:p-8">
             {/* Two ways in: a topic off the shelf, or one of your own that the AI
                 turns into something actually arguable. */}
             <div className="flex gap-1 rounded-xl bg-secondary p-1">
@@ -840,7 +840,21 @@ export default function GDPage() {
 
   // ─── Discussion ─────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto flex h-[calc(100dvh-7rem)] max-w-3xl flex-col gap-3 sm:h-[calc(100vh-8rem)] sm:gap-4">
+    /*
+     * dvh AT BOTH BREAKPOINTS, and the `sm:` one is why this comment exists.
+     *
+     * The base class was already `100dvh` — correct, and for the reason written out at
+     * (dashboard)/layout.tsx:25. The `sm:` variant then put `100vh` back, so every screen
+     * 640px and wider got the broken unit again. That is most phones in landscape and every
+     * phone that reports a wide-ish CSS width, and `vh` on mobile Safari/Chrome is the
+     * viewport height with the browser chrome HIDDEN: the container is permanently taller
+     * than what the device shows, so the input row at the bottom — the mic, "Add point", and
+     * the slide that ends the round — sits under the address bar with no gesture that brings
+     * it back.
+     *
+     * On desktop dvh and vh are identical, so nothing moves there.
+     */
+    <div className="mx-auto flex h-[calc(100dvh-7rem)] max-w-3xl flex-col gap-3 sm:h-[calc(100dvh-8rem)] sm:gap-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Topic</p>
@@ -948,7 +962,25 @@ export default function GDPage() {
         </motion.div>
       )}
 
-      <Card className="flex-1 overflow-hidden p-0">
+      {/*
+        `min-h-[9rem]` IS THE SHORT-VIEWPORT ESCAPE HATCH, and it belongs on this element
+        rather than on the fixed-height parent above.
+
+        This is the only `flex-1` child, and `overflow-hidden` sets its automatic minimum
+        size to zero — which is what lets it absorb the container's height on a normal
+        screen. On a SHORT one (a landscape phone, or a desktop at 200-400% zoom, both of
+        which produce a viewport around 400px tall) the siblings' natural heights add up to
+        more than the container, and a flex child that may shrink to zero does exactly that:
+        the transcript collapsed to a sliver and the round became unreadable while the
+        controls stayed put.
+
+        With a floor it stops shrinking, the column overflows its fixed height, and <main>
+        — the app shell's scroller — scrolls to reach the rest. Nothing is hidden; the page
+        just becomes taller than the screen, which is the correct outcome. The alternative,
+        turning the parent's `h-` into a `min-h-`, produces the opposite bug: the container
+        grows to fit the siblings and this child, whose minimum is zero, gets nothing.
+      */}
+      <Card className="min-h-[9rem] flex-1 overflow-hidden p-0">
         <div ref={scrollRef} className="h-full space-y-4 overflow-y-auto p-6">
           {history.map((t, i) => {
             const mine = t.speaker === YOU;
@@ -958,7 +990,7 @@ export default function GDPage() {
                   mine ? 'bg-primary text-primary-foreground' : panelTone(t.speaker, panel ?? []))}>
                   {t.speaker[0]}
                 </div>
-                <div className={cn('max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-shadow',
+                <div className={cn('min-w-0 max-w-[80%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-shadow',
                   mine ? 'bg-primary/10 text-foreground' : 'bg-surface-elevated',
                   // Ring the line currently being read aloud, so the text and the
                   // voice are visibly the same contribution.
@@ -991,8 +1023,14 @@ export default function GDPage() {
                 emptyLabel="Tap the mic and speak your point…"
               />
             </div>
-            <div className="mt-2.5 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+            {/* Wraps, because it does not fit. Mic + "Add point" + the 260px slide is about
+                450px of controls, and a 320px phone gives this card 256px of content box —
+                so unwrapped, the slide that ENDS THE ROUND was pushed off the right edge
+                with no horizontal scroll on the card to reach it. `justify-between` is kept
+                for the desktop row and `ml-auto` on the slide preserves the same alignment
+                once it wraps onto its own line. */}
+            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {stt.supported && (
                   <Button variant={stt.listening ? 'destructive' : 'secondary'} size="sm" onClick={toggleMic} disabled={panelTurn.isPending}>
                     {stt.listening ? <><MicOff className="h-4 w-4" /> Stop</> : <><Mic className="h-4 w-4" /> Speak</>}
@@ -1013,7 +1051,8 @@ export default function GDPage() {
                 confirmedLabel="Scoring your round…"
                 disabled={myContributions === 0}
                 onConfirm={endDiscussion}
-                className="max-w-[260px]"
+                // Full width on its own wrapped line, capped at the designed 260px from sm up.
+                className="ml-auto w-full min-w-0 sm:max-w-[260px]"
               />
             </div>
           </>

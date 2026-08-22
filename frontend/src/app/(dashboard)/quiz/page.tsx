@@ -181,9 +181,11 @@ function Quiz() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="space-y-6 p-8">
+          <Card className="space-y-6 p-5 sm:p-8">
             {/* Mode toggle */}
-            <div className="grid grid-cols-2 gap-2 rounded-xl border border-border p-1">
+            {/* Stacked below sm. Two 104px columns cannot hold "Instant practice" and
+                "AI-generated" at text-sm without breaking mid-word. */}
+            <div className="grid grid-cols-1 gap-2 rounded-xl border border-border p-1 sm:grid-cols-2">
               <button
                 onClick={() => setMode('instant')}
                 className={cn(
@@ -389,7 +391,19 @@ function Quiz() {
     return (
       <div className="mx-auto max-w-3xl space-y-6 pb-24">
         {/* Sticky timer bar */}
-        <div className="sticky top-0 z-10 -mx-6 flex items-center justify-between border-b border-border/60 bg-background/80 px-6 py-3 backdrop-blur-md">
+        {/*
+          THE NEGATIVE MARGIN HAS TO MATCH THE SHELL'S PADDING, and `-mx-6` matched neither
+          of the two values it actually has.
+
+          (dashboard)/layout.tsx pads the content region `px-4 sm:px-8`. This bar bleeds to
+          the edges by cancelling that padding, so below sm it was pulling 24px against 16px
+          of padding — 8px past the viewport edge on each side. That is 16px of content wider
+          than the screen, which is a horizontal scrollbar on the whole page, on the one
+          screen in the product where the candidate is against a clock.
+
+          Mirrored per breakpoint instead, so the bleed is exact at both.
+        */}
+        <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-background/80 px-4 py-3 backdrop-blur-md sm:-mx-8 sm:px-8">
           <span className="text-sm font-medium text-muted-foreground">
             {answeredCount}/{questions.length} answered
           </span>
@@ -432,7 +446,11 @@ function Quiz() {
                     >
                       {String.fromCharCode(65 + oi)}
                     </span>
-                    {opt}
+                    {/* Wrapped and `min-w-0`: a bare text node is an anonymous flex item that
+                        cannot be told to break, and quiz options are full of unbreakable
+                        tokens — `HashMap<String,List<Integer>>`, `ConcurrentModificationException`
+                        — which pushed the button past the card edge. */}
+                    <span className="min-w-0 break-words">{opt}</span>
                   </button>
                 );
               })}
@@ -440,8 +458,8 @@ function Quiz() {
           </Card>
         ))}
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 text-xs text-muted-foreground">
             {answeredCount < questions.length
               ? `${questions.length - answeredCount} unanswered — unanswered questions are marked wrong.`
               : 'All questions answered.'}
@@ -502,7 +520,7 @@ function Quiz() {
                       )}
                     >
                       <span className="font-mono text-[11px] text-muted-foreground">{String.fromCharCode(65 + oi)}</span>
-                      <span className="flex-1">{opt}</span>
+                      <span className="min-w-0 flex-1 break-words">{opt}</span>
                       {isCorrect && <span className="text-[11px] font-semibold text-accent-emerald-ink">Correct</span>}
                       {isSelected && !isCorrect && <span className="text-[11px] font-semibold text-accent-coral-ink">Your answer</span>}
                     </div>

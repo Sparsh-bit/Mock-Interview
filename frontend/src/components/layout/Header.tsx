@@ -1,9 +1,9 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { HelpCircle, LogOut, Menu } from 'lucide-react';
-import { MobileNav } from '@/components/layout/MobileNav';
+import { MOBILE_NAV_ID, MobileNav } from '@/components/layout/MobileNav';
 import { ADMIN_NAV_ITEMS, NAV_ITEMS, useIsAdmin } from '@/components/layout/Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
@@ -41,6 +41,24 @@ export function AppHeader({ user }: HeaderProps) {
   // Held so focus can return here when the drawer closes, rather than to the top of the page.
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
 
+  /*
+   * STABLE IDENTITY, and that is the entire point of the useCallback.
+   *
+   * MobileNav's focus effect lists `onClose` in its dependencies — it has to, since it calls
+   * it from the Escape handler. Passed as an inline `() => setNavOpen(false)` this prop was a
+   * new function on every render of this header, so the effect tore down and re-ran on every
+   * render while the drawer was open. Its cleanup FOCUSES THE HAMBURGER and its body focuses
+   * the panel, so each of those re-runs yanked focus out of the drawer and back to the top of
+   * it — and this header re-renders on things the user did not do: `useIsAdmin` reads the
+   * billing balance through react-query, which revalidates on window focus.
+   *
+   * The visible failure was a keyboard or screen-reader user tabbing down to "Reports" and
+   * being silently returned to the top of the drawer mid-navigation. Same cycle also saved
+   * and restored `document.body.style.overflow` on every render, which is how a scroll lock
+   * ends up stuck.
+   */
+  const closeNav = useCallback(() => setNavOpen(false), []);
+
   // The SAME list the desktop rail renders — imported, not copied, because two navs drift and
   // the one that drifts is always the one you look at less. Admin appended on the same
   // condition the rail uses.
@@ -70,6 +88,12 @@ export function AppHeader({ user }: HeaderProps) {
           onClick={() => setNavOpen(true)}
           aria-label="Open navigation"
           aria-expanded={navOpen}
+          // Names the thing it opens. `aria-expanded` on its own says "something is expanded"
+          // without saying what, so a screen reader cannot tell the user where they have just
+          // been taken. The id is imported from MobileNav rather than typed here, because an
+          // aria-controls pointing at an id that does not exist is worse than none at all and
+          // nothing in the build would ever catch the typo.
+          aria-controls={MOBILE_NAV_ID}
           // Hidden at lg and up, where the rail is visible instead. 44px square, because a
           // thumb is not a cursor.
           className="-ml-2 flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground lg:hidden"
@@ -81,7 +105,7 @@ export function AppHeader({ user }: HeaderProps) {
 
       <MobileNav
         open={navOpen}
-        onClose={() => setNavOpen(false)}
+        onClose={closeNav}
         triggerRef={menuButtonRef}
         groups={navGroups}
       />

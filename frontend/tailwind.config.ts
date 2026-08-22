@@ -17,6 +17,53 @@ const config: Config = {
       },
     },
     extend: {
+      /*
+       * ── A breakpoint on HEIGHT, not width ────────────────────────────────
+       *
+       * WHY THIS EXISTS. Every other breakpoint in this file is about width, and width is not
+       * what broke the live interview. The interview workspace pins itself to the viewport —
+       * `h-[100dvh] overflow-hidden` with each pane scrolling inside — so that the microphone
+       * and Submit do not move under the candidate's thumb as the panel talks. That model has
+       * a floor it cannot compress below, and the floor is REAL PIXELS:
+       *
+       *     h-16 header                                    64
+       *     mobile pane switcher (p-2 + min-h-10 + border)  57
+       *     grid padding (p-3, top and bottom)              24
+       *     pane padding (p-4, top and bottom)              32
+       *     phase badges row + its mb-4                      38
+       *     the pinned question (line-clamp-3 + py-3)        87
+       *     the answer channel: pt-4 + py-4 + 80px mic
+       *       + prompt + hands-free pill + the 96px
+       *       transcript floor + the button row            390
+       *     ------------------------------------------------------
+       *                                                    692  with the panel thread at ZERO
+       *
+       * Under 692 CSS px of viewport height the button row is simply outside the root box, and
+       * because the root is `overflow-hidden` there is no scrollbar and no gesture anywhere on
+       * the page that reaches it. The candidate cannot submit their answer. Not a hypothetical:
+       * BROWSER ZOOM IS EXACTLY THIS. Zoom does not shrink CSS pixels, it shrinks how many of
+       * them the window holds, so a 900px-tall window is a 450px viewport at 200% and a 225px
+       * one at 400% — and WCAG 1.4.4 requires the page to still work at 200%. A landscape phone
+       * (844x390) is under the floor before any zoom at all.
+       *
+       * 700px is the measured floor rounded up to the next hundred. Above it, nothing changes
+       * anywhere in the app — this is a `raw` media query, so it emits no CSS unless a
+       * `short:` variant is actually used, and today only the interview workspace uses it, to
+       * hand back the ordinary page scroll: `short:h-auto short:min-h-[100dvh]
+       * short:overflow-visible` on the root, and `short:overflow-visible` on each pane that
+       * would otherwise still be clipping inside a page that now scrolls.
+       *
+       * It is deliberately a height-only query with no width term, because the failure has
+       * nothing to do with width: a 3440px-wide ultrawide window dragged to 400px tall loses
+       * the Submit button exactly the same way a phone in landscape does.
+       *
+       * Tailwind orders extended screens after the built-in ones, so `short:` wins against a
+       * `lg:` rule on the same property. That is the intent — a short viewport needs the
+       * escape hatch whatever its width.
+       */
+      screens: {
+        short: { raw: '(max-height: 700px)' },
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

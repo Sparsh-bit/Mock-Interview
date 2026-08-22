@@ -7,8 +7,8 @@ import { Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, L
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ShareMenu } from '@/components/report/ShareMenu';
-import { DriveReportPaywall } from '@/components/billing/DriveReportPaywall';
-import { readReportLock } from '@/lib/billing/drive-report';
+import { ReportUnlockPaywall } from '@/components/billing/ReportUnlockPaywall';
+import { readReportLock } from '@/lib/billing/report-unlock';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
@@ -219,7 +219,7 @@ export default function ReportDetailPage() {
         {/* No ShareMenu and no Detailed Analysis link: neither is something to offer for a
             report the candidate has not seen yet, and a share link to a locked report is a
             link to a paywall with somebody else's name on it. */}
-        <DriveReportPaywall lock={lock} onUnlocked={() => void refetch()} />
+        <ReportUnlockPaywall lock={lock} onUnlocked={() => void refetch()} />
       </div>
     );
   }

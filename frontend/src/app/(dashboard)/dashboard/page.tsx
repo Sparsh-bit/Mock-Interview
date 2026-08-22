@@ -168,24 +168,31 @@ export default function DashboardPage() {
                   <FocusItem
                     key={sess.id}
                     id={sess.id}
-                    className="flex items-center justify-between rounded-xl border border-border/50 bg-surface/50 p-4 hover:bg-surface"
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-border/50 bg-surface/50 p-4 hover:bg-surface"
                   >
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold">{sess.company_name} — {sess.track_name}</span>
+                    {/* `min-w-0` on the block AND `break-words` on the label, together.
+                        "Cognizant Technology Solutions — Digital Nurture Java FSE" plus a
+                        status pill plus a score plus an icon is well over the 216px this
+                        card gets on a 320px phone; without the pair the label pushed the
+                        score and the report link off the right edge. */}
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="min-w-0 break-words text-xs font-semibold">{sess.company_name} — {sess.track_name}</span>
                         <Badge variant={sess.status === 'completed' ? 'success' : 'warning'}>{sess.status}</Badge>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
                         {sess.questions_asked} questions asked • {sess.started_at ? new Date(sess.started_at).toLocaleDateString() : 'Recent'}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex shrink-0 items-center gap-3">
                       {sess.overall_score !== null && (
                         <span className="text-sm font-bold text-primary">{sess.overall_score}/100</span>
                       )}
                       <Link
                         href={sess.status === 'completed' ? `/report/${sess.id}` : `/session/${sess.id}`}
-                        className="p-2 text-muted-foreground transition-colors hover:text-foreground"
+                        // 44px square on a phone. `p-2` around a 16px icon is 32px, which
+                        // is under the tap-target floor for the only way into the report.
+                        className="flex h-11 w-11 items-center justify-center text-muted-foreground transition-colors hover:text-foreground sm:h-9 sm:w-9"
                         title={sess.status === 'completed' ? 'View Report' : 'Resume Session'}
                       >
                         {sess.status === 'completed' ? <FileText className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -220,8 +227,10 @@ export default function DashboardPage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold">{track.company.name}</p>
-                        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{track.name}</p>
+                        {/* `break-words`, not `truncate` — the track name is the whole
+                            content of this link and half of it was being cut off. */}
+                        <p className="break-words text-xs font-semibold">{track.company.name}</p>
+                        <p className="mt-0.5 break-words text-[10px] text-muted-foreground">{track.name}</p>
                       </div>
                       <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-accent-emerald-ink" />
                     </div>
