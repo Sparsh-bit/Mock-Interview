@@ -57,7 +57,14 @@ FEATURE_LABELS: dict[str, str] = {
     "cross_question": "Live follow-up probing the last answer",
     "report_generation": "Final report — scores, topics, roadmap",
     "model_answer": "Detailed analysis: the answer they should have given",
-    "resume_analysis": "Resume parsing and structuring",
+    # TWO CALLS, NOT ONE, and the ledger names them separately because they are separately
+    # billed and separately capable of failing. Resume parsing was one call that had to return
+    # skills AND projects AND experience in a single structured response; splitting it in two
+    # means a model that fumbles the projects half no longer costs the candidate their skills,
+    # and the two halves run concurrently so the upload is faster. See services/resume/
+    # analyser.py and the two prompts/resume_analyzer_*.md templates.
+    "resume_analysis_skills": "Resume parsing — skills and experience",
+    "resume_analysis_projects": "Resume parsing — projects",
     "quiz_generation": "Practice quiz questions",
     "code_analysis": "Coding round evaluation",
     "communication_evaluation": "Communication round scoring",

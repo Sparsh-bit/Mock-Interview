@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from functools import lru_cache
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -29,24 +31,22 @@ from app.events import (
     get_event_emitter,
 )
 from app.events.emitter import EventEmitter
-from app.services.ai.schemas import ResumeAnalysisResponse
 from app.services.resume import (
     ResumeExtractionError,
     extract_text,
     looks_like_a_resume,
 )
-from app.services.resume.analyser import analyse_resume
+from app.services.resume.analyser import ResumeAnalysisOutcome, analyse_resume
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-#: Wall-clock ceiling on resume analysis at upload time.
-#:
-#: Sized to sit well inside a managed host's ~100s gateway cut even from a cold
-#: start, because a gateway 502 carries no CORS headers and reaches the browser as
-#: an opaque CORS error rather than a timeout. Exceeding it is not a failure: the
-#: extracted text is stored regardless, so the interview is still personalised.
-_RESUME_ANALYSIS_BUDGET_SECONDS = 45.0
+#: The wall-clock ceiling on resume analysis lives in
+#: settings.RESUME_ANALYSIS_BUDGET_SECONDS and is applied inside `analyse_resume`,
+#: which is the function that fans the work out and therefore the only place that
+#: can keep the half that finished when the other one does not. It used to be a
+#: hardcoded 45.0 here wrapped around a single `asyncio.wait_for`, which had no way
+#: to salvage anything — read the header of services/resume/analyser.py.
 
 #: Rate limit on upload. Each one reads a file AND runs a billed AI analysis, so
 #: an unthrottled upload endpoint is both a spend and a CPU amplifier: a loop of
@@ -65,13 +65,30 @@ ALLOWED_MIME_TYPES = {
 }
 
 
+@lru_cache(maxsize=1)
+def _storage_client() -> Any:
+    """
+    The process-wide Supabase client, built once.
+
+    `create_client` was being called per request, on both the upload and the delete
+    path. Each call builds a fresh set of HTTP clients, so every resume upload paid
+    a new TLS handshake to Supabase before it could send a byte — the same
+    connection-pool-per-request leak the AI provider factory has a long comment
+    about avoiding. The underlying client is httpx-based and thread-safe, which
+    matters because the calls below run in a worker thread.
+    """
+    from supabase import create_client  # noqa: PLC0415
+
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+
+
 class ResumeResponse(BaseModel):
     id: uuid.UUID
     filename: str
     file_size_bytes: int
     mime_type: str
     is_primary: bool
-    #: "completed" | "text_only" | "failed" | "pending"
+    #: "completed" | "partial" | "text_only" | "failed" | "pending"
     parsing_status: str
     parsed_skills: list[str] | None
     created_at: datetime
@@ -128,7 +145,7 @@ async def upload_resume(
     The newest upload becomes the candidate's active (primary) resume, so
     replacing a resume is simply uploading another one.
 
-    Three outcomes, all honest about what actually happened:
+    Four outcomes, all honest about what actually happened:
 
       422              the file's text could not be read (a scan, an encrypted
                        PDF, a corrupt export). Nothing is stored, and the message
@@ -136,7 +153,14 @@ async def upload_resume(
                        resume would leave them believing interviews use it.
       "text_only"      text extracted and stored, but AI analysis failed. The
                        interview is still personalised from the raw text.
-      "completed"      text plus the structured skills/projects/focus analysis
+      "partial"        one half of the analysis landed and the other did not —
+                       skills without projects, or the reverse. A REAL state, not a
+                       tidy-up: the analysis is requested as two concurrent halves
+                       and either can fail on its own. Reporting it as "completed"
+                       is exactly the bug that was reported ("skills and projects
+                       are not been able to fetch") — the upload said "Read and
+                       analysed" over an empty analysis.
+      "completed"      text plus the full structured skills/projects/focus analysis
                        that drives question selection.
     """
 
@@ -165,8 +189,15 @@ async def upload_resume(
     # personalising an interview, so storing it and reporting success would
     # recreate the original bug in a new form: the candidate believes their resume
     # is in use while the interviewer never sees a word of it.
+    #
+    # IN A WORKER THREAD, because PyPDF2 and python-docx are pure CPU and pure
+    # blocking. A 10 MB PDF with a pathological text layer holds the event loop for
+    # seconds, and while it does, every other request this worker is serving —
+    # interview turns, quiz starts, report polls — is frozen behind it. One upload
+    # is not allowed to be everyone else's latency.
     try:
-        resume_text = extract_text(
+        resume_text = await asyncio.to_thread(
+            extract_text,
             file_bytes,
             file.content_type or "",
             filename=file.filename or "",
@@ -190,52 +221,44 @@ async def upload_resume(
             chars=len(resume_text),
         )
 
-    # ── Analyse it (non-fatal) ──────────────────────────────────────────────
+    # ── Store the file and analyse it, AT THE SAME TIME ─────────────────────
     #
-    # Time-capped for the same reason report generation is: managed hosts cut the
-    # request at their gateway and the resulting 502 carries no CORS headers,
-    # surfacing in the browser as an opaque CORS error rather than a timeout.
+    # These two have nothing to say to each other: the storage write needs the
+    # bytes, the analysis needs the text, and neither reads the other's result. They
+    # were nonetheless strictly sequential, with the file upload waiting behind an
+    # AI call that measured 118-214 seconds — so the candidate paid for both ends of
+    # a request that only ever needed the longer one. Overlapping them is most of
+    # the answer to "make sure that the resume uploading also works faster".
     #
-    # Failure here is NOT fatal. The extracted text is stored either way, and the
-    # interviewer can read it directly — a personalised interview does not depend
-    # on the structured analysis existing.
-    analysis: ResumeAnalysisResponse | None = None
-    parsing_error: str | None = None
-    try:
-        analysis = await asyncio.wait_for(
-            analyse_resume(resume_text),
-            timeout=_RESUME_ANALYSIS_BUDGET_SECONDS,
-        )
-    except Exception as exc:
-        # Deliberately broad, and deliberately not fatal: a timeout, a provider
-        # outage, or a malformed response must all leave the candidate with a
-        # usable resume rather than a rejected upload.
-        parsing_error = (
-            "Your resume was read successfully, but the detailed skill analysis "
-            "could not be completed. Interviews will still be based on your "
-            "resume text."
-        )
-        logger.warning(
-            "resume_analysis_failed_text_still_stored",
-            user_id=str(current_user.user_id),
-            error=type(exc).__name__,
-        )
-
-    # Upload to Supabase Storage
-    from supabase import create_client  # noqa: PLC0415
-
+    # The storage write goes through `asyncio.to_thread` because supabase-py's
+    # client is SYNCHRONOUS. Called directly from this coroutine it blocked the
+    # whole event loop for the duration of a multi-megabyte HTTP PUT — not just this
+    # request, every request this worker had in flight.
     file_id = uuid.uuid4()
-    supabase = create_client(
-        settings.SUPABASE_URL,
-        settings.SUPABASE_SERVICE_KEY,
-    )
-
     storage_path = f"resumes/{current_user.user_id}/{file_id}/{file.filename}"
-    supabase.storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES).upload(
-        storage_path,
-        file_bytes,
-        {"content-type": file.content_type or "application/pdf"},
-    )
+
+    def _store_file() -> None:
+        _storage_client().storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES).upload(
+            storage_path,
+            file_bytes,
+            {"content-type": file.content_type or "application/pdf"},
+        )
+
+    storage_task = asyncio.create_task(asyncio.to_thread(_store_file))
+
+    # Analysis failure is NOT fatal and never raises: `analyse_resume` bounds itself
+    # with settings.RESUME_ANALYSIS_BUDGET_SECONDS and isolates its two halves, so
+    # the worst case here is an outcome with nothing in it. The extracted text is
+    # stored regardless and the interviewer can read it directly — a personalised
+    # interview does not depend on the structured analysis existing.
+    outcome: ResumeAnalysisOutcome = await analyse_resume(resume_text)
+    analysis = outcome.analysis
+    parsing_error = outcome.candidate_message()
+
+    # Awaited AFTER the analysis, so its duration is hidden inside it in the normal
+    # case. A storage failure is still fatal to the upload: a row pointing at a file
+    # that was never written is worse than a failed upload the candidate can retry.
+    await storage_task
 
     # ── The new resume becomes the active one ───────────────────────────────
     #
@@ -260,10 +283,15 @@ async def upload_resume(
         is_primary=True,
         parsed_text=resume_text,
         parsing_error=parsing_error,
-        # "completed" only when the structured analysis actually succeeded.
-        # "text_only" is the honest middle state: readable, usable for interviews,
-        # but without the skill/project breakdown.
-        parsing_status="completed" if analysis else "text_only",
+        # THREE STATES, BECAUSE THERE ARE THREE THINGS THAT HAPPEN. "completed"
+        # requires BOTH halves — it used to require only that `analysis` was
+        # non-None, and since every field of ResumeAnalysisResponse has a default,
+        # an empty analysis satisfied that and the candidate was told their resume
+        # was fully analysed when nothing had been extracted from it. "partial" is
+        # the half-and-half case, "text_only" is readable-but-unanalysed.
+        parsing_status=(
+            "completed" if outcome.complete else "partial" if analysis else "text_only"
+        ),
         parsed_skills=[s.name for s in analysis.skills] if analysis else None,
         parsed_projects=(
             [p.model_dump(mode="json") for p in analysis.projects] if analysis else None
@@ -294,6 +322,9 @@ async def upload_resume(
         user_id=str(current_user.user_id),
         filename=file.filename,
         size_bytes=file_size,
+        parsing_status=resume.parsing_status,
+        skills=len(resume.parsed_skills or []),
+        projects=len(resume.parsed_projects or []),
     )
 
     return _resume_response(resume)
@@ -378,8 +409,6 @@ async def delete_resume(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
-    from supabase import create_client  # noqa: PLC0415
-
     from app.models.report import ResumeFile  # noqa: PLC0415
 
     result = await db.execute(
@@ -392,15 +421,18 @@ async def delete_resume(
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    # Delete from Supabase Storage
-    supabase = create_client(
-        settings.SUPABASE_URL,
-        settings.SUPABASE_SERVICE_KEY,
-    )
+    # Delete from Supabase Storage — in a thread, because supabase-py is synchronous
+    # and a blocking network call in a coroutine stalls every other request on this
+    # worker, not just this one.
+    storage_path = resume.storage_path
     try:
-        supabase.storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES).remove([resume.storage_path])
+        await asyncio.to_thread(
+            lambda: _storage_client()
+            .storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES)
+            .remove([storage_path])
+        )
     except Exception:
-        logger.exception("supabase_storage_delete_failed", path=resume.storage_path)
+        logger.exception("supabase_storage_delete_failed", path=storage_path)
 
     await db.delete(resume)
 

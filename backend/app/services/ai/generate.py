@@ -118,11 +118,22 @@ async def generate_structured(
             try:
                 parsed = _parser.parse(resp.content, schema)
             except AIValidationError:
+                # THE FINISH REASON IS THE DIAGNOSIS, so log it here and not only in
+                # the provider. `finish_reason="length"` means the answer was cut off
+                # by this call site's max_tokens — a retry will hit the same ceiling in
+                # the same place, so the fix is the ceiling, not the retry. Resume
+                # analysis burned four billed calls per upload that way for months: the
+                # providers each logged a truncation warning, but neither said which
+                # FEATURE it belonged to, so nothing connected the warning to uploads
+                # coming back with no skills.
                 logger.warning(
                     "ai_generate_validation_failed",
                     context=context,
                     provider=provider.provider_name,
                     attempt=attempt,
+                    finish_reason=resp.finish_reason,
+                    completion_tokens=resp.completion_tokens,
+                    max_tokens=max_tokens,
                 )
                 # TEMPORARY (token counter). This call was billed in full and its
                 # output is unusable. Recording it is the whole point: a feature

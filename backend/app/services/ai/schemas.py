@@ -311,7 +311,21 @@ class CodingEvaluation(BaseModel):
 
 
 class ResumeSkill(BaseModel):
-    """One skill claimed on the resume, with how strongly it was claimed."""
+    """
+    One skill claimed on the resume, with how strongly it was claimed.
+
+    `name` and `confidence` are the only fields the analyser prompt still ASKS
+    for. The three below it are kept because old stored analyses contain them and
+    must keep validating, but nothing in the application reads them — grep
+    `proficiency_level` and the only hits are this file and a prompt that no
+    longer exists. They were ~25 of the ~40 output tokens each skill cost, on the
+    call whose output overran its token ceiling on every single attempt and left
+    candidates with no skills at all. Requesting a field nothing reads is not free:
+    it is paid for in the candidate's waiting time.
+
+    So: do not add them back to resume_analyzer_skills.md. If one is ever genuinely
+    needed, add the reader first.
+    """
 
     name: str
     domain: str = ""
@@ -331,6 +345,8 @@ class ResumeProject(BaseModel):
     technologies: list[str] = Field(default_factory=list)
     role: str = ""
     scale_indicators: list[str] = Field(default_factory=list)
+    #: Not requested from the model any more, and not read anywhere — see the note
+    #: on ResumeSkill. Retained so analyses stored before that change still validate.
     relevance_to_track: Literal["high", "medium", "low"] = "medium"
 
 
@@ -360,15 +376,58 @@ class ResumeInterviewFocus(BaseModel):
 
 
 class ResumeQuality(BaseModel):
-    """Feedback on the resume itself, shown to the candidate."""
+    """
+    Feedback on the resume itself.
+
+    NOT REQUESTED AND NOT STORED. There is no column for it on ResumeFile, so it
+    was generated, billed and dropped on the floor — about 120 output tokens per
+    upload of prose nobody has ever seen, on the one call that could not afford
+    them. It stays in the schema so a stored analysis that has it still validates.
+    Wiring it up means adding a column and a reader first, then asking for it.
+    """
 
     completeness_score: float = Field(ge=0.0, le=10.0, default=5.0)
     technical_depth_score: float = Field(ge=0.0, le=10.0, default=5.0)
     concerns: list[str] = Field(default_factory=list)
 
 
+class ResumeSkillsHalf(BaseModel):
+    """
+    What app/prompts/resume_analyzer_skills.md returns.
+
+    The analysis is requested as two concurrent halves rather than one object —
+    see services/resume/analyser.py for the measurements that forced that. Each
+    half gets its OWN model on purpose: every field of ResumeAnalysisResponse has
+    a default, so a half validated against the combined model would happily accept
+    the other half's answer (or an empty object) as a success. Validating the
+    narrow shape means a misdirected response comes back with an empty `skills`
+    list, which the call site's `is_valid` then rejects and retries.
+    """
+
+    skills: list[ResumeSkill] = Field(default_factory=list)
+    experience: ResumeExperience = Field(default_factory=ResumeExperience)
+
+
+class ResumeProjectsHalf(BaseModel):
+    """What app/prompts/resume_analyzer_projects.md returns. See ResumeSkillsHalf."""
+
+    projects: list[ResumeProject] = Field(default_factory=list)
+    interview_focus: ResumeInterviewFocus = Field(default_factory=ResumeInterviewFocus)
+
+
 class ResumeAnalysisResponse(BaseModel):
-    """Matches the output of app/prompts/resume_analyzer.md."""
+    """
+    The merged resume analysis: ResumeSkillsHalf + ResumeProjectsHalf.
+
+    EVERY FIELD HAS A DEFAULT, which is load-bearing in one direction and a trap in
+    the other. It is what lets a half-successful analysis still be stored and used
+    (one provider failure must not cost a candidate the half that worked, and
+    api/v1/interview.py rebuilds this from stored columns that were never complete).
+    It also means this model can NEVER reject an AI response — `{}` validates —
+    so it must not be used as the schema of a live AI call without an `is_valid`
+    predicate. It was, for one call, and that is precisely why uploads reported
+    "Read and analysed" with zero skills and zero projects.
+    """
 
     skills: list[ResumeSkill] = Field(default_factory=list)
     projects: list[ResumeProject] = Field(default_factory=list)

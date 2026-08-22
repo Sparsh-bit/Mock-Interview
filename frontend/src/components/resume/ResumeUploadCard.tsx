@@ -51,6 +51,20 @@ function statusMeta(resume: StoredResume): {
       detail: 'Your interviews will ask about these projects and skills by name.',
     };
   }
+  if (resume.parsing_status === 'partial') {
+    // Half the analysis landed. Its own state rather than a shade of failure: the
+    // server asks for skills and for projects as two independent calls, so one
+    // arriving without the other is normal-and-usable, and the message says which
+    // half is missing.
+    return {
+      tone: 'text-accent-amber-ink',
+      icon: AlertTriangle,
+      label: 'Partly analysed',
+      detail:
+        resume.parsing_error ??
+        'Part of the analysis could not be built. Interviews will still use your resume.',
+    };
+  }
   if (resume.has_text) {
     return {
       tone: 'text-accent-amber-ink',
@@ -92,13 +106,20 @@ export function ResumeUploadCard() {
 
     upload.mutate(file, {
       onSuccess: (result) => {
+        const skills = result.parsed_skills?.length ?? 0;
         if (result.parsing_status === 'completed') {
-          const skills = result.parsed_skills?.length ?? 0;
           toast.success(
             `Resume analysed — ${skills} skill${skills === 1 ? '' : 's'} and ${result.project_count} project${
               result.project_count === 1 ? '' : 's'
             } found.`
           );
+        } else if (result.parsing_status === 'partial') {
+          // Say what actually landed. Announcing a bare "uploaded" here is how a
+          // resume with zero extracted skills used to read as a full success.
+          const found = skills > 0
+            ? `${skills} skill${skills === 1 ? '' : 's'} found`
+            : `${result.project_count} project${result.project_count === 1 ? '' : 's'} found`;
+          toast.success(`Resume uploaded — ${found}. Part of the analysis could not be built.`);
         } else {
           toast.success('Resume uploaded. Interviews will use it.');
         }

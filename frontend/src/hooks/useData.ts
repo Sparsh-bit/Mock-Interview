@@ -275,7 +275,10 @@ export interface StoredResume {
   file_size_bytes: number;
   mime_type: string;
   is_primary: boolean;
-  /** "completed" | "text_only" | "failed" | "pending" */
+  /** "completed" | "partial" | "text_only" | "failed" | "pending".
+   *  "partial" means one half of the analysis landed and the other did not — the
+   *  server requests skills and projects as two independent calls, so skills
+   *  without projects is a real outcome and is not reported as "completed". */
   parsing_status: string;
   parsed_skills: string[] | null;
   created_at: string;
@@ -308,8 +311,10 @@ export function useUploadResume() {
       const form = new FormData();
       form.append('file', file);
       // Generous timeout: the request extracts the text AND runs the AI analysis
-      // before responding, so it is bounded by the server's 45s analysis budget
-      // rather than by network latency.
+      // before responding, so it is bounded by the server's analysis budget
+      // (RESUME_ANALYSIS_BUDGET_SECONDS, 35s) plus the storage write and DB insert,
+      // rather than by network latency. Kept well above that: a client that gives up
+      // first turns a successful upload into an error the candidate cannot act on.
       const res = await api.post('/api/v1/resume/upload', form, { timeout: 120_000 });
       return res.data as StoredResume;
     },
