@@ -739,7 +739,32 @@ async def upload_offer_banner(
         # supabase-py is SYNCHRONOUS. Called inline it blocks the event loop for the whole
         # upload — not just this request, every request this worker has in flight. Same
         # reasoning as the resume upload.
-        _banner_storage().storage.from_(settings.SUPABASE_STORAGE_BUCKET_BANNERS).upload(
+        client = _banner_storage()
+
+        # ── THE BUCKET IS CREATED IF IT IS NOT THERE, AND THAT REMOVES A SETUP STEP ───────
+        #
+        # This feature otherwise needed two manual actions before it could work at all: run
+        # the migration, and go into Supabase to make a public bucket. A feature that silently
+        # does nothing until somebody remembers an undocumented second step is a feature that
+        # gets reported as broken — which is exactly what happened.
+        #
+        # PUBLIC, deliberately and unlike `resumes`. The banner is rendered by an <img> on
+        # every signed-in candidate's dashboard, so a private bucket would mean minting a
+        # signed URL per view: an extra round trip on a page load and a link that expires
+        # while the page is open. The content is a marketing image we are choosing to show
+        # everybody, so a public URL leaks nothing.
+        #
+        # Suppressed rather than checked-then-created: "already exists" is the overwhelmingly
+        # common outcome and it is not an error, and a check-then-create has a race between
+        # two admins uploading at once. If creation genuinely fails the upload below fails too,
+        # with the real reason, so nothing is hidden by this.
+        with contextlib.suppress(Exception):
+            client.storage.create_bucket(
+                settings.SUPABASE_STORAGE_BUCKET_BANNERS,
+                options={"public": True},
+            )
+
+        client.storage.from_(settings.SUPABASE_STORAGE_BUCKET_BANNERS).upload(
             storage_path, data, {"content-type": content_type}
         )
 

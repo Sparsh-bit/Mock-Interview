@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
 import structlog
@@ -98,8 +98,9 @@ def mark_request_served() -> None:
 #: sustain roughly 11 reports a minute per process, which is a busy drive; and four
 #: in-flight ~17k-token prompts is bounded memory. Raise it with replica count, not
 #: instead of it.
-_REPORT_CONCURRENCY = 4
-_report_slots = asyncio.Semaphore(_REPORT_CONCURRENCY)
+#: Read from settings so a drive that still queues can be widened without a deploy. See the
+#: note on REPORT_CONCURRENCY for the arithmetic that set the default.
+_report_slots = asyncio.Semaphore(settings.REPORT_CONCURRENCY)
 
 
 def report_ai_budget_seconds() -> float:
@@ -287,8 +288,53 @@ def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     raw = raw_report or {}
     if raw.get("generated_by") != _UNSCORED:
         return False, 0
-    attempts = raw.get("unscored_attempts", 0)
-    attempts = attempts if isinstance(attempts, int) and attempts >= 0 else 0
+    # SANITISED FIRST. `raw_report` is JSONB and can hold anything a past version wrote — a
+    # string "3", a float, a list, NaN. The cooldown check below compares it to an int, so
+    # coercing after that check would turn hostile stored data into a TypeError and a 500 on
+    # the report page. Treating anything unusable as a first attempt is the safe reading, and
+    # the cap still applies from there.
+    #
+    # `bool` is excluded explicitly because it is a subclass of int in Python, so True would
+    # otherwise read as "one attempt".
+    raw_attempts = raw.get("unscored_attempts", 0)
+    attempts = (
+        raw_attempts
+        if isinstance(raw_attempts, int)
+        and not isinstance(raw_attempts, bool)
+        and raw_attempts >= 0
+        else 0
+    )
+
+    # ── THE CAP RESETS, RATHER THAN CONDEMNING THE SESSION ────────────────────────────────
+    #
+    # This used to return `attempts < _MAX_UNSCORED_ATTEMPTS` and nothing else, which made
+    # three failures permanent: the endpoint then served the placeholder from the database
+    # forever with no model call, so "Generate again" did nothing and the report sat at 0/100
+    # for good. An unscored report is also deliberately never paywalled, so the unlock could
+    # never appear either — one transient failure took away both the report and the sale.
+    #
+    # A reload storm is the expensive case and it happens in SECONDS, so a cooldown stops it
+    # just as well as a lifetime cap does. Past the cooldown the attempt counter is treated as
+    # spent rather than binding, which lets a session recover once whatever broke has passed —
+    # and recovers every already-affected candidate without anybody going to find them.
+    if attempts >= _MAX_UNSCORED_ATTEMPTS:
+        cooldown = settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES
+        last_at = raw.get("unscored_last_at")
+        if cooldown <= 0 or not last_at:
+            # No cooldown configured, or a placeholder written before this field existed and
+            # therefore un-ageable. The old behaviour: exhausted stays exhausted.
+            return False, attempts
+        try:
+            last = datetime.fromisoformat(str(last_at))
+        except ValueError:
+            return False, attempts
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        if datetime.now(UTC) - last >= timedelta(minutes=cooldown):
+            # Fresh set of attempts. Returning 0 rather than the old count is what makes this
+            # a reset instead of a single grudging extra try.
+            return True, 0
+        return False, attempts
     return attempts < _MAX_UNSCORED_ATTEMPTS, attempts
 
 
@@ -830,7 +876,24 @@ async def generate_report(
         # the honest unscored placeholder with a retry, which is a far better answer than a
         # dead two-minute wait, and it is the behaviour every other branch here already has.
         async def _generate_within_budget():
+            # TIMED SEPARATELY, BECAUSE "took too long" WAS NOT ACTIONABLE.
+            #
+            # Queueing and generating fail identically from the outside — the candidate sees
+            # one message either way — but they are different problems: queueing means too few
+            # slots for the number of people finishing at once, and generating means the
+            # interview was long or the provider was slow. One is fixed by raising
+            # REPORT_CONCURRENCY, the other is not fixed by that at all. Without this number in
+            # the log the only way to tell them apart is to guess.
+            _queue_started = perf_counter()
             async with _report_slots:
+                queue_waited = perf_counter() - _queue_started
+                if queue_waited > 1.0:
+                    logger.info(
+                        "report_queue_wait_seconds",
+                        session_id=str(session_id),
+                        waited_s=round(queue_waited, 1),
+                        concurrency=settings.REPORT_CONCURRENCY,
+                    )
                 return await generate_structured(
                     ReportGeneratorResponse,
                     messages,
@@ -1016,6 +1079,10 @@ async def generate_report(
                 # Counts toward _MAX_UNSCORED_ATTEMPTS so repeated page views
                 # cannot keep paying for a model that is failing.
                 "unscored_attempts": unscored_attempts + 1,
+                # WHEN, not just how many. The cooldown in `should_regenerate` is measured
+                # from this; without it an exhausted report can never be aged and stays
+                # permanently pending, which is the bug that field exists to fix.
+                "unscored_last_at": datetime.now(UTC).isoformat(),
                 "topics_attempted": topics_attempted,
                 "delivery": delivery_block,
                 "previous": previous_block,

@@ -451,6 +451,52 @@ class Settings(BaseSettings):
     #: so the server always loses the race deliberately and returns a real error instead of
     #: having the connection cut from under it. Measured latency is 6-16s.
     MODEL_ANSWER_BUDGET_SECONDS: float = 45.0
+    #: How many reports may be generating at once, per process.
+    #:
+    #: RAISED FROM A HARDCODED 4, because 4 could not survive a drive and the arithmetic says
+    #: so plainly. A report is 24s for six answers and 31s for twelve, measured; a full
+    #: twenty-answer report was measured at 48s. The generation budget covers QUEUE TIME PLUS
+    #: GENERATION — deliberately, so a queued candidate gets an honest retry rather than a
+    #: request that hangs past the gateway — so every second spent waiting for a slot is a
+    #: second the model does not get.
+    #:
+    #: With four slots and ~35s a report, the fifth candidate waits ~35s, the ninth ~70s, and
+    #: the twentieth is far past any budget. A cohort finishing their interviews together is
+    #: exactly what a campus drive IS, so under the old value most of them got "Scoring took
+    #: too long" — having never reached the model at all.
+    #:
+    #: 12 costs nothing that matters. Each in-flight report holds a ~17k-token prompt, so
+    #: twelve is well under a megabyte of text; the database connection is released across the
+    #: model call, so there is no pool pressure; and twelve concurrent completions is
+    #: unremarkable for the provider. What it buys is a queue three times shorter: with ~35s a
+    #: report, twelve slots clear roughly twenty reports a minute per process.
+    #:
+    #: PER PROCESS, so the real ceiling is this times the replica count. Raise it if a drive
+    #: still queues, and watch `report_queue_wait_seconds` in the logs to know whether it is
+    #: queueing or generation that is slow — they are different problems with different fixes.
+    REPORT_CONCURRENCY: int = 12
+    #: Minutes before a report that used up its scoring retries may try again.
+    #:
+    #: THE RETRY CAP WAS A LIFETIME CAP, AND THAT IS WHY REPORTS STAYED "PENDING" FOREVER.
+    #: After three failed scoring attempts `should_regenerate` returned False and the endpoint
+    #: served the placeholder straight from the database with no model call — so "Generate
+    #: again" did nothing, the report was permanently 0/100, and because an unscored report is
+    #: deliberately never paywalled, the unlock could never appear either. Every interview that
+    #: hit the earlier timeouts burned its three attempts and was then dead.
+    #:
+    #: The cap itself is right and stays: repeated page views must not fund an open-ended bill
+    #: against a model that is failing. What was wrong was making it PERMANENT. A cap that
+    #: resets after a cooling-off period still stops a reload storm — the expensive case, which
+    #: happens in seconds — while letting a session recover once whatever broke has passed.
+    #:
+    #: 30 MINUTES, and the cost is bounded by arithmetic rather than by hope: a report is about
+    #: $0.13, so a single session sitting on the retry button costs at most three attempts per
+    #: half hour, and AI_DAILY_BUDGET_USD remains the backstop for everything. It also means
+    #: every already-affected candidate recovers on their own, with nobody having to go and find
+    #: them, which matters when a whole cohort was affected at once.
+    #:
+    #: Zero disables the cooldown and restores the old permanent cap. Do not.
+    REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES: float = 30.0
     #: Seconds resume analysis may spend on the AI before the upload is stored with whatever
     #: it managed to produce.
     #:

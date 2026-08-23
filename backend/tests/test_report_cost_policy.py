@@ -159,3 +159,108 @@ class TestHostileStoredData:
         )
         assert regenerate is True
         assert 0 <= attempts < _MAX_UNSCORED_ATTEMPTS
+
+
+class TestAnExhaustedReportRecoversInsteadOfDying:
+    """
+    THE ROOT CAUSE OF "REPORT PENDING" FOREVER.
+
+    `should_regenerate` used to return `attempts < _MAX_UNSCORED_ATTEMPTS` and nothing else, so
+    three failures were PERMANENT: the endpoint then served the placeholder straight from the
+    database with no model call. "Generate again" did nothing, the score sat at 0/100 for good,
+    and because an unscored report is deliberately never paywalled, the unlock could never
+    appear either — one transient failure took away both the report and the sale.
+
+    Every interview that hit the earlier report timeouts burned its three attempts and was then
+    dead. That is a whole cohort of reports that could not be produced by any action available
+    to the candidate or the operator.
+
+    The cap stays, because repeated page views must not fund an open-ended bill against a model
+    that is failing. What changed is that it AGES: a reload storm is the expensive case and it
+    happens in seconds, so a cooldown stops it just as effectively while letting a session
+    recover once whatever broke has passed.
+    """
+
+    def _exhausted(self, *, minutes_ago: float) -> dict:
+        from datetime import UTC, datetime, timedelta
+
+        return {
+            "generated_by": _UNSCORED,
+            "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
+            "unscored_last_at": (
+                datetime.now(UTC) - timedelta(minutes=minutes_ago)
+            ).isoformat(),
+        }
+
+    def test_it_still_refuses_a_reload_storm(self):
+        # Seconds after the third failure — somebody holding the retry button. This is the
+        # case the cap exists for and it must still be refused.
+        regenerate, attempts = should_regenerate(self._exhausted(minutes_ago=0))
+        assert regenerate is False
+        assert attempts == _MAX_UNSCORED_ATTEMPTS
+
+    def test_it_retries_once_the_cooldown_has_passed(self):
+        from app.core.config import settings
+
+        aged = settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES + 1
+        regenerate, attempts = should_regenerate(self._exhausted(minutes_ago=aged))
+        assert regenerate is True, "an exhausted report can never recover"
+        # RESET, not one grudging extra try: a fresh set of attempts, so a session that broke
+        # during an outage gets the same chance as one that never failed.
+        assert attempts == 0
+
+    def test_a_placeholder_with_no_timestamp_keeps_the_old_behaviour(self):
+        # Written before the field existed, so it cannot be aged. Refusing is the safe reading
+        # — the alternative is treating unknown age as "old enough", which would let a genuine
+        # reload storm through on legacy rows.
+        regenerate, _ = should_regenerate(
+            {"generated_by": _UNSCORED, "unscored_attempts": _MAX_UNSCORED_ATTEMPTS}
+        )
+        assert regenerate is False
+
+    def test_a_corrupt_timestamp_does_not_crash_the_report_page(self):
+        # raw_report is JSONB and can hold anything. A ValueError here would 500 the page.
+        for bad in ("not a date", "", 12345, [], {}):
+            regenerate, _ = should_regenerate(
+                {
+                    "generated_by": _UNSCORED,
+                    "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
+                    "unscored_last_at": bad,
+                }
+            )
+            assert regenerate is False
+
+    def test_a_real_scored_report_is_never_regenerated_however_old(self):
+        # The cooldown must not start re-billing finished reports — generation is called on
+        # every page view, so that would be a bill funded by ordinary reading.
+        from datetime import UTC, datetime, timedelta
+
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": "ai",
+                "unscored_attempts": 99,
+                "unscored_last_at": (datetime.now(UTC) - timedelta(days=30)).isoformat(),
+            }
+        )
+        assert regenerate is False
+
+    def test_the_attempt_time_is_actually_written(self):
+        # Without it nothing can be aged, and the cooldown silently never triggers — the
+        # permanent-pending bug, back with a setting that looks like it should have fixed it.
+        import pathlib
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[1] / "app/api/v1/reports.py"
+        ).read_text()
+        assert '"unscored_last_at": datetime.now(UTC).isoformat()' in src
+
+    def test_the_cooldown_can_be_switched_off(self):
+        from app.core.config import settings
+
+        original = settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES
+        try:
+            settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES = 0
+            regenerate, _ = should_regenerate(self._exhausted(minutes_ago=10_000))
+            assert regenerate is False, "zero must restore the permanent cap"
+        finally:
+            settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES = original

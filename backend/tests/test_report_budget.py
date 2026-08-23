@@ -109,7 +109,9 @@ class TestTheSemaphoreIsInsideTheTimeout:
         # Bounding the wait must not be done by removing the queue. Four in-flight ~17k-token
         # prompts is the memory ceiling, and unbounded concurrency trades a database outage for
         # a provider rate-limit storm.
-        assert reports._REPORT_CONCURRENCY >= 1
+        from app.core.config import settings
+
+        assert settings.REPORT_CONCURRENCY >= 1
         assert "_report_slots" in _generate_report_source()
 
 

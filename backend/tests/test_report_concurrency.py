@@ -85,13 +85,28 @@ class TestConcurrencyIsBounded:
         assert slots_at != -1, "the model call is not bounded by a semaphore"
         assert slots_at < call_at, "the semaphore must be acquired before the model call"
 
-    def test_the_limit_is_small_enough_to_bound_the_pool_and_the_spend(self):
-        from app.api.v1.reports import _REPORT_CONCURRENCY
+    def test_the_limit_is_bounded_but_big_enough_for_a_cohort(self):
+        """
+        The upper bound was 8, justified by memory and spend. Both reasons were re-checked and
+        neither holds at that number:
 
-        # Above ~8 the point is lost: each in-flight report holds a ~17k-token prompt and
-        # costs ~$0.13, so a large limit is a memory and budget problem. At 0 or 1 the
-        # endpoint serialises and a drive queues for minutes.
-        assert 2 <= _REPORT_CONCURRENCY <= 8
+          MEMORY — an in-flight report holds a ~17k-token prompt, so twelve is well under a
+          megabyte of text. That is not a limit worth defending.
+
+          SPEND — concurrency does not change how much is spent, only how fast. The same
+          reports are generated either way; what caps cost is AI_DAILY_BUDGET_USD, which is a
+          real ceiling rather than a side effect of a queue length.
+
+        What DOES bound it is the provider's rate limit: enough parallel completions and a 429
+        comes back, which surfaces to the candidate as an unscored report. So there is still a
+        ceiling — it is just much higher than 8, and the lower bound matters more. At 0 or 1
+        the endpoint serialises and a drive queues for minutes; the generation budget covers
+        queue time as well as generation, so a long queue means reports that never reach the
+        model at all.
+        """
+        from app.core.config import settings
+
+        assert 4 <= settings.REPORT_CONCURRENCY <= 24
 
     def test_waiting_for_a_slot_counts_against_the_time_budget(self):
         """
