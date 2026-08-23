@@ -19,7 +19,12 @@ from app.api.v1.reports import (
     _GENERATION_STRATEGY,
     _MAX_COMPLETION_ATTEMPTS,
     _MAX_UNSCORED_ATTEMPTS,
+    _REASON_PROVIDER,
+    _REASON_SERVICE_LIMIT,
+    _REASON_TIMEOUT,
+    _REASON_USER_QUOTA,
     _REPORT_TOKENS_MAX,
+    _TRANSIENT_REASONS,
     _UNSCORED,
     _stored_analyses,
     report_token_budget,
@@ -511,3 +516,56 @@ class TestStoredAnalysesAreReadBackSafely:
         # Costs one re-grade. Raising here would 500 the report page for a stored shape that
         # is our fault rather than the candidate's.
         assert _stored_analyses(raw) == []
+
+
+class TestABudgetRefusalDoesNotCondemnTheReport:
+    """
+    FROM A PRODUCTION LOG: `ai_daily_budget_exceeded`, spent_usd 2.0029 against budget_usd
+    2.00. Anthropic refused instantly, the GLM fallback was rate-limited, and the report
+    rewrote itself as 0/100 — while each open burned one of its three retry attempts.
+
+    The daily cap resets at midnight UTC. So the attempts were being spent on a condition that
+    would not be true a few hours later, and once spent the report was stuck behind the cap and
+    the cooldown even after the budget came back.
+
+    Uncounted is safe here precisely BECAUSE the refusal is local and free: the cap is checked
+    before any request goes out, so a reload storm during a budget-exhausted period costs
+    nothing. The cap exists to stop page views paying for a failing model, and this pays for
+    nothing.
+    """
+
+    def test_the_two_budget_reasons_are_the_transient_ones(self):
+        assert _REASON_SERVICE_LIMIT in _TRANSIENT_REASONS
+        assert _REASON_USER_QUOTA in _TRANSIENT_REASONS
+
+    def test_a_real_failure_still_counts(self):
+        # A provider that is genuinely unreachable, or a generation that ran past the clock,
+        # DID cost something and is real evidence the report is not working. Those must keep
+        # counting, or the cap protects nothing at all.
+        assert _REASON_PROVIDER not in _TRANSIENT_REASONS
+        assert _REASON_TIMEOUT not in _TRANSIENT_REASONS
+
+    def test_the_stored_attempt_count_is_held_for_a_transient_reason(self):
+        # Mirrors the expression in the generator: a transient reason stores the count it
+        # already had, anything else stores one more.
+        for reason, expected in (
+            (_REASON_SERVICE_LIMIT, 2),
+            (_REASON_USER_QUOTA, 2),
+            (_REASON_PROVIDER, 3),
+            (_REASON_TIMEOUT, 3),
+        ):
+            stored = 2 if reason in _TRANSIENT_REASONS else 2 + 1
+            assert stored == expected, reason
+
+    def test_a_report_stalled_by_the_budget_is_still_retryable_afterwards(self):
+        # The whole point. Three opens during a budget-exhausted period leave the count where
+        # it started, so once the budget resets the report has its attempts intact.
+        raw = {
+            "generated_by": _UNSCORED,
+            "strategy": _GENERATION_STRATEGY,
+            "unscored_attempts": 0,
+            "unscored_last_at": datetime.now(UTC).isoformat(),
+        }
+        regenerate, attempts = should_regenerate(raw)
+        assert regenerate
+        assert attempts == 0

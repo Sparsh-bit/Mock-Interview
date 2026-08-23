@@ -201,3 +201,29 @@ class TestADuplicateRatingCostsOnlyTheRating:
         async with AsyncSessionFactory() as db:
             stored = await db.scalar(select(Report).where(Report.session_id == sid))
             assert stored is not None and stored.overall_score == 91.0
+
+
+def test_a_lost_report_write_is_logged_loudly():
+    """
+    The tripwire, pinned so it is not removed as noise later.
+
+    A write that vanishes has now happened twice, in two different ways, and both times the
+    endpoint returned 200 while the database kept the old row. Nothing raised. The only
+    evidence either time was a candidate saying their report still showed 0/100 after waiting
+    for it to regenerate — which is an expensive way to find out.
+
+    Verified empirically: reintroducing `db.rollback()` in the duplicate-rating branch makes
+    this fire with intended_score=68.6 against stored_score=0.0.
+    """
+    import inspect
+
+    from app.api.v1 import reports
+
+    src = inspect.getsource(reports.generate_report)
+    assert "report_write_did_not_persist" in src, (
+        "the post-commit check on the report write is gone. Silent data loss here is invisible "
+        "from the outside and cost two rounds of candidate reports to identify."
+    )
+    # It must compare against what was INTENDED, not merely log the stored value — a log line
+    # showing 0.0 with nothing to compare it to says nothing.
+    assert "intended_score" in src and "stored_score" in src

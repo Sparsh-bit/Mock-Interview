@@ -231,6 +231,20 @@ _REASON_SERVICE_LIMIT = "service_limit"
 _REASON_TIMEOUT = "timeout"
 _REASON_PROVIDER = "provider_unavailable"
 
+#: Reasons that are NOT evidence the report cannot be generated.
+#:
+#: A spent daily budget resets at midnight UTC; a spent personal allowance resets on the same
+#: schedule. Neither says anything about this report — the model was never asked. Counting them
+#: against the retry cap is how a report gets permanently condemned by a condition that fixed
+#: itself hours later, which is exactly what production showed: the daily cap was reached, the
+#: candidate opened their report, and each open burned one of three attempts on a refusal that
+#: happened locally before any request went out.
+#:
+#: Safe to leave uncounted precisely BECAUSE the refusal is local and free. The cap exists to
+#: stop repeated page views paying for a model that keeps failing; a budget refusal pays for
+#: nothing, so there is no spend for the cap to protect.
+_TRANSIENT_REASONS = frozenset({_REASON_SERVICE_LIMIT, _REASON_USER_QUOTA})
+
 
 def _classify_failure(exc: BaseException) -> str:
     """
@@ -1561,9 +1575,16 @@ async def generate_report(
                 # completely different from one hitting a provider outage, and before
                 # this both produced the same sentence.
                 "unscored_reason": unscored_reason,
-                # Counts toward _MAX_UNSCORED_ATTEMPTS so repeated page views
-                # cannot keep paying for a model that is failing.
-                "unscored_attempts": unscored_attempts + 1,
+                # Counts toward _MAX_UNSCORED_ATTEMPTS so repeated page views cannot keep
+                # paying for a model that is failing — EXCEPT when nothing was paid. See
+                # _TRANSIENT_REASONS: a spent budget is refused locally, before any request,
+                # and resets at midnight, so charging an attempt for it condemns the report
+                # for a reason that will not be true tomorrow.
+                "unscored_attempts": (
+                    unscored_attempts
+                    if unscored_reason in _TRANSIENT_REASONS
+                    else unscored_attempts + 1
+                ),
                 # WHEN, not just how many. The cooldown in `should_regenerate` is measured
                 # from this; without it an exhausted report can never be aged and stays
                 # permanently pending, which is the bug that field exists to fix.
@@ -1647,6 +1668,36 @@ async def generate_report(
 
     await db.commit()
     await db.refresh(report)
+
+    # ── DID THE WRITE ACTUALLY STICK? ────────────────────────────────────────────────────
+    #
+    # This has now failed silently twice, in two different ways, and both times the endpoint
+    # returned 200 with the values it had just computed while the database kept the old row.
+    # Once because the instance was no longer tracked so `setattr` flushed nothing; once
+    # because a duplicate rating rolled back the shared transaction and took the report with
+    # it. Neither raised. The only evidence either time was a candidate reporting that their
+    # report still said 0/100 after waiting for it to regenerate.
+    #
+    # `db.refresh` above has just re-read the row, so comparing it to what was intended costs
+    # nothing and turns a silent loss into one line in the log. It does NOT retry or raise: the
+    # candidate is better served the report we have than an error, and a write that vanished is
+    # a bug to fix rather than a condition to handle at runtime.
+    if ai_report is not None:
+        stored_score = _as_float(report.overall_score) or 0.0
+        if abs(stored_score - (ai_report.overall_score or 0.0)) > 0.01:
+            logger.error(
+                "report_write_did_not_persist",
+                session_id=str(session_id),
+                intended_score=ai_report.overall_score,
+                stored_score=stored_score,
+                intended_analyses=len(ai_report.question_analysis),
+                stored_analyses=len((report.raw_report or {}).get("question_analysis") or []),
+                detail=(
+                    "the report was generated and the row still holds different values — the "
+                    "write was rolled back or never flushed. The candidate will see a stale "
+                    "report and every retry will regenerate it for nothing"
+                ),
+            )
     overall_score = report.overall_score
 
     with contextlib.suppress(Exception):

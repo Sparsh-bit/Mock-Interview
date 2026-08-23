@@ -137,7 +137,9 @@ async def generate_structured(
                 # the one error being given no time. Backed off before the next attempt on
                 # the same provider — the fallback provider is still tried after, so this
                 # only ever adds delay on a path that was otherwise guaranteed to fail.
-                if attempt + 1 < attempts_per_provider:
+                if attempt + 1 < attempts_per_provider and not type(exc).__name__.endswith(
+                    "BudgetExceededError"
+                ):
                     if isinstance(exc, ProviderError) and exc.is_rate_limit():
                         await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
                     else:
@@ -156,6 +158,13 @@ async def generate_structured(
                         provider=provider.provider_name,
                         status_code=exc.status_code,
                     )
+                    break
+                # A SPENT BUDGET IS PERMANENT FOR THE DAY, so retrying the same provider is
+                # pure waste. Seen in production: two attempts logged for the same context
+                # inside a second, both refused by the daily cap before any request went out.
+                # Cheap — the cap is checked locally, so nothing was billed — but it delays
+                # the fallback, and the fallback is the only thing that can still answer.
+                if type(exc).__name__.endswith("BudgetExceededError"):
                     break
                 continue
 
