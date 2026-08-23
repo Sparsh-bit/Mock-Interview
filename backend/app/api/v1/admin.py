@@ -38,14 +38,17 @@ just needs repointing at whatever billing records instead.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from functools import lru_cache
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -144,6 +147,18 @@ async def _cost_by_user(db: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uui
         logger.warning("admin_cost_lookup_failed", error=type(exc).__name__)
         return {}
 
+
+
+@lru_cache(maxsize=1)
+def _admin_storage() -> Any:
+    """
+    The process-wide Supabase client, built once. Same reasoning as resume.py's: `create_client`
+    builds a fresh set of HTTP clients per call, so calling it per request pays a new TLS
+    handshake before sending a byte.
+    """
+    from supabase import create_client  # noqa: PLC0415
+
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
 
 
 async def _revoke_supabase_sessions(supabase_uid: str) -> bool:
@@ -455,6 +470,226 @@ async def update_user(
         "email": user.email,
         **after,
         "sessions_revoked": signed_out,
+    }
+
+
+async def _delete_supabase_user(supabase_uid: str) -> bool:
+    """
+    Delete the account from Supabase Auth. This is what makes a deletion PERMANENT.
+
+    WITHOUT THIS, DELETION IS COSMETIC. Our `users` row is not the account — the credentials
+    live in Supabase's own auth schema, and `get_current_user` creates a local row on first
+    sight of a valid token (deliberately, so a user can never be locked out by a signup hook
+    that failed months ago). So deleting only our row means the person signs in again, a fresh
+    row is created, and they are back — with their data gone but their access intact. That is
+    the worst of both outcomes and it would look exactly like the delete button not working.
+
+    Best-effort in the sense that it reports rather than raises, but the CALLER treats a false
+    return as fatal and aborts before touching our data. See the ordering note in the endpoint.
+    """
+    import httpx  # noqa: PLC0415
+
+    url = f"{settings.SUPABASE_URL}/auth/v1/admin/users/{supabase_uid}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.delete(
+                url,
+                headers={
+                    "apikey": settings.SUPABASE_SERVICE_KEY,
+                    "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+                },
+            )
+        # 404 counts as success: the auth user is already gone, which is the state we want and
+        # is exactly what a retry of a half-finished deletion looks like.
+        if r.status_code in (200, 204, 404):
+            return True
+        logger.error("supabase_delete_unexpected_status", status=r.status_code)
+        return False
+    except Exception as exc:  # noqa: BLE001 — reported to the caller, which aborts
+        logger.error("supabase_delete_failed", error=type(exc).__name__)
+        return False
+
+
+async def _delete_stored_files(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """
+    Remove this user's uploaded resumes from storage. Returns how many were removed.
+
+    THE DATABASE CASCADE DOES NOT REACH FILES. `resume_files` rows go when the user does, and
+    the objects they point at would stay in the bucket forever — a candidate's CV, still
+    stored, referenced by nothing that would ever tell you it exists. For a deletion that is
+    the whole point, so this runs first and its failure is not fatal: an orphaned file is worse
+    than nothing but far better than a deletion that refuses to proceed.
+    """
+    from app.models.report import ResumeFile  # noqa: PLC0415
+
+    paths = [
+        p
+        for p in (
+            await db.scalars(select(ResumeFile.storage_path).where(ResumeFile.user_id == user_id))
+        ).all()
+        if p
+    ]
+    if not paths:
+        return 0
+
+    def _remove() -> None:
+        _admin_storage().storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES).remove(paths)
+
+    with contextlib.suppress(Exception):
+        # supabase-py is synchronous; called inline it would block the event loop for the
+        # duration of the delete, and this can be a handful of multi-megabyte objects.
+        await asyncio.to_thread(_remove)
+        return len(paths)
+    logger.warning("resume_files_not_removed", user_id=str(user_id), count=len(paths))
+    return 0
+
+
+class DeleteUserRequest(BaseModel):
+    """
+    Confirmation for a destructive, irreversible action.
+
+    THE EMAIL IS REQUIRED AND IS CHECKED SERVER-SIDE against the row being deleted. A
+    confirmation the client alone enforces is not a confirmation — the endpoint is reachable
+    with a user id and nothing else — and the failure this guards is mundane and permanent:
+    the wrong row, deleted from a list where every row looks the same. Typing the address makes
+    the admin look at which account they are on.
+    """
+
+    #: Must match the target's email exactly, case-insensitively.
+    confirm_email: str = Field(min_length=3, max_length=255)
+    #: Why. Recorded in the audit log, which outlives the account.
+    reason: str = Field(default="", max_length=300)
+
+
+@router.post(
+    "/users/{user_id}/delete",
+    summary="Permanently delete an account and everything belonging to it",
+    dependencies=[Depends(_admin_write_rate_limit)],
+)
+async def delete_user(
+    user_id: uuid.UUID,
+    body: DeleteUserRequest,
+    current_user: AdminUser,
+    request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Delete an account for good: the Supabase login, the uploaded files, and every row.
+
+    IRREVERSIBLE, AND THE ONLY THING LEFT BEHIND IS THE AUDIT ENTRY. Every table referencing
+    `users.id` is already declared either ON DELETE CASCADE — sessions, answers, scores,
+    reports, resumes, the credit ledger, redemptions — or ON DELETE SET NULL for records that
+    must outlive the person, chiefly `audit_logs`. So one DELETE removes the graph correctly,
+    and `entity_id` on the audit row is a plain UUID rather than a foreign key precisely so
+    that the record of the deletion is not deleted by it.
+
+    THE ORDER IS CHOSEN FOR WHAT A FAILURE HALFWAY LEAVES BEHIND, and it is the whole design:
+
+      1. FILES first, and a failure here is tolerated. They are unreachable either way once
+         the rows are gone, so refusing to proceed would strand the account instead.
+      2. THE SUPABASE LOGIN second, and a failure here ABORTS. If the auth user survives our
+         data, the person signs in again and `get_current_user` creates them a fresh row —
+         access intact, data gone. Deleting our rows first and failing here produces exactly
+         that, so it must be attempted while we can still refuse.
+      3. OUR ROWS last, in the request transaction, committed by `get_db`. If this fails after
+         the auth user is gone, the account is unreachable and re-running the endpoint
+         finishes the job: step 2 treats an already-deleted auth user as success.
+
+    Reversing 2 and 3 is the tempting mistake, because it makes the happy path read better.
+
+    POST RATHER THAN DELETE, and not for taste. This needs a body — the typed confirmation —
+    and a body on a DELETE is poorly supported end to end: intermediaries are permitted to
+    drop it, this app is served through Cloudflare, and the frontend's own ApiClient does not
+    accept one on `delete` (which is what surfaced it). A confirmation that can be silently
+    stripped in transit is worse than no confirmation, because the endpoint would then see an
+    empty string and refuse every legitimate deletion — or, with a laxer check, accept one that
+    was never confirmed.
+
+    Three refusals, all server-side:
+      * NOT YOURSELF. An admin deleting their own account cannot undo it.
+      * NOT THE LAST ADMIN. Counted rather than inferred from this row, because the dangerous
+        case is deleting the other admin while assuming you are not the last.
+      * THE EMAIL MUST MATCH. See DeleteUserRequest.
+    """
+    user = await db.scalar(select(User).where(User.id == user_id))
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.id == current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account.",
+        )
+
+    if (body.confirm_email or "").strip().lower() != (user.email or "").strip().lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The email you typed does not match this account. Nothing was deleted.",
+        )
+
+    if user.is_admin:
+        others = await db.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.is_admin.is_(True), User.id != user.id)
+        )
+        if not others:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This is the last admin account — promote someone else first.",
+            )
+
+    # Captured BEFORE the delete: after it there is nothing left to describe, and the audit
+    # entry is the only remaining record that this account ever existed.
+    target_email = user.email
+    supabase_uid = user.supabase_uid
+
+    files_removed = await _delete_stored_files(db, user.id)
+
+    if not await _delete_supabase_user(supabase_uid):
+        # Refused rather than continued. See the ordering note: proceeding would leave a
+        # working login attached to no data, and the next sign-in would silently recreate the
+        # account as if nothing had happened.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "The account could not be removed from the login provider, so nothing was "
+                "deleted. Try again in a moment."
+            ),
+        )
+
+    db.add(
+        AuditLog(
+            user_id=current_user.user_id,
+            action="admin.user_deleted",
+            entity_type="user",
+            # A plain UUID column, not a foreign key — which is what lets this row survive the
+            # deletion it describes.
+            entity_id=user.id,
+            ip_address=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+            payload={
+                "target_email": target_email,
+                "actor_email": current_user.email,
+                "reason": body.reason.strip(),
+                "resume_files_removed": files_removed,
+            },
+        )
+    )
+
+    await db.delete(user)
+
+    logger.warning(
+        "admin_user_deleted",
+        actor=str(current_user.user_id),
+        target=str(user_id),
+        target_email=target_email,
+        files_removed=files_removed,
+    )
+    return {
+        "deleted": True,
+        "email": target_email,
+        "resume_files_removed": files_removed,
     }
 
 

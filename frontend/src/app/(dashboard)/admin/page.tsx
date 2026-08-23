@@ -34,6 +34,7 @@ import {
   Search,
   Shield,
   ShieldOff,
+  Trash2,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -161,6 +162,51 @@ export default function AdminPage() {
     // The server refuses the self-destructive cases; surface its reason verbatim
     // rather than a generic failure, because the reason is the useful part.
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  /**
+   * Permanent deletion, gated behind typing the address.
+   *
+   * A CONFIRM DIALOG IS NOT ENOUGH FOR THIS ONE. Deactivation is reversible and a
+   * `window.confirm` naming the account is proportionate to it. Deletion removes the Supabase
+   * login, the uploaded files and every row, and cannot be undone — so it asks the admin to
+   * TYPE the email, which is the only prompt that forces them to look at which row they are
+   * on. `window.prompt` rather than a modal because this page has no modal primitive and
+   * inventing one for a destructive action is the wrong place to debut new UI; the guarantee
+   * is the server checking the address against the row anyway.
+   */
+  const destroy = useMutation({
+    mutationFn: async (u: UserRow) => {
+      const typed = window.prompt(
+        `PERMANENTLY delete ${u.email}?\n\n` +
+          'This removes their login, their uploaded resume, and every interview, report and ' +
+          'payment record. It cannot be undone.\n\n' +
+          'Type the email address to confirm:',
+      );
+      // Cancelled. Not an error and must produce no toast — the admin changed their mind,
+      // which is the prompt working.
+      if (typed === null) return null;
+      // POST, not DELETE: this carries the typed confirmation, and a body on a DELETE is
+      // permitted to be dropped by intermediaries — this app is served through Cloudflare, and
+      // a confirmation that can vanish in transit is worse than none at all.
+      const res = await getBrowserApiClient().post(`/api/v1/admin/users/${u.id}/delete`, {
+        confirm_email: typed.trim(),
+        reason: 'Deleted from the admin users page',
+      });
+      return res.data as { deleted: boolean; email: string; resume_files_removed: number };
+    },
+    onSuccess: (data) => {
+      if (!data) return;
+      toast.success(`${data.email} deleted permanently.`);
+      void qc.invalidateQueries({ queryKey: ['admin'] });
+    },
+    onError: (err) => {
+      // The server's message is the useful one — "the email you typed does not match this
+      // account. Nothing was deleted." — so it is shown verbatim.
+      toast.error(
+        err instanceof ApiError && err.message ? err.message : 'Could not delete that account.',
+      );
+    },
   });
 
   const status = overview.error instanceof ApiError ? overview.error.status : undefined;
@@ -420,6 +466,31 @@ export default function AdminPage() {
                           <Shield className="h-3.5 w-3.5" />
                         </Button>
                       )}
+
+                      {/* LAST, AND SEPARATED. Everything to its left is reversible; this is
+                          not. Sitting it flush against Deactivate is how a tired admin
+                          deletes an account they meant to suspend, so it gets its own group
+                          and the only destructive styling on the row. Disabled on your own
+                          row — the server refuses it too, but a disabled button states the
+                          rule before the click rather than explaining it in a toast after. */}
+                      <span className="ml-1.5 border-l border-border/70 pl-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          loading={destroy.isPending}
+                          disabled={u.email === me?.email}
+                          title={
+                            u.email === me?.email
+                              ? 'You cannot delete your own account'
+                              : `Permanently delete ${u.email}`
+                          }
+                          aria-label={`Permanently delete ${u.email}`}
+                          className="text-destructive hover:bg-destructive/10"
+                          onClick={() => destroy.mutate(u)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </span>
                     </div>
                   </td>
                 </tr>
