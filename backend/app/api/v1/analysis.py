@@ -38,14 +38,13 @@ router = APIRouter()
 #:
 #: The prompt sizes the answer to the question (40 words for a definition, up to
 #: ~260 for a design question), and the response also carries the gaps, the key
-#: points and a verdict line. 900 tokens covers the largest shape with headroom.
-#: Sized against the actual response rather than guessed — an undersized ceiling
-#: truncates the JSON and the whole billed call is wasted.
-_MODEL_ANSWER_MAX_TOKENS = 900
-
-#: Wall-clock cap, well inside a managed host's ~100s gateway cut. A gateway 502
-#: carries no CORS headers and reaches the browser as an opaque CORS error.
-_MODEL_ANSWER_BUDGET_SECONDS = 45.0
+#: points and a verdict line.
+#:
+#: BOTH FIGURES NOW LIVE IN SETTINGS, with the measurements behind them written out there.
+#: They were module constants, which put a billed call's token ceiling and its wall-clock cap
+#: out of reach of an operator who needed to change one — and the ceiling in particular was
+#: wrong: at 900 the coaching fields were being truncated away while the request still
+#: reported success.
 
 #: Rate limit on model-answer generation.
 #:
@@ -328,14 +327,19 @@ async def generate_model_answer(
             generate_structured(
                 ModelAnswerResponse,
                 messages,
-                max_tokens=_MODEL_ANSWER_MAX_TOKENS,
-                attempts_per_provider=1,
+                max_tokens=settings.MODEL_ANSWER_MAX_TOKENS,
+                # TWO ATTEMPTS, like every other call site in the app. This was 1, so a single
+                # unusable response — one control character in the wrong place, one field the
+                # model chose to omit — was a 503 the candidate saw as "the ideal answer will
+                # not generate". A retry costs one billed call in the rare case; no retry cost
+                # the feature.
+                attempts_per_provider=2,
                 # BALANCED: the rubric is fully specified in the prompt, so this
                 # does not need reasoning on top.
                 cost_tier=CostTier.BALANCED,
                 context="model_answer",
             ),
-            timeout=_MODEL_ANSWER_BUDGET_SECONDS,
+            timeout=settings.MODEL_ANSWER_BUDGET_SECONDS,
         )
     except Exception as exc:
         logger.warning(

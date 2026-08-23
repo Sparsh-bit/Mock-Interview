@@ -155,12 +155,37 @@ class ResponseParser:
         Extract the first valid JSON object from content.
 
         Tries direct parse first (fastest), then pattern-based extraction.
+
+        EVERY PARSE HERE IS `strict=False`, AND THAT IS A BUG FIX, NOT A RELAXATION.
+
+        Reported as the ideal answer never generating on the detailed-analysis page. The model
+        was not failing and was not running out of tokens — the logged call completed with
+        `stop_reason=end_turn` at 893 of 1400 tokens and then failed validation. The reason was
+        a single character: a literal newline inside a JSON string value, which strict JSON
+        forbids. `json.loads` raised "Invalid control character at line 2 column 334", every
+        extraction pattern hit the same error, and the response was reported as containing no
+        JSON at all.
+
+        This is ordinary model behaviour rather than an anomaly, and it scales with prose
+        length: the longer the string being written, the likelier one raw newline lands in it.
+        That is exactly why the symptom looked arbitrary — short conceptual answers came back
+        fine and long design answers failed, so it read as "sometimes broken".
+
+        `strict=False` permits control characters inside strings and changes nothing else: the
+        grammar, the types, and the schema validation that runs afterwards are all untouched.
+        A control character in a string is a quoting slip in content we are about to hand to
+        Pydantic anyway, not a structural ambiguity — there is no second reading of the
+        document to be wrong about.
+
+        Applied to ALL THREE attempts deliberately. Fixing only the fast path would leave the
+        pattern-based and truncation-salvage routes throwing on the same character, so the same
+        response would still fail whenever it arrived wrapped in a fence.
         """
         stripped = content.strip()
 
         # 1. Direct JSON parse — fastest path, works for json_mode responses
         try:
-            result = json.loads(stripped)
+            result = json.loads(stripped, strict=False)
             if isinstance(result, dict):
                 return result
             # AI returned a JSON array instead of object — wrap for debugging
@@ -171,22 +196,55 @@ class ResponseParser:
         except json.JSONDecodeError:
             pass
 
-        # 2. Pattern-based extraction for markdown and prose
+        # 2. Pattern-based extraction for markdown and prose.
+        #
+        #    ALL MATCHES, MERGED — not the first one. A model writing a long response
+        #    sometimes SPLITS ONE OBJECT ACROSS SEVERAL FENCED BLOCKS, and taking the first
+        #    silently discarded the rest.
+        #
+        #    Reported as the ideal answer's "detailed analysis" never appearing. For a design
+        #    question the model reliably emitted two blocks: `{"model_answer": ...}` and then
+        #    a second `{"what_was_missing": [...], "key_points": [...], "verdict_line": ...}`.
+        #    The first parsed cleanly, so nothing errored and nothing was logged — the request
+        #    succeeded with the three coaching fields at their empty defaults, which is the
+        #    only part of that response a candidate actually needed. Short conceptual answers
+        #    fit in one block and were fine, so the failure looked arbitrary.
+        #
+        #    Merging is the right reading rather than a guess: the contract is ONE object, so
+        #    several top-level objects in one response are fragments of it, never rival
+        #    answers. Earlier fragments win a key collision, which keeps the old
+        #    first-match-wins behaviour for anything that was already working.
         for pattern in _EXTRACTION_PATTERNS:
-            match = pattern.search(stripped)
-            if not match:
+            fragments: list[dict[str, Any]] = []
+            for match in pattern.finditer(stripped):
+                candidate = (match.group(1) if match.lastindex else match.group(0)).strip()
+                try:
+                    parsed = json.loads(candidate, strict=False)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    fragments.append(parsed)
+            if not fragments:
                 continue
-            candidate = (match.group(1) if match.lastindex else match.group(0)).strip()
-            try:
-                result = json.loads(candidate)
-                if isinstance(result, dict):
-                    logger.debug(
-                        "ai_json_extracted_via_pattern",
-                        pattern=pattern.pattern[:40],
-                    )
-                    return result
-            except json.JSONDecodeError:
-                continue
+            merged: dict[str, Any] = {}
+            for fragment in fragments:
+                for key, value in fragment.items():
+                    merged.setdefault(key, value)
+            if len(fragments) > 1:
+                # Never silent. One object arriving as several blocks is worth seeing in the
+                # logs — it is a prompt that invites the split, and the next field added to
+                # that schema may land in a fragment nothing thought to merge.
+                logger.warning(
+                    "ai_json_merged_from_fragments",
+                    fragments=len(fragments),
+                    keys=sorted(merged)[:12],
+                )
+            else:
+                logger.debug(
+                    "ai_json_extracted_via_pattern",
+                    pattern=pattern.pattern[:40],
+                )
+            return merged
 
         # 3. Truncation salvage — the model ran out of tokens mid-answer. Last
         #    resort, and never silent: a truncated response means a call site's
@@ -195,7 +253,7 @@ class ResponseParser:
         repaired = _repair_truncated_json(stripped)
         if repaired is not None:
             try:
-                result = json.loads(repaired)
+                result = json.loads(repaired, strict=False)
             except json.JSONDecodeError:
                 result = None
             if isinstance(result, dict):
