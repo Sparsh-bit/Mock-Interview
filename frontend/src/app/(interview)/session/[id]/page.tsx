@@ -60,6 +60,21 @@ function GeneratingQuestion({ label }: { label: string }) {
         ))}
       </div>
       <p className="text-sm font-medium text-muted-foreground">{label}</p>
+
+      {/* DO NOT CLOSE THIS, SAID WHILE IT MATTERS.
+          The question is being generated server-side against this session, and a candidate who
+          reads a spinner as "stuck" and reloads or closes the tab loses their place in an
+          interview they get one attempt at. The sentence is only shown here — during the wait
+          — because a standing warning on a page that is working is noise people learn to
+          ignore, and then do not read on the one screen where it counts.
+
+          Deliberately calm and specific about the duration. "Do not close" on its own reads as
+          a threat and makes people anxious at exactly the wrong moment; naming a few seconds
+          tells them the wait is normal and finite, which is what actually stops the reload. */}
+      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground/80">
+        Please keep this screen open — your next question is being prepared and usually takes a
+        few seconds. Closing or reloading now would interrupt the interview.
+      </p>
     </motion.div>
   );
 }

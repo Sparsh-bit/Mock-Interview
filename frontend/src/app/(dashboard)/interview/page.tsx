@@ -8,6 +8,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
+import { InterviewReadiness } from '@/components/interview/InterviewReadiness';
 import { CreditMeter } from '@/components/billing/CreditMeter';
 import { DriveCTA } from '@/components/DriveCTA';
 import { parseIsTechnical } from '@/lib/interview/drive';
@@ -381,6 +382,15 @@ function InterviewSetup() {
             ) : (
               <span className="text-sm text-muted-foreground">A balanced spread for this role.</span>
             )}
+          </div>
+
+          {/* IMMEDIATELY ABOVE THE BUTTON, which is the only placement that works. These are
+              ten-second fixes — move rooms, plug in headphones, upload a resume — and they are
+              worth nothing once the mic is open, because the candidate gets one attempt at the
+              interview. Higher up the page they are read before the decision is real; lower,
+              after it has been made. */}
+          <div className="mb-5">
+            <InterviewReadiness />
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row">
