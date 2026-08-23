@@ -125,6 +125,29 @@ _UNSCORED = "unscored_fallback"
 #: the page. After this many failures the stored placeholder is served as-is.
 _MAX_UNSCORED_ATTEMPTS = 3
 
+#: Which generation strategy produced a stored report. BUMP THIS whenever a change could make
+#: a previously-failing report succeed.
+#:
+#: WHY IT EXISTS. Twice now a bug has made report scoring fail for a whole population of
+#: candidates, and both times the fix shipped and rescued nobody — because the retry cap and
+#: the cooldown had already condemned their placeholders, so "Generate again" did nothing and
+#: the report sat at 0/100 forever. The fix was correct and the affected reports stayed dead.
+#:
+#: A placeholder written by an OLDER strategy than the one running is not out of attempts: its
+#: attempts were spent against code that no longer exists. So it gets a fresh set, once, the
+#: next time anybody opens it — no SQL, no migration, no script anybody has to remember to
+#: run, and nobody has to go and find the affected sessions.
+#:
+#: It cannot loop: the retry stamps the current strategy whether it succeeds or fails, so a
+#: stale row is rescued exactly once per bump.
+_GENERATION_STRATEGY = "split-v1"
+
+#: Between two questions in the transcript handed to the model. Module scope because the
+#: summary call and every analysis batch must format the transcript the SAME way: the rubric
+#: is provider-cached on the exact bytes of the system block, and a batch that separated
+#: questions differently would read a different transcript from the one the summary read.
+_TRANSCRIPT_SEPARATOR = "\n\n---\n\n"
+
 #: Output-token budget for report generation, as (fixed, per-question).
 #:
 #: A single constant cannot be right here. The report's largest section is
@@ -302,6 +325,22 @@ def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
         and raw_attempts >= 0
         else 0
     )
+
+    # ── A PLACEHOLDER FROM AN OLDER STRATEGY IS NOT OUT OF ATTEMPTS ───────────────────────
+    #
+    # Its attempts were spent against code that has since changed, so counting them against
+    # the new code condemns exactly the population a fix was written for. See the note on
+    # _GENERATION_STRATEGY. This is checked BEFORE the cap and the cooldown deliberately:
+    # both of those are about spend on a strategy that is still failing, and this one is not
+    # that strategy.
+    if raw.get("strategy") != _GENERATION_STRATEGY:
+        logger.info(
+            "unscored_report_retried_after_strategy_change",
+            stored=str(raw.get("strategy"))[:32],
+            current=_GENERATION_STRATEGY,
+            attempts_forgiven=attempts,
+        )
+        return True, 0
 
     # ── THE CAP RESETS, RATHER THAN CONDEMNING THE SESSION ────────────────────────────────
     #
@@ -536,7 +575,20 @@ async def generate_report(
     from app.services.ai.base_provider import CostTier
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
-    from app.services.ai.schemas import ReportGeneratorResponse  # noqa: PLC0415
+    from app.services.ai.schemas import (  # noqa: PLC0415
+        QuestionAnalysisItem,
+        ReportAnalysisResponse,
+        ReportGeneratorResponse,
+        ReportSummaryResponse,
+    )
+    from app.services.report.composer import (  # noqa: PLC0415
+        SUMMARY_TOKENS,
+        Batch,
+        batch_token_budget,
+        derive_summary,
+        merge,
+        plan_batches,
+    )
 
     # Verify session
     session_result = await db.execute(
@@ -633,7 +685,11 @@ async def generate_report(
             f"Ideal answer note: {ideal}\n"
             f"question_id: {ans.question_id}"
         )
-    user_content = "\n\n---\n\n".join(transcript_lines)
+    #: The joined transcript, for the summary call — which needs the whole interview.
+    user_content = _TRANSCRIPT_SEPARATOR.join(transcript_lines)
+    #: The question ids, in the order asked, so concurrently-returned analyses can be put
+    #: back into interview order. See services/report/composer.order_by_transcript.
+    question_ids = [str(ans.question_id) for ans, _q, _t in transcript_rows]
 
     # Delivery metrics accumulated across the interview (pauses, fillers, pace).
     delivery = (session.session_metadata or {}).get("delivery") or {}
@@ -770,8 +826,8 @@ async def generate_report(
         ]
     )
 
-    messages = prompt_builder.chat_static(
-        system_template="report_generator",
+    summary_messages = prompt_builder.chat_static(
+        system_template="report_summary",
         user_content=session_brief + user_content,
     )
 
@@ -803,6 +859,12 @@ async def generate_report(
     # The limit exists to stop repeated EXPENSIVE AI CALLS, so it belongs at the point one
     # is about to be made. Everything above this line — an existing scored report, a
     # placeholder out of retries — has already returned, free and unmetered.
+    #
+    # ONE UNIT FOR THE WHOLE REPORT, not one per part. The report is now several concurrent
+    # model calls, and counting each of them would divide the candidate's hourly allowance by
+    # the length of their interview — a 19-question interview would spend four units to
+    # produce one report, and a longer one would spend more. The limit protects against
+    # repeated REPORTS, so it counts reports.
     await enforce_limit(
         get_redis(),
         key=CacheKeys.rate_limit_report(str(current_user.user_id)),
@@ -816,6 +878,10 @@ async def generate_report(
     #: the field is never absent from a stored unscored report.
     unscored_reason = _REASON_PROVIDER
     last_raw_content = ""
+    #: True when the summary call failed and the whole-interview view was derived from the
+    #: per-question scores instead. Stored, so a partial report is never presented as a full
+    #: one — see composer.derive_summary.
+    derived_summary = False
     _ai_started = perf_counter()
 
     # RELEASE THE DATABASE CONNECTION BEFORE THE MODEL CALL.
@@ -841,46 +907,108 @@ async def generate_report(
     await db.commit()
 
     try:
-        # HARD time budget. Managed hosts (Render included) cut the request at
-        # their gateway after ~100s and return a 502 that carries no CORS
-        # headers — which reaches the browser as an opaque CORS error instead of
-        # a real failure. Report generation is the slowest AI path in the app
-        # (DEEP tier buys reasoning), so it must be capped well inside that
-        # window and degrade to the heuristic report rather than be killed.
-        # And cap how many reports may be generating at once, per process.
+        # ── ONE REPORT, SEVERAL CONCURRENT CALLS ──────────────────────────────────────────
         #
-        # Releasing the connection above means a thousand concurrent requests can now all
-        # reach the model instead of queuing on the pool — which trades a database
-        # outage for a provider rate-limit storm and a budget drained in minutes. The
-        # semaphore is the actual queue: excess requests wait here, cheaply, holding no
-        # connection. It also bounds peak memory, since each in-flight report holds a
-        # ~17k-token prompt.
+        # HARD time budget. Managed hosts (Render included) cut the request at their gateway
+        # after ~100s and return a 502 that carries no CORS headers — which reaches the
+        # browser as an opaque CORS error instead of a real failure. So the whole thing must
+        # be capped well inside that window and degrade rather than be killed.
         #
-        # Waiting counts against the same wall-clock budget as generating, deliberately:
-        # a candidate who has been queued for 50 seconds is better served the honest
-        # unscored placeholder with a retry than a request that hangs past the gateway.
+        # AND THE SHAPE OF THE WORK IS WHAT CHANGED, not the cap. A report used to be ONE
+        # call whose response carried the summary AND one analysis entry per question, so its
+        # output — and therefore its latency, which is output-token-bound on these providers —
+        # grew with the interview. A 13-answer report measured 34s locally and ran past the
+        # budget in production: the candidate saw "Scoring took too long" and a 0/100 for an
+        # interview that was entirely gradeable, and every retry hit the same wall because a
+        # retry of one big call is still one big call.
         #
-        # AND IT DID NOT, WHICH IS THE BUG THIS COMMENT DESCRIBED AND THE CODE CONTRADICTED.
-        # `async with _report_slots` sat OUTSIDE the `wait_for`, so only GENERATING was
-        # bounded; acquiring a slot was not bounded by anything. With four slots at ~21s a
-        # report, the fifth caller waited ~21s, the ninth ~42s, and a queue of a dozen —
-        # exactly what a cohort finishing their interviews together produces — sailed past the
-        # client's 120s timeout with no response at all. Reported as "Report Unavailable —
-        # Request timed out after 120000ms".
+        # It is now a summary call plus one batch per six questions, ALL IN FLIGHT AT ONCE.
+        # The wall clock is the slowest single part instead of the sum of all of them, and a
+        # part that fails costs only its own questions — `_report_is_complete` accepts
+        # two-thirds coverage, so the report still scores. See services/report/composer.py.
         #
-        # Both are inside the timeout now, so the budget means what the comment always said:
-        # queue time plus generation time. A request that cannot be served inside it returns
-        # the honest unscored placeholder with a retry, which is a far better answer than a
-        # dead two-minute wait, and it is the behaviour every other branch here already has.
-        async def _generate_within_budget():
+        # The semaphore still bounds how many reports generate at once per process, so a
+        # cohort finishing together queues cheaply here rather than on the database pool or
+        # at the provider. Queue time counts against the same budget as generating,
+        # deliberately: a candidate queued for 50 seconds is better served the honest
+        # placeholder with a retry than a request that hangs past the gateway.
+        batches = plan_batches(len(transcript_rows))
+
+        async def _one_batch(batch: Batch) -> ReportAnalysisResponse:
+            """Grade one slice of the interview. Only this slice is lost if it fails."""
+            slice_lines = transcript_lines[batch.start : batch.end]
+            return (
+                await generate_structured(
+                    ReportAnalysisResponse,
+                    prompt_builder.chat_static(
+                        system_template="report_analysis",
+                        user_content=(
+                            f"Grade these {len(slice_lines)} answers. Return exactly "
+                            f"{len(slice_lines)} entries in `question_analysis`, in this "
+                            "order, copying each `question_id` exactly.\n\n"
+                            + _TRANSCRIPT_SEPARATOR.join(slice_lines)
+                        ),
+                    ),
+                    max_tokens=batch_token_budget(len(slice_lines)),
+                    attempts_per_provider=2,
+                    cost_tier=CostTier.BALANCED,
+                    # One entry per question in the slice, or the batch is a failure and its
+                    # questions fall to the other batches' coverage. A batch that returns two
+                    # entries for six questions is the truncation this split exists to avoid,
+                    # and accepting it would put a report on screen missing most of its
+                    # breakdown.
+                    is_valid=lambda r: len(r.question_analysis) >= max(1, len(slice_lines) - 1),
+                    cache_system=True,
+                    context="report_analysis",
+                )
+            )[0]
+
+        async def _summary() -> tuple[ReportSummaryResponse, str]:
+            """The whole-interview view. Derived from the batches if this fails."""
+            return await generate_structured(
+                ReportSummaryResponse,
+                summary_messages,
+                # Does NOT scale with the interview any more, which is the point: the summary
+                # of a 20-answer interview is the same three-to-four sentences as a 6-answer
+                # one, and the roadmap is capped at three items by the prompt.
+                max_tokens=SUMMARY_TOKENS,
+                # TWO ATTEMPTS PER PROVIDER, INSIDE THE SAME WALL-CLOCK BOUND.
+                #
+                # A 400, a 429 or a refused key comes back in a second or two, and with one
+                # attempt each the rest of the budget was then spent doing nothing while the
+                # candidate was told the model was unreachable. The deadline below bounds the
+                # total, so this cannot make the request longer — it only decides how many
+                # chances fit inside a fixed window.
+                #
+                # The fallback provider is deliberately KEPT in the chain. It is worth the
+                # least when the primary is merely slow and the most when the primary refuses
+                # outright — which is exactly what the daily spend cap does, instantly and for
+                # the rest of the UTC day.
+                attempts_per_provider=2,
+                # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills as output and
+                # roughly doubled the cost of the most expensive call in the app. The rubric
+                # is already explicit in the prompt.
+                cost_tier=CostTier.BALANCED,
+                # Reject a summary with no competency bars. Both `dimension_scores` and the
+                # roadmap are optional in the schema, so when the model economised it dropped
+                # them and the report saved with a blank panel.
+                is_valid=lambda r: all(k in (r.dimension_scores or {}) for k in _REQUIRED_DIMENSIONS),
+                # The rubric is byte-identical on every report now that the per-session values
+                # live in the user brief, so it is cached at the provider: written once at
+                # 1.25x, read at 0.1x thereafter.
+                cache_system=True,
+                context="report_generation",
+            )
+
+        async def _generate_within_budget() -> None:
+            nonlocal ai_report, last_raw_content, unscored_reason, derived_summary
+
             # TIMED SEPARATELY, BECAUSE "took too long" WAS NOT ACTIONABLE.
             #
-            # Queueing and generating fail identically from the outside — the candidate sees
-            # one message either way — but they are different problems: queueing means too few
-            # slots for the number of people finishing at once, and generating means the
-            # interview was long or the provider was slow. One is fixed by raising
-            # REPORT_CONCURRENCY, the other is not fixed by that at all. Without this number in
-            # the log the only way to tell them apart is to guess.
+            # Queueing and generating fail identically from the outside but are different
+            # problems: queueing means too few slots for the number of people finishing at
+            # once, generating means the interview was long or the provider was slow. One is
+            # fixed by raising REPORT_CONCURRENCY and the other is not fixed by that at all.
             _queue_started = perf_counter()
             async with _report_slots:
                 queue_waited = perf_counter() - _queue_started
@@ -891,66 +1019,110 @@ async def generate_report(
                         waited_s=round(queue_waited, 1),
                         concurrency=settings.REPORT_CONCURRENCY,
                     )
-                return await generate_structured(
-                    ReportGeneratorResponse,
-                    messages,
-                    # Output is 5x the price of input and this is the largest
-                    # response in the app, so the budget is what THIS report needs
-                    # -- scaled to the question count -- rather than a flat constant
-                    # that is simultaneously wasteful for short interviews and too
-                    # small for long ones.
-                    max_tokens=report_token_budget(len(transcript_rows)),
-                    # TWO ATTEMPTS PER PROVIDER, INSIDE THE SAME WALL-CLOCK BOUND.
-                    #
-                    # This was one, on the reasoning that a second full retry cannot fit in
-                    # the budget. That is true of a retry after a SLOW failure and false of
-                    # the case that actually bites: a provider that fails FAST. A 400, a 429
-                    # or a refused key comes back in a second or two, and with one attempt
-                    # each the rest of the budget — eighty-odd seconds of it — was then spent
-                    # doing nothing while the candidate was told the model was unreachable.
-                    #
-                    # `asyncio.wait_for` already bounds the total, so raising this CANNOT make
-                    # the request longer. It only decides how many chances fit inside a fixed
-                    # deadline: a fast failure leaves room for another, a slow one leaves none,
-                    # and the heuristic fallback still catches whatever is left over.
-                    #
-                    # The fallback provider is deliberately KEPT in the chain. It is worth
-                    # the least when the primary is merely slow and the most when the
-                    # primary refuses outright — which is exactly what the daily spend cap
-                    # does, instantly and for the rest of the UTC day. Removing it to give
-                    # the primary two attempts would mean that once the cap is hit, nobody
-                    # gets a report at all until midnight.
-                    attempts_per_provider=2,
-                    # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
-                    # as output and roughly doubled the cost of the single most
-                    # expensive call in the app. The scoring rubric is already
-                    # explicit in the prompt, so it does not need to reason its way
-                    # to the criteria.
-                    cost_tier=CostTier.BALANCED,
-                    # Reject a report that omits the two sections a candidate
-                    # actually reads. Both are optional in the schema
-                    # (default_factory), and the prompt only showed them in an
-                    # example — so when the model economised on a long response it
-                    # dropped them and the report saved with a blank competencies
-                    # panel and no per-question breakdown. Every report in production
-                    # had dimension_scores={} and question_analysis=[].
-                    #
-                    # Rejecting means falling back to the honest unscored report,
-                    # which the candidate can regenerate. That is strictly better than
-                    # storing a report that looks finished and is not.
-                    is_valid=lambda r: _report_is_complete(r, len(transcript_rows)),
-                    # The 2,778-token rubric is byte-identical on every report now that the
-                    # per-session values live in the user brief, so it is cached at the
-                    # provider: written once at 1.25x, read at 0.1x thereafter. Opt-in per
-                    # call rather than globally, because a global flag would bill a cache
-                    # WRITE on every other feature whose system block still varies, and
-                    # never read one back.
-                    cache_system=True,
-                    context="report_generation",
-                )
 
-        # ONE timeout over BOTH the queue and the generation. See the note above.
-        ai_report, last_raw_content = await asyncio.wait_for(
+                # EVERY PART FAILS ON ITS OWN. `return_exceptions=True` is what makes the
+                # split worth anything: without it one batch raising would cancel the rest
+                # and lose a report that was almost entirely generated — exactly the
+                # all-or-nothing behaviour being removed.
+                #
+                # Held as named tasks rather than passed inline so each result keeps its own
+                # type, and so the `finally` below can guarantee nothing is left running: an
+                # orphaned model call would keep billing after the candidate has already been
+                # answered, which is the leak that `asyncio.create_task` caused in the quiz
+                # path. Cancelling a gather does cancel its children, but only the tasks it
+                # still owns — this makes it true regardless of where the cancellation lands.
+                summary_task = asyncio.ensure_future(_summary())
+                batch_tasks = [asyncio.ensure_future(_one_batch(b)) for b in batches]
+                try:
+                    await asyncio.gather(
+                        summary_task, *batch_tasks, return_exceptions=True
+                    )
+                finally:
+                    for task in (summary_task, *batch_tasks):
+                        if not task.done():
+                            task.cancel()
+
+            analyses: list[QuestionAnalysisItem] = []
+            failed_batches = 0
+            for task in batch_tasks:
+                error = task.exception() if not task.cancelled() else None
+                if task.cancelled() or error is not None:
+                    failed_batches += 1
+                    logger.warning(
+                        "report_analysis_batch_failed",
+                        session_id=str(session_id),
+                        error_type=type(error).__name__ if error else "CancelledError",
+                        error=str(error)[:200] if error else "cancelled",
+                    )
+                    continue
+                analyses.extend(task.result().question_analysis)
+
+            summary: ReportSummaryResponse | None = None
+            summary_error = (
+                summary_task.exception() if not summary_task.cancelled() else TimeoutError()
+            )
+            if summary_error is not None:
+                unscored_reason = _classify_failure(summary_error)
+                logger.warning(
+                    "report_summary_failed",
+                    session_id=str(session_id),
+                    error_type=type(summary_error).__name__,
+                    error=str(summary_error)[:200],
+                    analyses=len(analyses),
+                )
+                # ── THE LAST 0/100 ────────────────────────────────────────────────────────
+                #
+                # Every answer was graded and only the covering paragraph is missing.
+                # Returning the unscored placeholder here would throw away a complete
+                # grading of the interview because one of four calls did not land, and it
+                # would tell a candidate whose answers WERE all scored that scoring failed.
+                # Derived numbers all trace to a model-assigned per-question score or a
+                # counted delivery metric — see composer.derive_summary.
+                summary = derive_summary(
+                    analyses,
+                    candidate_name=candidate_name,
+                    topics=sorted({topic_name for _, _, topic_name in transcript_rows}),
+                    answered=len(transcript_rows),
+                    delivery=delivery,
+                )
+                derived_summary = summary is not None
+            else:
+                summary, last_raw_content = summary_task.result()
+
+            if summary is None:
+                # Nothing to build on: no summary AND no graded answers. This is the only
+                # remaining route to the honest placeholder.
+                return
+
+            candidate = merge(summary, analyses, question_ids)
+            if not _report_is_complete(candidate, len(transcript_rows)):
+                # Too little of the interview came back to be worth showing. Deliberately not
+                # stored: a report missing most of its breakdown looks finished and is not.
+                logger.warning(
+                    "report_parts_insufficient",
+                    session_id=str(session_id),
+                    analyses=len(analyses),
+                    answered=len(transcript_rows),
+                    failed_batches=failed_batches,
+                )
+                return
+
+            if failed_batches or derived_summary:
+                logger.info(
+                    "report_generated_partially",
+                    session_id=str(session_id),
+                    failed_batches=failed_batches,
+                    total_batches=len(batches),
+                    derived_summary=derived_summary,
+                    analyses=len(analyses),
+                    answered=len(transcript_rows),
+                )
+            ai_report = candidate
+
+        # ONE timeout over the queue and every part. A part still running when it expires is
+        # cancelled by the gather being cancelled — nothing is orphaned to keep billing after
+        # the candidate has already been answered.
+        await asyncio.wait_for(
             _generate_within_budget(),
             timeout=report_ai_budget_seconds(),
         )
@@ -1045,6 +1217,13 @@ async def generate_report(
             improvement_roadmap=roadmap,
             raw_report={
                 "generated_by": "ai",
+                "strategy": _GENERATION_STRATEGY,
+                # True when the summary call failed and the whole-interview view was
+                # calculated from the per-question scores instead. Recorded so a partial
+                # report is never mistaken for a fully generated one in the logs or in a
+                # later investigation — the candidate's report is complete and scored either
+                # way, but these two were not produced the same way.
+                "summary_derived": derived_summary,
                 "readiness_reasoning": ai_report.readiness_reasoning,
                 "dimension_scores": ai_report.dimension_scores,
                 "performance_percentile": ai_report.performance_percentile,
@@ -1085,6 +1264,10 @@ async def generate_report(
             improvement_roadmap=[],
             raw_report={
                 "generated_by": _UNSCORED,
+                # WHICH STRATEGY FAILED. Stamped on failure as well as success, which is what
+                # keeps the rescue above from looping: this row has now had its chance under
+                # the current code, so it falls back to the ordinary cap and cooldown.
+                "strategy": _GENERATION_STRATEGY,
                 # WHY it is unscored, so the candidate is told the truth instead of one
                 # generic "temporarily unavailable" for four different situations. A
                 # candidate who has used their day's practice needs to hear something

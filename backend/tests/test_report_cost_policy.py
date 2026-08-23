@@ -11,9 +11,12 @@ Pure function, no database or provider needed — these run anywhere.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.api.v1.reports import (
+    _GENERATION_STRATEGY,
     _MAX_UNSCORED_ATTEMPTS,
     _REPORT_TOKENS_MAX,
     _UNSCORED,
@@ -78,7 +81,11 @@ class TestTokenBudgetFitsTheReport:
 
 
 def _placeholder(attempts: int | None = None) -> dict:
-    raw: dict = {"generated_by": _UNSCORED}
+    # STAMPED WITH THE CURRENT STRATEGY, deliberately. A placeholder from an older strategy
+    # is retried regardless of its attempt count (see TestAStaleStrategyIsRetried), and these
+    # tests are about the cap and the cooldown — leaving the stamp off would make every one of
+    # them pass for the wrong reason.
+    raw: dict = {"generated_by": _UNSCORED, "strategy": _GENERATION_STRATEGY}
     if attempts is not None:
         raw["unscored_attempts"] = attempts
     return raw
@@ -162,7 +169,7 @@ class TestHostileStoredData:
         # A crash here would 500 the report page; treating it as a first attempt
         # is the safe reading, and the cap still applies from there on.
         regenerate, attempts = should_regenerate(
-            {"generated_by": _UNSCORED, "unscored_attempts": bad}
+            {"generated_by": _UNSCORED, "strategy": _GENERATION_STRATEGY, "unscored_attempts": bad}
         )
         assert regenerate is True
         assert attempts == 0
@@ -172,7 +179,7 @@ class TestHostileStoredData:
         # in a way that silently changes the budget. Either reading is bounded,
         # so simply assert it stays within the cap and does not crash.
         regenerate, attempts = should_regenerate(
-            {"generated_by": _UNSCORED, "unscored_attempts": True}
+            {"generated_by": _UNSCORED, "strategy": _GENERATION_STRATEGY, "unscored_attempts": True}
         )
         assert regenerate is True
         assert 0 <= attempts < _MAX_UNSCORED_ATTEMPTS
@@ -203,6 +210,7 @@ class TestAnExhaustedReportRecoversInsteadOfDying:
 
         return {
             "generated_by": _UNSCORED,
+            "strategy": _GENERATION_STRATEGY,
             "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
             "unscored_last_at": (
                 datetime.now(UTC) - timedelta(minutes=minutes_ago)
@@ -241,7 +249,11 @@ class TestAnExhaustedReportRecoversInsteadOfDying:
         every decision after that is made on actual age.
         """
         regenerate, attempts = should_regenerate(
-            {"generated_by": _UNSCORED, "unscored_attempts": _MAX_UNSCORED_ATTEMPTS}
+            {
+                "generated_by": _UNSCORED,
+                "strategy": _GENERATION_STRATEGY,
+                "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
+            }
         )
         assert regenerate is True, "already-broken reports stay broken forever"
         assert attempts == 0
@@ -262,6 +274,7 @@ class TestAnExhaustedReportRecoversInsteadOfDying:
             regenerate, attempts = should_regenerate(
                 {
                     "generated_by": _UNSCORED,
+                    "strategy": _GENERATION_STRATEGY,
                     "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
                     "unscored_last_at": bad,
                 }
@@ -303,3 +316,72 @@ class TestAnExhaustedReportRecoversInsteadOfDying:
             assert regenerate is False, "zero must restore the permanent cap"
         finally:
             settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES = original
+
+
+class TestAStaleStrategyIsRetried:
+    """
+    THE RESCUE. Twice now a bug has made report scoring fail for a whole population of
+    candidates, and both times the fix shipped and rescued nobody: the cap and the cooldown
+    had already condemned their placeholders, so "Generate again" made no model call and the
+    report sat at 0/100 forever.
+
+    A placeholder written by an older strategy has not spent its attempts on the code that is
+    running now. It gets one fresh set, automatically, the next time anybody opens it — no
+    SQL, no script, and nobody has to go and find the affected sessions.
+    """
+
+    def test_a_placeholder_from_an_older_strategy_is_retried_however_exhausted(self):
+        regenerate, attempts = should_regenerate(
+            {
+                "generated_by": _UNSCORED,
+                "strategy": "some-older-pipeline",
+                "unscored_attempts": 999,
+                # Failed one second ago, so the cooldown would refuse it too.
+                "unscored_last_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        assert regenerate, (
+            "a report that failed under code that no longer exists must get another chance — "
+            "this is the whole reason the strategy stamp exists."
+        )
+        assert attempts == 0, "a rescue is a fresh set of attempts, not one grudging extra try"
+
+    def test_a_placeholder_with_no_strategy_at_all_is_retried(self):
+        # Every report broken before the stamp existed carries no stamp. If this returned
+        # False the fix would once again rescue nobody who was already affected — the exact
+        # mistake `unscored_last_at` made when it shipped.
+        regenerate, attempts = should_regenerate(
+            {
+                "generated_by": _UNSCORED,
+                "unscored_attempts": 999,
+                # A RECENT timestamp, on purpose. Without it this row would be rescued by the
+                # legacy-row branch instead — which made the test pass while the strategy
+                # check was disabled entirely, testing nothing it claimed to.
+                "unscored_last_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        assert regenerate
+        assert attempts == 0
+
+    def test_the_rescue_cannot_loop(self):
+        # The retry stamps the current strategy whether it succeeded or failed, so the very
+        # next decision is made by the ordinary cap. Without this a stale row would be
+        # retried on every single page view — an unbounded bill funded by reloads, which is
+        # what the cap exists to prevent.
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": _UNSCORED,
+                "strategy": _GENERATION_STRATEGY,
+                "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
+                "unscored_last_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        assert not regenerate
+
+    def test_a_scored_report_is_still_never_regenerated_after_a_bump(self):
+        # A finished report is final. The stamp must not reopen one: a strategy bump would
+        # otherwise re-bill every report anybody has ever generated, on their next page view.
+        regenerate, _ = should_regenerate(
+            {"generated_by": "ai", "strategy": "some-older-pipeline", "overall_score": 72}
+        )
+        assert not regenerate

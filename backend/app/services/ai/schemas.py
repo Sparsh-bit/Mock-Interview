@@ -260,6 +260,39 @@ class ReportGeneratorResponse(BaseModel):
     improvement_roadmap: list[ImprovementRoadmapItem] = Field(default_factory=list)
 
 
+class ReportSummaryResponse(BaseModel):
+    """
+    The whole-interview half of a report — everything except the per-question breakdown.
+
+    Matches app/prompts/report_summary.md. Deliberately has NO `question_analysis` field:
+    that half is generated concurrently in batches, and a field here would let the model
+    spend the response on it. See report_analysis.md for why the report is split at all.
+    """
+
+    executive_summary: str
+    readiness_level: Literal["interview_ready", "close_to_ready", "needs_more_practice", "significant_gaps"]
+    readiness_reasoning: str
+    overall_score: float = Field(ge=0.0, le=100.0)
+    overall_score_label: str
+    topic_scores: dict[str, float] = Field(default_factory=dict)
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    performance_percentile: int = Field(ge=0, le=100, default=50)
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    improvement_roadmap: list[ImprovementRoadmapItem] = Field(default_factory=list)
+
+
+class ReportAnalysisResponse(BaseModel):
+    """
+    One batch of per-question analyses. Matches app/prompts/report_analysis.md.
+
+    A batch covers a SLICE of the interview, so a batch that fails costs its own questions
+    and nothing else — which is the whole point of generating them separately.
+    """
+
+    question_analysis: list[QuestionAnalysisItem] = Field(default_factory=list)
+
+
 class CodeBug(BaseModel):
     """A single defect found in a coding submission."""
 

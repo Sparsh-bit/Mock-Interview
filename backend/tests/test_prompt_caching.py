@@ -37,7 +37,15 @@ API = BACKEND / "app" / "api" / "v1"
 #: exactly as _round_brief does for gd_panel. Worth ~$0.0075 a report, ~4.5% of a warm
 #: interview, and it scales the right way: a provider cache entry lives about five minutes
 #: and every read refreshes it, so the hit rate rises with how busy the product is.
-CACHED_TEMPLATES = ("gd_panel", "interview_panel", "report_generator")
+#:
+#: `report_generator` IS NO LONGER BUILT. A report is now two prompts — `report_summary` and
+#: `report_analysis` — generated concurrently, because one call whose output grew with the
+#: interview could not finish a long one inside the wall-clock budget. Both are composed from
+#: report_generator.md, which stays as the canonical rubric; tests/test_report_split.py pins
+#: that they still contain it. Splitting the prompt IMPROVES the cache rather than diluting
+#: it: a batch prompt is re-sent once per batch, so a 13-answer report reads the analysis
+#: rubric from the cache twice within one report instead of never.
+CACHED_TEMPLATES = ("gd_panel", "interview_panel", "report_summary", "report_analysis")
 
 
 def _static_templates() -> set[str]:

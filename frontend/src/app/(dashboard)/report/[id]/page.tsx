@@ -142,7 +142,7 @@ export default function ReportDetailPage() {
   const toggleShare = useToggleShareReport();
 
   /*
-   * GENERATED AT MOST ONCE, AND ONLY WHEN THERE IS NOTHING TO SHOW.
+   * GENERATED AT MOST ONCE PER VISIT, AND ONLY WHEN THERE IS NOTHING WORTH SHOWING.
    *
    * Generation is a billed model call. It used to be this page's QUERY, so React Query ran it
    * whenever the data went stale — a candidate who opened their report, went to Detailed
@@ -152,19 +152,31 @@ export default function ReportDetailPage() {
    * The ref is what makes "once" true. Effects re-run, and a second run while the first is
    * still in flight would buy two reports for one session.
    *
-   * AN UNSCORED REPORT IS NOT REGENERATED HERE. It exists, so there is something on screen and
-   * a button to press; pressing it is a decision the candidate makes, not one this page makes
-   * on their behalf with their money.
+   * AN UNSCORED PLACEHOLDER COUNTS AS NOTHING TO SHOW, and that is a deliberate change.
+   *
+   * It used to be excluded: a placeholder is a report, so `report` was truthy and this effect
+   * returned. The consequence was that every candidate whose scoring had failed had to find
+   * and press a button to get the thing they had already paid for — and most did not. They
+   * saw 0/100, read "Scoring could not be completed", and left. That population is the
+   * largest group in the admin marketing view.
+   *
+   * The spend guard is not this ref — it is the SERVER, and it has to be, because a ref only
+   * lasts as long as the page. `should_regenerate` refuses on a scored report always, and on a
+   * placeholder once its attempts and cooldown are spent; a refused call makes no model
+   * request and costs nothing. So opening an old 0/100 report retries it, and opening it
+   * repeatedly does not.
    */
   const requested = useRef(false);
+  const unscored = !!report?.unscored_reason;
   useEffect(() => {
-    if (isLoading || error || report || requested.current) return;
+    if (isLoading || error || requested.current) return;
+    if (report && !unscored) return;
     requested.current = true;
     generate.mutate();
     // `generate` is a stable mutation object from the hook; listing it would re-run this on
     // every render of a page that is deliberately allowed to do this exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, error, report]);
+  }, [isLoading, error, report, unscored]);
 
   const handleShare = () => {
     if (!report) return;
@@ -682,10 +694,14 @@ function UnscoredNotice({
     },
     timeout: {
       tone: 'coral' as const,
-      title: 'Scoring took too long',
+      title: 'Scoring is taking longer than usual',
+      // NO LONGER ABOUT LENGTH. A report is graded in concurrent batches, so a long
+      // interview costs the same wall-clock as a short one — saying "a long interview is a
+      // lot to grade at once" would now be telling the candidate the wrong thing about
+      // their own interview, and implying that answering everything was a mistake.
       body:
-        'A long interview is a lot to grade at once and this one ran past the time limit. ' +
-        'Your answers are saved — generating again usually works.',
+        'The scoring model was slow to respond this time. Every answer is saved and nothing ' +
+        'needs redoing — generating again almost always works.',
       canRetry: true,
     },
     provider_unavailable: {

@@ -55,7 +55,12 @@ FEATURE_LABELS: dict[str, str] = {
     "question_generation": "Adaptive question during an interview",
     "question_bank": "Shared question pool — generated once per role, then cached for everyone",
     "cross_question": "Live follow-up probing the last answer",
-    "report_generation": "Final report — scores, topics, roadmap",
+    "report_generation": "Final report — summary, scores, roadmap",
+    # The per-question breakdown, generated in concurrent batches alongside the summary
+    # above. Listed separately because it is several calls per report, so a rise here
+    # means longer interviews rather than more reports — and those need different
+    # answers. See services/report/composer.py.
+    "report_analysis": "Final report — per-question breakdown",
     "model_answer": "Detailed analysis: the answer they should have given",
     # TWO CALLS, NOT ONE, and the ledger names them separately because they are separately
     # billed and separately capable of failing. Resume parsing was one call that had to return

@@ -13,8 +13,16 @@
  * refuses and every candidate is told the model was unreachable. One bug, two symptoms, and the
  * expensive one was completely invisible.
  *
- * So the rule these tests hold: READS ARE QUERIES, BILLED WRITES ARE MUTATIONS, and the only
- * automatic generation left is the first one for a report that does not exist at all.
+ * So the rule these tests hold: READS ARE QUERIES, BILLED WRITES ARE MUTATIONS, and automatic
+ * generation happens at most once per visit and never for a report that is already scored.
+ *
+ * AN UNSCORED PLACEHOLDER IS RETRIED, and that is a deliberate widening of the old rule. It
+ * used to be excluded on the reasoning that the candidate should choose to spend; in practice
+ * they saw 0/100, read "scoring could not be completed", and left — so the report they had
+ * already paid for was never produced. The spend guard is the SERVER (`should_regenerate`),
+ * which refuses on a scored report always and on a placeholder once its attempts and cooldown
+ * are spent. A refused call makes no model request. A ref cannot be the guard here, because a
+ * ref only lasts as long as the page.
  */
 
 import { readFileSync } from 'node:fs';
@@ -71,10 +79,29 @@ describe('the page generates at most once, and only when there is nothing', () =
     expect(code(PAGE)).toMatch(/requested\.current\s*=\s*true/);
   });
 
-  it('does not generate when a report already exists', () => {
-    // An unscored report EXISTS. There is something on screen and a button to press, and
-    // pressing it is the candidate's decision to make with their own money.
-    expect(code(PAGE)).toMatch(/if \(isLoading \|\| error \|\| report \|\| requested\.current\) return;/);
+  it('does not generate when a SCORED report already exists', () => {
+    // THE MONEY-CRITICAL ONE. A finished report must be free to re-read, forever. Dropping
+    // this condition would buy a fresh report on every page view of every report in the
+    // product — the original drain, restored.
+    expect(code(PAGE)).toMatch(/if \(report && !unscored\) return;/);
+  });
+
+  it('does generate when the stored report is an unscored placeholder', () => {
+    // The 0/100 population. `unscored` must be derived from the server's own reason field
+    // rather than from a score of zero, because a genuine zero is a real result — a candidate
+    // who answered nothing correctly has a scored report and must not be re-billed for it.
+    expect(code(PAGE)).toMatch(/unscored\s*=\s*!!report\?\.unscored_reason/);
+  });
+
+  it('still cannot fire twice on one visit', () => {
+    // The ref is not the spend guard, but it is what stops two concurrent generations for one
+    // session while the first is still in flight.
+    const stripped = code(PAGE);
+    const at = stripped.indexOf('requested = useRef(false)');
+    expect(at).toBeGreaterThan(-1);
+    const effect = stripped.slice(at, at + 400);
+    expect(effect).toMatch(/requested\.current\) return;/);
+    expect(effect).toMatch(/requested\.current\s*=\s*true;/);
   });
 
   it('the retry buttons call the mutation, not a refetch', () => {
