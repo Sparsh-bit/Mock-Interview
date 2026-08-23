@@ -138,9 +138,23 @@ export interface CheckoutOrder {
 export function useCheckout() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { itemId: string; code?: string; captchaToken?: string }) => {
+    mutationFn: async (args: {
+      itemId: string;
+      code?: string;
+      captchaToken?: string;
+      /**
+       * The interview session a report unlock is for.
+       *
+       * REQUIRED FOR THE UNLOCK TO DO ANYTHING. Report access is decided by finding a grant
+       * whose session_id matches the report being opened, so a purchase that names no session
+       * succeeds, takes the money, and leaves the report locked. Omitted for every other
+       * item, where a credit belongs to the account rather than to one session.
+       */
+      sessionId?: string;
+    }) => {
       const res = await getBrowserApiClient().post('/api/v1/billing/checkout', {
         item_id: args.itemId,
+        session_id: args.sessionId ?? null,
         // The CODE, never a price. The server resolves the offer and computes the charge —
         // see services/billing/offers.py. A discount named by the browser is the same bug
         // as a price named by the browser.

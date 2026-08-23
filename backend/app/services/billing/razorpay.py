@@ -58,6 +58,27 @@ _NOTES_USER_KEY = "user_id"
 #: re-derive what should have been paid. It names an offer; it never names a price.
 _NOTES_OFFER_KEY = "offer_code"
 
+#: The interview session a report unlock was bought for, carried through the gateway.
+#:
+#: WITHOUT THIS A PAID UNLOCK DID NOTHING, AND THE MONEY WAS ALREADY TAKEN. Report access is
+#: decided by finding an unlock grant whose `session_id` matches the report being opened (see
+#: services/billing/report_access.py). The grant on both payment paths carried no session at
+#: all, so the lookup found nothing and the report stayed locked — permanently, for somebody
+#: who had just paid ₹49 for it. Nothing retried, because nothing had failed: the payment
+#: succeeded, the grant was written, and the two simply could not be connected.
+#:
+#: It rides in `notes` because that is the only channel that survives BOTH completion paths —
+#: the browser calling /verify and Razorpay calling the webhook — and either may be the one
+#: that lands first. Anything held only in our own request state would be missing from the
+#: webhook, which is the path that runs when the candidate closes the tab after paying.
+#:
+#: ATTACKER-INFLUENCED, like everything else in notes, and harmless: a grant is always written
+#: for the AUTHENTICATED buyer, and report_access matches on user_id AND session_id, so naming
+#: somebody else's session buys an unlock against a report you still cannot open. Checkout
+#: validates ownership anyway, because failing early with a clear message beats selling
+#: somebody an unlock that will do nothing.
+_NOTES_SESSION_KEY = "session_id"
+
 #: Razorpay will not accept an order below one rupee. Anything discounted under this is a
 #: free grant that must never reach the gateway — see offers.quote.
 _MIN_ORDER_PAISE = 100
@@ -136,6 +157,10 @@ class PaymentOutcome:
     #: A flag rather than an honour system: the webhook asserts on it before granting, so
     #: forgetting the check fails loudly in tests instead of quietly giving product away.
     amount_verified: bool = True
+    #: The interview session a report unlock was bought for, or "". See _NOTES_SESSION_KEY —
+    #: a grant written without it cannot be found by report_access, so the report stays locked
+    #: after a successful payment.
+    session_id: str = ""
 
 
 def items_from_payment(payload: dict) -> PaymentOutcome | None:
@@ -165,6 +190,7 @@ def items_from_payment(payload: dict) -> PaymentOutcome | None:
     user_id = str(notes.get(_NOTES_USER_KEY) or "").strip()
     item_id = str(notes.get(_NOTES_ITEM_KEY) or "").strip()
     offer_code = str(notes.get(_NOTES_OFFER_KEY) or "").strip().upper()
+    session_id = str(notes.get(_NOTES_SESSION_KEY) or "").strip()
     payment_id = str(payment.get("id") or "").strip()
     order_id = str(payment.get("order_id") or "").strip()
     amount = int(payment.get("amount") or 0)
@@ -206,6 +232,7 @@ def items_from_payment(payload: dict) -> PaymentOutcome | None:
         amount_paise=amount,
         offer_code=offer_code,
         amount_verified=not offer_code,
+        session_id=session_id,
     )
 
 
@@ -220,6 +247,7 @@ async def create_order(
     *,
     charged_paise: int | None = None,
     offer_code: str = "",
+    session_id: str = "",
 ) -> dict:
     """
     Open an order at Razorpay for `item`, returning what the browser checkout needs.
@@ -253,6 +281,8 @@ async def create_order(
         raise PaymentNotConfiguredError
 
     notes: dict[str, str] = {_NOTES_ITEM_KEY: item.id, _NOTES_USER_KEY: user_id}
+    if session_id:
+        notes[_NOTES_SESSION_KEY] = session_id
     if offer_code:
         # Carried so the webhook can re-derive what SHOULD have been paid. Not trusted on
         # the way back — it names which offer to look up, and the offer decides the price.

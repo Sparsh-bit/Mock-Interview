@@ -126,6 +126,15 @@ interface Quoted {
 export interface ReportUnlockPaywallProps {
   lock: ReportLock;
   /**
+   * The session whose report this is.
+   *
+   * PASSED THROUGH TO CHECKOUT, and the purchase is worthless without it: report access is
+   * decided by finding an unlock grant whose session_id matches, so an unlock bought without
+   * one takes the money and leaves the report locked — permanently, because nothing about
+   * that looks like a failure worth retrying.
+   */
+  sessionId: string;
+  /**
    * Ask the page to refetch the report.
    *
    * THE UNLOCK IS A REFETCH, and that is the whole benefit of gating delivery rather than
@@ -135,7 +144,7 @@ export interface ReportUnlockPaywallProps {
   onUnlocked: () => void;
 }
 
-export function ReportUnlockPaywall({ lock, onUnlocked }: ReportUnlockPaywallProps) {
+export function ReportUnlockPaywall({ lock, sessionId, onUnlocked }: ReportUnlockPaywallProps) {
   const { session } = useAuth();
   const quote = useQuote();
   const checkout = useCheckout();
@@ -261,7 +270,7 @@ export function ReportUnlockPaywall({ lock, onUnlocked }: ReportUnlockPaywallPro
    */
   const runCheckout = () => {
     checkout.mutate(
-      { itemId: lock.itemId, code: appliedCode, captchaToken },
+      { itemId: lock.itemId, code: appliedCode, captchaToken, sessionId },
       {
         onSuccess: async (order) => {
           /*

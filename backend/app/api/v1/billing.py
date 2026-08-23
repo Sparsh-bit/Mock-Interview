@@ -109,8 +109,33 @@ class BalanceOut(BaseModel):
     ban_reason: str | None = None
 
 
+def _session_uuid(raw: str) -> uuid.UUID | None:
+    """
+    A session id from the gateway's notes, or None.
+
+    `notes` is attacker-influenced, so this never trusts the string to be a UUID. None means
+    "this purchase was not for a session", which is the normal case for every item except the
+    report unlock — an interview credit belongs to the account, not to one session.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        logger.warning("payment_notes_session_id_unparseable", value=raw[:64])
+        return None
+
+
 class CheckoutRequest(BaseModel):
     item_id: str = Field(min_length=1, max_length=32)
+    #: The interview session a report unlock is being bought for.
+    #:
+    #: REQUIRED FOR THE UNLOCK TO DO ANYTHING, because report access is decided by finding a
+    #: grant whose session_id matches the report being opened. A purchase without it succeeds,
+    #: takes the money, and leaves the report locked — which is what happened before this
+    #: field existed. Ignored for every other item.
+    session_id: uuid.UUID | None = None
     #: A promo code, optional. The browser sends the CODE and never a price — the server
     #: resolves the offer and computes the charge.
     code: str = Field(default="", max_length=40)
@@ -271,6 +296,32 @@ async def checkout(
     payments, and Razorpay would happily accept ₹1 for five interviews if we let the browser
     name the figure.
     """
+    # ── THE SESSION A REPORT UNLOCK IS FOR, VALIDATED BEFORE ANY MONEY MOVES ─────────────
+    #
+    # The unlock is worthless without it: report access matches a grant on session_id, so a
+    # purchase that names no session takes the money and leaves the report locked. Checked here
+    # rather than at grant time because this is the last moment before a payment sheet opens —
+    # refusing now costs the candidate nothing, while refusing afterwards means refunding.
+    #
+    # OWNERSHIP IS VERIFIED, not assumed. The id comes from the browser and rides through the
+    # gateway in attacker-influenced notes. Naming somebody else's session could never unlock
+    # their report — the grant is written for the authenticated buyer and report_access matches
+    # on user_id as well — but it would sell somebody an unlock that does nothing, and a clear
+    # refusal now beats a support conversation later.
+    unlock_session_id: uuid.UUID | None = None
+    if request.session_id is not None:
+        from app.models.session import InterviewSession  # noqa: PLC0415
+
+        owns = await db.scalar(
+            select(InterviewSession.id).where(
+                InterviewSession.id == request.session_id,
+                InterviewSession.user_id == current_user.user_id,
+            )
+        )
+        if owns is None:
+            raise NotFoundError("Interview session", str(request.session_id))
+        unlock_session_id = request.session_id
+
     item = get_item(request.item_id)
     if item is None:
         raise NotFoundError("Item", request.item_id)
@@ -306,6 +357,11 @@ async def checkout(
             item.feature,
             item.quantity,
             kind=KIND_GRANT,
+        # THE SESSION THE UNLOCK BELONGS TO. Without it a paid unlock cannot be found by
+        # report_access, which matches on session_id — so the report stays locked and the money
+        # is already gone. Empty for every other item, which is correct: an interview credit
+        # belongs to the account, not to a session.
+            session_id=unlock_session_id,
             detail={
                 "item_id": item.id,
                 "offer": quoted.offer.code if quoted.offer else "",
@@ -334,6 +390,9 @@ async def checkout(
         str(current_user.user_id),
         charged_paise=quoted.charged_paise,
         offer_code=quoted.offer.code if quoted.offer else "",
+        # Carried through the gateway so BOTH completion paths can attach it — the browser
+        # calling /verify and Razorpay calling the webhook, either of which may land first.
+        session_id=str(unlock_session_id) if unlock_session_id else "",
     )
     order["granted"] = False
     order["original_paise"] = quoted.original_paise
@@ -479,6 +538,10 @@ async def verify_payment(
         item.quantity,
         kind=KIND_PURCHASE,
         payment_ref=request.razorpay_payment_id,
+        # Read back from the order's notes, alongside item_id and offer_code above, so this
+        # works whether the browser or the webhook gets here first. See _NOTES_SESSION_KEY in
+        # services/billing/razorpay.py for why a grant without it leaves a paid report locked.
+        session_id=_session_uuid(str(notes.get("session_id") or "")),
         detail={
             "item_id": item.id,
             "amount_paise": amount,
@@ -615,6 +678,9 @@ async def razorpay_webhook(
         outcome.item.quantity,
         kind=KIND_PURCHASE,
         payment_ref=outcome.payment_id,
+        # The path that runs when the candidate closes the tab after paying, which is exactly
+        # when nobody is around to retry. It must attach the session too.
+        session_id=_session_uuid(outcome.session_id),
         detail={
             "item_id": outcome.item.id,
             "amount_paise": outcome.amount_paise,

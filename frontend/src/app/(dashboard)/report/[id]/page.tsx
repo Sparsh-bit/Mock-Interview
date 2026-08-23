@@ -219,7 +219,11 @@ export default function ReportDetailPage() {
         {/* No ShareMenu and no Detailed Analysis link: neither is something to offer for a
             report the candidate has not seen yet, and a share link to a locked report is a
             link to a paywall with somebody else's name on it. */}
-        <ReportUnlockPaywall lock={lock} onUnlocked={() => void refetch()} />
+        <ReportUnlockPaywall
+          lock={lock}
+          sessionId={sessionId}
+          onUnlocked={() => void refetch()}
+        />
       </div>
     );
   }
