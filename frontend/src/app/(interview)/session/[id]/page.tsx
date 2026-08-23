@@ -699,16 +699,37 @@ export default function LiveSessionPage() {
       // Serially, a three-line turn was three vendor round-trips of ~3.5s laid end to end
       // with the playback between them.
       voicesRef.current.prefetchTurn(result.turns);
+      /*
+       * EACH LINE FAILS ON ITS OWN. The `await` used to sit bare in this loop, so a single
+       * rejected utterance broke out of it — and every LATER line of that turn was then never
+       * spoken and, because the reveal is driven by `onStart`, never even shown. Anil leads
+       * almost every turn, so a fault on his line deleted Priya's from the interview
+       * entirely: "only the anil is speaking, the priya is not their in the interview".
+       *
+       * The catch also guarantees the line is REVEALED. A candidate must be able to read what
+       * the panel said even when the audio for it failed — losing the voice is a degraded
+       * interview, losing the words is a broken one, and the second used to follow from the
+       * first for every line after the failure.
+       */
       for (const line of result.turns) {
-        await voicesRef.current.speakAs(line.speaker, line.text, {
-          // Fires when the audio is in hand, not when the request goes out — so the line
-          // appears with the voice rather than seconds ahead of it.
-          onStart: () => {
-            setPanelPending(false);
-            setPanelLines((prev) => [...prev, line]);
-          },
-          tone: line.tone,
-        });
+        let shown = false;
+        const reveal = () => {
+          if (shown) return;
+          shown = true;
+          setPanelPending(false);
+          setPanelLines((prev) => [...prev, line]);
+        };
+        try {
+          await voicesRef.current.speakAs(line.speaker, line.text, {
+            // Fires when the audio is in hand, not when the request goes out — so the line
+            // appears with the voice rather than seconds ahead of it.
+            onStart: reveal,
+            tone: line.tone,
+          });
+        } catch (err) {
+          console.warn(`panel line failed for ${line.speaker}; continuing the turn`, err);
+          reveal();
+        }
       }
       return {
         spoke: true,

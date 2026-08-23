@@ -49,14 +49,41 @@ const sleep = (ms: number) =>
  * characters a second is roughly half the slowest rate we ever set, plus 3s of
  * headroom for a cloud voice's fetch.
  */
+/*
+ * IT REPORTS WHETHER IT ACTUALLY SPOKE, and that return value is the fix for a whole
+ * panelist going silent.
+ *
+ * REPORTED, twice: "the priya is not speaking", then "only the anil is speaking, the priya is
+ * not their in the interview".
+ *
+ * This used to be `Promise<void>` with `utter.onerror = finish` — an ERROR was handled
+ * identically to a successful `end`. So when speechSynthesis refused an utterance, the caller
+ * was told it had been spoken: the line was revealed into the transcript, the chain moved on,
+ * and that panelist made no sound at all. Nothing logged it, because from the code's point of
+ * view nothing had gone wrong.
+ *
+ * And it refuses for ordinary reasons, per voice rather than per page — which is why it takes
+ * out ONE person and leaves the other working. The commonest is a cloud-backed voice
+ * (`localService: false`) that the engine cannot reach: Chrome's Google voices raise
+ * `error: "synthesis-failed"` or `"network"` and produce silence. Whoever the allocator gave a
+ * local voice keeps speaking, and the interview sounds like a one-man panel.
+ *
+ * `false` means "never made a sound and can safely be said again" — so the caller can retry
+ * on the engine's default voice, which is local and essentially always works. Saying it twice
+ * would be worse than saying it in a plainer voice, so the condition is deliberately narrow:
+ * an error AFTER the engine started is partial audio, and reports `true`.
+ */
 function speakOnce(
   utter: SpeechSynthesisUtterance,
   onStart?: () => void,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     let done = false;
     let started = false;
-    const finish = () => {
+    //: Set ONLY by the engine's own `start` event — never by the reveal fallback below, which
+    //: fires on a timer and says nothing about whether audio exists.
+    let engineStarted = false;
+    const finish = (spoke: boolean) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -67,9 +94,13 @@ function speakOnce(
         started = true;
         onStart?.();
       }
-      resolve();
+      resolve(spoke);
     };
-    const timer = setTimeout(finish, 3000 + utter.text.length * 90);
+    // THE WATCHDOG REPORTS TRUE. An engine that fires neither `end` nor `error` is usually
+    // speaking and merely quiet about it — iOS Safari does this routinely. Reporting false
+    // here would make the caller say every one of those lines a second time, which is a
+    // worse and much more noticeable fault than the one being fixed.
+    const timer = setTimeout(() => finish(true), 3000 + utter.text.length * 90);
 
     /*
      * FIRED WHEN THE VOICE ACTUALLY STARTS, which is what the caller reveals text on.
@@ -85,6 +116,7 @@ function speakOnce(
      * the neural fix.
      */
     utter.onstart = () => {
+      engineStarted = true;
       if (started) return;
       started = true;
       onStart?.();
@@ -97,10 +129,53 @@ function speakOnce(
       onStart?.();
     }, 1200);
 
-    utter.onend = finish;
-    utter.onerror = finish;
+    utter.onend = () => finish(true);
+    // An error BEFORE any audio means nothing was heard and the line can safely be repeated
+    // on another voice. An error after `start` is an interruption partway through — real
+    // audio reached the candidate, so repeating it would be worse than losing the tail.
+    utter.onerror = () => finish(engineStarted);
     window.speechSynthesis.speak(utter);
   });
+}
+
+/**
+ * Speak one chunk, and if the assigned voice made no sound at all, say it once more on the
+ * engine's default voice.
+ *
+ * THIS IS WHAT KEEPS A PANELIST FROM GOING SILENT. A `SpeechSynthesisVoice` can be listed by
+ * `getVoices()` and still be unusable: the cloud-backed ones (`localService: false`) need a
+ * network round trip the engine may not be able to make, and they fail per VOICE rather than
+ * per page. So one panelist is allocated a Google voice and is silent for the whole interview
+ * while the other, on a local voice, is perfectly audible — reported as "only the anil is
+ * speaking, the priya is not their in the interview".
+ *
+ * The retry drops `voice` and `lang` and keeps `pitch` and `rate`, which is deliberate: pitch
+ * and rate are what the allocator uses to keep two panelists on ONE shared voice tellable
+ * apart, so a fallback that kept them is still recognisably that person rather than the
+ * interview suddenly having a narrator.
+ *
+ * Only ever once, and only when nothing was heard — `speakOnce` reports `false` exclusively
+ * for an error raised before the engine started, so this cannot make a line be spoken twice.
+ */
+async function speakChunk(
+  build: () => SpeechSynthesisUtterance,
+  onStart?: () => void,
+  label?: string,
+): Promise<void> {
+  const utter = build();
+  const hadVoice = !!utter.voice;
+  if (await speakOnce(utter, onStart)) return;
+  if (!hadVoice) return; // Already the default voice. There is nothing plainer to fall back to.
+  // Logged, because a silent panelist is invisible from the outside and this is the only
+  // place that knows it happened. Without it the next report is another round of guessing.
+  console.warn(
+    `speech: voice for ${label ?? 'speaker'} produced no audio; retrying on the engine default`,
+  );
+  const retry = build();
+  retry.voice = null;
+  retry.lang = 'en-US';
+  // The reveal has already fired on the first attempt, so it is not passed again.
+  await speakOnce(retry);
 }
 
 /**
@@ -550,8 +625,10 @@ export function useSpeechSynthesis() {
         for (let i = 0; i < chunks.length; i++) {
           if (stale()) return;
           const c = chunks[i];
-          const utter = new SpeechSynthesisUtterance(c.text);
-          if (chosen) {
+          const first = i === 0;
+          const build = () => {
+            const utter = new SpeechSynthesisUtterance(c.text);
+            if (chosen) {
             utter.voice = chosen;
             utter.lang = chosen.lang;
           } else {
@@ -562,24 +639,32 @@ export function useSpeechSynthesis() {
             // Indian speaker and needs the right model. This one is only choosing an accent
             // to speak in, and a good neutral voice beats a robotic local one.
             utter.lang = 'en-US';
-          }
-          // The interviewer slows on the question itself and on the clause they
-          // end on. That is the "your turn" cue; without it a candidate is
-          // guessing when to start talking. Pitch stays flat — a question lift is
-          // both inaudible at any safe size and ignored outright by cloud voices.
-          utter.rate = Math.min(1.35, Math.max(0.7, Math.round(baseRate * shapingFor(c) * 100) / 100));
-          utter.pitch = 1.0;
-          // `speaking` is driven by onstart, as it already was. What IS fixed here:
-          // the old code attached `onerror = () => setSpeaking(false)` to EVERY
-          // chunk, so one failed utterance mid-queue reported the interviewer as
-          // finished while the rest of the question was still audible. speakOnce
-          // resolves on error instead, and only the loop's exit clears the flag.
-          if (i === 0) {
-            utter.onstart = () => {
-              if (!stale()) setSpeaking(true);
-            };
-          }
-          await speakOnce(utter);
+            }
+            // The interviewer slows on the question itself and on the clause they
+            // end on. That is the "your turn" cue; without it a candidate is
+            // guessing when to start talking. Pitch stays flat — a question lift is
+            // both inaudible at any safe size and ignored outright by cloud voices.
+            utter.rate = Math.min(
+              1.35,
+              Math.max(0.7, Math.round(baseRate * shapingFor(c) * 100) / 100),
+            );
+            utter.pitch = 1.0;
+            // `speaking` is driven by onstart, as it already was. What IS fixed here:
+            // the old code attached `onerror = () => setSpeaking(false)` to EVERY
+            // chunk, so one failed utterance mid-queue reported the interviewer as
+            // finished while the rest of the question was still audible. speakOnce
+            // resolves on error instead, and only the loop's exit clears the flag.
+            if (first) {
+              utter.onstart = () => {
+                if (!stale()) setSpeaking(true);
+              };
+            }
+            return utter;
+          };
+          // Same fallback as the panel: a voice the engine cannot actually use must not cost
+          // the candidate the question. This path is what everybody hears when the panel
+          // layer is unavailable, so a silent voice here is the whole interview.
+          await speakChunk(build, undefined, 'the interviewer');
           if (c.pauseAfterMs > 0 && !stale()) await sleep(c.pauseAfterMs);
         }
         if (!stale()) setSpeaking(false);
@@ -1255,24 +1340,32 @@ export function usePanelVoices(
 
         for (const chunk of chunks) {
           if (!live()) break;
-          const utter = new SpeechSynthesisUtterance(chunk.text);
-          if (chosen) {
-            utter.voice = chosen;
-            utter.lang = chosen.lang;
-          } else {
-            // Same reasoning as the interviewer path above.
-            utter.lang = 'en-US';
-          }
-          // Pitch is panel-voices' to set — it is the value allDistinguishable relies on to
-          // keep two panelists on one voice tellable apart. Tone only OFFSETS it, by at most
-          // 0.06, which is well inside that margin and still audible as gravity.
-          utter.pitch = Math.max(0.5, Math.min(2, (assigned?.pitch ?? 1) + toneShape.pitch));
-          utter.rate = Math.min(
-            1.35,
-            Math.max(0.7, Math.round(baseRate * shapingFor(chunk) * 100) / 100),
-          );
+          // Built by a FACTORY rather than once, because a SpeechSynthesisUtterance cannot be
+          // re-spoken after the engine has refused it — the retry inside speakChunk needs a
+          // fresh object, and reusing this one would silently do nothing.
+          const build = () => {
+            const utter = new SpeechSynthesisUtterance(chunk.text);
+            if (chosen) {
+              utter.voice = chosen;
+              utter.lang = chosen.lang;
+            } else {
+              // Same reasoning as the interviewer path above.
+              utter.lang = 'en-US';
+            }
+            // Pitch is panel-voices' to set — it is the value allDistinguishable relies on to
+            // keep two panelists on one voice tellable apart. Tone only OFFSETS it, by at
+            // most 0.06, which is well inside that margin and still audible as gravity.
+            utter.pitch = Math.max(0.5, Math.min(2, (assigned?.pitch ?? 1) + toneShape.pitch));
+            utter.rate = Math.min(
+              1.35,
+              Math.max(0.7, Math.round(baseRate * shapingFor(chunk) * 100) / 100),
+            );
+            return utter;
+          };
           // Browser: reveal on the engine's own onstart, not before handing it the text.
-          await speakOnce(utter, reveal);
+          // A voice that produces no audio falls back to the engine default rather than
+          // leaving this panelist silent — see speakChunk.
+          await speakChunk(build, reveal, speaker);
           if (chunk.pauseAfterMs > 0 && !live()) break;
           if (chunk.pauseAfterMs > 0) await sleep(chunk.pauseAfterMs);
         }

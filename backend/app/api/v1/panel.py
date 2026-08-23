@@ -117,6 +117,40 @@ INTERVIEWERS: list[Interviewer] = [
 
 INTERVIEWER_NAMES: list[str] = [i.name for i in INTERVIEWERS]
 
+#: Canonical spelling by lowercase name, so a speaker can be recognised however it was written.
+_CANONICAL_SPEAKER: dict[str, str] = {name.lower(): name for name in INTERVIEWER_NAMES}
+
+#: Punctuation a model puts on the END of a speaker label. "Priya:" is Priya with a colon on
+#: her, not a different person.
+_SPEAKER_PUNCTUATION = " \t:-—–.,"
+
+
+def canonical_speaker(name: str) -> str | None:
+    """
+    Map whatever the model wrote in `speaker` onto the panel name it meant — or None.
+
+    THIS IS THE FIX FOR "priya is not speaking", and the shape of that bug is worth keeping
+    written down, because it is a class of bug rather than one instance.
+
+    The contribution filter used to be `c.speaker in INTERVIEWER_NAMES`: an exact,
+    case-sensitive membership test. A model that answered with "priya", "PRIYA", "Priya " or
+    "Priya:" had done exactly what the prompt asked — it names the panel and says to use those
+    names — and its contribution was DISCARDED. Silently. No log, no fallback, no trace
+    anywhere except a candidate noticing that one of the two interviewers never spoke.
+
+    IT FAILS ASYMMETRICALLY, which is why it presents as "one person went quiet" rather than
+    "the panel is broken". Whichever name the model happens to capitalise consistently keeps
+    working; the other one disappears. Nothing else about the interview looks wrong.
+
+    AND THE CANONICAL SPELLING IS RETURNED, not the input. The browser hands this name straight
+    back to /tts/speak to resolve a voice, and it goes into the stored transcript and into the
+    report. Passing "priya" through would mean a real name on screen was lowercase, and while
+    `panel_voice_id` happens to lowercase its own lookup, relying on that would make every
+    downstream consumer responsible for a normalisation this boundary should have done once.
+    """
+    key = (name or "").strip(_SPEAKER_PUNCTUATION).strip().lower()
+    return _CANONICAL_SPEAKER.get(key)
+
 #: Panel dialogue is a CHEAP call and it runs on every question, so it needs its own ceiling
 #: separate from the interview limit. A 12-question interview with corrections and a closing
 #: sequence is roughly 16 of these.
@@ -987,19 +1021,53 @@ async def panel_turn(
             "bare question",
         )
 
-    valid = [
-        {
-            "speaker": c.speaker,
-            "text": c.text.strip(),
+    # ── THE SPEAKER NAME IS CANONICALISED, NOT MATCHED EXACTLY ───────────────────────────
+    #
+    # REPORTED AS "priya is not speaking", and this is how a whole panelist goes quiet.
+    #
+    # The filter below used to be `c.speaker in INTERVIEWER_NAMES`, an exact case-sensitive
+    # comparison against ["Anil", "Priya"]. A model that writes "priya", "PRIYA", "Priya " or
+    # "Priya:" has said exactly what was asked of it — the prompt names the panel and the
+    # instruction is to use those names — but the contribution was DROPPED, silently, with no
+    # log and no fallback. Her turn simply did not exist by the time the browser saw it.
+    #
+    # It also fails asymmetrically, which is why it reads as "one person stopped talking"
+    # rather than "the panel is broken": whichever name the model happens to capitalise
+    # consistently keeps working, and the other one vanishes.
+    #
+    # So the name is normalised and mapped back to the CANONICAL spelling — the browser hands
+    # this straight to /tts/speak, which resolves a voice by name, so a lowercase "priya"
+    # reaching that lookup would find no voice and fall back to browser speech even if it did
+    # survive this filter.
+    valid: list[dict] = []
+    dropped: list[str] = []
+    for c in turn.turns:
+        text = c.text.strip()
+        if not text:
+            continue
+        canonical = canonical_speaker(c.speaker)
+        if canonical is None:
+            dropped.append(c.speaker)
+            continue
+        valid.append({
+            "speaker": canonical,
+            "text": text,
             # Re-checked here rather than trusted: this is what the browser hands straight
             # back to /tts/speak, and an unrecognised name there would silently become
             # neutral anyway. Normalising at the boundary means the tone in the transcript
             # is the tone that was actually spoken.
             "tone": c.tone if c.tone in TONE_PROSODY else "neutral",
-        }
-        for c in turn.turns
-        if c.text.strip() and c.speaker in INTERVIEWER_NAMES
-    ][:4]
+        })
+    valid = valid[:4]
+
+    if dropped:
+        # NEVER SILENT AGAIN. A dropped contribution is a panelist who did not speak, and the
+        # only previous evidence was a candidate noticing that one interviewer had gone quiet.
+        logger.warning(
+            "panel_contribution_dropped_unknown_speaker",
+            speakers=dropped[:4],
+            known=INTERVIEWER_NAMES,
+        )
 
     asked_question = turn.asked_question and bool(valid)
 

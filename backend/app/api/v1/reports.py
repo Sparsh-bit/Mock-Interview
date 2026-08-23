@@ -950,7 +950,18 @@ async def generate_report(
                         ),
                     ),
                     max_tokens=batch_token_budget(len(slice_lines)),
-                    attempts_per_provider=2,
+                    # ── ONE ATTEMPT PER PROVIDER, AND THIS IS A COST DECISION ─────────────
+                    #
+                    # The summary gets two because losing it costs the whole headline. A BATCH
+                    # is already tolerated: `_report_is_complete` accepts two-thirds coverage,
+                    # so a batch that fails costs its own six questions and the report still
+                    # scores. Retrying it as hard as the summary buys very little and bills a
+                    # lot — at two attempts across two providers, a report with three batches
+                    # could bill twelve model calls on a bad provider minute instead of six.
+                    #
+                    # The fallback provider is still in the chain, so a batch does get a
+                    # second chance; it just does not get four.
+                    attempts_per_provider=1,
                     cost_tier=CostTier.BALANCED,
                     # One entry per question in the slice, or the batch is a failure and its
                     # questions fall to the other batches' coverage. A batch that returns two
