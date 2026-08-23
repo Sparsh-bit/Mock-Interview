@@ -246,6 +246,49 @@ class TestASummaryThatFailedIsDerivedRatherThanAbandoned:
         assert partial and full
         assert partial.overall_score < full.overall_score
 
+    def test_the_four_bars_describe_the_same_interview(self):
+        """
+        THE COHERENCE INVARIANT, and it was broken in a way reading the code did not show.
+
+        Measured end-to-end on a real six-answer interview scoring [7, 5, 7, 8, 5, 1], the
+        derived report returned answer_completeness 16.7 beside technical_accuracy 55.0. Those
+        two numbers describe the same interview. On the candidate's report they are two bars
+        side by side, so a 38-point gap reads as one of them being broken — and at a 0.25
+        weight it pulled the overall score down from ~55 to 44.5.
+
+        The cause was that `missing_concepts` is not a calibrated scale: it is however many
+        concepts the grader chose to list, and a thorough grader lists four on an answer worth
+        7/10. So the old divisor measured how talkative the grader was, not completeness.
+        """
+        # The real observed shape: mid-to-good answers, each with the four-ish missing
+        # concepts a thorough grader records. Nothing pathological.
+        analyses = [
+            _item("q1", 7.0, missing=["a", "b", "c", "d"]),
+            _item("q2", 5.0, missing=["a", "b", "c", "d"]),
+            _item("q3", 7.0, missing=["a", "b", "c"]),
+            _item("q4", 8.0, missing=[]),
+            _item("q5", 5.0, missing=["a", "b", "c", "d", "e"]),
+            _item("q6", 1.0, missing=["a", "b", "c", "d"], quality="incorrect"),
+        ]
+        out = derive_summary(analyses, candidate_name="A", topics=["Java"], answered=6)
+        assert out is not None
+        tech = out.dimension_scores["technical_accuracy"]
+        comp = out.dimension_scores["answer_completeness"]
+        # Completeness may sit BELOW accuracy — gaps are real — but not in a different world
+        # from it. Half is the line: at the old divisor this was 16.7 against 55.0, i.e. 0.30.
+        assert comp >= tech * 0.5, (
+            f"answer_completeness {comp} against technical_accuracy {tech} — these describe "
+            "the same interview and render as two bars side by side. A gap this size means "
+            "the completeness formula is measuring the grader's verbosity, not the answers."
+        )
+        # And the headline must still resemble the per-question mean it is built from.
+        mean_pct = sum(a.score for a in analyses) / len(analyses) * 10
+        assert abs(out.overall_score - mean_pct) <= 12, (
+            f"overall {out.overall_score} against a per-question mean of {mean_pct} — a "
+            "candidate can add up the scores in their own breakdown, so the headline cannot "
+            "drift far from them."
+        )
+
     def test_missing_concepts_lower_completeness(self):
         thorough = derive_summary(
             [_item("q1", 7.0)], candidate_name="A", topics=[], answered=1

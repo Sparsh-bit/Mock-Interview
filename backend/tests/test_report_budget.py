@@ -45,11 +45,22 @@ def _generate_report_source() -> str:
 class TestTheSemaphoreIsInsideTheTimeout:
     def test_the_slot_is_acquired_inside_the_budget(self):
         """
-        THE ONE THAT WOULD HAVE CAUGHT IT.
+        THE ONE THAT WOULD HAVE CAUGHT IT — and the mechanism has since changed, so this now
+        pins the newer, stricter version of the same invariant.
 
-        Parsed rather than grepped: `async with _report_slots` and `asyncio.wait_for` both
-        still appear in the source whichever way round they are nested, so a string search
-        cannot tell the fixed code from the broken code. The AST can.
+        THE INVARIANT: waiting for a report slot must be BOUNDED. It used to be bounded only
+        incidentally, by an `asyncio.wait_for` wrapped around the whole generation — and the
+        original bug was that the `async with _report_slots` sat OUTSIDE that wait_for, so
+        queue time was unbounded and a queued request could outlive the client.
+
+        That outer wait_for is now gone, and for a good reason: wrapping the generation in one
+        deadline cancelled the whole thing at the deadline, throwing away every concurrently
+        generated part that had already SUCCEEDED. The parts are bounded individually by
+        `asyncio.wait` instead, which returns what finished rather than raising.
+
+        So the queue needs its own bound, explicitly, and that is what this asserts. Parsed
+        rather than grepped: `acquire`, `wait_for` and `release` all appear in the source
+        whichever way they are arranged, and only the structure distinguishes bounded from not.
         """
         tree = ast.parse(inspect.getsource(reports))
         target = next(
@@ -57,38 +68,37 @@ class TestTheSemaphoreIsInsideTheTimeout:
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "generate_report"
         )
 
-        # Every `async with` that mentions _report_slots, and every wait_for call.
-        slot_withs = [
-            n for n in ast.walk(target)
-            if isinstance(n, ast.AsyncWith)
-            and "_report_slots" in ast.unparse(n.items[0].context_expr)
-        ]
-        assert slot_withs, "the concurrency cap is gone entirely"
-
         waits = [
             n for n in ast.walk(target)
-            if isinstance(n, ast.Call)
-            and ast.unparse(n.func).endswith("wait_for")
+            if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("wait_for")
         ]
-        assert waits, "report generation is no longer bounded by a timeout at all"
+        # THE ACQUIRE IS WRAPPED IN A TIMEOUT. Nothing else bounds it now.
+        bounded_acquires = [
+            n for n in waits if "_report_slots.acquire" in ast.unparse(n)
+        ]
+        assert bounded_acquires, (
+            "acquiring a report slot is not wrapped in asyncio.wait_for. Nothing else bounds "
+            "it any more — the outer deadline over the whole generation was removed because it "
+            "discarded already-finished parts — so an unbounded acquire means a cohort "
+            "finishing together can queue past the client's timeout with no response at all."
+        )
 
-        # THE INVARIANT, STATED THE SIMPLE WAY ROUND.
-        #
-        # In the broken version the `async with _report_slots` CONTAINED the `wait_for`, so the
-        # slot was taken before the clock started. In the fixed version the slot lives inside a
-        # coroutine that `wait_for` wraps, so no slot-acquiring `async with` contains a
-        # `wait_for` at all. That is the whole difference, and it is one assertion.
-        for sw in slot_withs:
-            enclosed = [
-                w for w in waits
-                if sw.lineno <= w.lineno
-                and (sw.end_lineno or sw.lineno) >= (w.end_lineno or w.lineno)
-            ]
-            assert not enclosed, (
-                "the report slot is acquired OUTSIDE the timeout: queue time is unbounded, so "
-                "a queued request can outlive the client. Move the `async with _report_slots` "
-                "inside the coroutine that asyncio.wait_for wraps."
-            )
+        # AND THE SLOT IS ALWAYS GIVEN BACK. A bounded acquire with no matching release in a
+        # `finally` is worse than the bug it replaced: twelve failures and reports stop
+        # generating at all, silently, and only under load.
+        src = inspect.getsource(reports.generate_report)
+        assert "_report_slots.release()" in src, (
+            "the report slot is acquired but never released — a slot leaked on the error path "
+            "is gone for the life of the process"
+        )
+        finallys = [
+            n for n in ast.walk(target)
+            if isinstance(n, ast.Try) and "_report_slots.release" in ast.unparse(n.finalbody)
+        ]
+        assert finallys, (
+            "the release is not in a `finally`, so any error between acquiring and releasing "
+            "leaks a slot permanently"
+        )
 
     def test_the_budget_stays_inside_the_gateway_window(self):
         """

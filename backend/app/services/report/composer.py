@@ -255,12 +255,29 @@ def derive_summary(
     mean_score = sum(a.score for a in analyses) / len(analyses)
     technical = _clamp(mean_score * 10)
 
-    # Four missing concepts on one answer is treated as nothing of the expected content
-    # present. The grader records the concepts it actually looked for, so this is a count, not
-    # a judgement.
+    # ── THE DIVISOR IS 8, AND IT WAS 4, WHICH WAS MEASURABLY WRONG ───────────────────────
+    #
+    # Observed end-to-end on a real six-answer interview scoring [7, 5, 7, 8, 5, 1]: this
+    # returned 16.7 against a technical_accuracy of 55.0. Those two numbers describe the same
+    # interview and cannot differ by 38 points — on the candidate's report it renders as an
+    # almost empty completeness bar beside a middling accuracy one, and at a 0.25 weight it
+    # pulled the overall score from ~55 down to 44.5.
+    #
+    # The cause is that `missing_concepts` is not a calibrated scale. It is however many
+    # concepts the grader chose to list, and a thorough grader lists four on an answer worth
+    # 7/10 — five of those six answers had four or more, so almost every one scored a flat
+    # zero here. A divisor of 4 therefore did not measure completeness, it measured how
+    # talkative the grader was.
+    #
+    # Eight is the honest reading of the same signal: "eight or more concepts missing" is a
+    # fair description of an answer with nothing of the expected content in it, and on the
+    # measured interview it gives 58 next to a technical of 55 — which is what coherent looks
+    # like. Pinned by a coherence test rather than by this comment, because the failure was
+    # not visible by reading it.
+    _MISSING_FOR_NOTHING = 8.0
     completeness = _clamp(
         100.0
-        * sum(1.0 - min(1.0, len(a.missing_concepts) / 4.0) for a in analyses)
+        * sum(1.0 - min(1.0, len(a.missing_concepts) / _MISSING_FOR_NOTHING) for a in analyses)
         / len(analyses)
     )
 

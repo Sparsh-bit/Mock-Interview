@@ -17,8 +17,9 @@ from time import perf_counter
 
 import structlog
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 from app.core.config import settings
 from app.core.rate_limit import enforce_limit
@@ -125,6 +126,14 @@ _UNSCORED = "unscored_fallback"
 #: the page. After this many failures the stored placeholder is served as-is.
 _MAX_UNSCORED_ATTEMPTS = 3
 
+#: How many times a SCORED report may be re-run to fill in missing per-question analyses.
+#:
+#: Low on purpose, and it can afford to be: a completion pass carries forward everything
+#: already graded, so it grades only the gap. Two attempts is enough to survive one bad
+#: provider minute without turning a permanently-unlucky session into a recurring bill every
+#: time the candidate opens their report.
+_MAX_COMPLETION_ATTEMPTS = 2
+
 #: Which generation strategy produced a stored report. BUMP THIS whenever a change could make
 #: a previously-failing report succeed.
 #:
@@ -147,6 +156,35 @@ _GENERATION_STRATEGY = "split-v1"
 #: is provider-cached on the exact bytes of the system block, and a batch that separated
 #: questions differently would read a different transcript from the one the summary read.
 _TRANSCRIPT_SEPARATOR = "\n\n---\n\n"
+
+#: How long ONE part of a report may hold up the whole thing.
+#:
+#: Separate from the total budget, and it is what makes a stalled call cheap instead of
+#: expensive. The parts all start together, so without this a single provider that accepts a
+#: request and never answers costs the FULL window — measured at 44s against a 40s budget on a
+#: deliberately stalled batch, when everything else had finished in 18.
+#:
+#: 45s is about two and a half times the slowest measured part (17.3s for a 7-question batch),
+#: so it cannot truncate a report that is merely slow; it only stops one dead call from
+#: spending the candidate's whole wait. Past it the part is cancelled, its questions are
+#: carried to the next attempt, and the report is built from everything that did land.
+_PART_DEADLINE_SECONDS = 45.0
+
+#: How many parts of ONE report may be in flight at the provider at the same time.
+#:
+#: THE SPLIT'S OWN SIDE EFFECT, AND IT WAS MEASURED IN PRODUCTION. Replacing one big call with
+#: a summary plus N batches fixed the latency and multiplied the INSTANTANEOUS request rate by
+#: the number of parts — which is precisely what an account-level rate limit counts. The log
+#: read: 429 from the provider, "您的账户已达到速率限制，请您控制请求频率" ("your account has
+#: reached its rate limit, please control your request frequency"), on report_analysis.
+#:
+#: So the parts are staggered two at a time rather than fired all at once. The latency win
+#: survives almost intact — a 13-answer report is three parts, so two waves of the slowest
+#: part (~35s) instead of one (~18s), against 85s+ for the single call it replaced — while the
+#: peak rate is halved and stops depending on how long the candidate's interview was. A
+#: 20-answer report used to hit the provider with four simultaneous calls; now it never
+#: exceeds two, however long the interview.
+_PART_CONCURRENCY = 2
 
 #: Output-token budget for report generation, as (fixed, per-question).
 #:
@@ -290,6 +328,30 @@ def report_token_budget(question_count: int) -> int:
     return min(budget, _REPORT_TOKENS_MAX)
 
 
+def _stored_analyses(raw_report: dict | None) -> list[dict]:
+    """
+    Per-question analyses a previous attempt already produced, from the stored row.
+
+    Defensive because `raw_report` is JSONB and can hold whatever any past version wrote — a
+    string, a list of strings, a dict, None. Anything unusable is treated as "nothing was
+    carried forward", which costs one re-grade; raising here would 500 the report page for a
+    data shape that is our fault rather than the candidate's.
+
+    Only entries with a `question_id` are kept: the id is how an entry is matched back to its
+    question, and one without it cannot be deduplicated against a fresh batch — it would show
+    the candidate the same question twice.
+    """
+    raw = raw_report or {}
+    stored = raw.get("question_analysis")
+    if not isinstance(stored, list):
+        return []
+    out: list[dict] = []
+    for item in stored:
+        if isinstance(item, dict) and str(item.get("question_id") or "").strip():
+            out.append(item)
+    return out
+
+
 def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     """
     Decide whether a stored report warrants another (billed) AI scoring call.
@@ -308,7 +370,44 @@ def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     """
     raw = raw_report or {}
     if raw.get("generated_by") != _UNSCORED:
-        return False, 0
+        # ── A SCORED REPORT MISSING PART OF ITS BREAKDOWN IS FINISHED, NOT FINAL ──────────
+        #
+        # Partial coverage is now stored rather than rejected — a batch that failed costs its
+        # own questions and the candidate still gets their scores. But that made a partial
+        # report PERMANENT: `generated_by` is "ai", so this returned False and the missing
+        # questions were never graded by anything, ever.
+        #
+        # So a partial report gets a bounded number of completion attempts. It is cheap in a
+        # way a first generation is not, because the analyses already stored are carried
+        # forward and only the GAP is graded — completing 7 of 13 is one batch, not three.
+        # And it converges: each attempt either fills the gap or spends one of the two.
+        #
+        # A COMPLETE scored report still short-circuits, which is the money-critical case. The
+        # coverage numbers are written by the generator itself, so a report from before they
+        # existed has none and is treated as complete rather than re-billed on sight.
+        coverage = raw.get("analysis_coverage")
+        if not isinstance(coverage, dict):
+            return False, 0
+        graded = coverage.get("graded")
+        answered = coverage.get("answered")
+        if not isinstance(graded, int) or not isinstance(answered, int):
+            return False, 0
+        if graded >= answered or answered <= 0:
+            return False, 0
+        done = raw.get("completion_attempts")
+        done = done if isinstance(done, int) and not isinstance(done, bool) and done >= 0 else 0
+        if done >= _MAX_COMPLETION_ATTEMPTS:
+            logger.info(
+                "partial_report_left_as_is",
+                graded=graded,
+                answered=answered,
+                attempts=done,
+            )
+            return False, 0
+        logger.info(
+            "completing_partial_report", graded=graded, answered=answered, attempt=done + 1
+        )
+        return True, 0
     # SANITISED FIRST. `raw_report` is JSONB and can hold anything a past version wrote — a
     # string "3", a float, a list, NaN. The cooldown check below compares it to an int, so
     # coercing after that check would turn hostile stored data into a TypeError and a 500 on
@@ -624,6 +723,10 @@ async def generate_report(
     # lie and permanently trap the session on an empty report. So only a real
     # scored report short-circuits; a placeholder is retried and upgraded in place.
     unscored_attempts = 0
+    #: Per-question analyses an earlier attempt already produced. See the note below.
+    carried_analyses: list[dict] = []
+    #: How many times this report has already been re-run to fill a gap in its breakdown.
+    completion_attempts = 0
     if existing_report:
         regenerate, unscored_attempts = should_regenerate(existing_report.raw_report)
         if not regenerate:
@@ -641,6 +744,25 @@ async def generate_report(
             session_id=str(session_id),
             attempt=unscored_attempts + 1,
             max_attempts=_MAX_UNSCORED_ATTEMPTS,
+        )
+        # ── WHAT WAS ALREADY GRADED IS KEPT ──────────────────────────────────────────────
+        #
+        # "generate the report according to the detailed analysis answers as we have them."
+        #
+        # A previous attempt may have graded some of the interview before something else
+        # failed, and those per-question analyses are already stored on the placeholder row.
+        # Every retry used to throw them away and re-grade the whole interview from scratch —
+        # so each attempt cost the full price, made no cumulative progress, and could fail in
+        # exactly the same place again. Three attempts, three full bills, nothing to show.
+        #
+        # Carried forward, a retry only grades what is MISSING. A second attempt on a report
+        # that got 6 of 13 is one batch and a summary rather than three batches and a summary,
+        # so it is both cheaper and far likelier to finish inside the budget — and the work
+        # accumulates until the report is whole.
+        carried_analyses = _stored_analyses(existing_report.raw_report)
+        _prior = (existing_report.raw_report or {}).get("completion_attempts")
+        completion_attempts = (
+            _prior if isinstance(_prior, int) and not isinstance(_prior, bool) and _prior >= 0 else 0
         )
 
     # Load full transcript: question + answer per turn. Scoring is deferred to
@@ -666,6 +788,25 @@ async def generate_report(
     profile_result = await db.execute(select(Profile).where(Profile.user_id == current_user.user_id))
     profile = profile_result.scalar_one_or_none()
     candidate_name = (profile.full_name if profile and profile.full_name else "the candidate")
+
+    # ── READ OFF THE ORM ONCE, HERE, BEFORE ANYTHING COMMITS ─────────────────────────────
+    #
+    # A 500 on the report page, `sqlalchemy.exc.MissingGreenlet` raised from `company.name`
+    # inside the activity-feed f-string. Between loading these two rows and the last use of
+    # them this handler commits three times and spends twenty seconds in a model call, and at
+    # the end of that an attribute access can turn into lazy IO in a context that cannot await
+    # it — which is a 500 on a report that had already been generated and paid for.
+    #
+    # It surfaced only now because it needs a SECOND generation for one session to reach it,
+    # and until partial reports could be completed there was never a second one. A latent fault
+    # with no route to it is still a fault.
+    #
+    # `candidate_name` above already does exactly this, one line up, for the same reason. These
+    # are three strings and a difficulty label; holding live ORM instances across the whole
+    # request to re-read them is the fragility, not the fix for it.
+    company_name = company.name if company else ""
+    track_name = track.name if track else ""
+    track_difficulty = track.difficulty_level if track else None
 
     duration_minutes = 0
     if session.started_at and session.completed_at:
@@ -807,8 +948,8 @@ async def generate_report(
             "## This session",
             "",
             f"Candidate: {candidate_name}",
-            f"Company: {company.name if company else 'Unknown Company'}",
-            f"Track: {track.name if track else 'Unknown Track'}",
+            f"Company: {company_name or 'Unknown Company'}",
+            f"Track: {track_name or 'Unknown Track'}",
             f"Questions asked: {len(transcript_rows)}",
             f"Duration: {duration_minutes} minutes",
             "",
@@ -932,13 +1073,46 @@ async def generate_report(
         # at the provider. Queue time counts against the same budget as generating,
         # deliberately: a candidate queued for 50 seconds is better served the honest
         # placeholder with a retry than a request that hangs past the gateway.
-        batches = plan_batches(len(transcript_rows))
+        # ── ONLY THE QUESTIONS NOBODY HAS GRADED YET ─────────────────────────────────────
+        #
+        # `carried_analyses` holds what an earlier attempt finished before it failed. Batching
+        # only the gaps is what makes a retry cheap and makes attempts CUMULATIVE: a report
+        # that got 6 of 13 needs one batch on the second go, not three, so it costs a third as
+        # much and is far likelier to land inside the budget. Re-grading answers that already
+        # have an analysis would pay for the same work again and could fail in the same place.
+        carried_items: list[QuestionAnalysisItem] = []
+        for stored in carried_analyses:
+            try:
+                carried_items.append(QuestionAnalysisItem.model_validate(stored))
+            except ValidationError:
+                # A shape an older version wrote that no longer validates. Dropped, so the
+                # question is simply re-graded — the cost of one entry, not of a 500.
+                continue
+        already = {item.question_id.strip() for item in carried_items}
+        pending_idx = [i for i, qid in enumerate(question_ids) if qid not in already]
+        if carried_items:
+            logger.info(
+                "report_reusing_stored_analyses",
+                session_id=str(session_id),
+                carried=len(carried_items),
+                still_to_grade=len(pending_idx),
+                answered=len(transcript_rows),
+            )
+        # Batched over the PENDING questions only. plan_batches works on a count, so the
+        # batch bounds index into `pending_idx` rather than into the transcript directly.
+        batches = plan_batches(len(pending_idx))
+
+        # Shared by the summary and every batch of THIS report, so one candidate's report
+        # cannot present the provider with more than _PART_CONCURRENCY calls at once. Created
+        # per request rather than per process: _report_slots already bounds how many reports
+        # run concurrently, and a process-wide gate here would serialise unrelated candidates.
+        part_gate = asyncio.Semaphore(_PART_CONCURRENCY)
 
         async def _one_batch(batch: Batch) -> ReportAnalysisResponse:
             """Grade one slice of the interview. Only this slice is lost if it fails."""
-            slice_lines = transcript_lines[batch.start : batch.end]
-            return (
-                await generate_structured(
+            slice_lines = [transcript_lines[pending_idx[i]] for i in range(batch.start, batch.end)]
+            async with part_gate:
+                result, _raw = await generate_structured(
                     ReportAnalysisResponse,
                     prompt_builder.chat_static(
                         system_template="report_analysis",
@@ -950,21 +1124,25 @@ async def generate_report(
                         ),
                     ),
                     max_tokens=batch_token_budget(len(slice_lines)),
-                    # ── ONE ATTEMPT PER PROVIDER, AND THIS IS A COST DECISION ─────────────
+                    # ── TWO ATTEMPTS PER PROVIDER, AND I HAD CUT THIS TO ONE, WRONGLY ──────
                     #
-                    # The summary gets two because losing it costs the whole headline. A BATCH
-                    # is already tolerated: `_report_is_complete` accepts two-thirds coverage,
-                    # so a batch that fails costs its own six questions and the report still
-                    # scores. Retrying it as hard as the summary buys very little and bills a
-                    # lot — at two attempts across two providers, a report with three batches
-                    # could bill twelve model calls on a bad provider minute instead of six.
+                    # The reasoning for one was that a failed batch is tolerated, so retrying
+                    # it costs more than it saves. A production log showed why that was wrong:
+                    # the failure batches actually hit is a 429 RATE LIMIT, which is the one
+                    # error a retry is precisely the right answer to — the request was never
+                    # served, so there is nothing wasteful about asking again a moment later.
+                    # With one attempt a rate-limited batch went straight to the fallback and,
+                    # if that was unavailable too, straight to nothing.
                     #
-                    # The fallback provider is still in the chain, so a batch does get a
-                    # second chance; it just does not get four.
-                    attempts_per_provider=1,
+                    # It is no longer the amplifier it was, either: generate_structured now
+                    # BACKS OFF before a retry instead of firing it in the same millisecond,
+                    # and _PART_CONCURRENCY keeps the parts from arriving together in the
+                    # first place. The retry is now a second chance rather than a second
+                    # simultaneous request.
+                    attempts_per_provider=2,
                     cost_tier=CostTier.BALANCED,
                     # One entry per question in the slice, or the batch is a failure and its
-                    # questions fall to the other batches' coverage. A batch that returns two
+                    # questions are carried to the next attempt. A batch that returns two
                     # entries for six questions is the truncation this split exists to avoid,
                     # and accepting it would put a report on screen missing most of its
                     # breakdown.
@@ -972,44 +1150,45 @@ async def generate_report(
                     cache_system=True,
                     context="report_analysis",
                 )
-            )[0]
+                return result
 
         async def _summary() -> tuple[ReportSummaryResponse, str]:
             """The whole-interview view. Derived from the batches if this fails."""
-            return await generate_structured(
-                ReportSummaryResponse,
-                summary_messages,
-                # Does NOT scale with the interview any more, which is the point: the summary
-                # of a 20-answer interview is the same three-to-four sentences as a 6-answer
-                # one, and the roadmap is capped at three items by the prompt.
-                max_tokens=SUMMARY_TOKENS,
-                # TWO ATTEMPTS PER PROVIDER, INSIDE THE SAME WALL-CLOCK BOUND.
-                #
-                # A 400, a 429 or a refused key comes back in a second or two, and with one
-                # attempt each the rest of the budget was then spent doing nothing while the
-                # candidate was told the model was unreachable. The deadline below bounds the
-                # total, so this cannot make the request longer — it only decides how many
-                # chances fit inside a fixed window.
-                #
-                # The fallback provider is deliberately KEPT in the chain. It is worth the
-                # least when the primary is merely slow and the most when the primary refuses
-                # outright — which is exactly what the daily spend cap does, instantly and for
-                # the rest of the UTC day.
-                attempts_per_provider=2,
-                # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills as output and
-                # roughly doubled the cost of the most expensive call in the app. The rubric
-                # is already explicit in the prompt.
-                cost_tier=CostTier.BALANCED,
-                # Reject a summary with no competency bars. Both `dimension_scores` and the
-                # roadmap are optional in the schema, so when the model economised it dropped
-                # them and the report saved with a blank panel.
-                is_valid=lambda r: all(k in (r.dimension_scores or {}) for k in _REQUIRED_DIMENSIONS),
-                # The rubric is byte-identical on every report now that the per-session values
-                # live in the user brief, so it is cached at the provider: written once at
-                # 1.25x, read at 0.1x thereafter.
-                cache_system=True,
-                context="report_generation",
-            )
+            async with part_gate:
+                return await generate_structured(
+                    ReportSummaryResponse,
+                    summary_messages,
+                    # Does NOT scale with the interview any more, which is the point: the summary
+                    # of a 20-answer interview is the same three-to-four sentences as a 6-answer
+                    # one, and the roadmap is capped at three items by the prompt.
+                    max_tokens=SUMMARY_TOKENS,
+                    # TWO ATTEMPTS PER PROVIDER, INSIDE THE SAME WALL-CLOCK BOUND.
+                    #
+                    # A 400, a 429 or a refused key comes back in a second or two, and with one
+                    # attempt each the rest of the budget was then spent doing nothing while the
+                    # candidate was told the model was unreachable. The deadline below bounds the
+                    # total, so this cannot make the request longer — it only decides how many
+                    # chances fit inside a fixed window.
+                    #
+                    # The fallback provider is deliberately KEPT in the chain. It is worth the
+                    # least when the primary is merely slow and the most when the primary refuses
+                    # outright — which is exactly what the daily spend cap does, instantly and for
+                    # the rest of the UTC day.
+                    attempts_per_provider=2,
+                    # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills as output and
+                    # roughly doubled the cost of the most expensive call in the app. The rubric
+                    # is already explicit in the prompt.
+                    cost_tier=CostTier.BALANCED,
+                    # Reject a summary with no competency bars. Both `dimension_scores` and the
+                    # roadmap are optional in the schema, so when the model economised it dropped
+                    # them and the report saved with a blank panel.
+                    is_valid=lambda r: all(k in (r.dimension_scores or {}) for k in _REQUIRED_DIMENSIONS),
+                    # The rubric is byte-identical on every report now that the per-session values
+                    # live in the user brief, so it is cached at the provider: written once at
+                    # 1.25x, read at 0.1x thereafter.
+                    cache_system=True,
+                    context="report_generation",
+                )
 
         async def _generate_within_budget() -> None:
             nonlocal ai_report, last_raw_content, unscored_reason, derived_summary
@@ -1020,8 +1199,34 @@ async def generate_report(
             # problems: queueing means too few slots for the number of people finishing at
             # once, generating means the interview was long or the provider was slow. One is
             # fixed by raising REPORT_CONCURRENCY and the other is not fixed by that at all.
+            #
+            # THE QUEUE IS BOUNDED HERE, not by a deadline around the whole function. It used
+            # to be covered by the outer `wait_for` that has just been removed — and removing
+            # that without this would leave `async with _report_slots` able to wait forever,
+            # which a cohort finishing their interviews together is exactly the shape to
+            # cause. A request that cannot even get a slot inside its share of the budget is
+            # better served the honest placeholder with a retry than a dead two-minute wait
+            # that the host's gateway ends in a CORS error.
+            #
+            # HALF THE BUDGET, so losing the queue race still leaves a real window to generate
+            # in. Waiting the whole budget for a slot and then having one second to use it is
+            # a guaranteed placeholder — the queue would be converting a busy minute into
+            # failed reports rather than slow ones.
             _queue_started = perf_counter()
-            async with _report_slots:
+            try:
+                await asyncio.wait_for(
+                    _report_slots.acquire(), timeout=report_ai_budget_seconds() * 0.5
+                )
+            except TimeoutError:
+                logger.warning(
+                    "report_queue_timeout",
+                    session_id=str(session_id),
+                    waited_s=round(perf_counter() - _queue_started, 1),
+                    concurrency=settings.REPORT_CONCURRENCY,
+                )
+                unscored_reason = _REASON_TIMEOUT
+                return
+            try:
                 queue_waited = perf_counter() - _queue_started
                 if queue_waited > 1.0:
                     logger.info(
@@ -1031,29 +1236,65 @@ async def generate_report(
                         concurrency=settings.REPORT_CONCURRENCY,
                     )
 
-                # EVERY PART FAILS ON ITS OWN. `return_exceptions=True` is what makes the
-                # split worth anything: without it one batch raising would cancel the rest
-                # and lose a report that was almost entirely generated — exactly the
-                # all-or-nothing behaviour being removed.
+                # ── asyncio.wait, NOT wait_for(gather(...)), AND THE DIFFERENCE IS THE BUG ──
                 #
-                # Held as named tasks rather than passed inline so each result keeps its own
-                # type, and so the `finally` below can guarantee nothing is left running: an
-                # orphaned model call would keep billing after the candidate has already been
-                # answered, which is the leak that `asyncio.create_task` caused in the quiz
-                # path. Cancelling a gather does cancel its children, but only the tasks it
-                # still owns — this makes it true regardless of where the cancellation lands.
+                # REPORTED AFTER THE SPLIT SHIPPED: still "scoring is taking longer than
+                # usual". The split was working and its whole point was being thrown away
+                # here.
+                #
+                # This was `await asyncio.gather(...)` inside an outer
+                # `asyncio.wait_for(_generate_within_budget(), timeout=budget)`. At the
+                # deadline `wait_for` cancels the coroutine AT THE GATHER — so the lines below
+                # that read each task's result never ran, and every part that had ALREADY
+                # SUCCEEDED was discarded. One slow batch threw away the summary and every
+                # other batch, and the candidate got the same 0/100 as before.
+                #
+                # So the split bought partial tolerance and the wrapper around it removed it
+                # again. Same trap this codebase already hit once in the quiz path: wait_for
+                # over a gather is all-or-nothing by construction, however tolerant the code
+                # inside it is.
+                #
+                # `asyncio.wait` RETURNS at its timeout instead of raising, handing back what
+                # finished. A part still running is cancelled and counts as failed — its
+                # questions are lost and nothing else is. That is the behaviour the comments
+                # above have claimed since the split was written.
+                #
+                # THE BUDGET IS WHAT IS LEFT, not the whole allowance, so queueing cannot be
+                # paid twice: a request that spent 40s waiting for a slot gets the remainder
+                # rather than a fresh window, and the total stays inside the gateway.
                 summary_task = asyncio.ensure_future(_summary())
                 batch_tasks = [asyncio.ensure_future(_one_batch(b)) for b in batches]
+                all_tasks = [summary_task, *batch_tasks]
+                remaining = report_ai_budget_seconds() - (perf_counter() - _ai_started)
                 try:
-                    await asyncio.gather(
-                        summary_task, *batch_tasks, return_exceptions=True
+                    # Never zero or negative: asyncio.wait would return instantly with
+                    # nothing done, which is a guaranteed placeholder for a request that has
+                    # only just been queued. One second is enough to collect a part that is
+                    # already finishing.
+                    # Returns as soon as every part is done, so the healthy path is unchanged
+                    # and costs the slowest part only. The timeout is the smaller of what is
+                    # left of the budget and the per-part deadline — see _PART_DEADLINE_SECONDS.
+                    await asyncio.wait(
+                        all_tasks, timeout=max(1.0, min(remaining, _PART_DEADLINE_SECONDS))
                     )
                 finally:
-                    for task in (summary_task, *batch_tasks):
+                    # An orphaned model call keeps billing after the candidate has been
+                    # answered. Cancelled here rather than left to the event loop, and
+                    # awaited below so the cancellation has actually landed before the
+                    # request returns.
+                    for task in all_tasks:
                         if not task.done():
                             task.cancel()
+                    await asyncio.gather(*all_tasks, return_exceptions=True)
+            finally:
+                # Paired with the bounded acquire above. A slot that is not released is a slot
+                # gone for the life of the process, so twelve failures would stop reports
+                # generating at all — silently, and only under load.
+                _report_slots.release()
 
-            analyses: list[QuestionAnalysisItem] = []
+            # Seeded with what was already graded, so the merge below sees the whole
+            # interview rather than only this attempt's share of it.
+            analyses: list[QuestionAnalysisItem] = list(carried_items)
             failed_batches = 0
             for task in batch_tasks:
                 error = task.exception() if not task.cancelled() else None
@@ -1106,17 +1347,36 @@ async def generate_report(
                 return
 
             candidate = merge(summary, analyses, question_ids)
-            if not _report_is_complete(candidate, len(transcript_rows)):
-                # Too little of the interview came back to be worth showing. Deliberately not
-                # stored: a report missing most of its breakdown looks finished and is not.
-                logger.warning(
-                    "report_parts_insufficient",
+
+            # ── PARTIAL COVERAGE IS A REPORT, NOT A FAILURE ───────────────────────────────
+            #
+            # This used to reject the merge unless `_report_is_complete` passed, which requires
+            # two thirds of the interview to have a per-question entry. Measured on a stalled
+            # batch: 6 of 13 answers graded, a full summary in hand — and the candidate got
+            # 0/100 with "scoring took too long", because 6 is below the 8 that rule wanted.
+            #
+            # THE RULE WAS RIGHT FOR A DIFFERENT SHAPE OF CALL. When the whole report was one
+            # response, missing entries meant the MODEL had summarised instead of analysing —
+            # a quality signal, and rejecting it was correct. With concurrent batches, missing
+            # entries mean a batch failed. That is not a quality problem and it must not cost
+            # the candidate everything else that worked: their scores, their competency bars,
+            # their strengths, their roadmap and the six answers that WERE graded.
+            #
+            # `_report_is_complete` is still used, and still for its original purpose — as the
+            # summary call's own `is_valid`, judging one model response.
+            #
+            # What is stored instead is the coverage, so a partial report is honest about being
+            # partial and the next attempt can finish it rather than redo it.
+            graded = len(candidate.question_analysis)
+            if graded < len(transcript_rows):
+                logger.info(
+                    "report_stored_with_partial_analysis",
                     session_id=str(session_id),
-                    analyses=len(analyses),
+                    graded=graded,
                     answered=len(transcript_rows),
                     failed_batches=failed_batches,
+                    carried=len(carried_items),
                 )
-                return
 
             if failed_batches or derived_summary:
                 logger.info(
@@ -1130,13 +1390,12 @@ async def generate_report(
                 )
             ai_report = candidate
 
-        # ONE timeout over the queue and every part. A part still running when it expires is
-        # cancelled by the gather being cancelled — nothing is orphaned to keep billing after
-        # the candidate has already been answered.
-        await asyncio.wait_for(
-            _generate_within_budget(),
-            timeout=report_ai_budget_seconds(),
-        )
+        # NO OUTER DEADLINE. The budget is applied INSIDE, by the asyncio.wait above, because
+        # a deadline out here can only cancel the whole thing — which is precisely how the
+        # split's partial results were being discarded. Everything past that wait is local
+        # work on results already in hand: merging, ordering and a completeness check, none of
+        # which can block.
+        await _generate_within_budget()
     except (AIProviderUnavailableError, TimeoutError) as exc:
         unscored_reason = _classify_failure(exc)
         logger.warning(
@@ -1239,6 +1498,23 @@ async def generate_report(
                 "dimension_scores": ai_report.dimension_scores,
                 "performance_percentile": ai_report.performance_percentile,
                 "question_analysis": [item.model_dump() for item in ai_report.question_analysis],
+                # HOW MUCH OF THE INTERVIEW HAS A PER-QUESTION ENTRY. Stored rather than
+                # recomputed because it is what makes a retry cumulative: the next attempt
+                # reads these entries back and grades only the gap. It is also what lets the
+                # report page say "6 of 13 graded" instead of quietly showing a short list.
+                "analysis_coverage": {
+                    "graded": len(ai_report.question_analysis),
+                    "answered": len(transcript_rows),
+                },
+                # Counted only when this run left the report short. A run that COMPLETES the
+                # breakdown resets it to zero, which is not leniency — the coverage check above
+                # short-circuits a complete report before this is ever read, so the value only
+                # matters while there is still a gap.
+                "completion_attempts": (
+                    completion_attempts + 1
+                    if len(ai_report.question_analysis) < len(transcript_rows)
+                    else 0
+                ),
                 "delivery": delivery_block,
                 "previous": previous_block,
                 "raw_response": last_raw_content,
@@ -1299,9 +1575,27 @@ async def generate_report(
         )
 
     if existing_report is not None:
-        # Upgrade the placeholder row in place rather than inserting — session_id
-        # is unique, so a second row is impossible anyway.
-        for field, value in {
+        # ── THE UPGRADE IS AN EXPLICIT UPDATE, AND IT HAD TO BECOME ONE ───────────────────
+        #
+        # THE WRITE WAS SILENTLY VANISHING. `existing_report` was loaded at the top of this
+        # handler, then `await db.commit()` released the pooled connection before the model
+        # call — deliberately, so a campus drive cannot exhaust the pool — and the instance
+        # does not reliably survive that plus twenty seconds of generation as a tracked,
+        # persistent object. `setattr` on an instance the session is no longer tracking is a
+        # no-op at flush time: no error, no warning, and the endpoint returns 200 with the
+        # values it just computed while the DATABASE still holds the old ones.
+        #
+        # Measured exactly: a partial report completed all thirteen of its analyses on the
+        # second attempt, logged `report_generated`, returned 200 — and the stored row still
+        # said six of thirteen, so the third attempt did the same work again. The same instance
+        # staleness raised MissingGreenlet from `company.name` a few lines further down.
+        #
+        # WRITTEN AS AN EXPLICIT UPDATE, not by mutating the instance. A Core statement names
+        # the row by its unique column and carries the values with it, so it does not care
+        # whether any Python object is still being tracked — the one thing that could not be
+        # relied on here. The instance is then refreshed FROM the database, so what the
+        # response renders is what was actually stored rather than what we hoped was.
+        new_values = {
             "overall_score": report.overall_score,
             "overall_score_label": report.overall_score_label,
             "executive_summary": report.executive_summary,
@@ -1311,9 +1605,17 @@ async def generate_report(
             "topic_scores": report.topic_scores,
             "improvement_roadmap": report.improvement_roadmap,
             "raw_report": report.raw_report,
-        }.items():
-            setattr(existing_report, field, value)
-        report = existing_report
+        }
+        await db.execute(
+            sa_update(Report).where(Report.session_id == session_id).values(**new_values)
+        )
+        # Dropped from the identity map so the re-select below genuinely reads the row rather
+        # than handing back the stale instance it already holds — which is what made the
+        # previous attempt at this fix a no-op.
+        db.expunge(existing_report)
+        refreshed = await db.scalar(select(Report).where(Report.session_id == session_id))
+        report = refreshed if refreshed is not None else existing_report
+        existing_report = report
     else:
         db.add(report)
     # Rate the round BEFORE committing, so the ledger row and the report land in one
@@ -1334,7 +1636,7 @@ async def generate_report(
                 question_count=len(transcript_rows),
                 # On the TRACK, not the company — a recruiter runs tracks of
                 # different difficulty, and it is the track that was sat.
-                company_difficulty=track.difficulty_level if track else None,
+                company_difficulty=track_difficulty,
                 had_cross_questions=bool(
                     (session.session_metadata or {}).get("cross_question_ids")
                 ),
@@ -1366,6 +1668,11 @@ async def generate_report(
         report_id=str(report.id),
         session_id=str(session_id),
         score=overall_score,
+        # HOW MUCH OF THE BREAKDOWN THIS ROW ACTUALLY HOLDS. Without it, a report stored with
+        # a gap and a report stored whole produce identical log lines — which is exactly the
+        # ambiguity that made a silently-lost write take several runs to identify.
+        graded=len((report.raw_report or {}).get("question_analysis") or []),
+        answered=len(transcript_rows),
     )
 
     # Record the interview in the unified activity feed so the history surface
@@ -1377,8 +1684,8 @@ async def generate_report(
         current_user.user_id,
         activity_type="interview",
         title=(
-            f"{company.name if company else 'Interview'}"
-            f"{' — ' + track.name if track else ''}"
+            f"{company_name or 'Interview'}"
+            f"{' — ' + track_name if track_name else ''}"
         ),
         score=overall_score,
         details={
@@ -1457,8 +1764,8 @@ async def get_public_report(
     return PublicReport(
         report_id=report.id,
         candidate_name=(profile.full_name if profile and profile.full_name else "Candidate"),
-        track_name=track.name if track else "Technical Interview",
-        company_name=company.name if company else "",
+        track_name=(track.name if track else "") or "Technical Interview",
+        company_name=(company.name if company else ""),
         overall_score=_as_float(report.overall_score),
         overall_score_label=report.overall_score_label or "",
         readiness_level=report.readiness_level or "",

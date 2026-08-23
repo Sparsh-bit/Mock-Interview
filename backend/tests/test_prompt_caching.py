@@ -130,11 +130,15 @@ class TestTheCachedPromptIsActuallyStatic:
         more generic for a reason nobody could see.
         """
         src = (API / "reports.py").read_text()
-        brief = src[src.index("session_brief = ") : src.index("messages = prompt_builder")]
+        brief = src[src.index("session_brief = ") : src.index("summary_messages = prompt_builder")]
         for value in (
             "candidate_name",
-            "company.name",
-            "track.name",
+            # Read off the ORM once, near the top, and held as plain strings — the instances
+            # do not reliably survive the three commits and the model call between loading
+            # them and using them, which raised MissingGreenlet from `company.name`. What
+            # matters here is unchanged: the value still reaches the brief.
+            "company_name",
+            "track_name",
             "transcript_rows",
             "duration_minutes",
             "delivery_summary",

@@ -114,12 +114,27 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 
     # ── AI Provider ───────────────────────────────────────────────────────
+    # ── ANTHROPIC IS THE PRIMARY, AND GLM IS NOT RELIED ON ───────────────────────────
+    #
+    # The default used to be glm/nvidia, and a production log showed exactly what that
+    # cost: glm answered 429 — "您的账户已达到速率限制", the account's own rate limit —
+    # the nvidia fallback could not be constructed at all, and every report failed with
+    # "the model was unreachable". A rate-limited primary behind a non-existent fallback
+    # is a chain with nothing in it.
+    #
+    # GLM stays as the FALLBACK. That is the difference between not relying on it and
+    # not having it: it is worth the most in exactly the case Anthropic cannot serve —
+    # a daily spend cap, which is instant and lasts until midnight UTC — and worth
+    # nothing the rest of the time, because it is never reached.
+    #
+    # A DEFAULT IS NOT PRODUCTION. If AI_PROVIDER is set explicitly in the host's
+    # environment, that value wins and this line changes nothing there.
     AI_PROVIDER: str = Field(
-        default="glm",
-        description="Primary AI provider: glm | nvidia | openai | anthropic | gemini | local",
+        default="anthropic",
+        description="Primary AI provider: anthropic | glm | nvidia | openai | gemini | local",
     )
     AI_FALLBACK_PROVIDER: str = Field(
-        default="nvidia",
+        default="glm",
         description=(
             "Secondary provider tried when the primary fails or returns "
             "unusable output. Empty string disables fallback. Must differ "
@@ -376,7 +391,20 @@ class Settings(BaseSettings):
     #: none of it." A warm cache returns in milliseconds, so this only ever bites the first
     #: report to ask for a given topic — and those writes are shared, so the next candidate
     #: benefits from work this one abandoned.
-    REPORT_RESOURCE_BUDGET_SECONDS: float = 10.0
+    # 4.0, down from 10.0, and this is a LATENCY decision measured rather than guessed.
+    #
+    # Study resources are attached to the roadmap after the report is generated. A curated or
+    # cached topic resolves from the database in milliseconds; only an UNCACHED one costs an AI
+    # call, and that call is both slow and the one most likely to fail — it timed out on both
+    # of two measured end-to-end runs, so ten seconds was being added to the candidate's wait
+    # on every report and buying nothing.
+    #
+    # Reports must be quick, and this is the cheapest ten seconds in the request to give back.
+    # Nothing is lost that the candidate would notice: a roadmap item still carries its topic,
+    # its score gap and its study-hours estimate without resources, and whichever discovery
+    # calls DO finish write into the shared cache — so the resources arrive for the next
+    # candidate on that topic either way.
+    REPORT_RESOURCE_BUDGET_SECONDS: float = 4.0
     #: Seconds quiz generation may spend on the AI before the curated bank serves the quiz.
     #:
     #: REPORTED AS "the quizes is also not generating the request timeout error is comming",

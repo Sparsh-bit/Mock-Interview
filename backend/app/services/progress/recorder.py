@@ -172,8 +172,28 @@ async def record_round(
                 "topics": [t.strip() for t in topics if t and t.strip()][:40],
             },
         )
-        db.add(event)
-        await db.flush()
+        # ── THE INSERT GETS ITS OWN SAVEPOINT ────────────────────────────────────────────
+        #
+        # A duplicate here is EXPECTED — the unique constraint on session_id is what stops a
+        # regenerated report banking the same rating gain twice — so the failure has to be
+        # containable. Without a savepoint the IntegrityError poisons the whole transaction,
+        # and the only way to clear that is `db.rollback()`, which throws away everything the
+        # CALLER has written too.
+        #
+        # It did exactly that. Reports are generated inside one transaction with the rating,
+        # deliberately, so a candidate can never see a report with no rating attached. On a
+        # SECOND generation for the same session — completing a partial report — this insert
+        # raised, the handler rolled back, and the report UPDATE went with it: the endpoint
+        # returned 200, `report_generated` logged the new score, and the database still held
+        # the old row. Measured directly: the update wrote thirteen analyses with rowcount 1,
+        # and the row afterwards had six. Every retry then did the same work again and
+        # persisted none of it.
+        #
+        # A savepoint makes "the rating was already banked" cost exactly the rating. The
+        # caller's transaction is untouched and still commits.
+        async with db.begin_nested():
+            db.add(event)
+            await db.flush()
         logger.info(
             "rating_round_recorded",
             user_id=str(user_id),
@@ -186,9 +206,12 @@ async def record_round(
         return event
 
     except IntegrityError:
-        # The unique constraint on session_id. Normal: a regenerated report must not
-        # bank the same gain twice.
-        await db.rollback()
+        # The unique constraint on session_id. Normal: a regenerated report must not bank the
+        # same gain twice.
+        #
+        # NO db.rollback() HERE. The savepoint above has already been released by the failure,
+        # so the session is usable again and the caller's work is intact — which is the entire
+        # point. Rolling back here would restore the bug the savepoint exists to fix.
         logger.info("rating_round_already_recorded", session_id=str(session_id))
         return None
     except Exception:

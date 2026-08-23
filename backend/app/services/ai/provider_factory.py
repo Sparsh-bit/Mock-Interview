@@ -185,10 +185,37 @@ def _build_provider_chain() -> list[BaseAIProvider]:
     """
     from app.core.config import settings  # noqa: PLC0415
 
-    chain: list[BaseAIProvider] = [_create_provider(settings.AI_PROVIDER)]
+    # ── A PRIMARY THAT CANNOT BE BUILT MUST NOT TAKE THE APP DOWN ────────────────────────
+    #
+    # This was `[_create_provider(settings.AI_PROVIDER)]` with nothing around it, so a missing
+    # or rejected API key for the primary raised inside lifespan startup and the whole service
+    # refused to boot — every endpoint, including the ones that need no AI at all: login, the
+    # dashboard, the question banks, billing.
+    #
+    # That is the wrong failure. A configured fallback with a valid key can serve every AI
+    # feature perfectly well, and an app that is up on its second-choice model is worth
+    # immeasurably more than one that is down on its first. Logged as an ERROR, and the chain
+    # is reported on /admin/ai-usage, so running on the fallback is loud rather than silent.
+    #
+    # It still fails hard when there is NOTHING to run on — see the raise below. That is a real
+    # misconfiguration and booting into it would only move the failure to every request.
+    chain: list[BaseAIProvider] = []
+    primary_name = settings.AI_PROVIDER.lower().strip()
+    try:
+        chain.append(_create_provider(primary_name))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "ai_primary_provider_unavailable",
+            provider=primary_name,
+            error=str(exc),
+            detail=(
+                "the PRIMARY provider could not be created — almost always a missing or "
+                "rejected API key. Falling through to AI_FALLBACK_PROVIDER; every AI feature "
+                "is now running on the second choice"
+            ),
+        )
 
     fallback_name = (settings.AI_FALLBACK_PROVIDER or "").lower().strip()
-    primary_name = settings.AI_PROVIDER.lower().strip()
     if fallback_name and fallback_name != primary_name:
         try:
             chain.append(_create_provider(fallback_name))
@@ -213,6 +240,16 @@ def _build_provider_chain() -> list[BaseAIProvider]:
                     "daily budget, every AI feature will fail until this is fixed"
                 ),
             )
+
+    if not chain:
+        # NOTHING TO RUN ON. Distinct from the degraded case above: there is no provider at
+        # all, so booting would only turn one startup error into a failure on every request,
+        # with a different and less informative message each time.
+        raise RuntimeError(
+            f"No AI provider could be created. AI_PROVIDER={primary_name!r} and "
+            f"AI_FALLBACK_PROVIDER={fallback_name!r} both failed to construct — check that "
+            "the API key for at least one of them is set in the environment."
+        )
 
     return chain
 

@@ -17,9 +17,11 @@ import pytest
 
 from app.api.v1.reports import (
     _GENERATION_STRATEGY,
+    _MAX_COMPLETION_ATTEMPTS,
     _MAX_UNSCORED_ATTEMPTS,
     _REPORT_TOKENS_MAX,
     _UNSCORED,
+    _stored_analyses,
     report_token_budget,
     should_regenerate,
 )
@@ -385,3 +387,127 @@ class TestAStaleStrategyIsRetried:
             {"generated_by": "ai", "strategy": "some-older-pipeline", "overall_score": 72}
         )
         assert not regenerate
+
+
+class TestAPartialReportCompletesItself:
+    """
+    Partial coverage is stored rather than rejected — a batch that failed costs its own
+    questions, not the candidate's whole report. That made a partial report PERMANENT: its
+    `generated_by` is "ai", so the missing questions were never graded by anything, ever.
+
+    A partial report now gets a bounded number of completion attempts, and they are cheap:
+    the analyses already stored are carried forward, so only the GAP is graded.
+    """
+
+    def test_a_report_missing_part_of_its_breakdown_is_completed(self):
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": "ai",
+                "strategy": _GENERATION_STRATEGY,
+                "analysis_coverage": {"graded": 6, "answered": 13},
+            }
+        )
+        assert regenerate, (
+            "six of thirteen answers graded is a report with a hole in it. Leaving it there "
+            "means the questions in the failed batch are never graded by anything."
+        )
+
+    def test_a_complete_report_is_never_regenerated(self):
+        # THE MONEY-CRITICAL CASE. Generation is called on every page view, so a True here
+        # re-bills every finished report in the product on every open.
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": "ai",
+                "analysis_coverage": {"graded": 13, "answered": 13},
+            }
+        )
+        assert not regenerate
+
+    def test_completion_stops_after_the_cap(self):
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": "ai",
+                "analysis_coverage": {"graded": 6, "answered": 13},
+                "completion_attempts": _MAX_COMPLETION_ATTEMPTS,
+            }
+        )
+        assert not regenerate, (
+            "a permanently unlucky session must not become a recurring bill every time the "
+            "candidate opens their report"
+        )
+
+    def test_a_report_from_before_coverage_was_recorded_is_left_alone(self):
+        # Every report generated before the coverage numbers existed carries none. Treating a
+        # missing field as "incomplete" would re-bill the entire back catalogue on sight.
+        regenerate, _ = should_regenerate({"generated_by": "ai", "overall_score": 72})
+        assert not regenerate
+
+    @pytest.mark.parametrize(
+        "coverage",
+        [
+            "6 of 13",
+            {"graded": "6", "answered": 13},
+            {"graded": 6},
+            {"answered": 13},
+            {"graded": 6, "answered": 0},
+            {"graded": None, "answered": None},
+            [],
+        ],
+    )
+    def test_unusable_coverage_is_not_treated_as_incomplete(self, coverage):
+        # raw_report is JSONB and holds whatever any past version wrote. Guessing "incomplete"
+        # from a shape we cannot read would bill a model call on a data problem that is ours.
+        regenerate, _ = should_regenerate(
+            {"generated_by": "ai", "analysis_coverage": coverage}
+        )
+        assert not regenerate
+
+    @pytest.mark.parametrize("bad", ["2", -1, True, None, 2.0, []])
+    def test_an_unusable_attempt_count_is_treated_as_none_spent(self, bad):
+        # Same reasoning as the unscored attempt counter: anything unreadable reads as a first
+        # attempt, and the cap still applies from there.
+        regenerate, _ = should_regenerate(
+            {
+                "generated_by": "ai",
+                "analysis_coverage": {"graded": 6, "answered": 13},
+                "completion_attempts": bad,
+            }
+        )
+        assert regenerate
+
+
+class TestStoredAnalysesAreReadBackSafely:
+    """
+    Carrying forward what a previous attempt graded is what makes a retry cheap and makes
+    attempts cumulative. It reads JSONB, so it must survive anything already written there.
+    """
+
+    def test_entries_are_returned(self):
+        out = _stored_analyses(
+            {"question_analysis": [{"question_id": "a", "question": "Q"}, {"question_id": "b"}]}
+        )
+        assert len(out) == 2
+
+    def test_an_entry_with_no_question_id_is_dropped(self):
+        # The id is how an entry is matched back to its question and deduplicated against a
+        # fresh batch. Without one it would show the candidate the same question twice.
+        out = _stored_analyses(
+            {"question_analysis": [{"question_id": "a"}, {"question": "no id"}, {"question_id": ""}]}
+        )
+        assert [e["question_id"] for e in out] == ["a"]
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            None,
+            {},
+            {"question_analysis": None},
+            {"question_analysis": "not a list"},
+            {"question_analysis": ["a string", 42, None]},
+            {"question_analysis": {}},
+        ],
+    )
+    def test_anything_unusable_reads_as_nothing_carried(self, raw):
+        # Costs one re-grade. Raising here would 500 the report page for a stored shape that
+        # is our fault rather than the candidate's.
+        assert _stored_analyses(raw) == []
