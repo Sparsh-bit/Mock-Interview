@@ -156,7 +156,14 @@ async def plan_interview(
     # Safe to charge first because create_plan runs in this same transaction: if generation
     # fails, the rollback takes the charge with it and the candidate is not billed for an
     # interview they never got.
-    await consume(db, current_user.user_id, "interview")
+    #
+    # THE ROW IS KEPT SO THE SESSION CAN BE ATTACHED TO IT BELOW. This charged with no
+    # session_id, and that gave away paid reports: report access is decided by finding the
+    # consume row for a session, so a charge with nothing attached looks identical to no
+    # charge at all — `report_access` found nothing, failed open as it is designed to, and
+    # delivered a free interview's report for nothing. Every interview begun through this
+    # endpoint was affected, which is most of them.
+    charge = await consume(db, current_user.user_id, "interview")
 
     resume_context = await _resolve_resume_context(db, current_user.user_id, request.resume_text)
 
@@ -171,6 +178,31 @@ async def plan_interview(
         custom_setup=request.custom_setup,
         is_technical=request.is_technical,
     )
+
+    # ATTACH THE CHARGE TO THE SESSION IT PAID FOR.
+    #
+    # Same transaction as both the charge and the plan, so either all three land or none do.
+    # Without this the row exists but is unattributable, and an unattributable charge is
+    # indistinguishable from no charge to `report_access` — which then fails open and gives
+    # the report away.
+    #
+    # `charge` is None only for an admin, who is unmetered and has no row to annotate; and
+    # `create_plan` is documented as returning {session_id, topics, question_count}, so a
+    # missing id here would be a contract change rather than an ordinary absence — hence the
+    # guard rather than a bare index.
+    if charge is not None:
+        new_session_id = plan.get("session_id") if isinstance(plan, dict) else None
+        if new_session_id:
+            charge.session_id = uuid.UUID(str(new_session_id))
+        else:
+            # Loud, because the report for this session would otherwise be given away and
+            # nothing else would ever mention it.
+            logger.error(
+                "interview_plan_charge_unattributed",
+                user_id=str(current_user.user_id),
+                detail="create_plan returned no session_id; report access cannot be decided",
+            )
+
     return plan
 
 

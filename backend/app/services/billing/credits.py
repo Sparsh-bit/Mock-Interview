@@ -60,7 +60,7 @@ import structlog
 from fastapi import status
 from sqlalchemy import func, select
 
-from app.core.exceptions import AccountBannedError, AppError
+from app.core.exceptions import AppError
 from app.db.session import AsyncSession
 from app.models.billing import CreditEvent, UserPlan
 from app.services.billing.plans import (
@@ -249,12 +249,30 @@ async def consume(
     *,
     session_id: uuid.UUID | None = None,
     detail: dict | None = None,
-) -> None:
+) -> CreditEvent | None:
     """
     Spend one of `feature`, or refuse.
 
-    Raises CreditsExhaustedError (402) when there is nothing left. Returns None on success,
-    having added a ledger row to the CALLER'S transaction — deliberately not committed here.
+    Raises CreditsExhaustedError (402) when there is nothing left. Returns the ledger row it
+    appended to the CALLER'S transaction — deliberately not committed here.
+
+    NONE MEANS NOTHING WAS CHARGED, which today is only the admin exemption below: admins are
+    unmetered, so no row is written and there is nothing for a caller to attach a session to.
+    A caller must therefore treat None as "no charge to annotate", never as an error.
+
+    THE ROW IS RETURNED SO A CALLER THAT CANNOT KNOW THE SESSION YET CAN ATTACH IT, and that
+    is not a convenience — it closes a hole that gave away paid reports. `/interview/plan`
+    charges BEFORE generating, because the generation is the expensive part and an exhausted
+    user must not pay for it; but the session does not exist until `create_plan` returns, so
+    that call site could only ever charge with `session_id=None`. Report access is decided by
+    finding the consume row for a session, and a charge with no session attached looks exactly
+    like no charge at all — so `report_access` found nothing, failed open as designed, and
+    handed over a free interview's report for nothing. Every interview begun through the plan
+    flow was affected.
+
+    So the caller charges, generates, and then sets `event.session_id` on the row it got back,
+    all inside the one transaction that `get_db` commits. Charge-before-generation is kept, and
+    the charge still ends up attributable to the session it paid for.
 
     THE CALLER MUST COMMIT, AND MUST COMMIT THE WORK IN THE SAME TRANSACTION. That is the
     contract, and it is what makes this atomic rather than merely careful: if starting the
@@ -275,14 +293,24 @@ async def consume(
     # /ai-usage wrong in the direction of "our users are more expensive than they are",
     # which is the number the pricing rests on.
     if await _is_admin(db, user_id):
-        return
+        # None, not a row: nothing was charged, so there is nothing for a caller to attach a
+        # session to. See the docstring.
+        return None
 
-    plan_row = await _plan_row(db, user_id, lock=True)
-    if plan_row.is_banned:
-        # Checked here as well as at the request boundary. This is the last gate before
-        # something billable happens, and a banned account reaching it means an earlier
-        # check was missed rather than that the ban should be ignored.
-        raise AccountBannedError(plan_row.ban_reason or "")
+    # THE RETURN VALUE IS DISCARDED AND THIS CALL IS STILL ESSENTIAL. DO NOT REMOVE IT.
+    #
+    # `lock=True` takes `SELECT ... FOR UPDATE` on the user's row, and that lock is the entire
+    # concurrency guarantee described at the top of this file: it is what makes a double-click
+    # on Start Interview cost one interview instead of two. It reads as a useless call now that
+    # nothing uses the row — which is exactly how somebody tidying up would delete it and
+    # silently reintroduce double-spending, a bug that only appears under a race and always on
+    # the expensive half.
+    #
+    # It used to be read for `is_banned`, which was the credential-sharing suspension's last
+    # gate before anything billable. That feature is gone — see the long note in
+    # core/security.py — and the column is now inert. Leaving the check in would have kept
+    # previously-suspended accounts locked out of credits they had already paid for.
+    await _plan_row(db, user_id, lock=True)
 
     net = await _totals(db, user_id)
     remaining = trial_allowance(feature) + net.get(feature, 0)
@@ -335,20 +363,20 @@ async def consume(
     )
     paid_with = "trial" if (consumed_before or 0) < trial_allowance(feature) else "credit"
 
-    db.add(
-        CreditEvent(
-            created_at=datetime.now(UTC),
-            user_id=user_id,
-            feature=feature,
-            kind=KIND_CONSUME,
-            delta=-1,
-            session_id=session_id,
-            # Merged rather than replaced: callers pass their own context here and none of it
-            # should be lost to this addition.
-            detail={**(detail or {}), "paid_with": paid_with},
-        )
+    event = CreditEvent(
+        created_at=datetime.now(UTC),
+        user_id=user_id,
+        feature=feature,
+        kind=KIND_CONSUME,
+        delta=-1,
+        session_id=session_id,
+        # Merged rather than replaced: callers pass their own context here and none of it
+        # should be lost to this addition.
+        detail={**(detail or {}), "paid_with": paid_with},
     )
+    db.add(event)
     await db.flush()
+    return event
 
 
 async def grant(
@@ -446,9 +474,3 @@ async def grant(
     await db.flush()
     return True
 
-
-# `AccountBannedError` moved to core/exceptions.py so that core/security.py — the auth
-# dependency where a suspension actually blocks a request — can raise the same typed error.
-# It was defined here, which meant the only path that raised it was spending a credit, and
-# the path that locks somebody out of the whole product raised untyped prose instead.
-# Re-exported because callers import it from here.
