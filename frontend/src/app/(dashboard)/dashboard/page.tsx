@@ -13,6 +13,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { DriveCTA } from '@/components/DriveCTA';
 import { PromoBanner } from '@/components/PromoBanner';
+import { ReportReadyNotice } from '@/components/ReportReadyNotice';
 import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -102,6 +103,15 @@ export default function DashboardPage() {
           page, and it is not their hours-practised total. It renders nothing at all when the
           Cognizant track is not in the catalogue or when it has been dismissed, so on any
           other day this slot collapses and the layout below is unchanged. */}
+      {/* AN UNFINISHED REPORT, ABOVE EVERYTHING ELSE ON THE PAGE.
+          Somebody whose scoring pass failed saw 0/100 and left, with no way to know their
+          answers were safe or that finishing it would now work. They are the largest group in
+          the admin marketing view, and this is the one thing on this page that is urgent for
+          them. Renders nothing for everybody else. */}
+      <motion.div variants={fadeUp}>
+        <ReportReadyNotice />
+      </motion.div>
+
       {/* THE PROMO STRIP, ABOVE THE DRIVE CARD.
           Highest on the page because it is the only element here whose value depends on being
           SEEN — a code nobody notices is a code nobody redeems. It renders nothing at all when

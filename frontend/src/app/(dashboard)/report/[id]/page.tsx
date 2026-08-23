@@ -1,9 +1,16 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { type ReportData, useReport, useToggleShareReport } from '@/hooks/useData';
+import {
+  type ReportData,
+  useGenerateReport,
+  useReport,
+  useToggleShareReport,
+} from '@/hooks/useData';
 import { motion } from 'framer-motion';
-import { Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp, XCircle } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ShareMenu } from '@/components/report/ShareMenu';
@@ -130,8 +137,34 @@ export default function ReportDetailPage() {
   const sessionId = params.id as string;
   const router = useRouter();
 
-  const { data: report, isLoading, isFetching, error, refetch } = useReport(sessionId);
+  const { data: report, isLoading, error, refetch } = useReport(sessionId);
+  const generate = useGenerateReport(sessionId);
   const toggleShare = useToggleShareReport();
+
+  /*
+   * GENERATED AT MOST ONCE, AND ONLY WHEN THERE IS NOTHING TO SHOW.
+   *
+   * Generation is a billed model call. It used to be this page's QUERY, so React Query ran it
+   * whenever the data went stale — a candidate who opened their report, went to Detailed
+   * Analysis and came back paid for another generation, every time. Reported as the Generate
+   * again button firing by itself, and the likeliest reason the daily spend cap was hit.
+   *
+   * The ref is what makes "once" true. Effects re-run, and a second run while the first is
+   * still in flight would buy two reports for one session.
+   *
+   * AN UNSCORED REPORT IS NOT REGENERATED HERE. It exists, so there is something on screen and
+   * a button to press; pressing it is a decision the candidate makes, not one this page makes
+   * on their behalf with their money.
+   */
+  const requested = useRef(false);
+  useEffect(() => {
+    if (isLoading || error || report || requested.current) return;
+    requested.current = true;
+    generate.mutate();
+    // `generate` is a stable mutation object from the hook; listing it would re-run this on
+    // every render of a page that is deliberately allowed to do this exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, error, report]);
 
   const handleShare = () => {
     if (!report) return;
@@ -142,7 +175,7 @@ export default function ReportDetailPage() {
     });
   };
 
-  if (isLoading) {
+  if (isLoading || generate.isPending) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -152,10 +185,14 @@ export default function ReportDetailPage() {
   }
 
   if (error || !report) {
+    // Distinguish "the generation itself failed" from "this session cannot produce a report".
+    // The first is worth retrying; the second is not, and telling somebody to retry something
+    // structurally impossible is how a dead end gets built.
+    const failed = generate.isError ? (generate.error as { message?: string } | null) : null;
     // The API explains exactly why a report can't be produced — the session was
     // never completed, or no answers were recorded. Showing a generic "not
     // found" threw that away and left the candidate with nothing to act on.
-    const reason = (error as { message?: string } | null)?.message?.trim();
+    const reason = (failed?.message ?? (error as { message?: string } | null)?.message)?.trim();
     const generic = 'Could not load the report for this session.';
     return (
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
@@ -168,7 +205,13 @@ export default function ReportDetailPage() {
             interview early, open it again and use “End interview” so it can be scored.
           </p>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-            <Button variant="secondary" onClick={() => refetch()} loading={isFetching}>
+            {/* RETRY IS AN EXPLICIT ACT. It generates, which costs money, so it happens
+                because somebody pressed it — never because a page re-rendered. */}
+            <Button
+              variant="secondary"
+              onClick={() => generate.mutate()}
+              loading={generate.isPending}
+            >
               Try again
             </Button>
             <Button onClick={() => router.push(`/session/${sessionId}`)}>
@@ -250,7 +293,38 @@ export default function ReportDetailPage() {
           completely different actions — and one of them is not a fault at all. */}
       {report.unscored_reason && (
         <motion.div variants={fadeUp}>
-          <UnscoredNotice reason={report.unscored_reason} onRetry={() => refetch()} retrying={isFetching} />
+          <UnscoredNotice
+            reason={report.unscored_reason}
+            onRetry={() => generate.mutate()}
+            retrying={generate.isPending}
+          />
+
+          {/* POINT AT WHAT IS ALREADY THERE.
+              An unscored report shows 0/100 and empty panels, which reads as "nothing was
+              saved" — and the candidate's next move is to leave. It is not true: every answer,
+              every question and the whole per-question breakdown are stored and readable on
+              the analysis page. Saying so, with an arrow to it, turns a dead screen into the
+              second-best thing available while the score is missing.
+
+              Shown ONLY on an unscored report. On a scored one the Detailed Analysis button in
+              the header is enough, and repeating it here would be noise. */}
+          <Link
+            href={`/report/${sessionId}/analysis`}
+            className="group mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3 transition-colors hover:bg-primary/[0.1]"
+          >
+            <ListChecks className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+            <span className="min-w-0 flex-1 text-sm text-foreground">
+              <strong className="font-semibold">Your answers are all saved.</strong>{' '}
+              See the question-by-question breakdown while the score finishes.
+            </span>
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-primary">
+              Detailed Analysis
+              <ArrowRight
+                className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
+                aria-hidden
+              />
+            </span>
+          </Link>
         </motion.div>
       )}
 

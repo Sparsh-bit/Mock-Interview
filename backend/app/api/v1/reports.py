@@ -900,9 +900,19 @@ async def generate_report(
                     # that is simultaneously wasteful for short interviews and too
                     # small for long ones.
                     max_tokens=report_token_budget(len(transcript_rows)),
-                    # One attempt per provider: a second full retry cannot fit in the
-                    # budget below, and the heuristic fallback is a better use of the
-                    # remaining time than a retry that gets cut off.
+                    # TWO ATTEMPTS PER PROVIDER, INSIDE THE SAME WALL-CLOCK BOUND.
+                    #
+                    # This was one, on the reasoning that a second full retry cannot fit in
+                    # the budget. That is true of a retry after a SLOW failure and false of
+                    # the case that actually bites: a provider that fails FAST. A 400, a 429
+                    # or a refused key comes back in a second or two, and with one attempt
+                    # each the rest of the budget — eighty-odd seconds of it — was then spent
+                    # doing nothing while the candidate was told the model was unreachable.
+                    #
+                    # `asyncio.wait_for` already bounds the total, so raising this CANNOT make
+                    # the request longer. It only decides how many chances fit inside a fixed
+                    # deadline: a fast failure leaves room for another, a slow one leaves none,
+                    # and the heuristic fallback still catches whatever is left over.
                     #
                     # The fallback provider is deliberately KEPT in the chain. It is worth
                     # the least when the primary is merely slow and the most when the
@@ -910,7 +920,7 @@ async def generate_report(
                     # does, instantly and for the rest of the UTC day. Removing it to give
                     # the primary two attempts would mean that once the cap is hit, nobody
                     # gets a report at all until midnight.
-                    attempts_per_provider=1,
+                    attempts_per_provider=2,
                     # BALANCED, not DEEP: DEEP buys adaptive reasoning, which bills
                     # as output and roughly doubled the cost of the single most
                     # expensive call in the app. The scoring rubric is already
@@ -952,6 +962,14 @@ async def generate_report(
             reason=type(exc).__name__,
             unscored_reason=unscored_reason,
             elapsed_s=round(perf_counter() - _ai_started, 1),
+            # THE NUMBERS THAT MAKE THIS DIAGNOSABLE FROM ONE LINE. "Scoring took too long"
+            # and "the model was unreachable" look identical from outside and need opposite
+            # fixes: an elapsed time near the budget means the interview was long or the host
+            # is slow; a failure after two seconds means a provider refused. Neither can be
+            # told apart without the budget and the size beside the elapsed time.
+            budget_s=report_ai_budget_seconds(),
+            questions=len(transcript_rows),
+            max_tokens=report_token_budget(len(transcript_rows)),
         )
     except Exception:
         # Deliberately broad. Anything unexpected here — a provider SDK raising

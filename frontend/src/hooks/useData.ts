@@ -205,53 +205,87 @@ export function useUpdateProfile() {
   });
 }
 
+/**
+ * Read a report. NEVER generates one.
+ *
+ * A BILLED AI CALL MUST NOT LIVE IN A QUERY, and it did: this used to POST to `/generate` as
+ * its `queryFn`, on the reasoning that generate is idempotent so one call is simpler than a
+ * probe. Idempotent is not the same as free. React Query owns when a query runs — it refetches
+ * on mount and whenever the data is stale — so with `staleTime` at a minute, a candidate who
+ * opened their report, went to Detailed Analysis and came back triggered ANOTHER paid
+ * generation. For a report that had not scored, `should_regenerate` says yes every time, so
+ * each of those was a real model call.
+ *
+ * Reported as "the generate again button is triggering by itself as it is exhausting my api",
+ * and it is also the likeliest reason the daily spend cap was hit — after which every provider
+ * refuses and every candidate is told the model was unreachable. One bug, two symptoms, and
+ * the expensive one was invisible.
+ *
+ * So: reads are queries and billed writes are mutations. A GET costs nothing and is safe to
+ * repeat as often as React Query likes. The 404 this produces on a first view is the cost of
+ * that separation and it is worth paying — a line in the console is cheaper than ₹11 of
+ * generation per tab switch.
+ */
 export function useReport(sessionId: string) {
   return useQuery({
     queryKey: ['report', sessionId],
     queryFn: async () => {
       const api = getBrowserApiClient();
-
-      // One call. `generate` is idempotent — it returns the existing report if
-      // there is one and creates it otherwise — so there is nothing to probe
-      // for first. Probing with a GET meant the normal path (no report yet)
-      // logged a 404 in the console on every first view, and a 404 cannot be
-      // suppressed from JavaScript: the browser records it at the network layer.
-      //
-      // 120s outlasts the server's own ceiling. The server caps AI generation at
-      // 50s and the host gateway cuts anything past ~100s, so the client is never
-      // the first to give up and a timeout here always means a real failure.
       try {
-        const res = await api.post(
-          `/api/v1/reports/${sessionId}/generate`,
-          {},
-          { timeout: 120_000 },
-        );
+        const res = await api.get(`/api/v1/reports/${sessionId}`);
         return res.data as ReportData;
       } catch (err: unknown) {
-        const e = err as { isTimeout?: boolean; status?: number };
-
-        // If we stopped waiting, the server may still have committed the report.
-        // Looking once more is a cheap read, never a second billed generation.
-        if (e?.isTimeout === true) {
-          const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
-          if (retry) return retry.data as ReportData;
-        }
-
-        // 429 — this user has generated a lot of reports this hour. If one already
-        // exists, SHOW IT: the limit is on making new reports, not on reading finished
-        // ones, and refusing to render a report that is sitting in the database because
-        // of a generation cap would be the limiter punishing the wrong action.
-        if (e?.status === 429) {
-          const existing = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
-          if (existing) return existing.data as ReportData;
-        }
-
+        // NO REPORT YET IS NOT AN ERROR. It is the state a candidate is in the moment they
+        // finish, and the caller turns it into "generate one" rather than an error card.
+        if ((err as { status?: number })?.status === 404) return null;
         throw err;
       }
     },
     enabled: !!sessionId,
-    // Generation is a billed AI call; never retry it automatically.
     retry: false,
+  });
+}
+
+/**
+ * Generate a report. A BILLED AI CALL, so it is a mutation and fires only when something asks.
+ *
+ * The server is idempotent — it returns an existing scored report untouched — so calling this
+ * twice cannot produce two reports. What it can produce is two BILLS, which is why nothing
+ * calls it on a timer, on a focus, or on a mount.
+ */
+export function useGenerateReport(sessionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const api = getBrowserApiClient();
+      // 120s outlasts the server's own ceiling: it caps AI generation at 85s and the host
+      // gateway cuts anything past ~100s, so the client is never the first to give up and a
+      // timeout here always means a real failure.
+      try {
+        const res = await api.post(`/api/v1/reports/${sessionId}/generate`, {}, { timeout: 120_000 });
+        return res.data as ReportData;
+      } catch (err: unknown) {
+        const e = err as { isTimeout?: boolean; status?: number };
+        // If we stopped waiting, the server may still have committed it. Looking once more is
+        // a cheap read, never a second billed generation.
+        if (e?.isTimeout === true) {
+          const retry = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
+          if (retry) return retry.data as ReportData;
+        }
+        // 429 — this account has generated a lot of reports this hour. If one already exists,
+        // SHOW IT: the limit is on making new reports, not on reading finished ones.
+        if (e?.status === 429) {
+          const existing = await api.get(`/api/v1/reports/${sessionId}`).catch(() => null);
+          if (existing) return existing.data as ReportData;
+        }
+        throw err;
+      }
+    },
+    // Never retried automatically: every attempt is money.
+    retry: false,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['report', sessionId], data);
+    },
   });
 }
 
