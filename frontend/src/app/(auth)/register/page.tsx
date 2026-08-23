@@ -139,12 +139,12 @@ export default function RegisterPage() {
           </Link>
           <div>
             <h2 className="mb-3 text-3xl font-medium tracking-[-0.03em]">
-              Your first free interview
+              Your interview practice
               <br />
               <span className="gradient-text">starts right now.</span>
             </h2>
             <p className="text-sm text-muted-foreground">
-              No setup. No payment. Just you, an AI interviewer, and the feedback you need.
+              No setup, no subscription. Just you, an AI interviewer, and the feedback you need.
             </p>
           </div>
           <ul className="space-y-3">

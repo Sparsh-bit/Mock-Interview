@@ -86,6 +86,33 @@ def _money(v: Decimal | float | int | None) -> float:
     return round(float(v or 0), 6)
 
 
+def _provider_chain_status() -> dict:
+    """
+    Which AI providers are actually live in this process, and whether a fallback exists.
+
+    Reads the CONSTRUCTED chain rather than the settings, because the two can disagree in the
+    way that matters: a fallback is configured, its key is missing, construction fails, and the
+    chain silently runs one provider long. Settings would say "fallback: glm" and be wrong.
+
+    Never raises. This is a diagnostic on an admin page, and a diagnostic that can 500 the page
+    it is meant to explain is worse than no diagnostic.
+    """
+    try:
+        from app.services.ai.provider_factory import get_ai_providers  # noqa: PLC0415
+
+        chain = [p.provider_name for p in get_ai_providers()]
+    except Exception as exc:  # noqa: BLE001
+        return {"chain": [], "has_fallback": False, "error": type(exc).__name__}
+    return {
+        "chain": chain,
+        "configured_primary": settings.AI_PROVIDER,
+        "configured_fallback": settings.AI_FALLBACK_PROVIDER or "",
+        # THE FIELD TO LOOK AT. False means one provider deep: healthy today, and a total
+        # outage the moment that provider refuses.
+        "has_fallback": len(chain) > 1,
+    }
+
+
 @router.get("", summary="Per-feature AI token use and cost (temporary, admin only)")
 async def get_ai_usage(
     current_user: AdminUser,
@@ -299,6 +326,17 @@ async def get_ai_usage(
         },
         "daily_budget_usd": settings.AI_DAILY_BUDGET_USD,
         "user_daily_budget_usd": settings.AI_USER_DAILY_BUDGET_USD,
+        # ── THE LIVE PROVIDER CHAIN, BECAUSE "the model was unreachable" NEEDS A CAUSE ──────
+        #
+        # When every report starts failing at once the question is always the same: was the
+        # spend cap hit, or is a provider misconfigured? Both answers were only in the logs,
+        # and one of them (a fallback that failed to construct because its key is missing) was
+        # a single line at startup that nobody rereads.
+        #
+        # A chain of length one is the dangerous state: nothing is wrong until the primary
+        # refuses, and then everything is. Reported here so it is visible before that happens
+        # rather than diagnosed afterwards.
+        "providers": _provider_chain_status(),
         # Cache performance, joined by the SAME `feature` label as the spend above, so
         # "what did this feature cost" and "how often did we avoid paying for it" read
         # side by side. Entries with hit_count 0 are the honest signal that caching a

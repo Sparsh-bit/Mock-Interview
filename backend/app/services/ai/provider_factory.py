@@ -193,7 +193,26 @@ def _build_provider_chain() -> list[BaseAIProvider]:
         try:
             chain.append(_create_provider(fallback_name))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("ai_fallback_provider_unavailable", provider=fallback_name, error=str(exc))
+            # ERROR, NOT WARNING, AND THE WORDING IS DELIBERATE.
+            #
+            # A fallback that cannot be constructed — almost always a missing API key in the
+            # environment — leaves the chain one provider long. Nothing breaks while the
+            # primary is healthy, so this is invisible until the moment it matters: the primary
+            # hits its daily spend cap or a rate limit, there is nothing behind it, and EVERY
+            # AI feature fails at once. Candidates see "the model was unreachable" on their
+            # report, which is true and says nothing about the cause.
+            #
+            # It was a warning, which in practice means nobody reads it. The chain is also
+            # reported on /admin/ai-usage so the state is visible without reading logs at all.
+            logger.error(
+                "ai_fallback_provider_unavailable",
+                provider=fallback_name,
+                error=str(exc),
+                detail=(
+                    "the provider chain has NO fallback: if the primary refuses or hits its "
+                    "daily budget, every AI feature will fail until this is fixed"
+                ),
+            )
 
     return chain
 

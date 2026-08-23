@@ -99,12 +99,24 @@ class CreditsExhaustedError(AppError):
     def __init__(self, feature: str, used_trial: bool) -> None:
         one = FEATURE_LABELS_SINGULAR.get(feature, feature)
         many = FEATURE_LABELS.get(feature, feature)
+        # THREE CASES, NOT TWO, because "left" and "more" are both wrong for somebody who
+        # never had any. Interviews have no trial now, so the very first click a new account
+        # makes lands here — telling them they have none LEFT of something they were never
+        # offered reads as a bug in our accounting rather than as a price.
+        if used_trial:
+            message = f"You have used your free {one}. Buy another to continue."
+        elif trial_allowance(feature) == 0:
+            # NO PRICE IN THE MESSAGE. The figure lives in plans.py and is resolved
+            # server-side at checkout; a copy of it here is a number that drifts from what is
+            # actually charged, which is the one kind of wrong this text must never be. And no
+            # "mock" prefix — the label already reads "mock interview".
+            # "a", not "an": every singular label here starts with a consonant sound — mock
+            # interview, group discussion, communication drill.
+            message = f"Buy a {one} to get started."
+        else:
+            message = f"You have no {many} left. Buy more to continue."
         super().__init__(
-            message=(
-                f"You have used your free {one}. Buy another to continue."
-                if used_trial
-                else f"You have no {many} left. Buy more to continue."
-            ),
+            message=message,
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             code="CREDITS_EXHAUSTED",
             details={"feature": feature, "trial_used": used_trial},
@@ -326,32 +338,21 @@ async def consume(
         )
         raise CreditsExhaustedError(feature, used_trial)
 
-    # ── WAS THIS ONE FREE, OR PAID FOR? RECORDED, BECAUSE NOTHING ELSE CAN ANSWER IT LATER ──
+    # ── WHICH POT PAID FOR THIS, RECORDED WHILE THE ANSWER STILL EXISTS ──────────────────
     #
-    # The product rule is "a free interview's report is payable; a purchased interview's report
-    # is included". The price is `plans.REPORT_UNLOCK_PRICE_PAISE` and is deliberately not
-    # restated here — an earlier draft of this comment said ₹49, which is the price of the
-    # `interview_1` item and NOT of the report unlock, and plans.py carries a section titled
-    # "WHY ₹50 AND NOT ₹49" explaining that the two numbers differ on purpose. A price copied
-    # into a comment is a price that drifts from the constant the server actually charges.
+    # A consumption row is a `-1` and says nothing about whether it came out of the trial or
+    # out of something bought, and `remaining = trial_allowance + net` is a single number that
+    # has already blended the two. So the question is unanswerable from the ledger afterwards —
+    # but it IS answerable here, because consumption draws on the trial first: this one is free
+    # exactly when fewer than `trial_allowance` have been consumed before it.
     #
-    # Deciding free-or-paid at report time is impossible from the ledger alone: a
-    # consumption row is a `-1` and says nothing about which pot it came out of, and
-    # `remaining = trial_allowance + net` is a single number that has already blended them.
+    # Kept now that the report paywall is gone, and it is no longer load-bearing. It was what
+    # decided whether a report was charged for; interviews are paid outright today, so nothing
+    # reads it to gate anything. It stays because it costs one count and answers "was this
+    # person's interview free or paid" for a support or refund question that no other row can
+    # settle — and because deleting an audit field is easy to regret and hard to backfill.
     #
-    # It IS knowable here, and only here. Consumption draws on the trial allowance first — that
-    # is what `trial_allowance(feature) + net` means — so this consumption is free exactly when
-    # fewer than `trial_allowance` have been consumed before it. One count, at the only moment
-    # the answer exists.
-    #
-    # Stored in `detail`, which is JSONB, so this needs no migration and no model change. The
-    # column's own comment says it is "room for anything the dispute needs later without a
-    # migration"; this is that.
-    #
-    # THE READER MUST FAIL OPEN. A row written before this existed carries no `paid_with`, and
-    # an unknown value has to mean "do not charge for the report" — never "charge". Locking a
-    # report somebody has already paid for is the worst outcome available here, and it would
-    # land on every interview taken before this deploy.
+    # Stored in `detail`, which is JSONB, so it needs no migration and no model change.
     consumed_before = await db.scalar(
         select(func.count())
         .select_from(CreditEvent)

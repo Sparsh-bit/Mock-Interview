@@ -27,8 +27,6 @@ from app.db.redis import CacheKeys, get_redis
 from app.db.session import AsyncSession, get_db
 from app.events import ReportGeneratedEvent, ReportGeneratedPayload, get_event_emitter
 from app.events.emitter import EventEmitter
-from app.services.billing import report_access
-from app.services.billing.plans import REPORT_UNLOCK_ITEM
 from app.services.prep.study_resources import attach_to_roadmap
 from app.services.progress.rating import tier_for
 from app.services.progress.recorder import record_round
@@ -320,14 +318,36 @@ def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     if attempts >= _MAX_UNSCORED_ATTEMPTS:
         cooldown = settings.REPORT_UNSCORED_RETRY_COOLDOWN_MINUTES
         last_at = raw.get("unscored_last_at")
-        if cooldown <= 0 or not last_at:
-            # No cooldown configured, or a placeholder written before this field existed and
-            # therefore un-ageable. The old behaviour: exhausted stays exhausted.
+        if cooldown <= 0:
+            # Expiry switched off deliberately. The old permanent cap.
             return False, attempts
+        if not last_at:
+            # ── A PLACEHOLDER FROM BEFORE THIS FIELD EXISTED. RETRY IT. ────────────────────
+            #
+            # This returned False, and that single line kept every already-broken report dead
+            # forever — which is the whole population the cooldown was added to rescue. Their
+            # placeholders were written before `unscored_last_at` existed, so they carry no
+            # timestamp, so they could not be aged, so they were never retried. The fix shipped
+            # and fixed nothing for anybody already affected.
+            #
+            # A missing timestamp is not unknown age: it means the row predates the deploy that
+            # started writing the field, so it is necessarily older than any cooldown. Treating
+            # it as retryable is the accurate reading, not a lenient one.
+            #
+            # The reload-storm risk this used to guard is one extra attempt per legacy report:
+            # the retry writes a timestamp, and every decision after that is made on real age.
+            return True, 0
         try:
             last = datetime.fromisoformat(str(last_at))
-        except ValueError:
-            return False, attempts
+        except (ValueError, TypeError):
+            # UNPARSEABLE IS TREATED AS UN-AGEABLE, WHICH MEANS RETRY — the same reading as a
+            # missing timestamp above, and for the same reason. `raw_report` is JSONB and can
+            # hold anything a past version wrote; refusing on garbage would strand exactly the
+            # rows whose history we cannot read, permanently, for a data problem that is ours
+            # rather than the candidate's. The retry overwrites it with a valid timestamp, so
+            # this can only ever happen once per row.
+            logger.warning("unscored_last_at_unparseable", value=str(last_at)[:64])
+            return True, 0
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)
         if datetime.now(UTC) - last >= timedelta(minutes=cooldown):
@@ -397,29 +417,6 @@ class ReportResponse(BaseModel):
     #: covering all four tells a candidate who has used their day's practice the same
     #: thing as one hitting an outage, and only one of those has an action.
     unscored_reason: str | None = None
-    #: ── THE PAYWALL, EXPRESSED AS THREE OPTIONAL FIELDS ──────────────────────────────────
-    #:
-    #: Optional with safe defaults so an older frontend bundle — one served from a cache, or a
-    #: tab left open across a deploy — renders exactly as it did before: `locked` is False and
-    #: nothing is hidden. A required field here would have broken every open tab at once.
-    #:
-    #: The LOCK IS ON DELIVERY, NEVER ON GENERATION. The report is generated, scored and stored
-    #: in full whatever these say; only the serialisation below is reduced. So unlocking is
-    #: instant with nothing to regenerate, a bug in the gate cannot destroy a report, and the
-    #: candidate's own data is never withheld from the database that owes it to them.
-    locked: bool = False
-    #: What it costs to unlock, in paise, priced server-side. The browser never names a price —
-    #: see plans.py, where the same rule protects every other purchase.
-    lock_price_paise: int | None = None
-    #: The item to buy. The client passes this straight to the existing checkout, so the paywall
-    #: needed no new payment path at all.
-    lock_item_id: str | None = None
-    #: How many questions the withheld analysis covers — the ONLY thing the teaser says about
-    #: the content, and it is a count rather than any of the content itself. It exists because
-    #: "unlock the breakdown of your 12 answers" is a true, specific sentence and "unlock your
-    #: report" is not, and because a candidate deciding whether to pay is entitled to know how
-    #: much is behind the wall. Counting is not leaking.
-    lock_question_count: int | None = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -500,7 +497,7 @@ async def get_report(
             detail="Report not found. Use POST /reports/{session_id}/generate to create one.",
         )
 
-    return await _deliver(db, current_user, report)
+    return _build_report_response(report)
 
 
 @router.post(
@@ -1180,7 +1177,7 @@ async def generate_report(
         },
     )
 
-    return await _deliver(db, current_user, report)
+    return _build_report_response(report)
 
 
 class PublicReport(BaseModel):
@@ -1347,75 +1344,6 @@ def _as_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(v) for v in value if v is not None]
-
-
-async def _deliver(
-    db: AsyncSession, current_user, report
-) -> ReportResponse:
-    """
-    Build the response for a report, reduced to a teaser if it has not been paid for.
-
-    ONE FUNCTION FOR BOTH ENDPOINTS. `GET /reports/{session_id}` and
-    `POST /reports/{session_id}/generate` both return a report, and the second is the one the
-    candidate sees the instant they finish an interview — so a paywall applied to only one of
-    them is a paywall that anybody can walk around by finishing an interview. Two call sites
-    with the same rule written twice is how they drift; there is one rule and one place.
-
-    A FREE interview's report costs ₹49; a PURCHASED interview's is included. The decision is
-    services/billing/report_access.py, which FAILS OPEN on every path — missing session, missing
-    ledger row, unparseable detail, any exception at all delivers the report. Read that module's
-    header before changing anything here.
-
-    Applied at DELIVERY, never around generation. The report is generated, scored and stored in
-    full regardless, so unlocking is instant with nothing to regenerate, and a mistake in the
-    gate can cost at most one report's revenue rather than somebody's data.
-    """
-    access = await report_access.evaluate(
-        db, user_id=current_user.user_id, session_id=report.session_id
-    )
-    full = _build_report_response(report)
-    if not access.locked:
-        return full
-
-    logger.info(
-        "report_locked",
-        session_id=str(report.session_id),
-        reason=access.reason,
-        price_paise=access.price_paise,
-    )
-    # THE TEASER, AND NOTHING ELSE. The score is what makes somebody want the explanation, so it
-    # is the one number that goes out. Everything being sold is withheld.
-    #
-    # Built by REPLACING fields on the full response rather than by constructing a second object
-    # field by field. A hand-built locked response is a second place that must be updated every
-    # time the model gains a field, and the failure mode of forgetting is leaking the new field
-    # through the paywall, silently. `model_copy` cannot forget.
-    return full.model_copy(
-        update={
-            "executive_summary": "",
-            "readiness_level": "",
-            "readiness_reasoning": "",
-            "strengths": [],
-            "weaknesses": [],
-            "topic_scores": {},
-            "dimension_scores": {},
-            "performance_percentile": 0,
-            "question_analysis": [],
-            "improvement_roadmap": [],
-            "pdf_url": None,
-            "delivery": None,
-            "previous": None,
-            "locked": True,
-            "lock_price_paise": access.price_paise,
-            "lock_item_id": REPORT_UNLOCK_ITEM.id,
-            # Read off the FULL response, before the clear above takes effect — `update` is
-            # applied to a copy, so `full` still has every question here. Taking the count from
-            # the report itself rather than re-querying the transcript keeps it honest: it is
-            # exactly the number of analyses the unlock will reveal, not the number of questions
-            # that were asked, which differ whenever scoring dropped one.
-            "lock_question_count": len(full.question_analysis),
-        }
-    )
 
 
 def _build_report_response(report) -> ReportResponse:

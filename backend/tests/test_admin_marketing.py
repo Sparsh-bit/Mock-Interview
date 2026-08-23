@@ -461,9 +461,18 @@ class TestRemainingIsTheSameNumberTheCandidateSees:
     async def test_spending_shows_up_and_purchases_add_on_top(self, population):
         db, ids = population
         bulk = await _remaining_by_user(db, list(ids.values()))
-        assert bulk[ids["dropper"]]["interview"] == trial_allowance("interview") - 1
-        # One trial spent, five bought.
-        assert bulk[ids["payer"]]["interview"] == trial_allowance("interview") - 1 + 5
+        # CLAMPED AT ZERO, not negative. Interviews have no trial now, so a consumption puts
+        # the raw net at -1 and the honest figure to show in a marketing email is 0 — "you have
+        # -1 mock interviews" is both nonsense and a hint that the ledger is broken. The
+        # clamping itself is covered by the test below.
+        assert bulk[ids["dropper"]]["interview"] == max(0, trial_allowance("interview") - 1)
+        # One consumed, five bought. Written as the formula the code uses — clamp the TOTAL,
+        # not the trial portion: `max(0, trial + net)` where net is purchases minus
+        # consumptions. Clamping the trial first gave 5 instead of 4, which is the kind of
+        # off-by-one that reads plausibly in a marketing email and is simply wrong.
+        assert bulk[ids["payer"]]["interview"] == max(
+            0, trial_allowance("interview") + (5 - 1)
+        )
 
     async def test_over_consumption_clamps_at_zero_rather_than_going_negative(self, population):
         """

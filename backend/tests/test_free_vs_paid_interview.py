@@ -17,6 +17,18 @@ when fewer than `trial_allowance` have been consumed before it. `consume` now re
 THE ONE RULE FOR THE READER, asserted at the bottom: an unknown value means DO NOT CHARGE. Every
 interview taken before this deploy has no `paid_with`, and reading that as "free, so charge them"
 would put a paywall in front of reports people had already earned.
+
+## Why this file now tests `gd` rather than `interview`
+
+`paid_with` records which pot a consumption came out of — the trial or something bought — and
+it existed to decide whether a report was charged for. Interviews are paid outright now, so
+`trial_allowance("interview")` is 0 and an interview can never be `paid_with="trial"`: there is
+no free interview left to distinguish. The report paywall it fed has been removed with it.
+
+The MECHANISM is generic and still live for group discussions and communication drills, which
+still have a trial each, so the coverage moved to one of those rather than being deleted.
+`paid_with` itself is kept as an audit field: it answers "was this person's session free or
+paid" for a support or refund question that no other row can settle.
 """
 
 from __future__ import annotations
@@ -64,7 +76,7 @@ async def user():
 # came out of, and `credit_events.session_id` is a real foreign key, so inventing ids would test
 # the constraint rather than the rule. A separate test in test_report_access covers the
 # session-scoped read.
-async def _paid_with(db, uid, feature: str = "interview") -> Counter[str | None]:
+async def _paid_with(db, uid, feature: str = "gd") -> Counter[str | None]:
     """
     How many consumptions were marked each way. A COUNT, not a sequence, and deliberately.
 
@@ -98,11 +110,11 @@ async def _paid_with(db, uid, feature: str = "interview") -> Counter[str | None]
 class TestTheTrialIsSpentFirst:
     async def test_every_trial_interview_is_marked_trial(self, user):
         db, uid = user
-        allowance = trial_allowance("interview")
+        allowance = trial_allowance("gd")
         assert allowance > 0, "this test is meaningless without a free tier"
 
         for _ in range(allowance):
-            await consume(db, uid, "interview", session_id=None)
+            await consume(db, uid, "gd", session_id=None)
             await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance}
@@ -110,16 +122,16 @@ class TestTheTrialIsSpentFirst:
     async def test_the_one_after_the_trial_is_marked_credit(self, user):
         """THE ASSERTION THE PRODUCT RULE RESTS ON."""
         db, uid = user
-        allowance = trial_allowance("interview")
+        allowance = trial_allowance("gd")
 
         for _ in range(allowance):
-            await consume(db, uid, "interview", session_id=None)
+            await consume(db, uid, "gd", session_id=None)
             await db.commit()
 
         # They buy one, then use it.
-        await grant(db, uid, "interview", 1, payment_ref="pay_TestPot")
+        await grant(db, uid, "gd", 1, payment_ref="pay_TestPot")
         await db.commit()
-        await consume(db, uid, "interview", session_id=None)
+        await consume(db, uid, "gd", session_id=None)
         await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance, "credit": 1}
@@ -131,12 +143,12 @@ class TestTheTrialIsSpentFirst:
         and marking those as `credit` would hand away reports the rule says are payable.
         """
         db, uid = user
-        await grant(db, uid, "interview", 5, payment_ref="pay_EarlyBird")
+        await grant(db, uid, "gd", 5, payment_ref="pay_EarlyBird")
         await db.commit()
 
-        allowance = trial_allowance("interview")
+        allowance = trial_allowance("gd")
         for _ in range(allowance + 1):
-            await consume(db, uid, "interview", session_id=None)
+            await consume(db, uid, "gd", session_id=None)
             await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance, "credit": 1}
@@ -144,7 +156,7 @@ class TestTheTrialIsSpentFirst:
     async def test_a_caller_s_own_detail_survives(self, user):
         # Call sites pass their own context in `detail`; the addition must merge, not replace.
         db, uid = user
-        await consume(db, uid, "interview", session_id=None, detail={"track": "java-fse"})
+        await consume(db, uid, "gd", session_id=None, detail={"track": "java-fse"})
         await db.commit()
 
         from sqlalchemy import select
@@ -158,13 +170,16 @@ class TestTheTrialIsSpentFirst:
         assert detail["paid_with"] == "trial"
 
     async def test_features_are_counted_separately(self, user):
-        # A GD does not spend an interview's trial. Counting all consumptions together would
-        # mark the first purchased interview as trial, or worse.
+        # A GD does not spend a communication drill's trial. Counting all consumptions together
+        # would mark a fresh feature's first use as paid, or worse.
+        #
+        # Two DIFFERENT features on purpose: retargeting this file at `gd` briefly made this
+        # consume gd twice, which tests exhaustion rather than separation.
         db, uid = user
         for _ in range(trial_allowance("gd")):
             await consume(db, uid, "gd", session_id=None)
             await db.commit()
-        await consume(db, uid, "interview", session_id=None)
+        await consume(db, uid, "communication", session_id=None)
         await db.commit()
 
         from sqlalchemy import select
@@ -173,7 +188,7 @@ class TestTheTrialIsSpentFirst:
 
         detail = await db.scalar(
             select(CreditEvent.detail).where(
-                CreditEvent.user_id == uid, CreditEvent.feature == "interview"
+                CreditEvent.user_id == uid, CreditEvent.feature == "communication"
             )
         )
         assert detail["paid_with"] == "trial"
@@ -181,15 +196,24 @@ class TestTheTrialIsSpentFirst:
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestWarning")
 class TestTheReaderMustFailOpen:
-    def test_the_contract_is_documented_where_the_reader_will_look(self):
+    def test_the_reason_the_marker_is_kept_is_stated_where_it_is_written(self):
         """
-        Every interview taken before this deploy has no `paid_with`. Reading that as "free, so
-        charge them" would put a paywall in front of reports people had already earned — on
-        every historical session at once. The rule is stated in the code so the reader cannot
-        miss it.
+        WHAT THIS USED TO PIN, AND WHY IT CHANGED.
+
+        It asserted the phrase "FAIL OPEN" in `consume`, guarding a rule that mattered while
+        `report_access` read `paid_with` to decide whether to charge for a report: a row written
+        before the field existed carries no marker, and reading absence as "free, therefore
+        charge" would have paywalled every report already earned.
+
+        That reader is gone. Interviews are paid outright, so there was nothing left to charge
+        for and the paywall was removed with it. Grepping for a phrase that describes behaviour
+        which no longer exists is ceremony, so what is asserted now is what is still true: the
+        field is written, and the code says why it is worth keeping.
         """
         import inspect
 
         src = inspect.getsource(consume)
-        assert "FAIL OPEN" in src
-        assert "never" in src.lower()
+        assert "paid_with" in src
+        assert "audit" in src.lower(), (
+            "the reason paid_with is still written should be stated where it is written"
+        )

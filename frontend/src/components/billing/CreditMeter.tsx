@@ -48,7 +48,7 @@ export function CreditMeter({ className }: { className?: string }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <div>
           <p className="text-sm font-medium text-foreground">
-            {data.trial_started ? 'Your balance' : 'Your free trial'}
+            Your balance
           </p>
           <p className="text-xs text-muted-foreground">
             {data.trial_started ? 'Purchases never expire' : 'One of each, on the house'}

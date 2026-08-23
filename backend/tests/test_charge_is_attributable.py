@@ -26,12 +26,6 @@ from __future__ import annotations
 
 import pathlib
 import re
-import uuid
-from datetime import UTC, datetime
-
-import pytest
-
-from app.services.billing.plans import trial_allowance
 
 INTERVIEW_API = pathlib.Path(__file__).resolve().parents[1] / "app/api/v1/interview.py"
 
@@ -96,120 +90,14 @@ class TestEveryChargeCanBeTracedToItsSession:
         )
 
 
-@pytest.mark.asyncio
-class TestTheLedgerShapeDecidesAccess:
-    """
-    The behaviour underneath, at the level report_access actually reads: a charge with no
-    session attached must not be what unlocks a report.
-    """
-
-    @pytest.fixture
-    async def env(self):
-        from app.db.session import AsyncSessionFactory, engine
-        from app.models.base import Base
-        from app.models.company import Company, InterviewTrack
-        from app.models.session import InterviewSession, SessionStatus
-        from app.models.user import User
-
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        uid, sid = uuid.uuid4(), uuid.uuid4()
-        async with AsyncSessionFactory() as db:
-            company = Company(id=uuid.uuid4(), name="C", slug=f"c-{uuid.uuid4().hex[:8]}")
-            track = InterviewTrack(
-                id=uuid.uuid4(), company_id=company.id, name="T", slug=f"t-{uuid.uuid4().hex[:8]}"
-            )
-            db.add_all([
-                User(id=uid, supabase_uid=str(uid), email=f"att-{uid}@example.test",
-                     is_active=True, is_admin=False),
-                company,
-                track,
-            ])
-            await db.flush()
-            db.add(
-                InterviewSession(
-                    id=sid, user_id=uid, track_id=track.id, status=SessionStatus.COMPLETED
-                )
-            )
-            await db.commit()
-        return {"user_id": uid, "session_id": sid}
-
-    async def test_an_attached_trial_charge_locks_the_report(self, env):
-        """The fixed behaviour: the charge names the session, so the paywall can see it."""
-        from app.db.session import AsyncSessionFactory
-        from app.services.billing.credits import consume
-        from app.services.billing.report_access import evaluate
-
-        async with AsyncSessionFactory() as db:
-            await consume(db, env["user_id"], "interview", session_id=env["session_id"])
-            await db.commit()
-
-        async with AsyncSessionFactory() as db:
-            access = await evaluate(db, user_id=env["user_id"], session_id=env["session_id"])
-        assert access.locked is True, "a free interview's report must be paywalled"
-
-    async def test_the_old_shape_is_what_gave_the_report_away(self, env):
-        """
-        Documents the bug rather than the fix, and is worth keeping.
-
-        A charge with no session attached leaves report_access with nothing to find, so it
-        fails open — correctly, given its contract — and the report is delivered. This test
-        exists so nobody reads the fail-open in report_access as the defect and "hardens" it:
-        that would start locking reports people own, which is the far more expensive mistake.
-        The defect was upstream, in charging without saying what for.
-        """
-        from app.db.session import AsyncSessionFactory
-        from app.services.billing.credits import consume
-        from app.services.billing.report_access import evaluate
-
-        async with AsyncSessionFactory() as db:
-            await consume(db, env["user_id"], "interview")  # no session_id — the old bug
-            await db.commit()
-
-        async with AsyncSessionFactory() as db:
-            access = await evaluate(db, user_id=env["user_id"], session_id=env["session_id"])
-        assert access.locked is False, (
-            "report_access must keep failing open on an unfindable charge; the fix belongs at "
-            "the call site that failed to attach one"
-        )
-
-    async def test_attaching_after_the_fact_locks_it_just_the_same(self, env):
-        """
-        The plan flow's actual shape: charge first, attach once the session exists. What
-        matters is that the end state is identical to charging with the id in hand.
-        """
-        from app.db.session import AsyncSessionFactory
-        from app.services.billing.credits import consume
-        from app.services.billing.report_access import evaluate
-
-        async with AsyncSessionFactory() as db:
-            charge = await consume(db, env["user_id"], "interview")
-            assert charge is not None
-            charge.session_id = env["session_id"]
-            await db.commit()
-
-        async with AsyncSessionFactory() as db:
-            access = await evaluate(db, user_id=env["user_id"], session_id=env["session_id"])
-        assert access.locked is True
-
-    async def test_a_purchased_interview_is_still_not_locked(self, env):
-        """The fix must not start charging twice for an interview somebody bought."""
-        from app.db.session import AsyncSessionFactory
-        from app.services.billing.credits import consume, grant
-        from app.services.billing.report_access import evaluate
-
-        async with AsyncSessionFactory() as db:
-            for _ in range(trial_allowance("interview")):
-                await consume(db, env["user_id"], "interview")
-            await grant(
-                db, env["user_id"], "interview", 1, payment_ref=f"pay_{uuid.uuid4().hex[:10]}"
-            )
-            charge = await consume(db, env["user_id"], "interview")
-            charge.session_id = env["session_id"]
-            await db.commit()
-
-        async with AsyncSessionFactory() as db:
-            access = await evaluate(db, user_id=env["user_id"], session_id=env["session_id"])
-        assert access.locked is False
-        assert datetime.now(UTC) is not None  # (sanity: the fixture ran in this process)
+# ─── The report-locking half of this file has been removed ────────────────────────────────
+#
+# It asserted that a trial-paid interview's report came back LOCKED and a purchased one did
+# not. Interviews are paid outright now, so there is no free interview whose report could be
+# charged for, and the paywall was removed with the pricing change.
+#
+# WHAT REMAINS ABOVE IS STILL THE POINT, and is if anything more important without the
+# paywall: an interview charge that names no session is an unattributable charge, and the
+# ledger is the only record of who was charged for what. It answers a refund question, an
+# "I was billed twice" question, and the admin marketing view's per-session columns. A charge
+# that cannot be tied to the thing it paid for makes all three unanswerable.

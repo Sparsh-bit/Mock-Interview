@@ -119,13 +119,30 @@ class TestPlaceholdersAreRetried:
 class TestRetriesAreBounded:
     """A provider outage must not become an unbounded bill."""
 
-    def test_placeholder_at_the_cap_stops_retrying(self):
-        regenerate, attempts = should_regenerate(_placeholder(_MAX_UNSCORED_ATTEMPTS))
+    def test_placeholder_at_the_cap_stops_retrying_within_the_cooldown(self):
+        # Same change as the test below: a fresh timestamp is what the cap refuses. Without one
+        # the row reads as pre-dating the field, which now means it is retried.
+        from datetime import UTC, datetime
+
+        raw = _placeholder(_MAX_UNSCORED_ATTEMPTS)
+        raw["unscored_last_at"] = datetime.now(UTC).isoformat()
+        regenerate, attempts = should_regenerate(raw)
         assert regenerate is False
         assert attempts == _MAX_UNSCORED_ATTEMPTS
 
-    def test_placeholder_over_the_cap_stops_retrying(self):
-        regenerate, _ = should_regenerate(_placeholder(_MAX_UNSCORED_ATTEMPTS + 50))
+    def test_placeholder_over_the_cap_stops_retrying_within_the_cooldown(self):
+        """
+        The cap still holds — it just holds for a WINDOW rather than forever.
+
+        This used to pass a placeholder with no timestamp, which now means "written before the
+        field existed, therefore old, therefore retry". A fresh timestamp is what a reload storm
+        actually looks like, and that is the case the cap exists to refuse.
+        """
+        from datetime import UTC, datetime
+
+        raw = _placeholder(_MAX_UNSCORED_ATTEMPTS + 50)
+        raw["unscored_last_at"] = datetime.now(UTC).isoformat()
+        regenerate, _ = should_regenerate(raw)
         assert regenerate is False
 
     def test_cap_is_small_enough_to_bound_spend(self):
@@ -209,26 +226,48 @@ class TestAnExhaustedReportRecoversInsteadOfDying:
         # during an outage gets the same chance as one that never failed.
         assert attempts == 0
 
-    def test_a_placeholder_with_no_timestamp_keeps_the_old_behaviour(self):
-        # Written before the field existed, so it cannot be aged. Refusing is the safe reading
-        # — the alternative is treating unknown age as "old enough", which would let a genuine
-        # reload storm through on legacy rows.
-        regenerate, _ = should_regenerate(
+    def test_a_placeholder_from_before_the_timestamp_existed_is_retried(self):
+        """
+        THE INVERSE OF WHAT THIS ASSERTED, AND THE CHANGE IS THE POINT.
+
+        It used to refuse, on the reasoning that unknown age should not be read as "old
+        enough". That was wrong in the one way that mattered: every report ALREADY broken when
+        the cooldown shipped carries no timestamp, so refusing them meant the fix rescued
+        nobody who was already affected — the entire population it was written for.
+
+        A missing timestamp is not unknown age. It means the row predates the deploy that began
+        writing the field, so it is necessarily older than any cooldown. The reload-storm risk
+        is one extra attempt per legacy report, because the retry stamps a real timestamp and
+        every decision after that is made on actual age.
+        """
+        regenerate, attempts = should_regenerate(
             {"generated_by": _UNSCORED, "unscored_attempts": _MAX_UNSCORED_ATTEMPTS}
         )
-        assert regenerate is False
+        assert regenerate is True, "already-broken reports stay broken forever"
+        assert attempts == 0
 
-    def test_a_corrupt_timestamp_does_not_crash_the_report_page(self):
-        # raw_report is JSONB and can hold anything. A ValueError here would 500 the page.
-        for bad in ("not a date", "", 12345, [], {}):
-            regenerate, _ = should_regenerate(
+    def test_a_corrupt_timestamp_retries_rather_than_crashing_or_stranding(self):
+        """
+        Two things at once, and both matter.
+
+        `raw_report` is JSONB and can hold anything a past version wrote, so an unparseable
+        value must not raise — a ValueError here would 500 the report page.
+
+        And it must not refuse either. Refusing on garbage strands exactly the rows whose
+        history we cannot read, permanently, for a data problem that is ours rather than the
+        candidate's. The retry overwrites the field with a valid timestamp, so this can happen
+        at most once per row.
+        """
+        for bad in ("not a date", "", 12345, [], {}, None):
+            regenerate, attempts = should_regenerate(
                 {
                     "generated_by": _UNSCORED,
                     "unscored_attempts": _MAX_UNSCORED_ATTEMPTS,
                     "unscored_last_at": bad,
                 }
             )
-            assert regenerate is False
+            assert regenerate is True, f"{bad!r} stranded the report"
+            assert attempts == 0
 
     def test_a_real_scored_report_is_never_regenerated_however_old(self):
         # The cooldown must not start re-billing finished reports — generation is called on

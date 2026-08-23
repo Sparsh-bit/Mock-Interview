@@ -27,16 +27,26 @@ from app.services.billing.razorpay import items_from_payment, verify_signature
 
 
 class TestTheTrial:
-    def test_every_feature_is_trialable_exactly_once(self):
-        # The trial's job is to prove the product works. One interview ending in a full
-        # report does that; a second is what somebody buys.
-        assert TRIAL_ALLOWANCE == {"interview": 1, "gd": 1, "communication": 1}
+    def test_interviews_are_paid_and_the_other_two_are_trialable_once(self):
+        """
+        INTERVIEWS ARE ZERO ON PURPOSE. Set by the owner — every interview is bought — so a new
+        account cannot start one until it pays and the front door is a paywall rather than a
+        trial. Pinned as an exact dict because it is a pricing decision: a stray 1 here gives
+        the whole product away, and a stray 0 on `gd` silently paywalls something advertised as
+        free.
+        """
+        assert TRIAL_ALLOWANCE == {"interview": 0, "gd": 1, "communication": 1}
 
-    def test_every_metered_feature_has_a_trial_entry(self):
-        # A feature missing from the trial silently gets 0, which reads to a new user as
-        # "this is broken" rather than "this is paid".
+    def test_every_metered_feature_has_an_explicit_trial_entry(self):
+        """
+        A feature ABSENT from the table silently gets 0, which is indistinguishable from a
+        deliberate 0 — and the two need opposite fixes. Interviews are 0 because that is the
+        pricing; a feature that is 0 because somebody forgot to add it reads to a new user as
+        "this is broken". So the assertion is on presence, not on the value.
+        """
         for feature in FEATURES:
-            assert trial_allowance(feature) >= 1, f"{feature} has no trial"
+            assert feature in TRIAL_ALLOWANCE, f"{feature} is missing from TRIAL_ALLOWANCE"
+            assert trial_allowance(feature) >= 0
 
     def test_an_unknown_feature_gets_nothing(self):
         # Metering something this module has never heard of must not become a free

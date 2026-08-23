@@ -81,20 +81,42 @@ class _StubDB:
 
 @pytest.mark.asyncio
 class TestTheTrialThenNothing:
+    """
+    THE FEATURE UNDER TEST IS `gd`, NOT `interview`, AND THAT IS DELIBERATE.
+
+    Interviews are paid outright now — `trial_allowance("interview")` is 0 — so an interview can
+    never demonstrate "the trial is spendable without buying". The trial MECHANISM is generic
+    and still live for group discussions and communication drills, so the coverage moves to a
+    feature that still has one rather than being deleted. `test_an_interview_is_refused_outright`
+    below covers the new interview behaviour.
+    """
+
+    async def test_an_interview_is_refused_outright_with_nothing_bought(self):
+        # THE NEW FRONT DOOR. A brand-new account has no interview trial, so the very first
+        # attempt must refuse — and refuse as a 402, which the client routes to the purchase
+        # sheet rather than to a dead end.
+        db = _StubDB(_Plan(), net={})
+        with pytest.raises(CreditsExhaustedError) as exc:
+            await consume(db, uuid.uuid4(), "interview")
+        assert exc.value.status_code == 402
+        assert db.added == [], "a refused interview must not write a ledger row"
+
     async def test_the_trial_is_spendable_without_buying_anything(self):
         # A brand-new account: no ledger rows at all, and the trial is a constant added at
         # read time rather than rows granted at signup.
         db = _StubDB(_Plan(), net={})
-        await consume(db, uuid.uuid4(), "interview")
+        await consume(db, uuid.uuid4(), "gd")
         assert len(db.added) == 1
         assert db.added[0].delta == -1
         assert db.added[0].kind == "consume"
 
     async def test_a_spent_trial_with_no_purchases_is_refused(self):
-        assert trial_allowance("interview") == 1
-        db = _StubDB(_Plan(), net={"interview": -1})
+        # On `gd`, which still has a trial. The interview case is the test above: it has no
+        # trial to spend, so it refuses on the very first attempt.
+        assert trial_allowance("gd") == 1
+        db = _StubDB(_Plan(), net={"gd": -1})
         with pytest.raises(CreditsExhaustedError) as exc:
-            await consume(db, uuid.uuid4(), "interview")
+            await consume(db, uuid.uuid4(), "gd")
         assert exc.value.status_code == 402, "must be 402 so the client offers the store"
         assert exc.value.code == "CREDITS_EXHAUSTED"
 
@@ -119,14 +141,26 @@ class TestTheTrialThenNothing:
             await consume(db, uuid.uuid4(), "gd")
 
     async def test_the_refusal_says_whether_the_trial_was_the_thing_spent(self):
-        # Drives the copy: "you have used your free mock interview" reads very differently
-        # from "you have no mock interviews left", and only one of them is true for a
-        # first-time user.
-        db = _StubDB(_Plan(), net={"interview": -1})
+        """
+        Drives the copy, and the two cases now diverge for real.
+
+        `gd` has a trial, so a refusal there means "you have used your free group discussion".
+        An INTERVIEW has none, so `trial_used` is False and the copy must not claim they used
+        up something they never had — which is exactly the sentence a brand-new account would
+        otherwise be shown on its very first click.
+        """
+        db = _StubDB(_Plan(), net={"gd": -1})
+        with pytest.raises(CreditsExhaustedError) as exc:
+            await consume(db, uuid.uuid4(), "gd")
+        assert exc.value.details["feature"] == "gd"
+        assert exc.value.details["trial_used"] is True
+
+        db = _StubDB(_Plan(), net={})
         with pytest.raises(CreditsExhaustedError) as exc:
             await consume(db, uuid.uuid4(), "interview")
-        assert exc.value.details["feature"] == "interview"
-        assert exc.value.details["trial_used"] is True
+        assert exc.value.details["trial_used"] is False, (
+            "an interview has no trial, so the copy must not say they used their free one"
+        )
 
 
 @pytest.mark.asyncio

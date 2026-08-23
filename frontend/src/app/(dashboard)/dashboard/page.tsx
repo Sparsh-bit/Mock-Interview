@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Loader2, Play, TrendingUp } from 'lucide-react';
+import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Loader2, Play, Plus, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FocusGroup, FocusItem } from '@/components/lightswind-pro/focus-cards';
 import { useProgress, useTracks, useUserSessions, useUserStats } from '@/hooks/useData';
@@ -66,10 +66,26 @@ export default function DashboardPage() {
               : `You have completed ${stats.completed_sessions} of ${stats.total_sessions} total sessions. Keep going!`
           }
           actions={
-            <Link href="/interview" className={cn(buttonVariants({ size: 'md' }))}>
-              <Play className="h-4 w-4" />
-              Start interview
-            </Link>
+            /* TWO ACTIONS, BECAUSE AN INTERVIEW IS NOW BOUGHT.
+               Interviews are paid outright, so "Start interview" refuses with a 402 for
+               anybody with none left — correctly, but that is a dead end if the only way to
+               resolve it is to discover the pricing page. Buying is now a first-class action
+               on the page every candidate lands on, sitting next to the thing it enables
+               rather than behind it. Secondary styling: starting is still the primary intent
+               for anybody who already has one. */
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/pricing"
+                className={cn(buttonVariants({ variant: 'secondary', size: 'md' }))}
+              >
+                <Plus className="h-4 w-4" />
+                Add interviews
+              </Link>
+              <Link href="/interview" className={cn(buttonVariants({ size: 'md' }))}>
+                <Play className="h-4 w-4" />
+                Start interview
+              </Link>
+            </div>
           }
         />
       </motion.div>

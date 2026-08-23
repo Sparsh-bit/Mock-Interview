@@ -233,6 +233,21 @@ class TestInterviewEndpoints:
         db_session.add(track)
         await db_session.commit()
 
+        # INTERVIEWS ARE PAID. `trial_allowance("interview")` is 0, so this account must buy
+        # one before it can start anything — the same thing every real candidate now does.
+        from app.services.billing.credits import grant as _grant
+
+        me = await async_client.get("/api/v1/auth/me", headers=auth_headers)
+        assert me.status_code == 200, me.text
+        await _grant(
+            db_session,
+            uuid.UUID(me.json()["id"]),
+            "interview",
+            1,
+            payment_ref=f"pay_test_{uuid.uuid4().hex[:12]}",
+        )
+        await db_session.commit()
+
         response = await async_client.post(
             "/api/v1/interview/start",
             json={"track_id": str(track.id)},
@@ -263,6 +278,21 @@ class TestInterviewEndpoints:
             description="Test track",
         )
         db_session.add(track)
+        await db_session.commit()
+
+        # INTERVIEWS ARE PAID. `trial_allowance("interview")` is 0, so this account must buy
+        # one before it can start anything — the same thing every real candidate now does.
+        from app.services.billing.credits import grant as _grant
+
+        me = await async_client.get("/api/v1/auth/me", headers=auth_headers)
+        assert me.status_code == 200, me.text
+        await _grant(
+            db_session,
+            uuid.UUID(me.json()["id"]),
+            "interview",
+            1,
+            payment_ref=f"pay_test_{uuid.uuid4().hex[:12]}",
+        )
         await db_session.commit()
 
         start_resp = await async_client.post(
