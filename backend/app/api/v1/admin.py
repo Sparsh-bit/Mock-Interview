@@ -50,6 +50,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func, or_, select, text
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -677,7 +678,36 @@ async def delete_user(
         )
     )
 
-    await db.delete(user)
+    # ── A CORE DELETE, NOT `db.delete(user)`, AND THIS IS THE WHOLE BUG ───────────────────
+    #
+    # `db.delete(user)` goes through the ORM, and the ORM does NOT defer to the database's
+    # ON DELETE rules unless every relationship is declared `passive_deletes=True`. Instead it
+    # loads the children and NULLS their foreign keys, which for any NOT NULL column is an
+    # immediate IntegrityError:
+    #
+    #     UPDATE resume_files SET user_id=NULL WHERE resume_files.id = ...
+    #     null value in column "user_id" of relation "resume_files" violates not-null constraint
+    #
+    # So the endpoint 500'd and nothing was deleted — the reported symptom exactly: accounts
+    # still listed after being "deleted". The FK rules in the database were correct the whole
+    # time; the ORM never let them run.
+    #
+    # It also explains why a thin test passes: a user with no resume, no session and no ledger
+    # rows has no children to nullify, so the ORM path succeeds and the bug is invisible. Any
+    # REAL account has all three.
+    #
+    # A Core `delete()` emits one plain `DELETE FROM users WHERE id = ...` and lets Postgres
+    # apply the CASCADE and SET NULL rules that are already declared on every referencing
+    # table. That is both the correct behaviour and far less work than the ORM's row-by-row
+    # walk. `synchronize_session=False` because the objects are about to be gone and there is
+    # nothing left in this session worth updating.
+    #
+    # The pending AuditLog above is flushed by autoflush before this statement runs, so the
+    # record of the deletion is written first and survives it.
+    await db.execute(sa_delete(User).where(User.id == user_id))
+    # Dropped from the identity map so nothing downstream can lazy-load a row that no longer
+    # exists — every value this endpoint still returns was captured before the delete.
+    db.expunge(user)
 
     logger.warning(
         "admin_user_deleted",
