@@ -28,26 +28,6 @@ export function CreditMeter({ className }: { className?: string }) {
   // candidate came to do.
   if (isLoading || !data) return null;
 
-  // A banned account has a different problem from an empty one, and showing it a balance
-  // would be answering a question it is not asking. The page it needs is the appeal.
-  if (data.is_banned) {
-    return (
-      <Card variant="flat" padding="md" className={cn('space-y-2', className)}>
-        <p className="text-sm font-medium text-foreground">Account suspended</p>
-        <p className="text-xs text-muted-foreground">
-          {data.appeal_submitted
-            ? 'Your review request has been received. We will get back to you.'
-            : 'This account was used from two places at once.'}
-        </p>
-        {!data.appeal_submitted && (
-          <Link href="/account/appeal" className="text-xs font-medium text-primary hover:underline">
-            Request a review
-          </Link>
-        )}
-      </Card>
-    );
-  }
-
   // An operator account is not metered, so a countdown would be a stuck number pretending
   // to mean something. Say what is true instead.
   if (data.unlimited) {

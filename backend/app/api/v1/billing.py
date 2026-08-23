@@ -1,11 +1,10 @@
 """
-The store, the balance and the appeal — api/v1/billing.py
+The store and the balance — api/v1/billing.py
 
 GET  /billing/items     — what you can buy and what it costs. The only public route here.
 GET  /billing/me        — what this account has left.
 POST /billing/checkout  — open a Razorpay order for one item.
 POST /billing/webhook   — Razorpay confirms a payment; the items are granted here.
-POST /billing/appeal    — a banned user asks for a review.
 
 THE BALANCE ROUTE IS INFORMATIONAL, NOT A GATE. The UI reads it to render what is left and
 to decide whether to show the purchase sheet before somebody starts something. It is not
@@ -23,7 +22,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, Header, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -52,12 +51,6 @@ _checkout_rate_limit = rate_limiter(
     action="starting a purchase",
 )
 
-_appeal_rate_limit = rate_limiter(
-    limit=3,
-    window_seconds=24 * 3600,
-    key_builder=lambda user_id: f"rate_limit:appeal:{user_id}:daily",
-    action="requesting a review",
-)
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
@@ -102,9 +95,7 @@ class BalanceOut(BaseModel):
     #: It changes nothing about ACCESS. Every admin endpoint is independently gated by the
     #: `AdminUser` dependency and returns 403 regardless of what this says.
     is_admin: bool = False
-    is_banned: bool
     ban_reason: str | None = None
-    appeal_submitted: bool = False
 
 
 class CheckoutRequest(BaseModel):
@@ -116,8 +107,6 @@ class CheckoutRequest(BaseModel):
     captcha_token: str = Field(default="", max_length=4096)
 
 
-class AppealRequest(BaseModel):
-    message: str = Field(min_length=10, max_length=1000)
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -167,9 +156,7 @@ async def my_balance(
         trial_started=balance.trial_started,
         unlimited=balance.unlimited,
         is_admin=balance.unlimited,
-        is_banned=bool(plan_row and plan_row.is_banned),
         ban_reason=plan_row.ban_reason if plan_row else None,
-        appeal_submitted=bool(plan_row and plan_row.appeal_at),
     )
 
 
@@ -825,42 +812,85 @@ async def my_payments(
     }
 
 
-@router.post(
-    "/appeal",
-    dependencies=[Depends(_appeal_rate_limit)],
-    summary="Ask for a suspended account to be reviewed",
+class PromoBannerOut(BaseModel):
+    """The promo banner a candidate sees, and what clicking it should carry across."""
+
+    image_url: str
+    alt_text: str
+    #: The offer's code, so the pricing page can prefill the box it scrolls to.
+    code: str
+    #: The ratio the image was validated against. The client renders its container at this
+    #: ratio, which is what makes an image that met the contract land pixel-exact and one that
+    #: somehow did not merely centre-crop instead of distorting the page.
+    aspect_ratio: float
+
+
+@router.get(
+    "/promo-banner",
+    response_model=PromoBannerOut | None,
+    summary="The promo banner to show on the dashboard, if any",
 )
-async def appeal(
-    request: AppealRequest,
+async def promo_banner(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),  # noqa: B008
-):
+) -> PromoBannerOut | None:
     """
-    A banned user's one route back.
+    The one banner worth showing right now, or null.
 
-    AN AUTOMATIC BAN NEEDS A HUMAN ROUTE OUT, and this is not a courtesy. The detector keys
-    on two IPs at once, which is a genuine sharing signal and also what a phone handing off
-    from mobile data to campus wi-fi looks like. Some proportion of bans will be wrong, they
-    will land on people who have paid, and without an appeal the only recourse is a support
-    email nobody reads.
+    THE OFFER DECIDES, NOT THE IMAGE. A banner is returned only while its offer is enabled,
+    public, and inside its window — the same conditions that decide whether the code can
+    actually be redeemed. That is the whole reason a banner hangs off an offer rather than
+    standing alone: switching a code off takes its advertisement down in the same action, so
+    there is no route to a dashboard promoting a code that refuses everybody who types it.
 
-    Rate limited to three a day. Not to be obstructive — one honest appeal is enough — but
-    because the endpoint is reachable by exactly the population with a reason to spam it.
+    `is_public` is checked as well as `enabled`, because a private code shared with four
+    friends must not end up posted on every candidate's dashboard.
 
-    Deliberately does NOT unban. Only an admin can (see api/v1/admin.py); an appeal that
-    lifted its own ban would make the ban decorative.
+    NEWEST WINS when more than one qualifies. Predictable and controlled by the admin —
+    re-uploading is how you change what is shown — and it needs no ordering column that
+    somebody would have to maintain.
+
+    NULL IS THE ORDINARY CASE, not an error: most of the time there is no live public offer
+    with an image, and the client renders nothing.
     """
-    plan_row = await db.scalar(
-        select(UserPlan).where(UserPlan.user_id == current_user.user_id).with_for_update()
+    from sqlalchemy.exc import ProgrammingError
+
+    from app.models.billing import Offer, OfferBanner
+
+    now = datetime.now(UTC)
+
+    # A SAVEPOINT around the read, because migrations here are applied BY HAND
+    # (docs/DEPLOY.md): between deploying this code and running migration 021 the table does
+    # not exist, and an UndefinedTable aborts the entire transaction rather than just failing
+    # this one query. Every candidate's dashboard calls this, so an unguarded read would take
+    # every dashboard down until somebody remembered to migrate — which is precisely the
+    # failure this feature was designed to be incapable of.
+    try:
+        async with db.begin_nested():
+            row = (
+                await db.execute(
+                    select(OfferBanner, Offer.code)
+                    .join(Offer, Offer.id == OfferBanner.offer_id)
+                    .where(
+                        Offer.enabled.is_(True),
+                        Offer.is_public.is_(True),
+                        or_(Offer.starts_at.is_(None), Offer.starts_at <= now),
+                        or_(Offer.ends_at.is_(None), Offer.ends_at >= now),
+                    )
+                    .order_by(OfferBanner.created_at.desc())
+                    .limit(1)
+                )
+            ).first()
+    except ProgrammingError:
+        logger.warning("offer_banners_table_missing", detail="run migration 021")
+        return None
+
+    if row is None:
+        return None
+    banner, code = row
+    return PromoBannerOut(
+        image_url=banner.image_url,
+        alt_text=banner.alt_text,
+        code=code,
+        aspect_ratio=settings.BANNER_ASPECT_RATIO,
     )
-    if plan_row is None or not plan_row.is_banned:
-        # Nothing to appeal. Not an error — a user who was unbanned while writing their
-        # appeal should be told the good news, not shown a failure.
-        return {"status": "not_banned"}
-
-    plan_row.appeal_text = request.message.strip()[:1000]
-    plan_row.appeal_at = datetime.now(UTC)
-    await db.commit()
-
-    logger.info("ban_appeal_submitted", user_id=str(current_user.user_id))
-    return {"status": "submitted"}

@@ -34,9 +34,7 @@ const PROTECTED_ROUTES = [
   // the AdminUser dependency; this only stops a logged-out visitor rendering the shell.
   '/admin',
   '/ai-usage',
-  // The ban appeal needs a session to know whose account to appeal for. It is exempt from
-  // the BAN (see _BAN_EXEMPT_SUFFIXES in core/security.py), which is a different thing from
-  // being exempt from login.
+  // Receipts. Needs a session to know whose payment to render.
   '/account',
 ];
 const AUTH_ROUTES = ['/login', '/register', '/forgot-password'];

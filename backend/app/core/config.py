@@ -263,6 +263,55 @@ class Settings(BaseSettings):
     SUPABASE_STORAGE_BUCKET_RESUMES: str = "resumes"
     SUPABASE_STORAGE_BUCKET_REPORTS: str = "reports"
     SUPABASE_STORAGE_BUCKET_AVATARS: str = "avatars"
+    #: Public bucket for promo banner images uploaded from the offers admin.
+    #:
+    #: MUST BE A PUBLIC BUCKET, unlike resumes and reports. A banner is rendered by an <img>
+    #: on the dashboard for every signed-in candidate, so a private bucket would mean minting
+    #: a signed URL per view — an extra round trip on a page load, and a link that expires
+    #: while the page is open. The content is a marketing image we are choosing to show
+    #: everybody, so there is nothing here that a public URL leaks.
+    SUPABASE_STORAGE_BUCKET_BANNERS: str = "banners"
+
+    # ─── The promo banner image contract ────────────────────────────────────────────────
+    #
+    # THESE NUMBERS ARE DERIVED FROM THE CONTAINER, NOT PICKED. The banner renders inside the
+    # dashboard's content column: `max-w-6xl` with `sm:px-8`, which is 1152 - 64 = 1088 CSS
+    # pixels at its widest. Everything below follows from that one measurement, and the admin
+    # form quotes these exact values so an upload cannot be a guess.
+
+    #: The required aspect ratio, width / height. 3:1.
+    #:
+    #: Chosen so the banner is a strip rather than a block: at the full 1088px it is 363px
+    #: tall, and on a 360px phone it is 120px — big enough for a promo code to be legible,
+    #: small enough that it never pushes the dashboard's actual content below the fold. The
+    #: render fixes this ratio in CSS, so an image of ANY size stays undistorted and aligned;
+    #: matching it is what avoids a centre-crop.
+    BANNER_ASPECT_RATIO: float = 3.0
+    #: How far from 3:1 an upload may be and still be accepted, as a fraction.
+    #:
+    #: 2%. Export tools round: a designer working to 3:1 can hand back 2400x801, and refusing
+    #: that would be pedantry that teaches the admin to ignore the requirement. Wide enough to
+    #: absorb rounding, far too narrow to admit 16:9 (1.78) or 4:1 — both of which WOULD crop
+    #: visibly.
+    BANNER_ASPECT_TOLERANCE: float = 0.02
+    #: The size to export at: 2400x800.
+    #:
+    #: 2400 is 2.2x the 1088px container, so the image is sharp on a 2x display with a little
+    #: headroom. Quoted to the admin as "the" size because one exact number produces correct
+    #: uploads where a range produces the smallest value in it.
+    BANNER_RECOMMENDED_WIDTH: int = 2400
+    #: The floor. Below this an image is upscaled by the browser and looks soft.
+    #:
+    #: 1200 is just above the 1088px container, so a 1200px image is still rendered at 1:1 or
+    #: better on a standard display — soft on a retina screen, but never blurry-on-everything.
+    BANNER_MIN_WIDTH: int = 1200
+    #: Bytes. 500 KB.
+    #:
+    #: A 2400x800 WebP of a promo graphic is comfortably under 200 KB, and a PNG of flat art
+    #: around 300 KB, so this accepts a correct export with room to spare while refusing the
+    #: 4 MB camera JPEG that would otherwise sit at the top of every candidate's dashboard on
+    #: a mobile connection.
+    BANNER_MAX_BYTES: int = 500 * 1024
 
     # ── Feature flags ─────────────────────────────────────────────────────
     FEATURE_VOICE_INTERVIEW: bool = False
@@ -402,43 +451,6 @@ class Settings(BaseSettings):
     #: so the server always loses the race deliberately and returns a real error instead of
     #: having the connection cut from under it. Measured latency is 6-16s.
     MODEL_ANSWER_BUDGET_SECONDS: float = 45.0
-    #: Hours an automatic account suspension lasts before it lifts itself.
-    #:
-    #: REPORTED AS "once the id gets suspended then it is not opening even if we log out from
-    #: everywhere". That was accurate, and it was not a bug in logout — `is_banned` is a
-    #: persisted column and signing out never touched it. The suspension was PERMANENT, and
-    #: services/security/sharing.py says so plainly: "only an admin can lift a ban".
-    #:
-    #: WHY THAT WAS THE WRONG SHAPE. The detector is a heuristic over IP prefixes, and its own
-    #: module header lists the honest population it will hit hardest: campus students on phones
-    #: moving between mobile data and college wi-fi, behind two layers of NAT. It has four
-    #: dampeners precisely because it EXPECTS to be wrong sometimes. Pairing a knowingly
-    #: fallible detector with an irreversible penalty puts the entire cost of its error on the
-    #: user, payable only by an admin who may be asleep — and the people it strands are
-    #: mid-placement-season, for whom a day is the whole opportunity.
-    #:
-    #: The evidence already expires: strikes live a week (`_STRIKE_TTL_SECONDS`) so that old
-    #: overlaps cannot add up to a ban. A ban outliving the evidence that justified it was
-    #: simply inconsistent with that.
-    #:
-    #: 24 HOURS, and it is a cooling-off period rather than a pardon. Long enough to end a
-    #: shared session and to cost a sharer the thing they were sharing; short enough that a
-    #: wrongly-suspended candidate loses a day rather than a placement. The appeal still exists
-    #: for anyone who cannot wait, an admin can still lift it instantly, and both routes are
-    #: unchanged.
-    #:
-    #: REPEATS ESCALATE, so this is not a standing 24-hour licence to share: the window is
-    #: multiplied by the number of times this account has already been un-suspended (see
-    #: `suspension_window_hours`), capped so that it can never become permanent again. Zero
-    #: disables the expiry and restores the old admin-only behaviour.
-    ACCOUNT_SUSPENSION_HOURS: float = 24.0
-    #: The most a suspension can ever last, however many times an account has repeated it.
-    #:
-    #: THE POINT OF THE CAP IS THE PROPERTY IT PRESERVES: no automatic penalty is permanent.
-    #: Without it the escalation above would reach effectively-forever after a handful of
-    #: repeats and reintroduce exactly the lockout this whole change removes — an outcome an
-    #: admin should have to choose deliberately, not one arithmetic should arrive at.
-    ACCOUNT_SUSPENSION_MAX_HOURS: float = 168.0
     #: Seconds resume analysis may spend on the AI before the upload is stored with whatever
     #: it managed to produce.
     #:

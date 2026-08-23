@@ -73,10 +73,6 @@ def is_eligible(plan: UserPlan, *, now: datetime | None = None) -> tuple[bool, s
 
     if not plan.autopay_enabled:
         return False, "not enabled"
-    if plan.is_banned:
-        # A suspended account must not be charged. Taking money from somebody who cannot use
-        # the product is the worst possible combination.
-        return False, "account suspended"
     if not plan.autopay_item_id or not plan.autopay_token:
         # Enabled but never completed. Treated as off rather than as an error: the mandate
         # setup can be abandoned halfway, and that must not become a charge.

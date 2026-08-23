@@ -45,7 +45,7 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -543,126 +543,6 @@ async def admin_overview(
         "cost_data_available": _ledger_enabled(),
         "daily_budget_usd": settings.AI_DAILY_BUDGET_USD,
     }
-
-
-# ─── Credential-sharing bans ──────────────────────────────────────────────────
-
-
-class UnbanRequest(BaseModel):
-    #: Why the ban is being lifted. Required, because "unbanned" with no reason is
-    #: indistinguishable from a misclick when the same account is reviewed again later.
-    note: str = Field(min_length=3, max_length=300)
-
-
-@router.get("/bans", summary="Suspended accounts, appeals first")
-async def list_bans(
-    current_user: AdminUser,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> list[dict]:
-    """
-    The review queue.
-
-    ORDERED WITH APPEALS FIRST because that is the actionable half. A ban nobody has
-    appealed needs no decision today; a person who has written in is waiting, and the
-    detector has a real false-positive rate — mobile handover, campus NAT, dual-stack
-    flapping — so somebody is waiting who should not be banned at all.
-    """
-    from app.models.billing import UserPlan  # noqa: PLC0415
-    from app.services.security.sharing import recent_places  # noqa: PLC0415
-
-    rows = (
-        await db.execute(
-            select(UserPlan, User.email)
-            .join(User, User.id == UserPlan.user_id)
-            .where(UserPlan.is_banned.is_(True))
-            .order_by(UserPlan.appeal_at.desc().nullslast(), UserPlan.banned_at.desc())
-            .limit(200)
-        )
-    ).all()
-
-    out = []
-    for plan, email in rows:
-        out.append(
-            {
-                "user_id": str(plan.user_id),
-                "email": email,
-                "reason": plan.ban_reason,
-                "banned_at": plan.banned_at.isoformat() if plan.banned_at else None,
-                "appeal_text": plan.appeal_text,
-                "appeal_at": plan.appeal_at.isoformat() if plan.appeal_at else None,
-                # Repeat offenders are the ones where a second unban needs more thought.
-                "previously_unbanned": plan.unbanned_count,
-                # The evidence, so the decision is made against what actually happened
-                # rather than against the one-line reason string.
-                "places": await recent_places(db, plan.user_id),
-            }
-        )
-    return out
-
-
-@router.post(
-    "/users/{user_id}/unban",
-    summary="Lift a credential-sharing suspension",
-    dependencies=[Depends(_admin_write_rate_limit)],
-)
-async def unban_user(
-    user_id: uuid.UUID,
-    body: UnbanRequest,
-    current_user: AdminUser,
-    request: Request,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> dict:
-    """
-    ADMIN ONLY, AND THE ONLY WAY OUT. The appeal endpoint records a request; it deliberately
-    cannot lift a ban, because a ban that clears itself on request is decorative.
-
-    Clearing the strike counter is not optional. Strikes live in Redis with a week's TTL, so
-    an account unbanned without clearing them is one overlap away from being banned again by
-    evidence an admin has already reviewed and forgiven — which would look, correctly, like
-    the unban button does not work.
-    """
-    from app.db.redis import get_redis  # noqa: PLC0415
-    from app.models.billing import UserPlan  # noqa: PLC0415
-    from app.services.security.sharing import lift_ban  # noqa: PLC0415
-
-    plan = await db.scalar(
-        select(UserPlan).where(UserPlan.user_id == user_id).with_for_update()
-    )
-    if plan is None or not plan.is_banned:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account is not banned")
-
-    # THE SAME HELPER THE AUTOMATIC EXPIRY USES, deliberately. This used to clear the six
-    # fields inline, and a suspension now also lifts itself after a cooling-off window (see
-    # core/security.py) — two copies of "what unbanning means" would drift, and the half that
-    # got forgotten would be the strike counter, which is invisible until the account is
-    # re-banned a day later by evidence somebody already forgave.
-    reason_before = await lift_ban(db, get_redis(), plan, reason="admin_unban")
-
-    db.add(
-        AuditLog(
-            user_id=current_user.user_id,
-            action="admin.user_unbanned",
-            entity_type="user",
-            entity_id=user_id,
-            ip_address=(request.client.host if request.client else None),
-            user_agent=request.headers.get("user-agent"),
-            payload={
-                "actor_email": current_user.email,
-                "note": body.note,
-                "ban_reason": reason_before,
-                "times_unbanned": plan.unbanned_count,
-            },
-        )
-    )
-    await db.commit()
-
-    logger.info(
-        "admin_user_unbanned",
-        actor=str(current_user.user_id),
-        target=str(user_id),
-        times=plan.unbanned_count,
-    )
-    return {"status": "unbanned", "times_unbanned": plan.unbanned_count}
 
 
 # ── Revenue ──────────────────────────────────────────────────────────────────────

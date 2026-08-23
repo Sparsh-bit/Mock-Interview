@@ -52,12 +52,19 @@ class TestWhenAChargeIsRefused:
         assert is_eligible(plan(autopay_token=None))[0] is False
         assert is_eligible(plan(autopay_item_id=None))[0] is False
 
-    def test_a_suspended_account_is_never_charged(self):
-        # Taking money from somebody who cannot use the product is the worst possible
-        # combination of failures.
-        allowed, reason = is_eligible(plan(is_banned=True))
-        assert allowed is False
-        assert "suspended" in reason
+    def test_the_inert_ban_column_no_longer_blocks_a_charge(self):
+        """
+        THE OPPOSITE OF WHAT THIS ASSERTED, and deliberately so.
+
+        Autopay used to refuse an account with `is_banned` set — correctly, while suspensions
+        existed: taking money from somebody who cannot use the product is the worst possible
+        combination. Credential-sharing suspension has been removed (see core/security.py), so
+        the column is inert and the accounts still carrying it can use the product normally.
+        Refusing to top them up would leave a paying customer unable to buy, for a reason that
+        no longer exists anywhere else in the system.
+        """
+        allowed, _ = is_eligible(plan(is_banned=True))
+        assert allowed is True
 
     def test_only_one_attempt_per_window(self):
         # A declined card retried on every request is a card the bank blocks, and a wall of

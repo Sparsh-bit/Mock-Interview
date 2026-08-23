@@ -61,22 +61,25 @@ describe('normalizeError reads both backend error shapes', () => {
     expect(err.isForbidden).toBe(false);
   });
 
-  it('surfaces a ban as forbidden with its appeal flag intact', async () => {
-    // A ban must NOT look like a paywall — more money does not fix it, and routing it to
-    // the store would be both wrong and insulting.
+  it('keeps a 403 distinct from a paywall, with its own code and details intact', async () => {
+    // A forbidden action must NOT look like a paywall — more money does not fix it, and
+    // routing it to the store would be both wrong and insulting. The envelope's own code is
+    // carried through as `serverCode`, because the HTTP status alone cannot tell two
+    // different 403s apart.
     const err = await normalizeError(
       new Error('x'),
       jsonResponse(403, {
         error: {
-          code: 'ACCOUNT_BANNED',
-          message: 'This account is suspended.',
-          details: { reason: 'two networks', appealable: true },
+          code: 'NOT_YOUR_REPORT',
+          message: 'This report belongs to somebody else.',
+          details: { report_id: 'abc' },
         },
       }),
     );
     expect(err.isForbidden).toBe(true);
     expect(err.isCreditsExhausted).toBe(false);
-    expect((err.details as { appealable?: boolean }).appealable).toBe(true);
+    expect(err.serverCode).toBe('NOT_YOUR_REPORT');
+    expect((err.details as { report_id?: string }).report_id).toBe('abc');
   });
 
   it('still reads plain FastAPI errors', async () => {

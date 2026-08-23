@@ -160,20 +160,26 @@ class TestAdminsAreNotMetered:
 
 
 @pytest.mark.asyncio
-class TestABannedAccountCannotSpend:
-    async def test_it_is_refused_before_anything_is_charged(self):
-        # Checked under the same row lock that decides entitlement — this is the last gate
-        # before something billable happens.
-        from app.services.billing.credits import AccountBannedError
+class TestAPreviouslySuspendedAccountCanStillSpend:
+    """
+    THE OPPOSITE ASSERTION TO THE ONE THAT USED TO BE HERE, and the change is deliberate.
 
+    `consume` used to refuse an account with `is_banned` set, as the last gate before anything
+    billable. Credential-sharing suspension has been removed entirely — see the note in
+    core/security.py for why — and `is_banned` is now an inert column that some accounts still
+    carry from before the removal.
+
+    Those are exactly the accounts that must not stay locked out: they were suspended by a
+    detector that fired on a phone changing network, and several of them had paid. So the gate
+    is gone, and this test exists to stop it being reinstated as a "safety" check that would
+    silently re-break them.
+    """
+
+    async def test_the_inert_ban_column_does_not_block_spending(self):
         db = _StubDB(_Plan(banned=True), net={"interview": 10})
-        with pytest.raises(AccountBannedError) as exc:
-            await consume(db, uuid.uuid4(), "interview")
-        # 403, not 402: more money does not fix this, and routing it to the store would be
-        # both wrong and insulting.
-        assert exc.value.status_code == 403
-        assert exc.value.details["appealable"] is True
-        assert db.added == []
+        await consume(db, uuid.uuid4(), "interview")
+        # The charge was written: one ledger row, not a refusal.
+        assert len(db.added) == 1
 
 
 class TestNoMeteredRouteCanForgetToCharge:

@@ -128,49 +128,6 @@ class StorageError(AppError):
         )
 
 
-class AccountBannedError(AppError):
-    """
-    The account is suspended for credential sharing.
-
-    403 rather than 402: this is not something more money fixes, and routing it to the
-    purchase sheet would be both wrong and insulting. The client sends it to the appeal page
-    instead — which is the entire reason this is a typed error and not a bare HTTPException.
-
-    LIVES HERE, NOT IN services/billing/credits.py, AND THAT MOVE WAS THE BUG FIX.
-
-    It was defined next to the credit ledger and therefore raised from exactly one place:
-    spending a credit. But the path that actually locks somebody out is core/security.py,
-    the auth dependency every authenticated request passes through — and `core` cannot import
-    from `services.billing`, so that path raised a bare `HTTPException` carrying the same
-    sentence as prose and none of the structure.
-
-    The consequence was the reported one. On the blocked path the client received an untyped
-    403, so it had no way to tell a suspension from any other failure: it rendered the
-    generic data-error card, which says "this is usually temporary, wait a moment and try
-    again" — false — offers a Try again button that can never succeed, and provides no link
-    to the appeal the message tells the user to go and find. A suspended account was a dead
-    end on screen even though the appeal endpoint was reachable the whole time.
-
-    `details.appealable` is what the client keys the appeal route off, and
-    frontend/src/lib/api/error-envelope.test.ts already pinned that contract before anything
-    rendered it.
-    """
-
-    def __init__(self, reason: str = "") -> None:
-        super().__init__(
-            message=(
-                "This account is suspended because it was used from two places at once. "
-                "You can request a review."
-            ),
-            status_code=status.HTTP_403_FORBIDDEN,
-            code="ACCOUNT_BANNED",
-            details={"reason": reason, "appealable": True},
-        )
-
-
-# ─── Error response shape ─────────────────────────────────────────────────────
-
-
 def _error_response(
     status_code: int,
     code: str,

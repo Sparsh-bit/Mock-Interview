@@ -7,7 +7,7 @@ import type { PaymentsResponse } from '@/lib/billing/receipt';
 
 
 /**
- * The store, the balance and the appeal — hooks/useBilling.ts
+ * The store and the balance — hooks/useBilling.ts
  *
  * THIS IS FOR DISPLAY, NOT FOR ENFORCEMENT. Everything here reads what the server already
  * decided; nothing here decides anything. The balance tells the UI how many interviews to
@@ -39,9 +39,7 @@ export interface Balance {
   /** Whether this account may see the admin pages. Never what grants access — the server
    *  gates every admin endpoint with its own dependency and returns 403 regardless. */
   is_admin: boolean;
-  is_banned: boolean;
   ban_reason: string | null;
-  appeal_submitted: boolean;
 }
 
 export interface StoreItem {
@@ -149,25 +147,6 @@ export function useCheckout() {
   });
 }
 
-/**
- * Ask for a suspended account to be reviewed.
- *
- * Deliberately does not unban anything — only an admin can. This records the request, and
- * the balance query is invalidated so the UI switches to "review requested" rather than
- * leaving the form up inviting a second submission.
- */
-export function useAppeal() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (message: string) => {
-      const res = await getBrowserApiClient().post('/api/v1/billing/appeal', { message });
-      return res.data as { status: string };
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
-    },
-  });
-}
 
 /**
  * Check a promo code against an item without committing to anything.
