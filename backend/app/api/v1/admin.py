@@ -623,7 +623,7 @@ async def unban_user(
     """
     from app.db.redis import get_redis  # noqa: PLC0415
     from app.models.billing import UserPlan  # noqa: PLC0415
-    from app.services.security.sharing import clear_strikes  # noqa: PLC0415
+    from app.services.security.sharing import lift_ban  # noqa: PLC0415
 
     plan = await db.scalar(
         select(UserPlan).where(UserPlan.user_id == user_id).with_for_update()
@@ -631,17 +631,12 @@ async def unban_user(
     if plan is None or not plan.is_banned:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account is not banned")
 
-    reason_before = plan.ban_reason
-    plan.is_banned = False
-    plan.ban_reason = None
-    plan.banned_at = None
-    plan.appeal_text = None
-    plan.appeal_at = None
-    # Kept across the unban, unlike everything else above — it is the only signal that this
-    # account has been here before.
-    plan.unbanned_count = (plan.unbanned_count or 0) + 1
-
-    await clear_strikes(get_redis(), user_id)
+    # THE SAME HELPER THE AUTOMATIC EXPIRY USES, deliberately. This used to clear the six
+    # fields inline, and a suspension now also lifts itself after a cooling-off window (see
+    # core/security.py) — two copies of "what unbanning means" would drift, and the half that
+    # got forgotten would be the strike counter, which is invisible until the account is
+    # re-banned a day later by evidence somebody already forgave.
+    reason_before = await lift_ban(db, get_redis(), plan, reason="admin_unban")
 
     db.add(
         AuditLog(

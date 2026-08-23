@@ -55,6 +55,7 @@ import structlog
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.core.config import settings
 from app.db.session import AsyncSession
 from app.models.billing import UserPlan
 from app.models.security import UserSession
@@ -289,13 +290,81 @@ async def _ban(db: AsyncSession, user_id: uuid.UUID, reason: str) -> bool:
 
 async def clear_strikes(redis, user_id: uuid.UUID) -> None:  # noqa: ANN001
     """
-    Forget the strike history. Called when an admin lifts a ban.
+    Forget the strike history. Called whenever a ban is lifted, by an admin or by expiry.
 
     Without this an unbanned user is one overlap from being banned again by strikes that
     were already reviewed and forgiven, which would make the unban look broken.
     """
     with __import__("contextlib").suppress(Exception):
         await redis.delete(f"sharing:strikes:{user_id}")
+
+
+def suspension_window_hours(unbanned_count: int) -> float:
+    """
+    How long THIS account's suspension lasts, given how often it has been here before.
+
+    A flat window would be a standing licence: share the account, lose a day, share it again.
+    So the window is multiplied by the number of previous lifts — a first suspension is a
+    day, a second two, a third three — which costs a genuine sharer progressively more while
+    a wrongly-suspended candidate, who by definition has no history, always pays the minimum.
+
+    CAPPED, and the cap is the property worth protecting: no automatic penalty is ever
+    permanent. Escalation without a ceiling reaches effectively-forever after a few repeats
+    and rebuilds the lockout this exists to remove. Making an account permanently unusable
+    should be a decision somebody takes, not somewhere multiplication ends up.
+
+    Returns 0.0 when the expiry is disabled, which restores admin-only lifting.
+    """
+    base = settings.ACCOUNT_SUSPENSION_HOURS
+    if base <= 0:
+        return 0.0
+    window = base * (max(0, unbanned_count) + 1)
+    return min(window, settings.ACCOUNT_SUSPENSION_MAX_HOURS)
+
+
+async def lift_ban(
+    db: AsyncSession,
+    redis,  # noqa: ANN001 — redis.asyncio.Redis
+    plan: UserPlan,
+    *,
+    reason: str,
+) -> str | None:
+    """
+    Clear a ban on an already-locked `plan` row. Returns the ban reason that was cleared.
+
+    ONE PLACE, TWO CALLERS — the admin unban endpoint and the automatic expiry — because the
+    two must not drift. Everything here is load-bearing and easy to half-do:
+
+      * `unbanned_count` SURVIVES, and is incremented. It is the only record that this
+        account has been suspended before, it drives the escalating window above, and it is
+        what `list_bans` shows an admin as "previously_unbanned".
+      * The APPEAL IS CLEARED. Leaving it behind would keep a resolved account sitting in the
+        review queue, and the next suspension would show an admin an appeal written about the
+        previous one.
+      * STRIKES ARE CLEARED, and this is the one that used to be forgotten. They live in
+        Redis for a week, so a lifted ban without this is one overlap from returning — by
+        evidence that has already been forgiven. To the user that is indistinguishable from
+        the lift never having worked.
+
+    Does NOT commit. The caller's request-scoped session owns that, so a failure downstream
+    rolls the lift back rather than leaving a half-applied state.
+    """
+    reason_before = plan.ban_reason
+    plan.is_banned = False
+    plan.ban_reason = None
+    plan.banned_at = None
+    plan.appeal_text = None
+    plan.appeal_at = None
+    plan.unbanned_count = (plan.unbanned_count or 0) + 1
+    await clear_strikes(redis, plan.user_id)
+    logger.info(
+        "ban_lifted",
+        user_id=str(plan.user_id),
+        reason=reason,
+        ban_reason=reason_before,
+        times_unbanned=plan.unbanned_count,
+    )
+    return reason_before
 
 
 async def recent_places(db: AsyncSession, user_id: uuid.UUID, limit: int = 10) -> list[dict]:

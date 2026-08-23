@@ -60,7 +60,7 @@ import structlog
 from fastapi import status
 from sqlalchemy import func, select
 
-from app.core.exceptions import AppError
+from app.core.exceptions import AccountBannedError, AppError
 from app.db.session import AsyncSession
 from app.models.billing import CreditEvent, UserPlan
 from app.services.billing.plans import (
@@ -447,22 +447,8 @@ async def grant(
     return True
 
 
-class AccountBannedError(AppError):
-    """
-    The account is banned for credential sharing.
-
-    403 rather than 402: this is not something more money fixes, and routing it to the
-    purchase sheet would be both wrong and insulting. The client sends it to the appeal
-    page instead.
-    """
-
-    def __init__(self, reason: str = "") -> None:
-        super().__init__(
-            message=(
-                "This account is suspended because it was used from two places at once. "
-                "You can request a review."
-            ),
-            status_code=status.HTTP_403_FORBIDDEN,
-            code="ACCOUNT_BANNED",
-            details={"reason": reason, "appealable": True},
-        )
+# `AccountBannedError` moved to core/exceptions.py so that core/security.py — the auth
+# dependency where a suspension actually blocks a request — can raise the same typed error.
+# It was defined here, which meant the only path that raised it was spending a credit, and
+# the path that locks somebody out of the whole product raised untyped prose instead.
+# Re-exported because callers import it from here.

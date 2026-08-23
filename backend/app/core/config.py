@@ -381,6 +381,64 @@ class Settings(BaseSettings):
     #: Zero means "never batch", restoring the single-call behaviour that could not serve a
     #: full-size quiz inside the client's timeout at all.
     QUIZ_BATCH_MAX_QUESTIONS: int = 5
+    #: Output-token ceiling for one on-demand "ideal answer" on the detailed-analysis page.
+    #:
+    #: MEASURED, and raised from a hardcoded 900 after that ceiling was found to be silently
+    #: truncating the useful half of the response. A design question's full shape — the spoken
+    #: answer plus `what_was_missing`, `key_points` and `verdict_line` — measures 2700-4100
+    #: characters of JSON, around 700-1000 output tokens. At 900 the answer itself consumed the
+    #: budget and the three coaching fields were cut off; the truncation salvage then recovered
+    #: a valid object with those fields at their empty defaults, so the request SUCCEEDED while
+    #: dropping the only part a candidate needed. Nothing errored and nothing was logged.
+    #:
+    #: 1400 covers the largest observed shape with headroom. Short conceptual answers are
+    #: unaffected — they finish around 1500 characters and never approach either figure.
+    MODEL_ANSWER_MAX_TOKENS: int = 1400
+    #: Wall-clock cap on generating one ideal answer.
+    #:
+    #: Well inside a managed host's ~100s gateway cut, because a gateway 502 carries no CORS
+    #: headers and reaches the browser as an opaque CORS error rather than as a failed request.
+    #: Also inside the 90s the client allows for this specific call (see useGenerateModelAnswer),
+    #: so the server always loses the race deliberately and returns a real error instead of
+    #: having the connection cut from under it. Measured latency is 6-16s.
+    MODEL_ANSWER_BUDGET_SECONDS: float = 45.0
+    #: Hours an automatic account suspension lasts before it lifts itself.
+    #:
+    #: REPORTED AS "once the id gets suspended then it is not opening even if we log out from
+    #: everywhere". That was accurate, and it was not a bug in logout — `is_banned` is a
+    #: persisted column and signing out never touched it. The suspension was PERMANENT, and
+    #: services/security/sharing.py says so plainly: "only an admin can lift a ban".
+    #:
+    #: WHY THAT WAS THE WRONG SHAPE. The detector is a heuristic over IP prefixes, and its own
+    #: module header lists the honest population it will hit hardest: campus students on phones
+    #: moving between mobile data and college wi-fi, behind two layers of NAT. It has four
+    #: dampeners precisely because it EXPECTS to be wrong sometimes. Pairing a knowingly
+    #: fallible detector with an irreversible penalty puts the entire cost of its error on the
+    #: user, payable only by an admin who may be asleep — and the people it strands are
+    #: mid-placement-season, for whom a day is the whole opportunity.
+    #:
+    #: The evidence already expires: strikes live a week (`_STRIKE_TTL_SECONDS`) so that old
+    #: overlaps cannot add up to a ban. A ban outliving the evidence that justified it was
+    #: simply inconsistent with that.
+    #:
+    #: 24 HOURS, and it is a cooling-off period rather than a pardon. Long enough to end a
+    #: shared session and to cost a sharer the thing they were sharing; short enough that a
+    #: wrongly-suspended candidate loses a day rather than a placement. The appeal still exists
+    #: for anyone who cannot wait, an admin can still lift it instantly, and both routes are
+    #: unchanged.
+    #:
+    #: REPEATS ESCALATE, so this is not a standing 24-hour licence to share: the window is
+    #: multiplied by the number of times this account has already been un-suspended (see
+    #: `suspension_window_hours`), capped so that it can never become permanent again. Zero
+    #: disables the expiry and restores the old admin-only behaviour.
+    ACCOUNT_SUSPENSION_HOURS: float = 24.0
+    #: The most a suspension can ever last, however many times an account has repeated it.
+    #:
+    #: THE POINT OF THE CAP IS THE PROPERTY IT PRESERVES: no automatic penalty is permanent.
+    #: Without it the escalation above would reach effectively-forever after a handful of
+    #: repeats and reintroduce exactly the lockout this whole change removes — an outcome an
+    #: admin should have to choose deliberately, not one arithmetic should arrive at.
+    ACCOUNT_SUSPENSION_MAX_HOURS: float = 168.0
     #: Seconds resume analysis may spend on the AI before the upload is stored with whatever
     #: it managed to produce.
     #:

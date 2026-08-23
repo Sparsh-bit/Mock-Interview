@@ -27,6 +27,20 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly details: unknown;
   readonly requestId: string | undefined;
+  /**
+   * The application's OWN error code from the envelope, e.g. `ACCOUNT_BANNED`.
+   *
+   * SEPARATE FROM `code`, WHICH STAYS STATUS-DERIVED. `code` is a closed union mapped from
+   * the HTTP status and existing call sites switch on it; widening it would change what
+   * `FORBIDDEN` means for every consumer at once. This carries the richer server value
+   * additively, so nothing that reads `code` today behaves differently.
+   *
+   * It exists because the envelope's `code` was being thrown away — the same oversight the
+   * long comment in `normalizeError` describes for `details`, and with the same consequence:
+   * the client could not tell one 403 from another, so a suspended account and an ordinary
+   * permission failure rendered the identical dead-end screen.
+   */
+  readonly serverCode: string | undefined;
 
   constructor(
     status: number,
@@ -34,6 +48,7 @@ export class ApiError extends Error {
     message: string,
     details?: unknown,
     requestId?: string,
+    serverCode?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -41,6 +56,7 @@ export class ApiError extends Error {
     this.code = code;
     this.details = details;
     this.requestId = requestId;
+    this.serverCode = serverCode;
     // Restore prototype chain in environments that transpile classes
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -73,6 +89,38 @@ export class ApiError extends Error {
       used: typeof d.used === 'number' ? d.used : 0,
       allowance: typeof d.allowance === 'number' ? d.allowance : 0,
     };
+  }
+
+  /**
+   * HTTP 403 with a way out — the account is suspended for suspected sharing.
+   *
+   * DISTINCT FROM `isForbidden` FOR THE SAME REASON `isCreditsExhausted` IS. A plain 403 is a
+   * dead end and offers the user nothing; this one has an appeal attached, so the client must
+   * route it somewhere completely different. Collapsing them is what produced the reported
+   * bug: a suspended candidate saw the generic data-error card — "this is usually temporary,
+   * wait a moment and try again", which is false, with a Try again button that could never
+   * succeed and no link to the appeal the message told them to find.
+   *
+   * KEYED ON THE CODE, NOT THE MESSAGE. The sentence lives in one place server-side
+   * (AccountBannedError) and will be reworded; a client matching on prose would silently stop
+   * recognising suspensions the first time somebody improved the copy, and the symptom would
+   * be the dead-end screen coming back with no code change to blame.
+   *
+   * `details.appealable` is checked too rather than assumed, so a future suspension that is
+   * genuinely not appealable — an admin ban, a chargeback — does not get pointed at a form
+   * that will refuse it.
+   */
+  get isAccountSuspended(): boolean {
+    return this.status === 403 && this.serverCode === 'ACCOUNT_BANNED';
+  }
+
+  /** Whether a suspended account may ask for review. False for any other error. */
+  get isAppealable(): boolean {
+    if (!this.isAccountSuspended) return false;
+    const d = this.details as Record<string, unknown> | null | undefined;
+    // Absent means appealable: the server has sent `appealable: true` since this existed, and
+    // hiding the only route out because a field went missing is the worse way to be wrong.
+    return d?.appealable !== false;
   }
 
   /** HTTP 404 */
@@ -209,6 +257,9 @@ export async function normalizeError(
       message,
       envelope ? envelope.details : payload.detail,
       requestId,
+      // The application's own code, when it sent one. This was being discarded, which is why
+      // a suspended account was indistinguishable from any other 403 on the client.
+      envelope?.code,
     );
   }
 

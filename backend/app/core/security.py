@@ -34,6 +34,7 @@ from jose import JWTError, jwt
 from redis.asyncio import Redis
 
 from app.core.config import settings
+from app.core.exceptions import AccountBannedError
 from app.db.redis import get_redis
 from app.db.session import AsyncSession, get_db
 
@@ -209,16 +210,73 @@ def _is_ban_exempt(path: str) -> bool:
 
 
 async def _is_banned(db: AsyncSession, user_id: uuid.UUID) -> bool:
-    """Is this account already suspended? Cheap indexed read on the per-user row."""
+    """
+    Is this account suspended RIGHT NOW? Cheap indexed read on the per-user row.
+
+    A SUSPENSION EXPIRES, AND THIS IS WHERE THAT HAPPENS. Reported as "once the id gets
+    suspended then it is not opening even if we log out from everywhere" — which was exactly
+    right, and was not a fault in logout: `is_banned` is a column, signing out never touched
+    it, and nothing else lifted it either. The penalty was permanent while the evidence for it
+    expired in a week, and the detector that produced it is a documented heuristic that
+    expects to be wrong sometimes. See ACCOUNT_SUSPENSION_HOURS for why that pairing was the
+    real defect.
+
+    LIFTED ON READ, rather than by a scheduled job, because a cron that fails silently leaves
+    people locked out and nobody finds out until they complain — which is how this was found.
+    Reading the flag is something every authenticated request already does, so the expiry
+    cannot be missed by anything that matters: the next request the user makes IS the trigger.
+
+    THE FAST PATH IS UNCHANGED. Not banned, or expiry disabled, and this is the same single
+    indexed read it always was. The locking `SELECT ... FOR UPDATE` happens only for an
+    account that is banned AND past its window, which is once per suspension, ever.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.models.billing import UserPlan  # noqa: PLC0415
 
-    return bool(
-        await db.scalar(
-            select(UserPlan.is_banned).where(UserPlan.user_id == user_id)
+    row = (
+        await db.execute(
+            select(UserPlan.is_banned, UserPlan.banned_at, UserPlan.unbanned_count).where(
+                UserPlan.user_id == user_id
+            )
         )
+    ).first()
+    if row is None or not row.is_banned:
+        return False
+
+    from app.services.security.sharing import suspension_window_hours  # noqa: PLC0415
+
+    window = suspension_window_hours(row.unbanned_count or 0)
+    if window <= 0:
+        # Expiry disabled: admin-only, the original behaviour.
+        return True
+    if row.banned_at is None:
+        # A ban with no timestamp cannot be aged, and treating it as expired would clear a
+        # suspension on the strength of missing data. It stays, and the appeal still applies.
+        return True
+    if datetime.now(UTC) - row.banned_at < timedelta(hours=window):
+        return True
+
+    # Past the window. Re-read under a lock, because two concurrent requests would otherwise
+    # both lift it and both increment `unbanned_count`, over-counting this account's history
+    # and lengthening every future suspension it serves.
+    from app.db.redis import get_redis  # noqa: PLC0415
+    from app.services.security.sharing import lift_ban  # noqa: PLC0415
+
+    plan = await db.scalar(
+        select(UserPlan).where(UserPlan.user_id == user_id).with_for_update()
     )
+    if plan is None or not plan.is_banned:
+        return False
+    await lift_ban(db, get_redis(), plan, reason="suspension_expired")
+    # Committed here rather than left to `get_db`, because this runs in a dependency: if the
+    # endpoint below then fails for its own reasons, the rollback would undo the lift and the
+    # user would still be suspended on their next request. The lift is a decision about the
+    # account, not part of whatever the request was trying to do.
+    await db.commit()
+    return False
 
 
 async def get_current_user(
@@ -329,13 +387,19 @@ async def get_current_user(
 
         if verdict.banned or await _is_banned(db, user.id):
             logger.warning("auth_rejected_banned_account", user_id=str(user.id))
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "This account is suspended because it was used from two places at "
-                    "once. You can request a review from your account page."
-                ),
-            )
+            # THE TYPED ERROR, NOT A BARE HTTPException, and that is the fix for a suspended
+            # account being a dead end on screen.
+            #
+            # This raised prose with a 403 and nothing else. The client had no way to tell a
+            # suspension from any other forbidden response, so every blocked page fell to the
+            # generic data-error card: "this is usually temporary, wait a moment and try
+            # again" — untrue — with a Try again button that could never succeed and no link
+            # to the appeal the sentence told the user to go and find. The appeal endpoint was
+            # reachable the entire time (see _BAN_EXEMPT_SUFFIXES); nothing on screen said so.
+            #
+            # AccountBannedError carries `code: ACCOUNT_BANNED` and `details.appealable`
+            # through the error envelope, which is the contract the client routes on.
+            raise AccountBannedError(reason="shared_account")
 
     # TEMPORARY (token counter) — tag any AI spend during this request with the
     # user who caused it. Removed with the rest of the ledger; see
