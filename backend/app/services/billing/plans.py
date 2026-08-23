@@ -101,15 +101,20 @@ FEATURE_LABELS_SINGULAR: dict[str, str] = {
 #:   * Copy that promised a free interview had to change with it. A dashboard offering
 #:     something the ledger refuses is worse than one that never offered it.
 #:
-#: GD and communication drills are UNCHANGED at one each. They are separate products and the
-#: instruction was about interviews; making them paid too is a decision to take deliberately,
-#: not a side effect of this line.
+#: GROUP DISCUSSIONS ARE ALSO ZERO, set separately and later: "make sure to make the gd also
+#: payment and not free for anyone only for the admins". The admin half of that was already
+#: true — `consume` returns before charging anything for an operator account, so admins are
+#: unmetered on every feature and needed no change here.
+#:
+#: Communication drills are the last thing with a trial. That is now the only way a new account
+#: can use any AI feature without paying, so it is also the only remaining demonstration that
+#: the product works — worth knowing before it goes too.
 #:
 #: NOT per month. There is no renewal anywhere in this file; see `credits.py` for why the
 #: absence of a period is what makes the ledger simpler rather than harder.
 TRIAL_ALLOWANCE: dict[str, int] = {
     "interview": 0,
-    "gd": 1,
+    "gd": 0,
     "communication": 1,
 }
 

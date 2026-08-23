@@ -39,9 +39,31 @@ from collections import Counter
 import pytest
 
 from app.services.billing.credits import KIND_CONSUME, consume, grant
-from app.services.billing.plans import trial_allowance
+from app.services.billing.plans import TRIAL_ALLOWANCE, trial_allowance
 
 pytestmark = pytest.mark.asyncio
+
+
+def a_trialable_feature() -> str:
+    """
+    Any feature that still has a free trial.
+
+    DERIVED, NOT NAMED, because these tests have now been re-pointed twice — from `interview`
+    to `gd` when interviews became paid, and from `gd` to something else when group discussions
+    did. The behaviour under test is the trial MECHANISM, which is generic; naming a feature
+    couples every one of these tests to a pricing decision that has nothing to do with them.
+
+    Raises if nothing is trialable any more, which is the honest outcome: the mechanism would
+    then be unreachable and these tests would be asserting nothing. A loud failure is the signal
+    to delete them, not to invent a fixture that keeps them green.
+    """
+    for feature, allowance in TRIAL_ALLOWANCE.items():
+        if allowance > 0:
+            return feature
+    raise AssertionError(
+        "no feature has a trial any more — the trial mechanism is unreachable, so these tests "
+        "assert nothing and should be removed rather than propped up"
+    )
 
 
 @pytest.fixture
@@ -76,7 +98,7 @@ async def user():
 # came out of, and `credit_events.session_id` is a real foreign key, so inventing ids would test
 # the constraint rather than the rule. A separate test in test_report_access covers the
 # session-scoped read.
-async def _paid_with(db, uid, feature: str = "gd") -> Counter[str | None]:
+async def _paid_with(db, uid, feature: str | None = None) -> Counter[str | None]:
     """
     How many consumptions were marked each way. A COUNT, not a sequence, and deliberately.
 
@@ -95,6 +117,13 @@ async def _paid_with(db, uid, feature: str = "gd") -> Counter[str | None]:
 
     from app.models.billing import CreditEvent
 
+
+    # DEFAULTED HERE, NOT IN THE SIGNATURE. A default is evaluated at import time and would
+    # freeze whichever feature was trialable when this module loaded — and it is how this helper
+    # came to name `gd`, which is now paid. `None` reaching the query silently matched nothing,
+    # which reads as "the ledger wrote no row" rather than "the filter was wrong".
+    feature = feature or a_trialable_feature()
+
     rows = (
         await db.execute(
             select(CreditEvent.detail).where(
@@ -110,11 +139,11 @@ async def _paid_with(db, uid, feature: str = "gd") -> Counter[str | None]:
 class TestTheTrialIsSpentFirst:
     async def test_every_trial_interview_is_marked_trial(self, user):
         db, uid = user
-        allowance = trial_allowance("gd")
+        allowance = trial_allowance(a_trialable_feature())
         assert allowance > 0, "this test is meaningless without a free tier"
 
         for _ in range(allowance):
-            await consume(db, uid, "gd", session_id=None)
+            await consume(db, uid, a_trialable_feature(), session_id=None)
             await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance}
@@ -122,33 +151,33 @@ class TestTheTrialIsSpentFirst:
     async def test_the_one_after_the_trial_is_marked_credit(self, user):
         """THE ASSERTION THE PRODUCT RULE RESTS ON."""
         db, uid = user
-        allowance = trial_allowance("gd")
+        allowance = trial_allowance(a_trialable_feature())
 
         for _ in range(allowance):
-            await consume(db, uid, "gd", session_id=None)
+            await consume(db, uid, a_trialable_feature(), session_id=None)
             await db.commit()
 
         # They buy one, then use it.
-        await grant(db, uid, "gd", 1, payment_ref="pay_TestPot")
+        await grant(db, uid, a_trialable_feature(), 1, payment_ref="pay_TestPot")
         await db.commit()
-        await consume(db, uid, "gd", session_id=None)
+        await consume(db, uid, a_trialable_feature(), session_id=None)
         await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance, "credit": 1}
 
     async def test_buying_early_does_not_make_the_trial_paid(self, user):
         """
-        Somebody who buys credit before spending their free interviews still gets their free ones
+        Somebody who buys credit before spending their free allowance still gets the free ones
         marked `trial`. The trial is spent first by construction — `remaining = trial + net` —
         and marking those as `credit` would hand away reports the rule says are payable.
         """
         db, uid = user
-        await grant(db, uid, "gd", 5, payment_ref="pay_EarlyBird")
+        await grant(db, uid, a_trialable_feature(), 5, payment_ref="pay_EarlyBird")
         await db.commit()
 
-        allowance = trial_allowance("gd")
+        allowance = trial_allowance(a_trialable_feature())
         for _ in range(allowance + 1):
-            await consume(db, uid, "gd", session_id=None)
+            await consume(db, uid, a_trialable_feature(), session_id=None)
             await db.commit()
 
         assert await _paid_with(db, uid) == {"trial": allowance, "credit": 1}
@@ -156,7 +185,9 @@ class TestTheTrialIsSpentFirst:
     async def test_a_caller_s_own_detail_survives(self, user):
         # Call sites pass their own context in `detail`; the addition must merge, not replace.
         db, uid = user
-        await consume(db, uid, "gd", session_id=None, detail={"track": "java-fse"})
+        await consume(
+            db, uid, a_trialable_feature(), session_id=None, detail={"track": "java-fse"}
+        )
         await db.commit()
 
         from sqlalchemy import select
@@ -170,16 +201,27 @@ class TestTheTrialIsSpentFirst:
         assert detail["paid_with"] == "trial"
 
     async def test_features_are_counted_separately(self, user):
-        # A GD does not spend a communication drill's trial. Counting all consumptions together
-        # would mark a fresh feature's first use as paid, or worse.
-        #
-        # Two DIFFERENT features on purpose: retargeting this file at `gd` briefly made this
-        # consume gd twice, which tests exhaustion rather than separation.
+        """
+        Spending one feature's trial must not change how another feature's use is marked.
+
+        Demonstrated with a TRIALABLE feature and a PAID one, because only one feature has a
+        trial left. That is the reachable version of the same rule: the paid feature's
+        consumption is marked `credit` even though a trial was spent moments earlier on
+        something else. Counting all consumptions together would mark it `trial` and give away
+        a report — which is the bug this marker exists to prevent.
+        """
         db, uid = user
-        for _ in range(trial_allowance("gd")):
-            await consume(db, uid, "gd", session_id=None)
+        trialable = a_trialable_feature()
+        paid = next(f for f, n in TRIAL_ALLOWANCE.items() if n == 0)
+
+        for _ in range(trial_allowance(trialable)):
+            await consume(db, uid, trialable, session_id=None)
             await db.commit()
-        await consume(db, uid, "communication", session_id=None)
+
+        # Bought, then used. Its marker must not be borrowed from the other feature's trial.
+        await grant(db, uid, paid, 1, payment_ref="pay_TestSeparate")
+        await db.commit()
+        await consume(db, uid, paid, session_id=None)
         await db.commit()
 
         from sqlalchemy import select
@@ -188,10 +230,15 @@ class TestTheTrialIsSpentFirst:
 
         detail = await db.scalar(
             select(CreditEvent.detail).where(
-                CreditEvent.user_id == uid, CreditEvent.feature == "communication"
+                CreditEvent.user_id == uid,
+                CreditEvent.feature == paid,
+                # The GRANT row for this feature has no `paid_with` and its detail is NULL, so
+                # without this the query returns the purchase and the assertion below reads a
+                # None. Only a consumption carries the marker.
+                CreditEvent.kind == KIND_CONSUME,
             )
         )
-        assert detail["paid_with"] == "trial"
+        assert detail["paid_with"] == "credit"
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestWarning")

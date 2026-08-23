@@ -520,17 +520,17 @@ export default function LandingPage() {
           <SectionMark n="07" label="What it costs" />
           <WipeUp delay={0.1}>
             <h2 className="mt-8 max-w-3xl text-[clamp(1.6rem,3.4vw,2.4rem)] font-medium leading-[1.12] tracking-[-0.03em]">
-              Start free with a group discussion, a communication drill and
+              Start free with a communication drill and
               <span className="text-accent-indigo-ink"> unlimited quizzes — no card.</span>
             </h2>
           </WipeUp>
           <WipeUp delay={0.18}>
             <p className="mt-5 max-w-2xl text-base leading-relaxed text-muted-foreground">
               A mock interview is the real thing — a full panel, a coding round and a
-              hire/no-hire report — and it is the one part you buy, from ₹49. There is no
-              subscription to argue yourself into: you buy a session when you want one, and
-              what you buy never expires. Group discussions, communication drills and quizzes
-              you can try without paying.
+              hire/no-hire report — and interviews and group discussions are what you buy, from
+              ₹49. There is no subscription to argue yourself into: you buy a session when you
+              want one, and what you buy never expires. A communication drill and unlimited
+              quizzes you can try without paying.
             </p>
           </WipeUp>
           <WipeUp delay={0.24}>

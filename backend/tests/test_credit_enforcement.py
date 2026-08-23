@@ -23,7 +23,30 @@ import uuid
 import pytest
 
 from app.services.billing.credits import CreditsExhaustedError, consume
-from app.services.billing.plans import trial_allowance
+from app.services.billing.plans import TRIAL_ALLOWANCE, trial_allowance
+
+
+def a_trialable_feature() -> str:
+    """
+    Any feature that still has a free trial.
+
+    DERIVED, NOT NAMED, because these tests have now been re-pointed twice — from `interview`
+    to `gd` when interviews became paid, and from `gd` to something else when group discussions
+    did. The behaviour under test is the trial MECHANISM, which is generic; naming a feature
+    couples every one of these tests to a pricing decision that has nothing to do with them.
+
+    Raises if nothing is trialable any more, which is the honest outcome: the mechanism would
+    then be unreachable and these tests would be asserting nothing. A loud failure is the signal
+    to delete them, not to invent a fixture that keeps them green.
+    """
+    for feature, allowance in TRIAL_ALLOWANCE.items():
+        if allowance > 0:
+            return feature
+    raise AssertionError(
+        "no feature has a trial any more — the trial mechanism is unreachable, so these tests "
+        "assert nothing and should be removed rather than propped up"
+    )
+
 
 API = pathlib.Path(__file__).resolve().parent.parent / "app" / "api" / "v1"
 
@@ -82,13 +105,12 @@ class _StubDB:
 @pytest.mark.asyncio
 class TestTheTrialThenNothing:
     """
-    THE FEATURE UNDER TEST IS `gd`, NOT `interview`, AND THAT IS DELIBERATE.
+    THE FEATURE IS DERIVED, NOT NAMED. See `a_trialable_feature`.
 
-    Interviews are paid outright now — `trial_allowance("interview")` is 0 — so an interview can
-    never demonstrate "the trial is spendable without buying". The trial MECHANISM is generic
-    and still live for group discussions and communication drills, so the coverage moves to a
-    feature that still has one rather than being deleted. `test_an_interview_is_refused_outright`
-    below covers the new interview behaviour.
+    Interviews and group discussions are both paid now, so neither can demonstrate "the trial is
+    spendable without buying". The mechanism is generic, so these tests ask the pricing table
+    which feature still has a trial rather than hard-coding one and being re-pointed again.
+    `test_an_interview_is_refused_outright` below covers the paid-outright behaviour.
     """
 
     async def test_an_interview_is_refused_outright_with_nothing_bought(self):
@@ -105,18 +127,19 @@ class TestTheTrialThenNothing:
         # A brand-new account: no ledger rows at all, and the trial is a constant added at
         # read time rather than rows granted at signup.
         db = _StubDB(_Plan(), net={})
-        await consume(db, uuid.uuid4(), "gd")
+        await consume(db, uuid.uuid4(), a_trialable_feature())
         assert len(db.added) == 1
         assert db.added[0].delta == -1
         assert db.added[0].kind == "consume"
 
     async def test_a_spent_trial_with_no_purchases_is_refused(self):
-        # On `gd`, which still has a trial. The interview case is the test above: it has no
-        # trial to spend, so it refuses on the very first attempt.
-        assert trial_allowance("gd") == 1
-        db = _StubDB(_Plan(), net={"gd": -1})
+        # On whichever feature still has a trial. The paid-outright case is the test above: it
+        # has no trial to spend, so it refuses on the very first attempt.
+        feature = a_trialable_feature()
+        assert trial_allowance(feature) == 1
+        db = _StubDB(_Plan(), net={feature: -1})
         with pytest.raises(CreditsExhaustedError) as exc:
-            await consume(db, uuid.uuid4(), "gd")
+            await consume(db, uuid.uuid4(), feature)
         assert exc.value.status_code == 402, "must be 402 so the client offers the store"
         assert exc.value.code == "CREDITS_EXHAUSTED"
 
@@ -144,15 +167,16 @@ class TestTheTrialThenNothing:
         """
         Drives the copy, and the two cases now diverge for real.
 
-        `gd` has a trial, so a refusal there means "you have used your free group discussion".
-        An INTERVIEW has none, so `trial_used` is False and the copy must not claim they used
-        up something they never had — which is exactly the sentence a brand-new account would
+        A trialable feature refused means "you have used your free one". A PAID-OUTRIGHT feature
+        has no trial, so `trial_used` is False and the copy must not claim they used up
+        something they never had — which is exactly the sentence a brand-new account would
         otherwise be shown on its very first click.
         """
-        db = _StubDB(_Plan(), net={"gd": -1})
+        feature = a_trialable_feature()
+        db = _StubDB(_Plan(), net={feature: -1})
         with pytest.raises(CreditsExhaustedError) as exc:
-            await consume(db, uuid.uuid4(), "gd")
-        assert exc.value.details["feature"] == "gd"
+            await consume(db, uuid.uuid4(), feature)
+        assert exc.value.details["feature"] == feature
         assert exc.value.details["trial_used"] is True
 
         db = _StubDB(_Plan(), net={})

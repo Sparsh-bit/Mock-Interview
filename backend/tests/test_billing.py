@@ -27,15 +27,18 @@ from app.services.billing.razorpay import items_from_payment, verify_signature
 
 
 class TestTheTrial:
-    def test_interviews_are_paid_and_the_other_two_are_trialable_once(self):
+    def test_only_communication_drills_are_trialable(self):
         """
-        INTERVIEWS ARE ZERO ON PURPOSE. Set by the owner — every interview is bought — so a new
-        account cannot start one until it pays and the front door is a paywall rather than a
-        trial. Pinned as an exact dict because it is a pricing decision: a stray 1 here gives
-        the whole product away, and a stray 0 on `gd` silently paywalls something advertised as
-        free.
+        INTERVIEWS AND GROUP DISCUSSIONS ARE BOTH ZERO ON PURPOSE. Set by the owner in two
+        steps: every interview is bought, then "make the gd also payment and not free for
+        anyone only for the admins". Admins were already unmetered — `consume` returns before
+        charging an operator account — so that half needed no change.
+
+        Pinned as an exact dict because it is a pricing decision and every one of these numbers
+        is revenue: a stray 1 gives a product away to every new account, and a stray 0 on
+        communication drills silently paywalls the last thing a candidate can try for free.
         """
-        assert TRIAL_ALLOWANCE == {"interview": 0, "gd": 1, "communication": 1}
+        assert TRIAL_ALLOWANCE == {"interview": 0, "gd": 0, "communication": 1}
 
     def test_every_metered_feature_has_an_explicit_trial_entry(self):
         """
