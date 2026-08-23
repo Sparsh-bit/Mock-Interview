@@ -1,6 +1,8 @@
 'use client';
 
 import { useInterview } from '@/hooks/useInterview';
+import { useBalance } from '@/hooks/useBilling';
+import { useLeaveGuard } from '@/hooks/useLeaveGuard';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -252,6 +254,35 @@ export default function LiveSessionPage() {
    */
   type Phase = 'skill_check' | 'asking' | 'pivot' | 'reviewing' | 'closing' | 'done';
   const [phase, setPhase] = useState<Phase>('skill_check');
+  /*
+   * LEAVING NOW COSTS THEM THE ATTEMPT, so say so.
+   *
+   * The interview is already spent the moment it starts — the charge is taken up front and the
+   * session cannot be resumed — so a candidate who closes the tab, reloads, or switches to
+   * another app to look something up loses the whole thing. Most of them have no idea; the
+   * common one is reloading because a question is taking a few seconds and the page looks
+   * stuck, which is precisely the moment the warning has to exist.
+   *
+   * Armed only while there is something to lose: not on the loading screen, not on the
+   * completed screen, and never on the report. A guard that fires on a finished interview
+   * teaches people to click through it.
+   */
+  const balance = useBalance();
+  const leave = useLeaveGuard(phase !== 'done');
+
+  /*
+   * IS THIS ATTEMPT FREE? Asked so the warning can be TRUE rather than merely alarming.
+   *
+   * "Your free interview will be wasted" is exactly right for a candidate on the trial and
+   * simply wrong for one who bought a five-pack — telling a paying customer they are losing
+   * something free reads as the product not knowing what they paid. `trial_allowance` comes
+   * from the server precisely so this is not a guess: if everything consumed so far still
+   * falls inside the trial, this attempt came out of it.
+   */
+  const interviewBalance = balance.data?.features?.find((f) => f.feature === 'interview');
+  const isFreeAttempt =
+    !!interviewBalance && interviewBalance.used <= interviewBalance.trial_allowance;
+
   //: Which pane is showing on a phone. Three columns do not fit on 375px and this product's
   //: users are overwhelmingly phone-first, so below lg they become tabs rather than a stack —
   //: stacked, the compiler would sit two screens below the question it belongs to.
@@ -1247,6 +1278,31 @@ export default function LiveSessionPage() {
      * and every ordinary laptop window keeps exactly the pinned layout it has today.
      */
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-background short:h-auto short:min-h-[100dvh] short:overflow-visible">
+      {/* THEY CAME BACK. Shown after a tab or app switch, because nothing can be prevented at
+          that point — the interview kept running while they were away — and the honest thing
+          is to tell them what it cost and what happens if they do it again. Dismissible, but it
+          returns on the next departure: somebody who dismissed it and left again has shown they
+          did not take it in. */}
+      {leave.hasLeft && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-accent-amber/40 bg-accent-amber/15 px-4 py-2 text-xs text-accent-amber-ink sm:px-6"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <strong className="font-semibold">Stay on this screen.</strong>{' '}
+            {isFreeAttempt ? 'Your free interview' : 'This interview'} is already counted — the
+            interview kept going while you were away, and closing or reloading this tab ends it
+            for good.
+          </span>
+          <button
+            onClick={leave.acknowledge}
+            className="shrink-0 font-semibold underline underline-offset-2"
+          >
+            Got it
+          </button>
+        </div>
+      )}
       {/* Header.
           THE TITLE TRUNCATES AND THE BUTTON DOES NOT SHRINK, and that ordering is the whole
           point of the classes here. This row was `justify-between` with `px-6` and nothing

@@ -31,11 +31,19 @@ const FEATURES: MarketingFeature[] = [
 const SEGMENTS: MarketingSegment[] = [
   {
     segment: 'report_waiting',
-    label: 'Report ready, unpaid',
-    pitch: 'Their personalised report is generated and locked — the ₹50 unlock.',
+    label: 'Report ready, not unlocked',
+    what_happened:
+      'Finished an interview. The report is generated and waiting behind the unlock.',
+    pitch: 'Their personalised report is generated and locked — the ₹49 unlock.',
     count: 1,
   },
-  { segment: 'customer', label: 'Paid before', pitch: 'Thank them, and tell them what is next.', count: 1 },
+  {
+    segment: 'customer',
+    label: 'Paid customer',
+    what_happened: 'Has paid for something at least once.',
+    pitch: 'Thank them, and tell them what is next.',
+    count: 1,
+  },
 ];
 
 function row(over: Partial<MarketingRow> = {}): MarketingRow {
@@ -158,7 +166,7 @@ describe('the file says what an operator needs to write an email', () => {
 
   it('carries the pitch for the row segment so the file is mail-mergeable on its own', () => {
     const csv = toCsv([row()], FEATURES, SEGMENTS);
-    expect(csv).toContain('₹50 unlock');
+    expect(csv).toContain('₹49 unlock');
   });
 
   it('an unknown segment leaves the pitch empty rather than dropping the row', () => {

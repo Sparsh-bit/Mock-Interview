@@ -28,6 +28,15 @@ export interface FeatureBalance {
   granted: number;
   used: number;
   remaining: number;
+  /**
+   * How many of `granted` came from the free trial rather than a purchase.
+   *
+   * Lets the client tell a FREE attempt from a paid one, which `granted` alone cannot —
+   * "your free interview will be wasted" is true for somebody on the trial and simply wrong
+   * for somebody who bought a five-pack. Served rather than assumed so the wording moves with
+   * the allowance.
+   */
+  trial_allowance: number;
 }
 
 export interface Balance {
@@ -39,7 +48,6 @@ export interface Balance {
   /** Whether this account may see the admin pages. Never what grants access — the server
    *  gates every admin endpoint with its own dependency and returns 403 regardless. */
   is_admin: boolean;
-  ban_reason: string | null;
 }
 
 export interface StoreItem {

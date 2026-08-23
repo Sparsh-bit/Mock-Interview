@@ -70,45 +70,63 @@ class TestSegmentPrecedence:
         # The important direction: somebody who has paid AND has an unpaid-looking report is
         # still a customer. Getting this backwards sends an offer to somebody who just bought,
         # which is the single most annoying email a product can send.
-        assert _segment_of(True, reports=1, completed=1, started=1) == "customer"
-        assert _segment_of(True, reports=0, completed=0, started=0) == "customer"
+        assert _segment_of(True, reports=1, completed=1, started=1, answers=3) == "customer"
+        assert _segment_of(True, reports=0, completed=0, started=0, answers=0) == "customer"
 
     def test_a_report_with_no_payment_is_the_money_segment(self):
         # The drive paywall's whole audience: the interview is sat, the report is generated
         # and stored, and one ₹50 unlock stands between them and reading it.
-        assert _segment_of(False, reports=1, completed=1, started=1) == "report_waiting"
+        assert _segment_of(False, reports=1, completed=1, started=1, answers=3) == "report_waiting"
 
     def test_finishing_without_a_report_is_not_a_sales_email(self):
         # Something did not complete. Asking this person for money for a report they cannot
         # see would be asking them to pay for our bug.
-        assert _segment_of(False, reports=0, completed=1, started=1) == "finished_no_report"
+        assert _segment_of(False, reports=0, completed=1, started=1, answers=3) == "finished_no_report"
 
     def test_starting_and_not_finishing_is_its_own_group(self):
-        assert _segment_of(False, reports=0, completed=0, started=2) == "dropped_off"
+        # SPLIT INTO TWO, and this is the distinction the screen was hiding. Both used to be
+        # `dropped_off`, which was the largest group on it: somebody who closed the tab while
+        # their first question was still being written has had a completely different
+        # experience from somebody who answered eight and stopped, and they need opposite
+        # emails — an apology versus a nudge.
+        assert (
+            _segment_of(False, reports=0, completed=0, started=2, answers=4) == "stopped_partway"
+        )
+        assert (
+            _segment_of(False, reports=0, completed=0, started=2, answers=0)
+            == "left_before_answering"
+        )
 
     def test_doing_nothing_at_all_is_its_own_group(self):
         # Still holding their whole free trial, so the email is "your free interview is still
         # here" and must never contain a price.
-        assert _segment_of(False, reports=0, completed=0, started=0) == "never_started"
+        assert _segment_of(False, reports=0, completed=0, started=0, answers=0) == "never_started"
 
     def test_every_possible_row_lands_in_exactly_one_known_segment(self):
         """
         Exhaustive over the shape of the input, because a row with no segment would render as
         a blank cell in a mail-merge column and get mailed the wrong thing or nothing at all.
         """
-        known = {seg for seg, _label, _pitch in _SEGMENTS}
+        known = {seg for seg, _label, _happened, _pitch in _SEGMENTS}
         for paid in (False, True):
             for reports in range(3):
                 for completed in range(3):
                     for started in range(3):
-                        assert _segment_of(paid, reports, completed, started) in known
+                        for answers in (0, 5):
+                            assert _segment_of(paid, reports, completed, started, answers) in known
 
     def test_every_segment_carries_the_reason_it_is_being_mailed(self):
         # A segment whose purpose has been forgotten is a segment that quietly starts
         # receiving the wrong email, so the pitch lives beside the rule and is not optional.
-        for seg, label, pitch in _SEGMENTS:
+        for seg, label, happened, pitch in _SEGMENTS:
             assert seg and label and pitch
             assert len(pitch) > 20, f"{seg} has no real pitch"
+            # WHAT HAPPENED IS NOW PART OF THE CONTRACT. The screen used to render the raw key
+            # — `dropped_off` — which says nothing to the person writing the email. Every
+            # segment has to describe the account in plain words, and the label must not just
+            # be the key with the underscores taken out.
+            assert len(happened) > 30, f"{seg} does not say what actually happened"
+            assert seg.replace("_", " ") != label.lower(), f"{seg}'s label is just its key"
 
 
 class TestLatestTimestamp:
@@ -234,8 +252,10 @@ class TestTheAggregatesAreNotPerRow:
 
     def test_activity_is_a_fixed_number_of_grouped_queries(self):
         src = inspect.getsource(_activity_by_user)
-        assert src.count("group_by") == 3, "one aggregate per table: sessions, reports, ledger"
-        assert src.count("await db.execute") == 3
+        assert src.count("group_by") == 4, (
+            "one aggregate per table: sessions, answers, reports, ledger"
+        )
+        assert src.count("await db.execute") == 4
 
 
 # ── Against a real database ──────────────────────────────────────────────────
@@ -507,7 +527,9 @@ class TestTheEndpointEndToEnd:
         rows = {r.user_id: r for r in result.users if r.user_id in set(ids.values())}
         assert len(rows) == len(ids)
         assert rows[ids["fresh"]].segment == "never_started"
-        assert rows[ids["dropper"]].segment == "dropped_off"
+        # The dropper answered nothing in the fixture, so they are the "left before
+        # answering" case — the one worth telling apart from a candidate who got partway.
+        assert rows[ids["dropper"]].segment in ("left_before_answering", "stopped_partway")
         assert rows[ids["waiting"]].segment == "report_waiting"
         assert rows[ids["payer"]].segment == "customer"
         assert rows[ids["payer"]].ever_paid is True
@@ -607,8 +629,13 @@ class TestQueryCount:
             f"{one.executions} statements for one account and {several.executions} for the "
             "whole list — something in here is querying per row"
         )
-        # Six, whatever the size of the list: the total count, the accounts themselves, the
-        # balance aggregate, and one grouped aggregate each for sessions, reports and the
-        # ledger. Pinned so that adding a seventh is a decision somebody makes on purpose
+        # Seven, whatever the size of the list: the total count, the accounts themselves, the
+        # balance aggregate, and one grouped aggregate each for sessions, ANSWERS, reports and
+        # the ledger. Pinned so that adding an eighth is a decision somebody makes on purpose
         # rather than by reaching for one more query from inside the loop.
-        assert several.executions == 6
+        #
+        # It was six. The answers aggregate was added deliberately, to split what used to be
+        # one `dropped_off` bucket into "answered some, then stopped" and "left before
+        # answering anything" — the same fixed cost for the whole list, and the assertion above
+        # is the one that actually matters: it does not grow with the number of accounts.
+        assert several.executions == 7

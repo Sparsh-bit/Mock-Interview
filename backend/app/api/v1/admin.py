@@ -60,7 +60,7 @@ from app.db.redis import CacheKeys
 from app.db.session import get_db
 from app.models.billing import CreditEvent
 from app.models.report import Report
-from app.models.session import InterviewSession, SessionStatus
+from app.models.session import Answer, InterviewSession, SessionStatus
 from app.models.system import AuditLog
 from app.models.user import Profile, User
 from app.services.billing.credits import KIND_PURCHASE
@@ -1049,6 +1049,10 @@ class MarketingRow(BaseModel):
 class MarketingSegment(BaseModel):
     segment: str
     label: str
+    #: What this account actually DID, in the past tense — see `_SEGMENTS`. Served rather than
+    #: written in the UI so the screen cannot describe a segment differently from the rule that
+    #: assigns it.
+    what_happened: str
     #: What to say to this group. Copy, not configuration — it is here so the legend in the
     #: UI and the reasoning in this file cannot drift apart.
     pitch: str
@@ -1085,7 +1089,7 @@ class MarketingListResponse(BaseModel):
 #:                     is true, you do not send an offer to somebody who has just bought.
 #:   report_waiting  — a report exists and they have never paid. With the drive paywall live
 #:                     this is the money segment: the work is done, the report is generated
-#:                     and stored, and one ₹50 unlock stands between them and it.
+#:                     and stored, and one ₹49 unlock stands between them and it.
 #:   finished_no_report
 #:                   — completed a session but no report exists. Something did not finish, or
 #:                     they left before it generated. Support-shaped, not sales-shaped, and
@@ -1100,31 +1104,83 @@ class MarketingListResponse(BaseModel):
 #: `pitch` is the one-line reason each group is being mailed, kept beside the rule rather than
 #: in a document, because a segment whose purpose has been forgotten is a segment that quietly
 #: starts receiving the wrong email.
-_SEGMENTS: tuple[tuple[str, str, str], ...] = (
-    ("customer", "Paid before", "Thank them, and tell them what is next."),
+#: Each segment as (key, short label, what actually happened, what to say to them).
+#:
+#: FOUR FIELDS, NOT THREE, and the new one is the point of this table.
+#:
+#: The admin screen was rendering the raw KEY — `dropped_off` — which tells the person writing
+#: the email nothing about what the account actually did, and quietly hid the most useful
+#: distinction in the list: whether somebody closed the tab while their first question was
+#: still being written, or answered eight questions and stopped. Those are opposite situations.
+#: The first is a product failure worth apologising for; the second is a nudge to come back.
+#: Both were `dropped_off`, and `dropped_off` was the largest group on the screen.
+#:
+#: `what_happened` is written as a statement of fact about the account, in the past tense, so
+#: it can be read straight off the row without interpreting a slug. `pitch` stays the reason
+#: the email is being sent — kept beside the rule rather than in a document, because a segment
+#: whose purpose has been forgotten is a segment that quietly starts receiving the wrong email.
+_SEGMENTS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "customer",
+        "Paid customer",
+        "Has paid for something at least once.",
+        "Thank them, and tell them what is next.",
+    ),
     (
         "report_waiting",
-        "Report ready, unpaid",
-        "Their personalised report is generated and locked — the ₹50 unlock.",
+        "Report ready, not unlocked",
+        "Finished an interview. The report is generated and waiting behind the ₹49 unlock — "
+        "they have seen the score and not the analysis.",
+        "Their personalised report is generated and locked — the ₹49 unlock.",
     ),
     (
         "finished_no_report",
-        "Finished, no report",
+        "Finished, report never generated",
+        "Completed an interview, but no report exists — generation failed or they left before "
+        "it finished. They have nothing to show for the attempt.",
         "Something did not complete. Ask what happened before selling anything.",
     ),
-    ("dropped_off", "Started, never finished", "Come back and finish the interview you began."),
-    ("never_started", "Signed up, never started", "Their free interview is still waiting."),
+    (
+        "stopped_partway",
+        "Answered some, then stopped",
+        "Started an interview and answered at least one question, then left without finishing. "
+        "They know what it is like and did not see it through.",
+        "Come back and finish the interview you began.",
+    ),
+    (
+        "left_before_answering",
+        "Left before answering anything",
+        "Started an interview and never answered a single question — closed it during setup or "
+        "while the first question was still being prepared.",
+        "Ask what stopped them: this is usually a slow first question or a missing resume.",
+    ),
+    (
+        "never_started",
+        "Signed up, never started",
+        "Signed up and never opened an interview. Still holding their whole free trial.",
+        "Their free interview is still waiting.",
+    ),
 )
 
 
-def _segment_of(row_ever_paid: bool, reports: int, completed: int, started: int) -> str:
+def _segment_of(
+    row_ever_paid: bool, reports: int, completed: int, started: int, answers: int
+) -> str:
     """
     The one segment this account belongs to.
 
-    Pure, and takes only the four facts it needs, so the precedence documented on `_SEGMENTS`
-    can be tested exhaustively without a database. Derived entirely from fields the row
-    already carries, which is what makes it impossible for the segment to disagree with the
-    columns beside it.
+    Pure, and takes only the facts it needs, so the precedence can be tested exhaustively
+    without a database. Derived entirely from counts the row already carries, which is what
+    makes it impossible for the segment to disagree with the columns beside it.
+
+    THE ORDER IS THE DEFINITION. Each test assumes every test above it has failed, so a paying
+    customer is never also "never started" and somebody with a report is never "stopped
+    partway". Reordering these silently reassigns whole groups of people to the wrong email.
+
+    `answers` splits what used to be one `dropped_off` bucket. It was the largest group on the
+    screen and it hid the most useful distinction available: a candidate who closed the tab
+    while their first question was still being written has had a completely different
+    experience from one who answered eight and stopped, and they need opposite emails.
     """
     if row_ever_paid:
         return "customer"
@@ -1133,7 +1189,9 @@ def _segment_of(row_ever_paid: bool, reports: int, completed: int, started: int)
     if completed > 0:
         return "finished_no_report"
     if started > 0:
-        return "dropped_off"
+        # Zero answers means they never got as far as speaking. Worth separating: it is the
+        # signature of a slow first question, a missing resume, or a failure on start.
+        return "stopped_partway" if answers > 0 else "left_before_answering"
     return "never_started"
 
 
@@ -1218,6 +1276,7 @@ async def _activity_by_user(
         uid: {
             "sessions_started": 0,
             "sessions_completed": 0,
+            "answers": 0,
             "last_session_at": None,
             "reports": 0,
             "last_report_at": None,
@@ -1244,6 +1303,25 @@ async def _activity_by_user(
         out[uid]["sessions_started"] = int(started or 0)
         out[uid]["sessions_completed"] = int(completed or 0)
         out[uid]["last_session_at"] = last_at
+
+    # HOW FAR THEY ACTUALLY GOT, which is the difference between two completely different
+    # emails. "Started but never finished" covers both the candidate who closed the tab while
+    # the first question was still being written and the one who answered eight and stopped,
+    # and those want opposite messages — the first is a product failure to apologise for, the
+    # second is a nudge to come back and finish. A count of answers is what separates them.
+    #
+    # Joined through the session rather than read off a user column, because `answers` has no
+    # user_id — one grouped query for the whole list, same as every other aggregate here.
+    answers = (
+        await db.execute(
+            select(InterviewSession.user_id, func.count(Answer.id))
+            .join(Answer, Answer.session_id == InterviewSession.id)
+            .where(InterviewSession.user_id.in_(user_ids))
+            .group_by(InterviewSession.user_id)
+        )
+    ).all()
+    for uid, n in answers:
+        out[uid]["answers"] = int(n or 0)
 
     reports = (
         await db.execute(
@@ -1375,6 +1453,7 @@ async def marketing_list(
                     int(a.get("reports") or 0),
                     int(a.get("sessions_completed") or 0),
                     int(a.get("sessions_started") or 0),
+                    int(a.get("answers") or 0),
                 ),
             )
         )
@@ -1386,7 +1465,7 @@ async def marketing_list(
     # all three into the paging query for a list that is already bounded and in memory.
     users.sort(key=lambda u: (u.last_active_at is not None, u.last_active_at or u.joined_at), reverse=True)
 
-    counts = {seg: 0 for seg, _label, _pitch in _SEGMENTS}
+    counts = {seg: 0 for seg, _label, _happened, _pitch in _SEGMENTS}
     for u in users:
         counts[u.segment] = counts.get(u.segment, 0) + 1
 
@@ -1414,8 +1493,14 @@ async def marketing_list(
         # candidate and another to the person mailing them.
         features=[MarketingFeature(feature=f, label=FEATURE_LABELS.get(f, f)) for f in FEATURES],
         segments=[
-            MarketingSegment(segment=seg, label=label, pitch=pitch, count=counts.get(seg, 0))
-            for seg, label, pitch in _SEGMENTS
+            MarketingSegment(
+                segment=seg,
+                label=label,
+                what_happened=happened,
+                pitch=pitch,
+                count=counts.get(seg, 0),
+            )
+            for seg, label, happened, pitch in _SEGMENTS
         ],
         users=users,
     )

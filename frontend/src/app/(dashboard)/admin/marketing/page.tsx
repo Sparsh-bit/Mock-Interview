@@ -71,7 +71,7 @@ import { CSV_BOM, csvFilename, toCsv, type MarketingListResponse, type Marketing
  *
  * `customer` is emerald and `report_waiting` is amber because those are the two groups an
  * operator scans for: one has already paid and must not be sent an offer, the other is the one
- * the ₹50 unlock is for. `finished_no_report` is coral because it is the only group whose
+ * the ₹49 unlock is for. `finished_no_report` is coral because it is the only group whose
  * segment might mean something went wrong for that candidate, and reading it as a sales
  * opportunity would be the mistake.
  */
@@ -79,7 +79,12 @@ const SEGMENT_TONE: Record<string, 'success' | 'warning' | 'danger' | 'info' | '
   customer: 'success',
   report_waiting: 'warning',
   finished_no_report: 'danger',
-  dropped_off: 'info',
+  // `dropped_off` was split in two. The one that never got a question answered is coral, not
+  // info, because it usually means something went wrong for that candidate — a slow first
+  // question, a missing resume, a failure on start — and reading it as a sales opportunity
+  // would be the mistake. The one who answered and stopped is a genuine nudge.
+  left_before_answering: 'danger',
+  stopped_partway: 'info',
   never_started: 'neutral',
 };
 
@@ -297,7 +302,10 @@ export default function MarketingPage() {
           {activeSegment && (
             <p className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{activeSegment.label}:</span>{' '}
-              {activeSegment.pitch}
+              {/* WHAT HAPPENED FIRST, then what to write. The pitch alone assumes the reader
+                  already knows what the group did, which is exactly what the raw slug failed
+                  to tell them. */}
+              {activeSegment.what_happened} <span className="text-foreground/80">{activeSegment.pitch}</span>
             </p>
           )}
 
@@ -341,7 +349,7 @@ export default function MarketingPage() {
                     </tr>
                   )}
                   {rows.map((r) => (
-                    <Row key={r.user_id} row={r} features={data.features} />
+                    <Row key={r.user_id} row={r} features={data.features} segments={data.segments} />
                   ))}
                 </tbody>
               </table>
@@ -361,10 +369,14 @@ export default function MarketingPage() {
 function Row({
   row,
   features,
+  segments,
 }: {
   row: MarketingRow;
   features: MarketingListResponse['features'];
+  /** Passed so the badge can render the server's label and reason rather than the raw key. */
+  segments: MarketingListResponse['segments'];
 }) {
+  const meta = segments.find((s) => s.segment === row.segment);
   return (
     <tr className={cn('border-b border-border/60 last:border-0', !row.is_active && 'opacity-60')}>
       <td className="px-5 py-3">
@@ -373,7 +385,20 @@ function Row({
         {!row.is_active && <span className="ml-2 text-[10px] uppercase text-accent-coral-ink">deactivated</span>}
       </td>
       <td className="px-3 py-3">
-        <Badge variant={SEGMENT_TONE[row.segment] ?? 'neutral'}>{row.segment}</Badge>
+        {/* THE HUMAN LABEL, NOT THE KEY. This rendered `row.segment` — so the screen said
+            `dropped_off`, which tells the person writing the email nothing about what the
+            account actually did. The label and the reason both come from the server (see
+            _SEGMENTS in api/v1/admin.py) so the screen cannot describe a segment differently
+            from the rule that assigns it. `title` carries the full sentence for a hover;
+            the label is what is readable at a glance down a column. */}
+        <Badge
+          variant={SEGMENT_TONE[row.segment] ?? 'neutral'}
+          // The full sentence on hover. Falls back to the key only if the server ever sends a
+          // segment this build has not heard of, which is better than rendering nothing.
+          title={meta?.what_happened ?? row.segment}
+        >
+          {meta?.label ?? row.segment}
+        </Badge>
       </td>
       {features.map((f) => (
         <td key={f.feature} className="px-3 py-3 text-right tabular-nums">

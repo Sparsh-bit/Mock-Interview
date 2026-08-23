@@ -793,18 +793,17 @@ function InterviewSetup() {
           )}
         </div>
 
-        {/* A disabled button with no reason beside it is a dead end — the candidate cannot
-            tell whether they missed a field or the app is broken. Named specifically rather
-            than "complete the form", because the two possible causes have different fixes. */}
-        {!hasResume && (
-          <p className="mb-3 text-center text-xs text-muted-foreground">
-            Add your resume above (or{' '}
-            <Link href="/profile" className="font-semibold text-primary hover:underline">
-              upload it once
-            </Link>
-            ) — the interview is built around your own projects.
-          </p>
-        )}
+        {/* WHAT IS STOPPING THEM, STATED LOUDLY, PLUS THE ROOM ADVICE.
+            This used to be one line of small grey text above a large button. The button is
+            DISABLED without a resume, so a candidate who missed that line saw a dead control
+            and no explanation — and a dead control with no reason is indistinguishable from a
+            broken app. That is the most likely reason somebody lands here and leaves without
+            starting, which is precisely the `dropped_off` segment the admin view reports, and
+            it is the largest group. `resumeSatisfied` is passed because this form accepts
+            PASTED text as well as a stored file, which the card cannot see on its own. */}
+        <div className="mb-4">
+          <InterviewReadiness resumeSatisfied={hasResume} emphasis="required" />
+        </div>
 
         <button
           onClick={handleGenerate}
@@ -816,10 +815,18 @@ function InterviewSetup() {
           disabled={createPlan.isPending || !selectedTrackId || !hasResume}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-4 text-sm font-bold text-primary-foreground shadow-glow transition-[color,background-color,border-color,box-shadow,transform,opacity] hover:bg-primary/90 disabled:opacity-50"
         >
+          {/* THE BUTTON EXPLAINS ITSELF WHEN IT CANNOT BE PRESSED.
+              A greyed-out "Build my interview plan" tells the candidate nothing about which of
+              the two requirements is missing, and they are one tap from leaving. Saying what it
+              is waiting for turns a dead end into an instruction. */}
           {createPlan.isPending ? (
             <>
               <Sparkles className="h-4 w-4 animate-pulse" /> Building your tailored interview…
             </>
+          ) : !selectedTrackId ? (
+            <>Choose a role above to continue</>
+          ) : !hasResume ? (
+            <>Add your resume to continue</>
           ) : (
             <>
               Build my interview plan <ArrowRight className="h-4 w-4" />
@@ -860,6 +867,21 @@ function InterviewSetup() {
           <p className="mt-3 text-center text-xs text-muted-foreground">
             Crafting questions for your company, program and resume — this usually takes a few
             seconds. Hang tight.
+          </p>
+        )}
+        {/* DO NOT CLOSE IT, AND WHY. This is the longest wait in the product and the one most
+            likely to be read as a stuck page, so it is the wait people abandon. The interview
+            is charged when it starts, so abandoning here does not cost the attempt — but
+            leaving does throw away a minute of work and, on a slow connection, the candidate
+            usually returns to start again. Said plainly, and only while the request is in
+            flight: a standing warning on a page that is idle is noise. */}
+        {createPlan.isPending && (
+          <p
+            role="status"
+            className="mx-auto mt-2 max-w-md text-center text-xs font-medium text-accent-amber-ink"
+          >
+            Please keep this page open while your interview is being prepared — closing or
+            reloading now will discard it and you will have to start again.
           </p>
         )}
       </div>

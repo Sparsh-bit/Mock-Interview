@@ -32,22 +32,59 @@ import { usePrimaryResume, useUserProfile } from '@/hooks/useData';
  * decides. Somebody sitting in a shared room ten minutes before a real drive does not need the
  * product refusing to let them practise.
  */
-export function InterviewReadiness() {
+export function InterviewReadiness({
+  resumeSatisfied,
+  emphasis = 'tips',
+}: {
+  /**
+   * Override for whether the resume requirement is met.
+   *
+   * NEEDED BECAUSE THE FORM HAS A SECOND WAY TO SATISFY IT. The setup page accepts a stored
+   * file OR text pasted into the box, and this component can only see the stored one — so
+   * without the override a candidate who had just pasted their resume would be told they have
+   * none, which is the fastest way to teach somebody that these warnings are wrong.
+   */
+  resumeSatisfied?: boolean;
+  /**
+   * `required` states the resume as a REQUIREMENT rather than a suggestion, for the screen
+   * where it actually blocks. See the note on the resume gap below.
+   */
+  emphasis?: 'tips' | 'required';
+} = {}) {
   const { data: resume } = usePrimaryResume();
   const { data: profile } = useUserProfile();
 
   // Undefined while loading. Treated as "no warning yet" rather than as missing, so the card
   // does not flash a "you have no resume" warning at somebody who has one — which would teach
   // them the warnings are unreliable and worth ignoring.
-  const resumeMissing = resume === null || (resume !== undefined && !resume.has_text);
+  const resumeMissing =
+    resumeSatisfied !== undefined
+      ? !resumeSatisfied
+      : resume === null || (resume !== undefined && !resume.has_text);
   const nameMissing = profile !== undefined && !profile?.full_name?.trim();
 
   const gaps: Array<{ text: string; href: string; cta: string }> = [];
   if (resumeMissing) {
     gaps.push({
+      /*
+       * TWO DIFFERENT SENTENCES, BECAUSE THE RESUME IS A DIFFERENT THING ON EACH SCREEN.
+       *
+       * On the setup form it BLOCKS: the build button is disabled without one, so the honest
+       * word is "required" and the candidate needs to know the button is waiting for them
+       * rather than broken. A silent disabled button is the single most likely reason somebody
+       * lands on this page and leaves without starting — which is exactly the `dropped_off`
+       * segment in the admin marketing view.
+       *
+       * On the plan screen it is already satisfied, so if it somehow is not, the interview
+       * still runs and the honest word is what it costs: generic questions instead of your own
+       * projects.
+       */
       text:
-        'No resume on file — the interviewer will ask general questions instead of asking ' +
-        'about your own projects by name.',
+        emphasis === 'required'
+          ? 'A resume is required to build your interview — paste your skills and projects ' +
+            'below, or upload one once and never be asked again.'
+          : 'No resume on file — the interviewer will ask general questions instead of asking ' +
+            'about your own projects by name.',
       href: '/profile',
       cta: 'Upload your resume',
     });
@@ -122,9 +159,14 @@ export function InterviewReadiness() {
               </Link>
             </div>
           ))}
-          <p className="text-[11px] text-muted-foreground">
-            You can start without these — the interview will simply be less tailored to you.
-          </p>
+          {/* Only true where it IS true. On the form the resume is not optional, and saying
+              "you can start without these" beside a disabled button would be a plain
+              contradiction — the kind that makes a candidate distrust every other line. */}
+          {emphasis !== 'required' && (
+            <p className="text-[11px] text-muted-foreground">
+              You can start without these — the interview will simply be less tailored to you.
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -47,6 +47,13 @@ export interface MarketingFeature {
 export interface MarketingSegment {
   segment: string;
   label: string;
+  /**
+   * What this account actually DID, in the past tense.
+   *
+   * Served rather than written in the UI so the screen cannot describe a segment differently
+   * from the rule that assigns it — see `_SEGMENTS` in backend/app/api/v1/admin.py.
+   */
+  what_happened: string;
   pitch: string;
   count: number;
 }

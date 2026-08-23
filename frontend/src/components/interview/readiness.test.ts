@@ -137,3 +137,115 @@ describe('the do-not-close warning while a question is generated', () => {
     expect(SESSION).toMatch(/takes a\s*\n?\s*few seconds|few seconds/i);
   });
 });
+
+describe('abandoning a live interview is warned about', () => {
+  const GUARD = readFileSync(join(SRC, 'hooks/useLeaveGuard.ts'), 'utf8');
+
+  it('warns before a close or reload', () => {
+    // The only one of the three that can actually PREVENT the loss, so it must exist. The
+    // browser supplies its own wording and ignores any custom string, so this cannot explain
+    // what is at stake — it can only make the action deliberate.
+    expect(GUARD).toContain('beforeunload');
+    // Both forms: preventDefault is the modern spec, returnValue is what older Safari and
+    // Firefox still require, and those are the browsers this product's users are on.
+    expect(GUARD).toMatch(/preventDefault\(\)/);
+    expect(GUARD).toMatch(/returnValue/);
+  });
+
+  it('notices a tab or app switch', () => {
+    expect(GUARD).toContain('visibilitychange');
+  });
+
+  it('re-shows the warning if they leave again after dismissing it', () => {
+    // Somebody who dismissed it once and left again has demonstrated they did not take it in.
+    expect(GUARD).toMatch(/setAcknowledged\(false\)/);
+  });
+
+  it('is only armed while there is something to lose', () => {
+    // A guard that fires on a finished interview teaches people to click through it.
+    expect(SESSION).toMatch(/useLeaveGuard\(phase !== 'done'\)/);
+  });
+
+  it('is called before any early return', () => {
+    // HOOKS MUST BE UNCONDITIONAL. Placed after the `phase === 'done'` return it was skipped
+    // on the completed screen, changing React's hook order between renders — the same mistake
+    // eslint caught on the admin page's delete mutation.
+    const hookAt = SESSION.indexOf('useLeaveGuard(');
+    const firstReturn = SESSION.indexOf('if (phase === ');
+    expect(hookAt).toBeGreaterThan(-1);
+    expect(hookAt).toBeLessThan(firstReturn);
+  });
+
+  it('says the attempt is already counted', () => {
+    expect(SESSION).toMatch(/already counted/i);
+  });
+
+  it('only calls it FREE when it actually was', () => {
+    // "Your free interview will be wasted" is true for somebody on the trial and simply wrong
+    // for somebody who bought a five-pack — telling a paying customer they are losing
+    // something free reads as the product not knowing what they paid for. Decided from the
+    // server's trial_allowance rather than assumed.
+    expect(SESSION).toMatch(/trial_allowance/);
+    expect(SESSION).toMatch(/isFreeAttempt \?/);
+  });
+});
+
+describe('the plan-building wait tells them not to close it', () => {
+  const SETUP_SRC = readFileSync(join(SRC, 'app/(dashboard)/interview/page.tsx'), 'utf8');
+
+  it('warns while the plan is being built', () => {
+    // The longest wait in the product and the one most often read as a stuck page, so it is
+    // the wait people abandon.
+    expect(SETUP_SRC).toMatch(/keep this page open/i);
+  });
+
+  it('says what leaving costs', () => {
+    expect(SETUP_SRC).toMatch(/start again/i);
+  });
+
+  it('shows it only while the request is in flight', () => {
+    // A standing warning on an idle page is noise.
+    const at = SETUP_SRC.indexOf('keep this page open');
+    expect(SETUP_SRC.slice(Math.max(0, at - 400), at)).toMatch(/createPlan\.isPending/);
+  });
+});
+
+describe('the setup form says what is blocking the start', () => {
+  const SETUP_SRC = readFileSync(join(SRC, 'app/(dashboard)/interview/page.tsx'), 'utf8');
+
+  it('shows the readiness card on the form, in required mode', () => {
+    // The resume BLOCKS here — the build button is disabled without one — so it has to be
+    // stated as a requirement, not a suggestion.
+    expect(SETUP_SRC).toMatch(/<InterviewReadiness[\s\S]*?emphasis="required"/);
+  });
+
+  it('passes the pasted-text state so the warning cannot be wrong', () => {
+    // The form accepts a stored file OR text pasted into the box, and the card can only see
+    // the stored one. Without this a candidate who had just pasted their resume would be told
+    // they have none — the fastest way to teach somebody these warnings are wrong.
+    expect(SETUP_SRC).toMatch(/resumeSatisfied=\{hasResume\}/);
+  });
+
+  it('the button says what it is waiting for instead of being inertly greyed out', () => {
+    // A dead control with no reason is indistinguishable from a broken app, and the candidate
+    // is one tap from leaving — which is the dropped_off segment.
+    expect(SETUP_SRC).toMatch(/Add your resume to continue/);
+    expect(SETUP_SRC).toMatch(/Choose a role above to continue/);
+  });
+
+  it('names the two requirements separately', () => {
+    // "Complete the form" does not say which of the two is missing, and they have different
+    // fixes — one is a dropdown, the other is a file.
+    const at = SETUP_SRC.indexOf('Choose a role above to continue');
+    const near = SETUP_SRC.slice(at - 400, at + 400);
+    expect(near).toMatch(/!selectedTrackId/);
+    expect(near).toMatch(/!hasResume/);
+  });
+
+  it('does not tell them the interview works without a resume on this screen', () => {
+    // It does not: the button is disabled. Saying otherwise beside a disabled control is a
+    // contradiction that makes every other line less believable.
+    const CARD = readFileSync(join(SRC, 'components/interview/InterviewReadiness.tsx'), 'utf8');
+    expect(CARD).toMatch(/emphasis !== 'required' &&/);
+  });
+});

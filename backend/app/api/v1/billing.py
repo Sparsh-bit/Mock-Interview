@@ -39,7 +39,7 @@ from app.services.billing.credits import (
     get_balance,
     grant,
 )
-from app.services.billing.plans import ITEMS, get_item
+from app.services.billing.plans import ITEMS, get_item, trial_allowance
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/billing", tags=["Billing"])
@@ -72,6 +72,17 @@ class FeatureBalanceOut(BaseModel):
     granted: int
     used: int
     remaining: int
+    #: How many of `granted` came from the free trial rather than from a purchase.
+    #:
+    #: CARRIED SO THE CLIENT CAN TELL A FREE ATTEMPT FROM A PAID ONE. `granted` is trial plus
+    #: everything bought, so on its own it cannot answer "is this one free" — and the client
+    #: needs to, because the warning shown when somebody is about to abandon an interview says
+    #: something materially different in each case. "Your free interview will be wasted" is
+    #: true and motivating for a candidate on the trial, and simply wrong for one who bought a
+    #: five-pack; guessing would mean telling paying customers they are losing something free.
+    #:
+    #: Derived from plans.py rather than stored, so it moves with the allowance.
+    trial_allowance: int
 
 
 class BalanceOut(BaseModel):
@@ -150,6 +161,7 @@ async def my_balance(
                 granted=f.granted,
                 used=f.used,
                 remaining=f.remaining,
+                trial_allowance=trial_allowance(f.feature),
             )
             for f in balance.features
         ],
