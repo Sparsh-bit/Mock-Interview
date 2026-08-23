@@ -22,12 +22,15 @@ offer would take them with it. An unused code can go; a used one is switched off
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
+from functools import lru_cache
+from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +41,11 @@ from app.core.exceptions import AppError, NotFoundError
 from app.core.security import AdminUser
 from app.db.session import get_db
 from app.models.billing import Offer, OfferRedemption
+from app.services.billing.banners import (
+    BannerRejected,
+    banner_spec,
+    validate_banner,
+)
 from app.services.billing.offers import KINDS
 from app.services.billing.plans import ITEMS
 
@@ -104,6 +112,23 @@ class OfferIn(BaseModel):
             )
 
 
+class BannerOut(BaseModel):
+    """A stored banner, as the admin list shows it."""
+
+    image_url: str
+    alt_text: str
+    width: int
+    height: int
+    bytes: int
+    content_type: str
+    #: Whether the stored image matches the CURRENT contract.
+    #:
+    #: Recomputed on read rather than stored, because the contract can change — raising the
+    #: minimum width would leave previously-valid banners on file, and an admin needs to see
+    #: which ones now need re-exporting without having to compare numbers by eye.
+    matches_spec: bool
+
+
 class OfferOut(BaseModel):
     id: uuid.UUID
     code: str
@@ -122,6 +147,8 @@ class OfferOut(BaseModel):
     #: Rupees given away, so an offer's cost is visible next to the offer itself rather than
     #: needing a separate report to notice a code that has quietly cost thousands.
     discount_given_rupees: int
+    #: The promo image, or None. See BannerOut.
+    banner: BannerOut | None = None
     #: Why this offer cannot be bought right now, or "" when nothing is wrong.
     #:
     #: THIS EXISTS BECAUSE THE ONE FAILURE IT REPORTS WAS INVISIBLE FROM EVERY ADMIN SCREEN.
@@ -169,6 +196,10 @@ async def list_offers(
     # asking per offer would imply it could differ between them.
     captcha_ready = bool(settings.TURNSTILE_SECRET_KEY)
 
+    # ONE QUERY FOR EVERY BANNER, not one per offer. The list is short, but an N+1 here would
+    # be a query per row on the page an admin refreshes while iterating on an image.
+    banners = await _banners_by_offer(db)
+
     return [
         OfferOut(
             id=o.id,
@@ -186,6 +217,7 @@ async def list_offers(
             redemptions=usage.get(o.id, (0, 0))[0],
             discount_given_rupees=usage.get(o.id, (0, 0))[1] // 100,
             blocked_reason=_blocked_reason(o, captcha_ready=captcha_ready),
+            banner=banners.get(o.id),
         )
         for o in rows
     ]
@@ -534,3 +566,273 @@ async def apply_unapplied(
         )
 
     return {"granted": granted, "skipped": skipped}
+
+
+# ─── The promo banner ─────────────────────────────────────────────────────────────────────
+#
+# An optional image per offer, rendered as a strip on every candidate's dashboard and linking
+# to the pricing page's apply-a-code box. The offer is the thing being advertised, so the
+# banner hangs off the offer rather than being a standalone piece of content: switching the
+# code off takes its advertisement down with it, which is the behaviour anybody would expect
+# and the one they would otherwise have to remember to do by hand.
+
+
+@lru_cache(maxsize=1)
+def _banner_storage() -> Any:
+    """
+    The process-wide Supabase client, built once.
+
+    Same reasoning as resume.py's: `create_client` builds a fresh set of HTTP clients every
+    call, so calling it per request pays a new TLS handshake to Supabase before sending a
+    byte. The underlying client is httpx-based and thread-safe, which matters because the
+    calls here run in a worker thread.
+    """
+    from supabase import create_client  # noqa: PLC0415
+
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+
+
+def _to_banner_out(row) -> BannerOut:  # noqa: ANN001 - OfferBanner, imported lazily
+    """
+    A stored row as the admin sees it, including whether it still meets the contract.
+
+    `matches_spec` is recomputed here rather than stored, because the contract can change:
+    raising the minimum width would leave previously-valid banners on file, and an admin needs
+    to see which ones now need re-exporting rather than comparing numbers by eye.
+    """
+    spec = banner_spec()
+    tolerance = spec.aspect_ratio * settings.BANNER_ASPECT_TOLERANCE
+    return BannerOut(
+        image_url=row.image_url,
+        alt_text=row.alt_text,
+        width=row.width,
+        height=row.height,
+        bytes=row.bytes,
+        content_type=row.content_type,
+        matches_spec=(
+            row.width >= spec.min_width
+            and abs(row.width / row.height - spec.aspect_ratio) <= tolerance
+        ),
+    )
+
+
+async def _banners_by_offer(db: AsyncSession) -> dict[uuid.UUID, BannerOut]:
+    """
+    Every banner, keyed by offer — or nothing at all if the table does not exist yet.
+
+    THE MISSING-TABLE CASE IS REAL. Migrations here are applied by hand (docs/DEPLOY.md), so
+    between deploying this code and running migration 021 the table is absent. Without the
+    guard the offers list — the page an admin would be looking at — would 500. Degrading to
+    "no banners" instead means the rest of the page works and the feature appears once they
+    migrate.
+
+    A SAVEPOINT, because catching the Python exception is not sufficient: an UndefinedTable
+    aborts the surrounding Postgres transaction, and every later query in this request would
+    then fail with "current transaction is aborted" rather than returning data.
+    """
+    from sqlalchemy.exc import ProgrammingError
+
+    from app.models.billing import OfferBanner
+
+    try:
+        async with db.begin_nested():
+            rows = (await db.scalars(select(OfferBanner))).all()
+    except ProgrammingError:
+        logger.warning("offer_banners_table_missing", detail="run migration 021")
+        return {}
+    return {row.offer_id: _to_banner_out(row) for row in rows}
+
+
+async def _banner_for(db: AsyncSession, offer_id: uuid.UUID) -> BannerOut | None:
+    """
+    The banner for one offer, or None — including when the table does not exist yet.
+
+    THE MISSING-TABLE CASE IS REAL AND HAS TO BE SURVIVED. Migrations here are applied by hand
+    (docs/DEPLOY.md), so between deploying this code and running migration 021 the table is
+    absent. Without this guard the offers list — the page an admin would be on — would 500,
+    which is a worse outcome than the banner column simply being empty until they migrate.
+    """
+    from sqlalchemy.exc import ProgrammingError
+
+    from app.models.billing import OfferBanner
+
+    # A SAVEPOINT, because catching the Python exception is not enough: an UndefinedTable
+    # aborts the surrounding Postgres transaction, and every later query in this request
+    # would then fail with "current transaction is aborted" instead of returning data.
+    try:
+        async with db.begin_nested():
+            row = await db.scalar(
+                select(OfferBanner).where(OfferBanner.offer_id == offer_id)
+            )
+    except ProgrammingError:
+        logger.warning("offer_banners_table_missing", detail="run migration 021")
+        return None
+    if row is None:
+        return None
+    return _to_banner_out(row)
+
+
+@router.get("/banner-spec", summary="What a banner image has to be")
+async def get_banner_spec(current_user: AdminUser) -> dict:
+    """
+    The image contract, served rather than hardcoded in the form.
+
+    The validator and the form must not be able to disagree — an admin told "2400x800" by a
+    form while the server accepts something else is a bug that presents as the upload
+    mysteriously failing. One source, read by both.
+    """
+    return banner_spec().as_dict()
+
+
+@router.post("/{offer_id}/banner", summary="Upload or replace an offer's banner image")
+async def upload_offer_banner(
+    offer_id: uuid.UUID,
+    current_user: AdminUser,
+    file: UploadFile = File(...),  # noqa: B008
+    alt_text: str = Form(""),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Validate the image, store it, and point the offer at it.
+
+    VALIDATED BEFORE IT IS STORED, so a refused upload leaves nothing behind. The order is
+    deliberate — uploading first and checking after means a rejected image still occupies the
+    bucket, and nothing ever cleans those up.
+
+    REPLACING DELETES THE OLD FILE. Without that, every re-upload during a design iteration
+    leaves an orphan in a public bucket: still served, still linkable, and no longer
+    referenced by anything that would tell you it exists.
+    """
+    from app.models.billing import Offer, OfferBanner
+
+    offer = await db.scalar(select(Offer).where(Offer.id == offer_id))
+    if offer is None:
+        raise NotFoundError("Offer not found")
+
+    data = await file.read()
+    verdict = validate_banner(data)
+    if isinstance(verdict, BannerRejected):
+        # 422 rather than 400: the request was well-formed, the CONTENT is what is
+        # unacceptable, and the message is written for the person reading it.
+        raise AppError(
+            message=verdict.reason,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code="BANNER_REJECTED",
+        )
+
+    # Falls back to the offer's own label, because alt text is not optional for a link and an
+    # empty string would leave a screen reader announcing an unlabelled link to the pricing
+    # page. The label is what the offer is called, which is the right thing to say.
+    alt = (alt_text or "").strip()[:160] or f"{offer.label} — offer"
+
+    existing = None
+    with contextlib.suppress(Exception):
+        async with db.begin_nested():
+            existing = await db.scalar(
+                select(OfferBanner).where(OfferBanner.offer_id == offer_id)
+            )
+
+    storage_path = f"banners/{offer_id}/{uuid.uuid4()}.{verdict.fmt}"
+    content_type = f"image/{verdict.fmt}"
+
+    def _store() -> None:
+        # supabase-py is SYNCHRONOUS. Called inline it blocks the event loop for the whole
+        # upload — not just this request, every request this worker has in flight. Same
+        # reasoning as the resume upload.
+        _banner_storage().storage.from_(settings.SUPABASE_STORAGE_BUCKET_BANNERS).upload(
+            storage_path, data, {"content-type": content_type}
+        )
+
+    await asyncio.to_thread(_store)
+
+    public_url = (
+        _banner_storage()
+        .storage.from_(settings.SUPABASE_STORAGE_BUCKET_BANNERS)
+        .get_public_url(storage_path)
+    )
+
+    old_path = existing.storage_path if existing else None
+    if existing is not None:
+        existing.storage_path = storage_path
+        existing.image_url = public_url
+        existing.alt_text = alt
+        existing.width = verdict.width
+        existing.height = verdict.height
+        existing.bytes = len(data)
+        existing.content_type = content_type
+        existing.uploaded_by = current_user.user_id
+    else:
+        db.add(
+            OfferBanner(
+                offer_id=offer_id,
+                storage_path=storage_path,
+                image_url=public_url,
+                alt_text=alt,
+                width=verdict.width,
+                height=verdict.height,
+                bytes=len(data),
+                content_type=content_type,
+                uploaded_by=current_user.user_id,
+            )
+        )
+
+    # AFTER the row is written, and failure here is swallowed: an orphaned old file is
+    # untidy, while failing the request would leave the admin thinking the upload did not
+    # work when the new banner is already live.
+    if old_path:
+        def _remove_old() -> None:
+            _banner_storage().storage.from_(
+                settings.SUPABASE_STORAGE_BUCKET_BANNERS
+            ).remove([old_path])
+
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_remove_old)
+
+    logger.info(
+        "offer_banner_uploaded",
+        offer_id=str(offer_id),
+        actor=current_user.email,
+        width=verdict.width,
+        height=verdict.height,
+        bytes=len(data),
+        replaced=bool(old_path),
+    )
+    return {
+        "image_url": public_url,
+        "alt_text": alt,
+        "width": verdict.width,
+        "height": verdict.height,
+        "bytes": len(data),
+        "content_type": content_type,
+        "matches_spec": True,
+    }
+
+
+@router.delete("/{offer_id}/banner", summary="Remove an offer's banner image")
+async def delete_offer_banner(
+    offer_id: uuid.UUID,
+    current_user: AdminUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """Take the banner down and delete the file behind it."""
+    from app.models.billing import OfferBanner
+
+    row = await db.scalar(select(OfferBanner).where(OfferBanner.offer_id == offer_id))
+    if row is None:
+        raise NotFoundError("This offer has no banner")
+
+    path = row.storage_path
+    await db.delete(row)
+
+    def _remove() -> None:
+        _banner_storage().storage.from_(
+            settings.SUPABASE_STORAGE_BUCKET_BANNERS
+        ).remove([path])
+
+    # Swallowed for the same reason as above: the row is gone, so the banner is down, and
+    # failing the request over a leftover file would tell the admin the removal did not work.
+    with contextlib.suppress(Exception):
+        await asyncio.to_thread(_remove)
+
+    logger.info("offer_banner_deleted", offer_id=str(offer_id), actor=current_user.email)
+    return {"status": "deleted"}

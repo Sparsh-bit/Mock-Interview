@@ -285,6 +285,52 @@ class Offer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
 
+class OfferBanner(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    The promo image for one offer: shown on the dashboard, links to the apply-a-code box.
+
+    A SEPARATE TABLE RATHER THAN COLUMNS ON `Offer`, and the reason is this project's
+    deployment shape rather than modelling taste. Migrations are run BY HAND against Supabase,
+    so there is always a window where new code is live and the schema is not. Columns on
+    `offers` would put `SELECT offers.banner_url ...` on every read of that table — the pricing
+    page, the quote, checkout, redemption — and 500 the entire paid path until somebody
+    remembered to migrate. Nothing existing reads this table, so before the migration the
+    feature simply has nothing to show and every money path is untouched.
+
+    ONE PER OFFER, by a unique constraint rather than by the endpoint checking first: two
+    admins uploading at once cannot leave two rows where the reader expects one.
+
+    THE DIMENSIONS ARE COLUMNS, not just the URL, so the admin list can say whether an image
+    matches the required ratio without re-downloading it to find out.
+    """
+
+    __tablename__ = "offer_banners"
+
+    offer_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("offers.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+
+    #: Where the file sits in the bucket. Kept because deleting or replacing a banner has to
+    #: delete the FILE too, and a public URL cannot be turned back into a storage path
+    #: reliably once the bucket's URL format changes.
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str] = mapped_column(Text, nullable=False)
+
+    #: NOT NULL, because a banner is a LINK. Without an accessible name a screen reader
+    #: announces an unlabelled link to the pricing page, which is the same defect as an
+    #: icon-only button with no aria-label.
+    alt_text: Mapped[str] = mapped_column(String(160), nullable=False)
+
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class OfferRedemption(Base, UUIDPrimaryKeyMixin):
     """
     One account, one use of one code. Append-only.

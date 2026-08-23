@@ -415,7 +415,23 @@ export default function StorePage() {
             discounts. Checking it before anything is chosen also means an unusable code is
             refused while the candidate is still browsing rather than at the till. */}
         {signedIn && (
-          <div className="rounded-2xl border border-border p-4 sm:p-5">
+          <div
+            /*
+             * THE LANDING POINT FOR THE DASHBOARD PROMO BANNER.
+             *
+             * The banner links to `/pricing#apply-offer`, so this id is the other half of that
+             * feature — renaming it silently turns the banner into a link that loads the page
+             * and scrolls nowhere, which looks like the banner being broken. Pinned by
+             * components/promo-banner.test.ts.
+             *
+             * `scroll-mt-24` because a bare anchor puts the target flush against the top of the
+             * viewport, tucking the "Have a code?" label under the sticky header — the
+             * candidate arrives at an unlabelled input. The offset leaves the label visible,
+             * which is the whole point of scrolling here rather than to the input itself.
+             */
+            id="apply-offer"
+            className="scroll-mt-24 rounded-2xl border border-border p-4 sm:p-5"
+          >
             <label
               htmlFor="promo"
               className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground"

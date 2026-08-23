@@ -5,6 +5,7 @@ import { Loader2, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { OfferBannerControl, type OfferBanner } from '@/components/admin/OfferBannerControl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -71,6 +72,8 @@ interface Offer {
    * backend knows both halves; the browser knows neither.
    */
   blocked_reason: string;
+  /** The promo image for this offer, or null. See OfferBannerControl. */
+  banner: OfferBanner | null;
 }
 
 const BLANK = {
@@ -386,6 +389,14 @@ export default function AdminOffersPage() {
                     {o.blocked_reason}
                   </p>
                 )}
+
+                {/* THE BANNER, ONLY WHERE IT CAN DO ANYTHING.
+                    A banner advertises a code to every candidate on the dashboard, so it only
+                    makes sense on a PUBLIC offer — a private code shared with four friends
+                    must not be posted product-wide, and the server enforces that by filtering
+                    on `is_public` when it decides what to serve. Offering the upload on a
+                    private offer would be offering something that could never appear. */}
+                {o.is_public && <OfferBannerControl offerId={o.id} banner={o.banner} />}
               </div>
 
               {/* THE SWITCH. One tap, immediate, and it keeps the redemption history — which
