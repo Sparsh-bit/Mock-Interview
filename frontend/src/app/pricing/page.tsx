@@ -9,6 +9,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -17,13 +18,14 @@ import {
   useQuote,
   useStoreItems,
   useVerifyPayment,
+  type ItemPrice,
   type StoreItem,
 } from '@/hooks/useBilling';
 import { describeOffer } from '@/lib/billing/describe-offer';
 import { openCheckout } from '@/lib/billing/razorpay-checkout';
 import { Turnstile } from '@/components/billing/Turnstile';
 import { PaymentHistory } from '@/components/billing/PaymentHistory';
-import { FreeOrderSheet } from '@/components/billing/FreeOrderSheet';
+import { OrderSummarySheet } from '@/components/billing/OrderSummarySheet';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
@@ -65,17 +67,33 @@ const FEATURE_BLURB: Record<string, string> = {
 
 function ItemCard({
   item,
+  price,
   onBuy,
   busy,
   signedIn,
 }: {
   item: StoreItem;
+  /**
+   * This item's figure under the applied code, from the server, or null when no code is on.
+   *
+   * THE WHOLE POINT OF PASSING IT IN. The tile has to change the moment Apply succeeds and
+   * change back the moment Remove is pressed, and the only honest way to do that is for the
+   * number to arrive already computed. A tile that worked out its own discount would be a
+   * second implementation of what money costs, sitting on the one screen that promises it.
+   */
+  price: ItemPrice | null;
   onBuy: (id: string) => void;
   busy: boolean;
   signedIn: boolean;
 }) {
   const isBundle = item.quantity > 1;
   const perUnit = Math.round(item.price_rupees / item.quantity);
+  // Only when the code actually reaches this item AND actually changes its price. A struck
+  // price that is struck to the same number is a discount claimed where none was given, and
+  // an out-of-scope item must show what the candidate will really be charged.
+  const discounted =
+    price && price.covered && price.charged_paise < item.price_paise ? price : null;
+  const nowRupees = discounted ? Math.round(discounted.charged_paise / 100) : item.price_rupees;
 
   return (
     <Card
@@ -91,12 +109,24 @@ function ItemCard({
         <p className="text-xs text-muted-foreground">{item.tagline}</p>
       </div>
 
-      <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums text-foreground">
-          ₹{item.price_rupees}
+          ₹{nowRupees}
         </span>
-        {isBundle && (
+        {discounted && (
+          <span className="text-sm tabular-nums text-muted-foreground line-through">
+            ₹{item.price_rupees}
+          </span>
+        )}
+        {isBundle && !discounted && (
           <span className="text-xs text-muted-foreground">₹{perUnit} each</span>
+        )}
+        {discounted && (
+          <span className="rounded-md bg-accent-emerald-soft px-1.5 py-0.5 text-[11px] font-semibold text-accent-emerald-ink">
+            {discounted.is_free
+              ? 'Free with your code'
+              : `Save ₹${item.price_rupees - nowRupees}`}
+          </span>
         )}
       </div>
 
@@ -140,6 +170,7 @@ export default function StorePage() {
     kind: 'percent' | 'fixed' | 'free' | '';
     value: number;
     applies_to: string[];
+    prices?: ItemPrice[];
   } | null>(null);
   const [captchaToken, setCaptchaToken] = useState('');
   /*
@@ -153,7 +184,19 @@ export default function StorePage() {
    * nothing to confirm, which reads as the button having failed, because everything a
    * candidate knows about buying says something should appear.
    */
-  const [freeOrder, setFreeOrder] = useState<StoreItem | null>(null);
+  const [pendingOrder, setPendingOrder] = useState<StoreItem | null>(null);
+
+  /*
+   * THIS ITEM'S FIGURE UNDER THE APPLIED CODE, or null.
+   *
+   * `quoted.prices` is the whole catalogue priced by the server in the one request Apply
+   * already made. Looking a tile up in it is the entire mechanism behind "prices change when a
+   * code is applied and change back when it is removed" — Remove clears `quoted`, every lookup
+   * returns null, and every tile falls back to its list price with no second request and
+   * nothing to reset.
+   */
+  const priceFor = (itemId: string): ItemPrice | null =>
+    quoted?.prices?.find((p) => p.item_id === itemId) ?? null;
 
   /*
    * CHECKED WITHOUT NAMING AN ITEM, because at this point there is no item.
@@ -199,17 +242,22 @@ export default function StorePage() {
       window.location.href = `/register?redirectTo=${encodeURIComponent('/pricing')}`;
       return;
     }
-    // A code that covers this in full goes through the confirm sheet. `quoted` is priced
-    // against the cheapest item, so it is only a reliable "this is free" signal for a `free`
-    // code — which is the only kind that can produce a ₹0 total on every item.
-    if (quoted?.is_free && appliedCode) {
-      const item = items?.find((i) => i.id === itemId) ?? null;
-      if (item) {
-        setFreeOrder(item);
-        return;
-      }
-    }
-    runCheckout(itemId);
+    /*
+     * EVERY ORDER GETS THE SUMMARY, not just the free ones.
+     *
+     * This used to open the sheet only for a ₹0 total and hand everything else straight to
+     * Razorpay — a card form with an amount in it and no statement of what was being bought or
+     * whether the code had come off. The sheet is the invoice now: one confirm for both kinds
+     * of order, and the gateway is what varies behind it.
+     *
+     * Note what this deliberately no longer does. It read `quoted.is_free`, a flag about the
+     * CODE rather than about this item — priced, at the time, against whichever item the Apply
+     * box had guessed. `priceFor` answers that question for the actual item, so the branch it
+     * was guarding is gone rather than repaired.
+     */
+    const item = items?.find((i) => i.id === itemId) ?? null;
+    if (!item) return;
+    setPendingOrder(item);
   };
 
   /*
@@ -234,7 +282,7 @@ export default function StorePage() {
         if (order.granted) {
           // Reached from the confirm sheet, or from a code that turned out to be free only
           // for this particular item.
-          setFreeOrder(null);
+          setPendingOrder(null);
           toast.success('Added to your account. Nothing to pay.');
           setAppliedCode('');
           setQuoted(null);
@@ -299,7 +347,7 @@ export default function StorePage() {
         }
       },
       onError: (err) => {
-        setFreeOrder(null);
+        setPendingOrder(null);
         const notConfigured = err instanceof ApiError && err.status === 503;
         // An offer error carries a message the candidate can act on — "this offer has
         // expired" rather than "invalid code", which sends them hunting for a typo that is
@@ -338,24 +386,147 @@ export default function StorePage() {
       <div className="mx-auto w-full max-w-5xl space-y-10 px-6 py-10 sm:px-10 sm:py-14">
         <PageHeader
           title="Buy what you need"
-          description="No subscription. Try each thing free once, then pay per session — and what you buy never expires."
+          description="No subscription. Pay per session, and what you buy never expires."
         />
 
-        {/* The trial, stated plainly and first. It is the most persuasive thing on the page
-            and it costs the reader nothing to accept. */}
-        <Card variant="flat" padding="md">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <span className="font-medium text-foreground">Free on every account:</span>
-            {['1 mock interview', '1 group discussion', '1 communication drill', 'Unlimited quizzes'].map(
-              (t) => (
-                <span key={t} className="flex items-center gap-1.5 text-muted-foreground">
-                  <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
-                  {t}
+        {/* THE PROMO BOX, FIRST ON THE PAGE.
+            Placed once, and now ABOVE the items rather than below them. Two reasons, and
+            the second is the one that changed:
+
+            A code applies to the purchase, not to a tile, so one box rather than six —
+            identical boxes on every card would suggest six separate discounts.
+
+            AND APPLYING IT NOW CHANGES EVERY PRICE ON THE PAGE. While the box sat under the
+            items it was a footnote to a decision already made; a candidate scrolled past six
+            full prices, chose one, and only then found the field. Above them, the code is
+            entered before anything is chosen and every tile below is already showing what it
+            will actually cost — which is the order the decision is really made in. It also
+            means an unusable code is refused while they are still browsing rather than at the
+            till. */}
+        {signedIn && (
+          <div
+            /*
+             * THE LANDING POINT FOR THE DASHBOARD PROMO BANNER.
+             *
+             * The banner links to `/pricing#apply-offer`, so this id is the other half of that
+             * feature — renaming it silently turns the banner into a link that loads the page
+             * and scrolls nowhere, which looks like the banner being broken. Pinned by
+             * components/promo-banner.test.ts.
+             *
+             * `scroll-mt-24` because a bare anchor puts the target flush against the top of the
+             * viewport, tucking the "Have a code?" label under the sticky header — the
+             * candidate arrives at an unlabelled input. The offset leaves the label visible,
+             * which is the whole point of scrolling here rather than to the input itself.
+             */
+            id="apply-offer"
+            className="scroll-mt-24 rounded-2xl border border-border p-4 sm:p-5"
+          >
+            <label
+              htmlFor="promo"
+              className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+              Have a code?
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id="promo"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') applyCode();
+                }}
+                placeholder="DIWALI25"
+                // Uppercased as they type, because the server stores and compares uppercase.
+                // Seeing the code in the form it will actually be checked in avoids the
+                // "but I typed it correctly" class of support message.
+                //
+                // The design-system Input rather than a hand-rolled one: this was the only
+                // field on the site that set its own height, radius and focus ring, so it was
+                // the only field that did not grow the 16px minimum that stops iOS zooming
+                // the page when it is focused.
+                className="min-w-0 flex-1 font-mono uppercase tracking-wider"
+                maxLength={40}
+              />
+              <Button
+                variant="secondary"
+                onClick={applyCode}
+                loading={quote.isPending}
+                disabled={!codeInput.trim()}
+              >
+                Apply
+              </Button>
+              {appliedCode && (
+                <button
+                  onClick={() => {
+                    setAppliedCode('');
+                    setQuoted(null);
+                    setCodeInput('');
+                    setCaptchaToken('');
+                  }}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+
+            {quoted && appliedCode && (
+              <p className="mt-3 text-sm">
+                <span className="font-semibold text-accent-emerald-ink">
+                  {describeOffer(quoted)}
+                </span>{' '}
+                {/* WAS "the exact price is confirmed on the item you choose", which was true
+                    only while the page could not price anything. Every tile below now shows
+                    what the server will actually charge, so the old line would send a
+                    candidate looking for a confirmation that has already happened. */}
+                <span className="text-muted-foreground">
+                  Prices below have been updated.
                 </span>
-              ),
+              </p>
             )}
+
+            {/* Only when this offer asks for it. */}
+            {quoted?.requires_captcha && <Turnstile onToken={setCaptchaToken} />}
           </div>
-        </Card>
+        )}
+
+        {/* WHAT IS ACTUALLY FREE, READ FROM THE SERVER.
+
+            This card used to list "1 mock interview" and "1 group discussion" as free. Both
+            went paid and the strip did not, because it was four strings typed into a page
+            while plans.py said zero — so the most prominent claim on the pricing page was
+            false for weeks, and nothing could have caught it: no test can know that a
+            sentence disagrees with a number it never reads.
+
+            It is now built from `trial_allowance` on the items response, which comes from the
+            same constant the enforcement layer uses. If a feature's allowance changes, this
+            line changes with it; if every allowance goes to zero, the card renders only the
+            quizzes, which are genuinely unlimited and are not metered at all. */}
+        {!!items?.length && (
+          <Card variant="flat" padding="md">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+              <span className="font-medium text-foreground">Free on every account:</span>
+              {FEATURE_ORDER.map((feature) => {
+                const item = items.find((i) => i.feature === feature);
+                if (!item || item.trial_allowance <= 0) return null;
+                const label =
+                  item.trial_allowance === 1 ? item.feature_label_singular : item.feature_label;
+                return (
+                  <span key={feature} className="flex items-center gap-1.5 text-muted-foreground">
+                    <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
+                    {item.trial_allowance} {label}
+                  </span>
+                );
+              })}
+              {/* Not metered by the credits ledger at all, so there is no allowance to read
+                  — it is unlimited by construction rather than by configuration. */}
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
+                Unlimited quizzes
+              </span>
+            </div>
+          </Card>
+        )}
 
         {isLoading && (
           <div className="flex justify-center py-16">
@@ -399,6 +570,7 @@ export default function StorePage() {
                     <ItemCard
                       key={item.id}
                       item={item}
+                      price={priceFor(item.id)}
                       onBuy={buy}
                       busy={checkout.isPending && checkout.variables?.itemId === item.id}
                       signedIn={signedIn}
@@ -409,112 +581,41 @@ export default function StorePage() {
             );
           })}
 
-        {/* THE PROMO BOX.
-            Placed once, above the items, rather than on every card: a code applies to the
-            purchase, not to a tile, and six identical boxes would suggest six separate
-            discounts. Checking it before anything is chosen also means an unusable code is
-            refused while the candidate is still browsing rather than at the till. */}
-        {signedIn && (
-          <div
-            /*
-             * THE LANDING POINT FOR THE DASHBOARD PROMO BANNER.
-             *
-             * The banner links to `/pricing#apply-offer`, so this id is the other half of that
-             * feature — renaming it silently turns the banner into a link that loads the page
-             * and scrolls nowhere, which looks like the banner being broken. Pinned by
-             * components/promo-banner.test.ts.
-             *
-             * `scroll-mt-24` because a bare anchor puts the target flush against the top of the
-             * viewport, tucking the "Have a code?" label under the sticky header — the
-             * candidate arrives at an unlabelled input. The offset leaves the label visible,
-             * which is the whole point of scrolling here rather than to the input itself.
-             */
-            id="apply-offer"
-            className="scroll-mt-24 rounded-2xl border border-border p-4 sm:p-5"
-          >
-            <label
-              htmlFor="promo"
-              className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-            >
-              Have a code?
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                id="promo"
-                value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') applyCode();
-                }}
-                placeholder="DIWALI25"
-                // Uppercased as they type, because the server stores and compares uppercase.
-                // Seeing the code in the form it will actually be checked in avoids the
-                // "but I typed it correctly" class of support message.
-                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-elevated px-3 py-2 font-mono text-sm uppercase tracking-wider focus:border-primary focus:outline-none"
-                maxLength={40}
-              />
-              <Button
-                variant="secondary"
-                onClick={applyCode}
-                loading={quote.isPending}
-                disabled={!codeInput.trim()}
-              >
-                Apply
-              </Button>
-              {appliedCode && (
-                <button
-                  onClick={() => {
-                    setAppliedCode('');
-                    setQuoted(null);
-                    setCodeInput('');
-                    setCaptchaToken('');
-                  }}
-                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-
-            {quoted && appliedCode && (
-              <p className="mt-3 text-sm">
-                <span className="font-semibold text-accent-emerald-ink">
-                  {describeOffer(quoted)}
-                </span>{' '}
-                <span className="text-muted-foreground">
-                  The exact price is confirmed on the item you choose.
-                </span>
-              </p>
-            )}
-
-            {/* Only when this offer asks for it. */}
-            {quoted?.requires_captcha && <Turnstile onToken={setCaptchaToken} />}
-          </div>
-        )}
-
         {/* Only for somebody signed in — there is nothing to show otherwise, and an empty
             "Payment history" card on a public pricing page is noise. */}
         {signedIn && <PaymentHistory />}
 
-        {/* The confirm step for a ₹0 order. Razorpay cannot open below ₹1, so this is the
-            summary that takes the sheet's place — see FreeOrderSheet. */}
-        <FreeOrderSheet
-          open={!!freeOrder}
-          item={freeOrder}
+        {/* THE INVOICE, shown before anything is charged. A ₹0 order confirms here and is
+            granted; anything else confirms here and hands over to Razorpay — one shape for
+            both, so "no card form appeared" never reads as a fault. */}
+        <OrderSummarySheet
+          open={!!pendingOrder}
+          item={pendingOrder}
           code={appliedCode}
           /* THE ITEM'S OWN PRICE, not the quote's.
            *
            * This read `quoted.original_paise` first, which was the price of whatever item
            * the Apply box happened to validate against — the cheapest one — so the sheet
-           * struck through ₹19 while granting the ₹199 five-pack. Now that the box names no
-           * item at all that field is 0, and `??` would have passed the zero straight
-           * through, since it only falls back on null and undefined. The item being
-           * confirmed is right here and knows its own price. */
-          originalPaise={freeOrder?.price_paise ?? 0}
+           * struck through ₹19 while granting the ₹199 five-pack. The box names no item at
+           * all now, so that field is 0, and `??` would pass the zero straight through since
+           * it only falls back on null and undefined. The item being confirmed is right here
+           * and knows its own price. */
+          originalPaise={pendingOrder?.price_paise ?? 0}
+          /* WHAT THE SERVER WILL ACTUALLY CHARGE for this item under this code. Falls back to
+           * the list price when no code is applied, or when the code does not reach this item
+           * — the same number the line above shows, so a no-discount invoice needs no branch
+           * and cannot claim a saving it did not give. */
+          chargedPaise={
+            (pendingOrder && priceFor(pendingOrder.id)?.covered
+              ? priceFor(pendingOrder.id)?.charged_paise
+              : undefined) ??
+            pendingOrder?.price_paise ??
+            0
+          }
           confirming={checkout.isPending}
-          onCancel={() => setFreeOrder(null)}
+          onCancel={() => setPendingOrder(null)}
           onConfirm={() => {
-            if (freeOrder) runCheckout(freeOrder.id);
+            if (pendingOrder) runCheckout(pendingOrder.id);
           }}
         />
 

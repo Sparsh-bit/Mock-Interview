@@ -58,6 +58,29 @@ export interface StoreItem {
   price_paise: number;
   name: string;
   tagline: string;
+  /**
+   * How many of this feature a brand-new account gets free.
+   *
+   * SERVED RATHER THAN WRITTEN DOWN, because the page spent weeks advertising a free mock
+   * interview and a free group discussion after both went paid — the free-tier strip was a
+   * sentence typed into a component while plans.py said zero. A number that only exists on
+   * the server cannot drift from the server.
+   */
+  trial_allowance: number;
+  /** Plural, from the server, so the strip's wording moves with the catalogue. */
+  feature_label: string;
+  feature_label_singular: string;
+}
+
+/** One item's price under one applied code. See the backend's `_priced_catalogue`. */
+export interface ItemPrice {
+  item_id: string;
+  feature: string;
+  original_paise: number;
+  charged_paise: number;
+  is_free: boolean;
+  /** False when the code's scope does not reach this item — it keeps its full price. */
+  covered: boolean;
 }
 
 /**
@@ -211,6 +234,16 @@ export function useQuote() {
         value: number;
         /** Item ids this code covers. Empty means every item. */
         applies_to: string[];
+        /**
+         * EVERY ITEM'S REAL FIGURE UNDER THIS CODE, computed server-side in one request.
+         *
+         * Present only on the no-item quote — the one the Apply box sends — because that is
+         * the question "what does this code do to the store". It is what lets every tile show
+         * a live price without the browser doing discount arithmetic (a second implementation
+         * of what money costs) or firing one request per tile (against a bucket of ten an
+         * hour that /quote shares with /checkout).
+         */
+        prices?: ItemPrice[];
       };
     },
   });
