@@ -1,8 +1,8 @@
 'use client';
 
 import { useInterview } from '@/hooks/useInterview';
-import { useTracks, usePrimaryResume } from '@/hooks/useData';
-import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2 } from 'lucide-react';
+import { useTracks, usePrimaryResume, useUploadResume } from '@/hooks/useData';
+import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2, Upload } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -101,6 +101,7 @@ function InterviewSetup() {
   const [resumeText, setResumeText] = useState('');
   // Shown so a blank box does not look like opting out of personalisation.
   const { data: storedResume } = usePrimaryResume();
+  const uploadResume = useUploadResume();
   //: Either source counts. Trimmed, so whitespace is not an answer.
   const hasResume = !!storedResume?.has_text || resumeText.trim().length >= 20;
 
@@ -309,9 +310,38 @@ function InterviewSetup() {
    * their plan away, and re-submitting under a paywall would buy a second refusal.
    */
   const autostarted = useRef(false);
+
+  /*
+   * WAS THERE A RESUME WHEN THE PAGE LOADED? — and this ref is a money guard, not a
+   * convenience.
+   *
+   * `hasResume` is one of the readiness conditions the autostart effect waits on, and
+   * `POST /interview/plan` CHARGES before it generates. That was safe while the only way to
+   * get a resume was to go to /profile: a resume-less visitor arriving on `?autostart=1`
+   * simply did nothing, because the condition could never become true without leaving.
+   *
+   * The upload control below makes it become true, here, seconds later — so the effect would
+   * re-run the instant the upload resolved and silently buy an interview the candidate never
+   * asked to start. The one-shot ref does not help: it has not fired yet, so there is nothing
+   * to stop.
+   *
+   * So autostart is gated on whether a resume was ALREADY on file when the query first
+   * resolved. Uploading during the visit is a deliberate act with its own outcome — the form
+   * unblocks — and it must not also mean "and spend money now". Somebody who wants the
+   * interview presses the button that is now enabled, which is one tap and is theirs.
+   */
+  const resumeAtArrival = useRef<boolean | null>(null);
+  if (resumeAtArrival.current === null && storedResume !== undefined) {
+    resumeAtArrival.current = !!storedResume?.has_text;
+  }
+
   useEffect(() => {
     if (!requestedAutostart || autostarted.current) return;
     if (!selectedTrackId || !hasResume) return;
+    // The guard above answers "is the form ready"; this one answers "did the candidate do
+    // something during this visit to MAKE it ready". Pasted text counts for readiness and not
+    // for autostart, for the same reason an upload does not.
+    if (resumeAtArrival.current !== true) return;
     if (createPlan.isPending || plan || paywall) return;
     // A deep link is always a catalogue path — nothing in a URL sets `customSetup`, only typing
     // an employer does. So this being true means the candidate started editing the form while
@@ -750,7 +780,7 @@ function InterviewSetup() {
             <span className={storedResume?.has_text ? 'text-muted-foreground' : 'text-destructive'}>
               {storedResume?.has_text
                 ? '(on file — paste here only to override it for this interview)'
-                : '(required — paste your skills & projects, or upload once in your profile)'}
+                : '(required — paste your skills & projects, or upload a file below)'}
             </span>
           </label>
 
@@ -761,9 +791,12 @@ function InterviewSetup() {
                 Using <span className="font-semibold text-foreground">{storedResume.filename}</span> — leave this
                 blank to keep using it.
               </span>
-              <Link href="/profile" className="font-semibold text-primary hover:underline">
-                Change
-              </Link>
+              {/* WAS A LINK TO /profile. There is an upload control directly below now, so
+                  sending them away to swap a file would be leaving a page to do something the
+                  page does. */}
+              <span className="font-semibold text-muted-foreground">
+                or upload a different one below
+              </span>
             </div>
           )}
 
@@ -779,15 +812,61 @@ function InterviewSetup() {
             className="w-full resize-none rounded-xl border border-border/50 bg-surface-elevated px-4 py-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
 
-          {!storedResume?.has_text && (
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Tip:{' '}
-              <Link href="/profile" className="font-semibold text-primary hover:underline">
-                upload your resume once
-              </Link>{' '}
-              and every interview will use it automatically.
-            </p>
-          )}
+          {/* UPLOAD, HERE, RATHER THAN A LINK TO /profile.
+              This said "upload your resume once" and pointed at another page — at the exact
+              moment somebody is trying to start an interview, with a required field blocking
+              them. Leaving to do it means finding the page, uploading, and finding their way
+              back to a form they have already half filled in, and the setup they had chosen
+              is gone. It is the same file either way; the only difference is whether they
+              have to abandon what they were doing to send it.
+
+              IT DOES NOT START ANYTHING. Uploading unblocks the button; pressing the button
+              is a separate decision, and a paid one — see `resumeAtArrival` above for the
+              autostart hazard this creates and how it is closed. */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label
+              className={cn(
+                'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold transition-colors',
+                'hover:bg-secondary focus-within:ring-2 focus-within:ring-ring',
+                uploadResume.isPending && 'pointer-events-none opacity-60',
+              )}
+            >
+              {uploadResume.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Upload className="h-3.5 w-3.5" aria-hidden />
+              )}
+              {uploadResume.isPending
+                ? 'Reading your resume…'
+                : storedResume?.has_text
+                  ? 'Upload a different resume'
+                  : 'Upload your resume'}
+              <input
+                type="file"
+                className="sr-only"
+                accept=".pdf,.doc,.docx,.txt"
+                disabled={uploadResume.isPending}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Cleared immediately so choosing the SAME file twice still fires a change
+                  // event — otherwise a failed upload cannot be retried with the same file.
+                  e.target.value = '';
+                  if (!file) return;
+                  uploadResume.mutate(file, {
+                    onSuccess: () =>
+                      toast.success('Resume saved — every interview will use it from now on.'),
+                    onError: () =>
+                      toast.error('Could not read that file. Try a PDF, DOCX or plain text.'),
+                  });
+                }}
+              />
+            </label>
+            <span className="text-[11px] text-muted-foreground">
+              {/* The upload takes up to half a minute because the server extracts the text and
+                  analyses it before answering, so saying so beats a button that looks stuck. */}
+              PDF, DOCX or text. Saved once and reused for every interview.
+            </span>
+          </div>
         </div>
 
         {/* WHAT IS STOPPING THEM, STATED LOUDLY, PLUS THE ROOM ADVICE.
