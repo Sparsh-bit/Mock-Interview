@@ -31,10 +31,10 @@ const FEATURES: MarketingFeature[] = [
 const SEGMENTS: MarketingSegment[] = [
   {
     segment: 'report_waiting',
-    label: 'Report ready, not unlocked',
+    label: 'Report started, never scored',
     what_happened:
-      'Finished an interview. The report is generated and waiting behind the unlock.',
-    pitch: 'Their personalised report is generated and locked — the ₹49 unlock.',
+      'Finished an interview and a report row exists, but it was never scored.',
+    pitch: 'Tell them to open their report — it finishes on its own now.',
     count: 1,
   },
   {
@@ -59,6 +59,9 @@ function row(over: Partial<MarketingRow> = {}): MarketingRow {
     sessions_started: 2,
     sessions_completed: 1,
     reports: 1,
+    scored_reports: 1,
+    best_score: 71.5,
+    purchases: 0,
     last_active_at: '2026-08-21T18:30:00Z',
     ever_paid: false,
     last_paid_at: null,
@@ -166,7 +169,7 @@ describe('the file says what an operator needs to write an email', () => {
 
   it('carries the pitch for the row segment so the file is mail-mergeable on its own', () => {
     const csv = toCsv([row()], FEATURES, SEGMENTS);
-    expect(csv).toContain('₹49 unlock');
+    expect(csv).toContain('finishes on its own now');
   });
 
   it('an unknown segment leaves the pitch empty rather than dropping the row', () => {
@@ -187,10 +190,14 @@ describe('the file says what an operator needs to write an email', () => {
 
   it('reports whether they have ever paid in words, not booleans', () => {
     const paid = parse(toCsv([row({ ever_paid: true, last_paid_at: '2026-08-20T05:00:00Z' })], FEATURES, SEGMENTS));
-    const idx = paid[0].indexOf('ever_paid');
-    expect(paid[1][idx]).toBe('yes');
-    expect(paid[1][idx + 1]).toBe('2026-08-20');
-    expect(parse(toCsv([row()], FEATURES, SEGMENTS))[1][idx]).toBe('no');
+    // LOOKED UP BY NAME, NOT BY `idx + 1`. The offset form assumed last_paid sits immediately
+    // after ever_paid, so adding a `purchases` column between them broke a test that was not
+    // about either — which is the hazard of two hand-maintained, index-aligned lists. By name,
+    // a new column in the middle cannot break an assertion about a different one.
+    expect(paid[1][paid[0].indexOf('ever_paid')]).toBe('yes');
+    expect(paid[1][paid[0].indexOf('last_paid')]).toBe('2026-08-20');
+    const unpaid = parse(toCsv([row({ ever_paid: false })], FEATURES, SEGMENTS));
+    expect(unpaid[1][unpaid[0].indexOf('ever_paid')]).toBe('no');
   });
 
   it('a missing balance for a feature reads as zero rather than blank', () => {

@@ -33,9 +33,15 @@ export interface MarketingRow {
   sessions_started: number;
   sessions_completed: number;
   reports: number;
+  /** Reports that actually carry a score. A row is written even when scoring fails. */
+  scored_reports: number;
+  /** Their best scored report, 0-100, or null. Never negative — see FORMULA_LEADERS. */
+  best_score: number | null;
   last_active_at: string | null;
   ever_paid: boolean;
   last_paid_at: string | null;
+  /** How many purchases. Never a rupee total — /admin/revenue owns the money figure. */
+  purchases: number;
   segment: string;
 }
 
@@ -171,7 +177,10 @@ export function toCsv(
     'sessions_started',
     'sessions_completed',
     'reports',
+    'scored_reports',
+    'best_score',
     'ever_paid',
+    'purchases',
     'last_paid',
     'last_active',
     'joined',
@@ -190,7 +199,13 @@ export function toCsv(
       String(r.sessions_started),
       String(r.sessions_completed),
       String(r.reports),
+      String(r.scored_reports),
+      // Empty rather than a placeholder for "never scored": a spreadsheet can filter and
+      // average an empty cell correctly and cannot do either with an em dash. Rounded, and
+      // never negative, which is what keeps it clear of the formula-injection guard below.
+      r.best_score === null ? '' : String(Math.round(r.best_score)),
       yesNo(r.ever_paid),
+      String(r.purchases),
       isoDay(r.last_paid_at),
       isoDay(r.last_active_at),
       isoDay(r.joined_at),

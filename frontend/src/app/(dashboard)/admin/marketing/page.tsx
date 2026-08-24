@@ -69,13 +69,25 @@ import { CSV_BOM, csvFilename, toCsv, type MarketingListResponse, type Marketing
 /**
  * Segment → badge colour, and the mapping is not decoration.
  *
- * `customer` is emerald and `report_waiting` is amber because those are the two groups an
- * operator scans for: one has already paid and must not be sent an offer, the other is the one
- * the ₹49 unlock is for. `finished_no_report` is coral because it is the only group whose
- * segment might mean something went wrong for that candidate, and reading it as a sales
- * opportunity would be the mistake.
+ * `report_generated` and `customer` are both emerald because those are the two groups an
+ * operator scans for and neither should be sent an offer: the first got the whole product end
+ * to end, the second has already paid. `report_waiting` is amber and no longer means what it
+ * used to — it was "the report is behind a ₹49 unlock", a paywall that no longer exists at any
+ * price, and now means a report row that was never scored. `finished_no_report` and
+ * `left_before_answering` are coral because those are the groups whose segment might mean
+ * something went wrong for that candidate, and reading either as a sales opportunity would be
+ * the mistake.
  */
 const SEGMENT_TONE: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
+  // GREEN, AND ABOVE `customer` IN THE SERVER'S PRECEDENCE. The product did the whole thing it
+  // promises for this account: interview sat, report scored, delivered. There is a test on the
+  // backend pinning that it outranks `customer`, because below it the bucket would be empty —
+  // interviews are all paid now, so anybody with a report has also paid.
+  //
+  // A KEY WITH NO ENTRY HERE DEGRADES TO `neutral` WITH NO ERROR, which is why renaming a
+  // segment server-side without touching this map produces a table that looks fine and is
+  // quietly wrong. The csv.ts mirror has the same hazard.
+  report_generated: 'success',
   customer: 'success',
   report_waiting: 'warning',
   finished_no_report: 'danger',
@@ -233,11 +245,11 @@ export default function MarketingPage() {
               color="blue"
             />
             <StatCard
-              label="Report ready, unpaid"
-              value={data.segments.find((s) => s.segment === 'report_waiting')?.count ?? 0}
-              sub="the ₹50 unlock"
+              label="Reports delivered"
+              value={data.segments.find((s) => s.segment === 'report_generated')?.count ?? 0}
+              sub="interview sat, report scored"
               icon={<Wallet className="h-4 w-4" />}
-              color="amber"
+              color="emerald"
             />
             <StatCard
               label="Paid before"
@@ -333,6 +345,7 @@ export default function MarketingPage() {
                     ))}
                     <th className="px-3 py-2.5 text-right font-normal">Sessions</th>
                     <th className="px-3 py-2.5 text-right font-normal">Reports</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Best score</th>
                     <th className="px-3 py-2.5 text-right font-normal">Paid</th>
                     <th className="px-5 py-2.5 text-right font-normal">Last active</th>
                   </tr>
@@ -341,7 +354,7 @@ export default function MarketingPage() {
                   {rows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6 + data.features.length}
+                        colSpan={7 + data.features.length}
                         className="px-5 py-10 text-center text-sm text-muted-foreground"
                       >
                         {list.isLoading ? 'Loading…' : 'No accounts in this view.'}
@@ -419,10 +432,35 @@ function Row({
         {row.sessions_completed}
         <span className="text-muted-foreground">/{row.sessions_started}</span>
       </td>
-      <td className="px-3 py-3 text-right tabular-nums">{row.reports}</td>
+      <td className="px-3 py-3 text-right tabular-nums">
+        {/* SCORED, then total. A report row is written even when scoring fails, so the plain
+            count alone would say the product worked for somebody it did not. */}
+        {row.scored_reports}
+        {row.reports !== row.scored_reports && (
+          <span className="text-muted-foreground">/{row.reports}</span>
+        )}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums">
+        {/* Their best scored report. The only interview-DERIVED number on this row — a score is
+            a figure about an account; questions, answers and transcripts are the candidate's
+            own words and are not reachable through a mailing list. */}
+        {row.best_score === null ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          <span className="font-semibold text-accent-teal-ink">{Math.round(row.best_score)}</span>
+        )}
+      </td>
       <td className="px-3 py-3 text-right text-xs">
         {row.ever_paid ? (
-          <span className="text-accent-emerald-ink">{when(row.last_paid_at)}</span>
+          <span className="text-accent-emerald-ink">
+            {when(row.last_paid_at)}
+            {/* How many times, not how much. /admin/revenue is the single reconciling money
+                figure; a per-user rupee total here would be a second number that disagrees
+                with it, next to a name, and the wrong one would be believed. */}
+            {row.purchases > 1 && (
+              <span className="ml-1 text-muted-foreground">×{row.purchases}</span>
+            )}
+          </span>
         ) : (
           <span className="text-muted-foreground">no</span>
         )}

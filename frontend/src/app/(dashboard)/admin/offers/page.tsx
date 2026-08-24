@@ -76,6 +76,32 @@ interface Offer {
   banner: OfferBanner | null;
 }
 
+/**
+ * What a preview row looks like. Mirrors PreviewRow on POST /admin/offers/preview.
+ *
+ * The admin sees the same figures the created code would produce, because the endpoint prices
+ * an unpersisted offer with the same two functions the till uses — `covers` for scope and
+ * `charge_for` for the amount.
+ */
+interface PreviewRow {
+  item_id: string;
+  feature: string;
+  name: string;
+  quantity: number;
+  price_paise: number;
+  charged_paise: number;
+  covered: boolean;
+}
+
+//: The three features a code can be scoped to. There is no report product — the unlock was
+//: removed — so a fourth box here would be a scope over an item that does not exist, which,
+//: because an empty scope means EVERY item, would silently produce an unrestricted code.
+const FEATURES = [
+  { id: 'interview', label: 'Mock interviews' },
+  { id: 'gd', label: 'Group discussions' },
+  { id: 'communication', label: 'Communication drills' },
+] as const;
+
 const BLANK = {
   code: '',
   label: '',
@@ -87,6 +113,15 @@ const BLANK = {
   max_redemptions: '' as string | number,
   starts_at: '',
   ends_at: '',
+  /**
+   * Which features the code covers. EMPTY MEANS EVERY FEATURE.
+   *
+   * That default is the pre-existing behaviour of every offer ever created — `applies_to`
+   * empty has always meant "applies to everything" — and it is also the trap: an admin who
+   * ticks nothing has not made a narrow code, they have made a store-wide one. The form says
+   * so in words rather than relying on them knowing it.
+   */
+  applies_to_features: [] as string[],
 };
 
 function describe(o: Offer): string {
@@ -108,6 +143,41 @@ export default function AdminOffersPage() {
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'offers'] });
 
+  /*
+   * WHAT THIS CODE WILL ACTUALLY DO, priced before it exists.
+   *
+   * "40% off, drills only" is a sentence. ₹19 becoming ₹11 is a decision, and it is the one
+   * the admin is really making. Two mistakes this catches, both silent and both expensive: a
+   * percentage that rounds to a figure nobody intended, and a scope that covers more than it
+   * reads like it does — ticking nothing means EVERY feature, so "I did not choose" and "I
+   * discounted the whole catalogue" are the same request.
+   *
+   * Keyed on exactly the three fields that decide money, so it re-runs when any of them
+   * changes and not when the label or the dates do. The endpoint writes nothing.
+   */
+  const previewValue =
+    form.kind === 'fixed' ? Math.round(Number(form.value) * 100) : Number(form.value);
+  const preview = useQuery({
+    queryKey: ['admin', 'offers', 'preview', form.kind, previewValue, form.applies_to_features],
+    enabled: creating && Number.isFinite(previewValue) && previewValue >= 0,
+    queryFn: async () =>
+      (
+        await getBrowserApiClient().post('/api/v1/admin/offers/preview', {
+          kind: form.kind,
+          value: previewValue,
+          applies_to_features: form.applies_to_features,
+        })
+      ).data as PreviewRow[],
+  });
+
+  const toggleFeature = (id: string) =>
+    setForm((f) => ({
+      ...f,
+      applies_to_features: f.applies_to_features.includes(id)
+        ? f.applies_to_features.filter((x) => x !== id)
+        : [...f.applies_to_features, id],
+    }));
+
   const create = useMutation({
     mutationFn: async () => {
       const body: Record<string, unknown> = {
@@ -123,6 +193,10 @@ export default function AdminOffersPage() {
         max_redemptions: form.max_redemptions === '' ? null : Number(form.max_redemptions),
         starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
         ends_at: form.ends_at ? new Date(form.ends_at).toISOString() : null,
+        // The server expands these into concrete item ids and stores those. Sending the
+        // FEATURES rather than the ids keeps the expansion in one place — the place that also
+        // knows which items exist.
+        applies_to_features: form.applies_to_features,
       };
       return (await getBrowserApiClient().post('/api/v1/admin/offers', body)).data;
     },
@@ -316,6 +390,81 @@ export default function AdminOffersPage() {
             </label>
           </div>
 
+          {/* ── WHAT THE CODE APPLIES TO ────────────────────────────────────────────────
+              Chosen per FEATURE. The server expands the choice into the item ids that exist
+              at that moment and stores those, so this is a snapshot rather than a standing
+              rule: a bundle added to the catalogue later falls outside every code created
+              before it, and the candidate pays full price on it rather than getting a
+              discount nobody priced. */}
+          <div className="mt-5 border-t border-border/60 pt-4">
+            <p className="text-sm font-medium text-foreground">Applies to</p>
+            <div className="mt-2 flex flex-wrap gap-4 text-sm">
+              {FEATURES.map((f) => (
+                <label key={f.id} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.applies_to_features.includes(f.id)}
+                    onChange={() => toggleFeature(f.id)}
+                  />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+            {/* SAID OUT LOUD, because the default is the dangerous one. An empty scope has
+                always meant every item, so an admin who ticks nothing has made a store-wide
+                code — not a narrow one. */}
+            <p className="mt-2 text-xs text-muted-foreground">
+              {form.applies_to_features.length === 0
+                ? 'Nothing ticked — this code will apply to EVERY product in the store.'
+                : `Only ${form.applies_to_features.length} of ${FEATURES.length} product types. Everything else stays at full price.`}
+            </p>
+          </div>
+
+          {/* ── WHAT EACH THING WILL COST ───────────────────────────────────────────────
+              The whole catalogue under these terms, priced by the server with the same
+              functions the till uses. This is the confirmation step: the admin sees the real
+              figures before the code exists, rather than after somebody has redeemed it. */}
+          <div className="mt-4 rounded-xl border border-border/60 bg-surface-elevated p-4">
+            <p className="text-sm font-medium text-foreground">Price after this code</p>
+            {preview.isLoading && (
+              <p className="mt-2 text-xs text-muted-foreground">Pricing…</p>
+            )}
+            {preview.isError && (
+              <p className="mt-2 text-xs text-accent-coral-ink">
+                Could not price these terms. Check the value.
+              </p>
+            )}
+            {preview.data && (
+              <ul className="mt-2 space-y-1.5">
+                {preview.data.map((row) => {
+                  const from = Math.round(row.price_paise / 100);
+                  const to = Math.round(row.charged_paise / 100);
+                  return (
+                    <li
+                      key={row.item_id}
+                      className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm"
+                    >
+                      <span className="min-w-0 text-muted-foreground">{row.name}</span>
+                      <span className="tabular-nums">
+                        {row.covered && to !== from ? (
+                          <>
+                            <span className="text-muted-foreground line-through">₹{from}</span>{' '}
+                            <span className="font-semibold text-accent-emerald-ink">₹{to}</span>
+                          </>
+                        ) : (
+                          /* Shown rather than hidden. A list of only the discounted items
+                             cannot answer "what did I NOT discount", which is the half of the
+                             question a scope is actually about. */
+                          <span className="text-muted-foreground">₹{from} — unchanged</span>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
           <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
             The code, its type and its value cannot be edited afterwards — changing what a
             code means once people have used it makes the redemption record disagree with the
@@ -326,9 +475,11 @@ export default function AdminOffersPage() {
             <Button
               onClick={() => create.mutate()}
               loading={create.isPending}
-              disabled={!form.code.trim()}
+              // Not creatable until the figures above have loaded. The button says "create
+              // with these prices", so it must not be pressable before there are any.
+              disabled={!form.code.trim() || preview.isLoading || !preview.data}
             >
-              Create offer
+              Create offer with these prices
             </Button>
           </div>
         </Card>

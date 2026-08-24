@@ -178,6 +178,20 @@ class TestNoNewDisclosure:
             "last_active_at",
             "ever_paid",
             "last_paid_at",
+            # ADDED DELIBERATELY. This set is pinned so that widening what a mailing list
+            # carries is a decision somebody makes, not something that happens.
+            #
+            # `purchases` is a COUNT, never a rupee total: /admin/revenue is the single
+            # reconciling money figure and has to dedupe double-grants, so a second per-user
+            # total here would be a number that disagrees with it beside a person's name.
+            #
+            # `best_score` is the one interview-DERIVED value on the row, and the boundary is
+            # the point: a score is a figure about an account; questions, answers and
+            # transcripts are the candidate's own words and stay out. The grep test below is
+            # what keeps that line where it is.
+            "purchases",
+            "scored_reports",
+            "best_score",
             "segment",
         }
 
@@ -313,9 +327,14 @@ async def population():
     from app.models.session import InterviewSession, SessionStatus
     from app.models.user import User
 
-    ids = {k: uuid.uuid4() for k in ("fresh", "dropper", "waiting", "payer", "overdrawn")}
+    ids = {
+        k: uuid.uuid4()
+        for k in ("fresh", "dropper", "waiting", "payer", "overdrawn", "unscored", "buyer")
+    }
     company_id, track_id = uuid.uuid4(), uuid.uuid4()
-    session_ids = {k: uuid.uuid4() for k in ("dropper_a", "dropper_b", "waiting", "payer")}
+    session_ids = {
+        k: uuid.uuid4() for k in ("dropper_a", "dropper_b", "waiting", "payer", "unscored")
+    }
     now = datetime.now(UTC)
 
     try:
@@ -386,11 +405,41 @@ async def population():
                                now - timedelta(days=2)))
             db.add(event(ids["dropper"], "interview", KIND_CONSUME, -1, now - timedelta(days=3)))
 
-            # `waiting`: finished, report exists, never paid. The ₹50 audience.
+            # `waiting`: finished, and the report is SCORED. Was described here as "the ₹50
+            # audience" — a report unlock that no longer exists at any price; reports come
+            # with the interview now.
             db.add(session_row(session_ids["waiting"], ids["waiting"], SessionStatus.COMPLETED,
                                now - timedelta(days=1)))
             db.add(report_row(session_ids["waiting"], ids["waiting"], now - timedelta(days=1)))
             db.add(event(ids["waiting"], "interview", KIND_CONSUME, -1, now - timedelta(days=1)))
+
+            # `unscored`: finished, a report row exists, and it was NEVER SCORED — the
+            # placeholder written when generation fails. This is what `report_waiting` means
+            # now, and it is a genuinely different email from the scored case: their answers
+            # are safe and the report completes itself on the next open, so there is nothing
+            # to sell them and something to reassure them about.
+            db.add(session_row(session_ids["unscored"], ids["unscored"], SessionStatus.COMPLETED,
+                               now - timedelta(days=2)))
+            db.add(
+                Report(
+                    id=uuid.uuid4(),
+                    session_id=session_ids["unscored"],
+                    user_id=ids["unscored"],
+                    overall_score=0.0,
+                    overall_score_label="Pending",
+                    executive_summary="Scoring did not finish.",
+                    readiness_level="needs_more_practice",
+                )
+            )
+            db.add(event(ids["unscored"], "interview", KIND_CONSUME, -1, now - timedelta(days=2)))
+
+            # `buyer`: paid and has never practised. The `customer` segment, which a scored
+            # report now outranks — so this is the account that keeps it reachable.
+            db.add(
+                event(
+                    ids["buyer"], "interview", KIND_PURCHASE, 5, now - timedelta(hours=3),
+                )
+            )
 
             # `payer`: finished, report exists, bought a five-pack.
             db.add(session_row(session_ids["payer"], ids["payer"], SessionStatus.COMPLETED,
@@ -539,10 +588,31 @@ class TestTheEndpointEndToEnd:
         # The dropper answered nothing in the fixture, so they are the "left before
         # answering" case — the one worth telling apart from a candidate who got partway.
         assert rows[ids["dropper"]].segment in ("left_before_answering", "stopped_partway")
-        assert rows[ids["waiting"]].segment == "report_waiting"
-        assert rows[ids["payer"]].segment == "customer"
+        # A SCORED REPORT NOW OUTRANKS EVERYTHING, including having paid. This fixture's
+        # report carries overall_score=71.5, so this account is somebody the product worked
+        # end to end for — which is the more useful thing to know about them than how they
+        # arrived. `report_waiting` kept its name and changed its meaning: a report row that
+        # was never scored. `unscored` below covers it.
+        assert rows[ids["waiting"]].segment == "report_generated"
+        assert rows[ids["waiting"]].scored_reports == 1
+        assert rows[ids["waiting"]].best_score == 71.5
+        assert rows[ids["unscored"]].segment == "report_waiting"
+        assert rows[ids["unscored"]].scored_reports == 0
+        assert rows[ids["unscored"]].best_score is None
+        # The payer ALSO has a scored report, so they land in `report_generated` too — and
+        # that is the ordering working rather than a surprise. Paid-ness is still on the row
+        # as its own columns, which is why nothing is lost by it not being the segment.
+        assert rows[ids["payer"]].segment == "report_generated"
         assert rows[ids["payer"]].ever_paid is True
+        assert rows[ids["payer"]].purchases == 1
         assert rows[ids["waiting"]].ever_paid is False
+
+        # WHO IS LEFT IN `customer`, now that a scored report outranks it: somebody who has
+        # paid and has not practised yet. A real and useful group — they are the ones to tell
+        # to start, not to sell to — and the reason the segment is still worth having.
+        assert rows[ids["buyer"]].segment == "customer"
+        assert rows[ids["buyer"]].ever_paid is True
+        assert rows[ids["buyer"]].scored_reports == 0
 
         # Most recently active first, and the account that has never done anything is last
         # rather than first — the order somebody actually mails in.
@@ -648,3 +718,52 @@ class TestQueryCount:
         # answering anything" — the same fixed cost for the whole list, and the assertion above
         # is the one that actually matters: it does not grow with the number of accounts.
         assert several.executions == 7
+
+
+class TestAScoredReportOutranksHavingPaid:
+    """
+    THE ORDERING QUESTION, pinned because getting it wrong is silent.
+
+    `customer` used to be first, on the reasoning that you do not send an offer to somebody who
+    has just bought. That was right while interviews had a free trial. They do not any more —
+    every interview is paid — so almost anybody with a report has also paid, and a
+    "report generated" segment placed below `customer` would be a bucket that is definitionally
+    empty. Nobody would notice: the screen would simply never show it.
+    """
+
+    def test_a_scored_report_wins_over_having_paid(self):
+        assert (
+            _segment_of(True, reports=1, completed=1, started=1, answers=8, scored_reports=1)
+            == "report_generated"
+        )
+
+    def test_paying_without_a_scored_report_is_still_a_customer(self):
+        # The segment stays reachable and stays useful: they have paid and not practised, so
+        # the email tells them to start rather than selling them anything.
+        assert (
+            _segment_of(True, reports=0, completed=0, started=0, answers=0, scored_reports=0)
+            == "customer"
+        )
+
+    def test_a_report_row_with_no_score_is_not_a_delivered_report(self):
+        # An unscored placeholder is written whenever generation fails. Counting it as a
+        # delivered report would tell the operator the product worked for somebody it did not.
+        assert (
+            _segment_of(False, reports=1, completed=1, started=1, answers=8, scored_reports=0)
+            == "report_waiting"
+        )
+
+    def test_the_new_segment_is_declared_above_customer(self):
+        # Precedence is the definition, and it lives in two places that must agree: the order
+        # of _SEGMENTS and the order of the tests in _segment_of. This pins the table.
+        keys = [seg for seg, _label, _happened, _pitch in _SEGMENTS]
+        assert keys.index("report_generated") < keys.index("customer")
+
+    def test_no_segment_still_advertises_a_report_unlock(self):
+        # Two segment strings named a Rs 49 report unlock that no longer exists at any price —
+        # report_access.py is gone and the report comes with the interview. Copy that describes
+        # a deleted paywall is how an operator ends up mailing an offer nobody can accept.
+        for _seg, label, happened, pitch in _SEGMENTS:
+            blob = f"{label} {happened} {pitch}".lower()
+            assert "unlock" not in blob, f"{label} still mentions an unlock"
+            assert "₹49" not in blob and "₹50" not in blob, f"{label} still names a price"

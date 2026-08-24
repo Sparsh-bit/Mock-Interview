@@ -1042,6 +1042,23 @@ class MarketingRow(BaseModel):
     last_active_at: datetime | None
     ever_paid: bool
     last_paid_at: datetime | None
+    #: How many purchases, not how much money.
+    #:
+    #: DELIBERATELY NOT A RUPEE TOTAL. /admin/revenue is the single reconciling money figure
+    #: and it has to dedupe against double-grants with DISTINCT ON; a second per-user total
+    #: computed here would be a rupee number that disagrees with the one on the revenue page,
+    #: and the wrong one would be believed because it is next to a name. A count is immune —
+    #: counting one payment twice cannot change "have they ever paid" or "when".
+    purchases: int
+    #: Reports that actually carry a score. An unscored placeholder is written whenever
+    #: generation fails, so a plain report count would say the product worked for somebody it
+    #: did not.
+    scored_reports: int
+    #: Their best scored report, or null. THE ONLY INTERVIEW-DERIVED NUMBER ON THIS ROW, and
+    #: the line is drawn there on purpose: a score is a figure about an account, and questions,
+    #: answers and transcripts are the candidate's own words. There is a test that greps this
+    #: module to keep that boundary honest.
+    best_score: float | None
     #: One of `_SEGMENTS`. Exactly one per row — see `_segment_of`.
     segment: str
 
@@ -1121,17 +1138,28 @@ class MarketingListResponse(BaseModel):
 #: whose purpose has been forgotten is a segment that quietly starts receiving the wrong email.
 _SEGMENTS: tuple[tuple[str, str, str, str], ...] = (
     (
+        "report_generated",
+        "Scored report delivered",
+        "Finished an interview and has a scored report. The product did the whole thing it "
+        "promises, end to end, for this account.",
+        "The best thing that can happen to a candidate here. Ask for a testimonial, and sell "
+        "the next interview against the score they already have.",
+    ),
+    (
         "customer",
         "Paid customer",
-        "Has paid for something at least once.",
+        "Has paid for something at least once, and has no scored report yet.",
         "Thank them, and tell them what is next.",
     ),
     (
         "report_waiting",
-        "Report ready, not unlocked",
-        "Finished an interview. The report is generated and waiting behind the ₹49 unlock — "
-        "they have seen the score and not the analysis.",
-        "Their personalised report is generated and locked — the ₹49 unlock.",
+        "Report started, never scored",
+        # WAS "Report ready, not unlocked", describing a ₹49 unlock that no longer exists —
+        # report_access.py is gone and reports are free with the interview. The segment itself
+        # survives because the STATE survives: a report row that never got a score.
+        "Finished an interview and a report row exists, but it was never scored. Their answers "
+        "are stored and the report completes itself the next time they open it.",
+        "Tell them to open their report — it finishes on its own now. Do not sell anything.",
     ),
     (
         "finished_no_report",
@@ -1164,7 +1192,12 @@ _SEGMENTS: tuple[tuple[str, str, str, str], ...] = (
 
 
 def _segment_of(
-    row_ever_paid: bool, reports: int, completed: int, started: int, answers: int
+    row_ever_paid: bool,
+    reports: int,
+    completed: int,
+    started: int,
+    answers: int,
+    scored_reports: int = 0,
 ) -> str:
     """
     The one segment this account belongs to.
@@ -1182,6 +1215,20 @@ def _segment_of(
     while their first question was still being written has had a completely different
     experience from one who answered eight and stopped, and they need opposite emails.
     """
+    # ── A SCORED REPORT OUTRANKS HAVING PAID, AND THAT ORDERING IS DELIBERATE ────────────
+    #
+    # `customer` used to be first, on the reasoning that you do not send an offer to somebody
+    # who has just bought. That was right when interviews had a free trial. They do not any
+    # more — every interview is paid — so ANYBODY with a report is almost certainly also
+    # `ever_paid`, and a "report generated" segment sitting below `customer` would be a bucket
+    # that is definitionally empty.
+    #
+    # It is also the more useful fact. "Has paid" says how they arrived; "has a scored report"
+    # says the product did the entire thing it promises for them, which is the group you ask
+    # for a testimonial and sell the next interview to. Paid-ness is still on the row as its
+    # own columns, so nothing is lost by not being the segment.
+    if scored_reports > 0:
+        return "report_generated"
     if row_ever_paid:
         return "customer"
     if reports > 0:
@@ -1279,6 +1326,8 @@ async def _activity_by_user(
             "answers": 0,
             "last_session_at": None,
             "reports": 0,
+            "scored_reports": 0,
+            "best_score": None,
             "last_report_at": None,
             "ledger_at": None,
             "purchases": 0,
@@ -1323,16 +1372,33 @@ async def _activity_by_user(
     for uid, n in answers:
         out[uid]["answers"] = int(n or 0)
 
+    # TWO MORE COLUMNS ON THE SAME GROUPED QUERY, not a second round trip. There are tests in
+    # test_admin_marketing.py asserting that no query here scales with the number of rows, and
+    # they exist because a per-user aggregate in a loop is exactly how this page starts timing
+    # out gradually enough to read as "the admin page is slow lately".
+    #
+    # A SCORED REPORT IS `overall_score > 0`, NOT MERELY A REPORT ROW. An unscored placeholder
+    # is written whenever generation fails, so counting rows would report a candidate whose
+    # scoring never finished as somebody the product worked for. The distinction is the whole
+    # point of the segment.
     reports = (
         await db.execute(
-            select(Report.user_id, func.count(), func.max(Report.created_at))
+            select(
+                Report.user_id,
+                func.count(),
+                func.max(Report.created_at),
+                func.count().filter(Report.overall_score > 0),
+                func.max(Report.overall_score).filter(Report.overall_score > 0),
+            )
             .where(Report.user_id.in_(user_ids))
             .group_by(Report.user_id)
         )
     ).all()
-    for uid, n, last_at in reports:
+    for uid, n, last_at, scored, best in reports:
         out[uid]["reports"] = int(n or 0)
         out[uid]["last_report_at"] = last_at
+        out[uid]["scored_reports"] = int(scored or 0)
+        out[uid]["best_score"] = float(best) if best is not None else None
 
     # WHY THE LEDGER IS READ FOR ACTIVITY AND NOT JUST FOR MONEY. `credit_events` is written
     # when somebody starts anything metered, so its latest row is a real activity timestamp —
@@ -1448,12 +1514,16 @@ async def marketing_list(
                 ),
                 ever_paid=ever_paid,
                 last_paid_at=a.get("last_paid_at"),
+                purchases=int(a.get("purchases") or 0),
+                scored_reports=int(a.get("scored_reports") or 0),
+                best_score=a.get("best_score"),
                 segment=_segment_of(
                     ever_paid,
                     int(a.get("reports") or 0),
                     int(a.get("sessions_completed") or 0),
                     int(a.get("sessions_started") or 0),
                     int(a.get("answers") or 0),
+                    int(a.get("scored_reports") or 0),
                 ),
             )
         )
