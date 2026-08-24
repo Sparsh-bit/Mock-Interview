@@ -30,7 +30,7 @@ from app.core.exceptions import AppError, NotFoundError
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.session import get_db
-from app.models.billing import CreditEvent, UserPlan
+from app.models.billing import CreditEvent, Offer, UserPlan
 from app.services.billing import captcha, offers, razorpay
 from app.services.billing.credits import (
     KIND_GRANT,
@@ -39,7 +39,13 @@ from app.services.billing.credits import (
     get_balance,
     grant,
 )
-from app.services.billing.plans import ITEMS, get_item, trial_allowance
+from app.services.billing.plans import (
+    FEATURE_LABELS,
+    FEATURE_LABELS_SINGULAR,
+    ITEMS,
+    get_item,
+    trial_allowance,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/billing", tags=["Billing"])
@@ -64,6 +70,33 @@ class ItemOut(BaseModel):
     price_paise: int
     name: str
     tagline: str
+    #: How many of THIS ITEM'S FEATURE the one-time trial includes — not how many of this
+    #: item. `interview_5` reports 0 because the trial includes zero interviews, not because
+    #: a bundle cannot be trialled.
+    #:
+    #: PUBLISHED BECAUSE THE PRICING PAGE WAS GUESSING, AND GUESSING WRONG. It printed "Free
+    #: on every account: 1 mock interview, 1 group discussion, 1 communication drill" as a
+    #: hardcoded list, against a TRIAL_ALLOWANCE of {interview: 0, gd: 0, communication: 1} —
+    #: so a visitor was promised two things `consume` refuses on the very first attempt. Copy
+    #: that offers what the ledger will not give is worse than copy that offers nothing: the
+    #: candidate finds out at the paywall, having already decided we are the kind of product
+    #: that says one thing and does another.
+    #:
+    #: CARRIED ON THE ITEM RATHER THAN AS A SIBLING OBJECT so this response stays a JSON
+    #: array. This route is public, unauthenticated and cached for the whole session by the
+    #: browser, and the frontend and backend deploy separately — turning the array into
+    #: `{items: [...], trial: {...}}` would blank the pricing page for every visitor in the
+    #: window between the two deploys. An additive field is ignored by an old client; a
+    #: changed shape is not. Same instinct as the savepoint around the banner read below.
+    trial_allowance: int
+    #: The plural human label for the feature — "mock interviews" — from the same table
+    #: /billing/me reads. Served rather than hardcoded so the one page that renders for
+    #: logged-out visitors names things the way the rest of the app does, and keeps doing so
+    #: when a feature is renamed. The trial copy needs a noun, and inventing it in the browser
+    #: is exactly how the false claim above survived for so long.
+    feature_label: str
+    #: Singular, because trial copy is almost always about one of something.
+    feature_label_singular: str
 
 
 class FeatureBalanceOut(BaseModel):
@@ -156,6 +189,12 @@ async def list_items():
     Unauthenticated on purpose — this is the pricing page, and requiring a login to see what
     something costs is the one place where auth actively loses you the sale. It exposes only
     what is already printed on the marketing site.
+
+    IT ALSO PUBLISHES THE TRIAL, for the same reason it publishes the prices: because the
+    alternative is the page stating a number from memory. See `ItemOut.trial_allowance` —
+    /pricing was advertising a free mock interview and a free group discussion that the
+    allowance has said were zero since interviews and GDs went paid. Both figures now come
+    from plans.py, which is the only thing that decides either.
     """
     return [
         ItemOut(
@@ -166,6 +205,12 @@ async def list_items():
             price_paise=i.price_paise,
             name=i.name,
             tagline=i.tagline,
+            trial_allowance=trial_allowance(i.feature),
+            # `.get` with the identifier as its own fallback: a feature added to the
+            # catalogue before somebody remembers the label table should read a little bare,
+            # not 500 the one public route on the site.
+            feature_label=FEATURE_LABELS.get(i.feature, i.feature),
+            feature_label_singular=FEATURE_LABELS_SINGULAR.get(i.feature, i.feature),
         )
         for i in ITEMS
     ]
@@ -195,6 +240,77 @@ async def my_balance(
         is_admin=balance.unlimited,
         ban_reason=plan_row.ban_reason if plan_row else None,
     )
+
+
+class ItemPriceOut(BaseModel):
+    """One item's price under one code — a row of the pricing page's live price list."""
+
+    item_id: str
+    feature: str
+    #: List price, always. Unchanged by the code, so the page has something to strike through.
+    original_paise: int
+    #: What this account would actually pay for it with this code applied. Equal to
+    #: `original_paise` for an item the code does not cover.
+    charged_paise: int
+    #: No payment at all — grant it directly, never open an order. Razorpay cannot take an
+    #: order below ₹1, so `charged_paise == 0` is a different code path and not merely a small
+    #: number; see offers.MIN_CHARGEABLE_PAISE.
+    is_free: bool
+    #: Whether the code applies to this item at all. False means the figures above are simply
+    #: the list price and the tile must render as untouched — not as a discount of zero, which
+    #: would put a "with code" badge on something the code will be refused for.
+    covered: bool
+
+
+def _priced_catalogue(offer: Offer) -> list[ItemPriceOut]:
+    """
+    Every item in the store, priced under one offer.
+
+    WHY THE SERVER ANSWERS THIS AND NOT THE PAGE. /pricing has to show a live price on every
+    tile the moment a code is applied, and revert them all when it is removed. It had exactly
+    two other ways to get those numbers, and both are worse:
+
+      * DO THE ARITHMETIC IN THE BROWSER. That puts a second implementation of what money
+        costs in the one place we can neither trust nor patch quickly, and
+        services/billing/offers.py opens by explaining why there is only ever one — two things
+        that compute a price will disagree, and the one that disagrees in the candidate's
+        favour is the one giving product away.
+      * FIRE ONE /quote PER ITEM. Six requests per Apply, against a bucket of ten per hour
+        that /quote SHARES with /checkout — deliberately, because an unlimited quote endpoint
+        is an oracle for guessing private codes. A candidate who tried two codes would then be
+        unable to buy anything for an hour, which is the worst possible thing for a rate limit
+        to do.
+
+    So the question "what does this code do to the store" costs one request and is answered by
+    the same functions checkout and the webhook use.
+
+    SCOPE IS HONOURED RATHER THAN IGNORED. An item outside the offer's `applies_to` comes back
+    `covered: false` at its ORIGINAL price, because that is what the candidate will actually be
+    charged for it. Discounting the whole page and letting `quote` refuse at the till is the
+    same bug in the opposite direction as the one that made the Apply box stop naming an item
+    at all — a promise on the tile that the next request breaks.
+
+    A MISCONFIGURED CODE RAISES HERE, from `charge_for`, rather than pricing as "no discount":
+    an unknown `kind` has no defensible price, and 400 with "that code is misconfigured" at
+    Apply is strictly better than a page full of full prices under a code the candidate was
+    told would work. `validate_code` alone never noticed, so that failure used to surface only
+    when they pressed Buy.
+    """
+    priced: list[ItemPriceOut] = []
+    for item in ITEMS:
+        covered = offers.covers(offer, item)
+        charged = offers.charge_for(offer, item) if covered else item.price_paise
+        priced.append(
+            ItemPriceOut(
+                item_id=item.id,
+                feature=item.feature,
+                original_paise=item.price_paise,
+                charged_paise=charged,
+                is_free=charged == 0,
+                covered=covered,
+            )
+        )
+    return priced
 
 
 class QuoteRequest(BaseModel):
@@ -232,6 +348,12 @@ async def quote_item(
 
     Raises the same OfferError messages, which are written to be actionable — "this offer has
     expired" rather than "invalid code".
+
+    TWO SHAPES, ONE ENDPOINT, and the difference is whether an item was named. Named, it
+    answers about that item. Unnamed — the Apply box — it validates the code and returns
+    `prices`, the whole catalogue priced under it, so the page can light up every tile from a
+    single request. The rate limit is the reason those are one endpoint rather than seven; see
+    `_priced_catalogue`.
     """
     # NO ITEM: validate the code alone. This is the Apply box, where the candidate has not
     # chosen yet — everything that is true regardless of what they buy is checked, and which
@@ -253,6 +375,18 @@ async def quote_item(
             "kind": offer.kind,
             "value": offer.value,
             "applies_to": list(offer.applies_to or []),
+            # EVERY ITEM'S REAL FIGURE, so the page does not have to guess one.
+            #
+            # The three fields above describe the OFFER; these describe the STORE under it.
+            # They exist because "the rupee figure depends on which item" is not a reason the
+            # page cannot show it — it is a reason the SERVER has to compute all of them, and
+            # the two alternatives (discount maths in the browser, or one request per tile
+            # against a bucket shared with checkout) are set out in `_priced_catalogue`.
+            #
+            # It also retires a real landmine on the page: `original_paise` above is 0 here,
+            # because no item was named, and the free-order sheet once struck through the
+            # wrong price by reading it. Nothing needs to infer a price from a zero any more.
+            "prices": _priced_catalogue(offer),
         }
 
     item = get_item(request.item_id)

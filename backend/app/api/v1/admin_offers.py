@@ -3,6 +3,7 @@ Offers and promo codes, from the admin side — api/v1/admin_offers.py
 
 GET    /admin/offers          — every code, with how many times each has been used
 POST   /admin/offers          — create one
+POST   /admin/offers/preview  — what each item would cost under terms not yet created
 PATCH  /admin/offers/{id}     — edit it, including the on/off switch
 DELETE /admin/offers/{id}     — remove one that has never been used
 
@@ -25,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
@@ -47,7 +49,7 @@ from app.services.billing.banners import (
     validate_banner,
 )
 from app.services.billing.offers import KINDS
-from app.services.billing.plans import ITEMS
+from app.services.billing.plans import FEATURES, ITEMS, items_for
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin/offers", tags=["Admin — Offers"])
@@ -55,14 +57,161 @@ router = APIRouter(prefix="/admin/offers", tags=["Admin — Offers"])
 _ITEM_IDS = {i.id for i in ITEMS}
 
 
-class OfferIn(BaseModel):
-    """A new offer, or a set of edits to one."""
+def _expand_features(features: Sequence[str]) -> list[str]:
+    """
+    The item ids a set of chosen features covers, as of right now.
+
+    A SCOPE IS CHOSEN PER FEATURE AND STORED PER ITEM, in the `applies_to` column that has
+    always been there. An admin thinks "this code is for drills"; the column has only ever
+    meant "these item ids", so the feature is expanded at creation time into
+    ["communication_1", "communication_10"] and that list is what gets written.
+
+    WHY NOT A COLUMN OF ITS OWN. Migrations here are applied BY HAND against Supabase
+    (docs/DEPLOY.md), so a new column is a window in which every money path selects a column
+    the database does not have yet. `applies_to` exists, is JSONB, is already read by the one
+    place a scope is enforced, and already means exactly this.
+
+    THE EXPANSION IS A SNAPSHOT, NOT A RULE, and this is the accepted cost of that choice.
+    Choosing "interviews" today records the interview items that exist TODAY. Add a third
+    interview bundle to plans.ITEMS tomorrow and every coupon created before it falls outside
+    it — the new id is simply not in the list, so the code is refused on that bundle and the
+    candidate pays full price rather than being handed a discount nobody priced. The failure
+    lands on the safe side, but a feature-scoped code is genuinely not a standing rule about a
+    feature: it is a frozen list of ids. A code that must cover everything forever is the one
+    with an EMPTY scope, and the empty case is the only one immune to this.
+
+    An empty `features` therefore expands to nothing, which leaves `applies_to` empty — and an
+    empty `applies_to` has always meant "every item". So "no feature chosen" keeps meaning
+    "applies to everything", exactly as every offer created before this field behaves.
+    """
+    return [item.id for f in features for item in items_for(f)]
+
+
+def _features_covered(applies_to: Sequence[str]) -> list[str]:
+    """
+    Which features a stored id list represents — the inverse of `_expand_features`.
+
+    DERIVED ON READ RATHER THAN STORED ALONGSIDE. Writing the chosen features down next to the
+    expanded ids would be two records of one decision, and the two can drift: the ids are what
+    a discount is actually computed against, so a features column that disagreed with them
+    would be describing a coupon nobody has. This reads the ids and says what they add up to.
+
+    IT ONLY CLAIMS A FEATURE WHEN THE ROUND TRIP IS EXACT — every item of that feature is
+    present, AND the features together re-expand to precisely what is stored. Otherwise it
+    returns nothing and `applies_to` is the only honest answer. Two real cases land there: a
+    hand-picked list from before this field existed ("interview_1" alone is NOT "applies to
+    interviews", and saying so would promise a discount on the five-pack that does not exist),
+    and a feature-scoped code that a newly-added item has left behind — see the snapshot note
+    above, where the code quietly stops covering the whole feature and the admin screen should
+    stop saying that it does.
+    """
+    if not applies_to:
+        # Unrestricted. Empty means the same thing on the way out as on the way in: every
+        # feature, which is what every offer that predates this field is.
+        return []
+    stored = set(applies_to)
+    covered: list[str] = [f for f in FEATURES if {i.id for i in items_for(f)} <= stored]
+    if set(_expand_features(covered)) != stored:
+        return []
+    return covered
+
+
+class OfferTerms(BaseModel):
+    """
+    The fields that decide money: what the discount is, and what it applies to.
+
+    SHARED BY CREATION AND BY THE PRICE PREVIEW, as one definition, so the preview cannot
+    price something other than what creation would make. The preview exists to tell an admin
+    what a code will do before it is live; a preview that validated or normalised its inputs
+    differently from `POST ""` would be a preview of a different offer, which is worse than no
+    preview at all because it would be believed.
+    """
+
+    kind: str
+    value: int = Field(default=0, ge=0)
+    #: Which features the code covers. EMPTY MEANS EVERY FEATURE — see `_expand_features`,
+    #: and note that the empty case is also the only scope that survives a new item being
+    #: added to the catalogue.
+    applies_to_features: list[str] = Field(default_factory=list, max_length=len(FEATURES))
+    #: Item ids named outright. Predates `applies_to_features` and is kept because it can say
+    #: things a feature cannot — "the five-pack only" — and because requests already send it.
+    #:
+    #: ON `OfferTerms` RATHER THAN ON `OfferIn`, because it decides money, which is what this
+    #: model is defined to hold. It also has to be here for the price preview to be honest: a
+    #: preview that ignored an item allowlist would quote a discount on items the created code
+    #: would refuse.
+    applies_to: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, v: str) -> str:
+        if v not in KINDS:
+            raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+        return v
+
+    @field_validator("applies_to_features")
+    @classmethod
+    def _real_features(cls, v: list[str]) -> list[str]:
+        # REJECTED, NEVER IGNORED, and the direction of the failure is the reason. A misspelt
+        # feature expands to no items, an empty `applies_to` means "every item", so silently
+        # dropping "comunication" would not produce a narrow code — it would produce an
+        # unrestricted one. The admin would have discounted the entire catalogue while
+        # believing they had limited the code to drills.
+        unknown = [f for f in v if f not in FEATURES]
+        if unknown:
+            raise ValueError(
+                f"unknown features: {', '.join(unknown)} — expected {', '.join(FEATURES)}"
+            )
+        # Normalised to catalogue order and de-duplicated, so ["gd", "gd"] and ["gd"] store a
+        # byte-identical scope and `_features_covered` reads either back the same way.
+        chosen = set(v)
+        return [f for f in FEATURES if f in chosen]
+
+    @field_validator("value")
+    @classmethod
+    def _sane_value(cls, v: int, info) -> int:
+        kind = (info.data or {}).get("kind")
+        if kind == "percent" and not (1 <= v <= 100):
+            raise ValueError("a percent offer needs a value between 1 and 100")
+        return v
+
+
+    @field_validator("applies_to")
+    @classmethod
+    def _real_items(cls, v: list[str]) -> list[str]:
+        # A typo here silently makes the code apply to nothing, which presents to the
+        # candidate as the code being refused on every single item they try.
+        unknown = [i for i in v if i not in _ITEM_IDS]
+        if unknown:
+            raise ValueError(f"unknown item ids: {', '.join(unknown)}")
+        return v
+
+    @property
+    def scope(self) -> list[str]:
+        """
+        The item ids to store: the chosen features expanded, plus any ids named outright.
+
+        A UNION, because the two fields say the same kind of thing — `applies_to` IS an item
+        allowlist and a feature is shorthand for a slice of one, so a request naming both wants
+        both. Sorted rather than left in the order the fields happened to mention them, so two
+        equivalent requests store an identical list and `_features_covered` reads them back
+        identically.
+
+        Both empty stays empty, which is the pre-existing "applies to every item".
+
+        THE PREVIEW READS THIS SAME PROPERTY. That is what makes "what the admin was shown"
+        and "what was written to the column" the same computation rather than two that agree
+        today.
+        """
+        wanted = set(self.applies_to) | set(_expand_features(self.applies_to_features))
+        return sorted(wanted)
+
+
+class OfferIn(OfferTerms):
+    """A new offer."""
 
     code: str = Field(min_length=3, max_length=40)
     label: str = Field(min_length=1, max_length=120)
-    kind: str
-    value: int = Field(default=0, ge=0)
-    applies_to: list[str] = Field(default_factory=list, max_length=32)
     enabled: bool = True
     is_public: bool = False
     starts_at: datetime | None = None
@@ -76,31 +225,6 @@ class OfferIn(BaseModel):
         # Stored and compared uppercase, so "diwali25" and "DIWALI25" cannot become two
         # offers — one of which would then have its own separate single-use record.
         return v.strip().upper()
-
-    @field_validator("kind")
-    @classmethod
-    def _known_kind(cls, v: str) -> str:
-        if v not in KINDS:
-            raise ValueError(f"kind must be one of {', '.join(KINDS)}")
-        return v
-
-    @field_validator("applies_to")
-    @classmethod
-    def _real_items(cls, v: list[str]) -> list[str]:
-        # A typo here silently makes the code apply to nothing, which presents to the
-        # candidate as "that code does not apply to this item" on every item they try.
-        unknown = [i for i in v if i not in _ITEM_IDS]
-        if unknown:
-            raise ValueError(f"unknown item ids: {', '.join(unknown)}")
-        return v
-
-    @field_validator("value")
-    @classmethod
-    def _sane_value(cls, v: int, info) -> int:
-        kind = (info.data or {}).get("kind")
-        if kind == "percent" and not (1 <= v <= 100):
-            raise ValueError("a percent offer needs a value between 1 and 100")
-        return v
 
     def check_window(self) -> None:
         """An offer that ends before it starts can never be used by anybody."""
@@ -136,6 +260,11 @@ class OfferOut(BaseModel):
     kind: str
     value: int
     applies_to: list[str]
+    #: The features this code covers, DERIVED from `applies_to` rather than stored — see
+    #: `_features_covered`. Empty here means one of two things and the pair has to be read
+    #: together: with an empty `applies_to` it is "every feature", and with a non-empty one it
+    #: is a scope no set of whole features describes, where the item list is the truth.
+    applies_to_features: list[str]
     enabled: bool
     is_public: bool
     starts_at: datetime | None
@@ -208,6 +337,7 @@ async def list_offers(
             kind=o.kind,
             value=o.value,
             applies_to=list(o.applies_to or []),
+            applies_to_features=_features_covered(list(o.applies_to or [])),
             enabled=o.enabled,
             is_public=o.is_public,
             starts_at=o.starts_at,
@@ -261,7 +391,9 @@ async def create_offer(
         label=request.label,
         kind=request.kind,
         value=request.value,
-        applies_to=request.applies_to,
+        # The chosen features, expanded into the concrete ids that exist at this moment. See
+        # `_expand_features` for why this is a snapshot and what that costs.
+        applies_to=request.scope,
         enabled=request.enabled,
         is_public=request.is_public,
         starts_at=request.starts_at,
@@ -288,6 +420,11 @@ async def create_offer(
         kind=offer.kind,
         value=offer.value,
         public=offer.is_public,
+        # Both halves, because the stored ids are the snapshot and the features are what the
+        # admin believed they were choosing. When a scope later looks wrong, the question is
+        # which of the two moved.
+        features=request.applies_to_features,
+        scope=offer.applies_to,
         by=str(current_user.user_id),
     )
     return {"id": str(offer.id), "code": offer.code}
@@ -315,6 +452,79 @@ class OfferPatch(BaseModel):
     #: Editing what a code MEANS after people have used it makes the redemption record a lie
     #: — the rows say what was charged under the old terms, and the offer would claim
     #: different ones. Switch it off and make a new code instead.
+
+
+class PreviewRow(BaseModel):
+    """What one catalogue item would cost under terms that do not exist yet."""
+
+    item_id: str
+    feature: str
+    name: str
+    quantity: int
+    price_paise: int
+    charged_paise: int
+    #: False when the code's scope does not reach this item. `charged_paise` is then simply the
+    #: full price — the row is present so the admin sees what is NOT discounted, which is the
+    #: half of the answer a list of covered items cannot give.
+    covered: bool
+
+
+@router.post("/preview", summary="What each item would cost under terms not yet created")
+async def preview_offer(
+    request: OfferTerms,
+    current_user: AdminUser,
+) -> list[PreviewRow]:
+    """
+    Price the whole catalogue under terms an admin is still typing.
+
+    WHY IT EXISTS. "40% off, drills only" is a sentence; ₹19 becoming ₹11 is a decision. An
+    admin creating a code is choosing a number they cannot see, and the two mistakes this
+    prevents are both expensive and both silent: a percentage that rounds to a price nobody
+    intended, and a scope that covers more than it reads like it does — an empty feature list
+    means EVERY feature, so "I did not tick anything" and "I discounted the entire catalogue"
+    are the same request.
+
+    IT TAKES `OfferTerms`, THE SAME MODEL CREATION TAKES, and that is the whole point. A
+    preview with its own parsing or its own validation would be a preview of a different
+    offer, which is worse than no preview because it would be believed. The scope shown here
+    is `request.scope` — byte-identical to what `POST ""` would write into `applies_to`.
+
+    IT TOUCHES NO DATABASE. There is deliberately no `db` dependency: nothing is looked up and
+    nothing could be written even by accident. The `Offer` it builds is never added to a
+    session; it exists only to be handed to the same two functions the real quote path uses.
+    """
+    from app.services.billing import offers  # noqa: PLC0415
+
+    # Unpersisted, and constructed with exactly the three fields that decide money, so the
+    # figures below come from the same arithmetic a live code would get. Building a
+    # lookalike object with its own fields would be a second definition of an offer.
+    draft = Offer(
+        code="PREVIEW",
+        label="preview",
+        kind=request.kind,
+        value=request.value,
+        applies_to=request.scope,
+    )
+
+    rows: list[PreviewRow] = []
+    for item in ITEMS:
+        # TWO SEPARATE QUESTIONS, ASKED SEPARATELY. `charge_for` answers "how much under these
+        # terms" and deliberately does not consider scope; `covers` answers "does this code
+        # reach this item at all". Collapsing them would price an out-of-scope item at the
+        # discount and show the admin a saving the till would refuse.
+        covered = offers.covers(draft, item)
+        rows.append(
+            PreviewRow(
+                item_id=item.id,
+                feature=item.feature,
+                name=item.name,
+                quantity=item.quantity,
+                price_paise=item.price_paise,
+                charged_paise=offers.charge_for(draft, item) if covered else item.price_paise,
+                covered=covered,
+            )
+        )
+    return rows
 
 
 @router.patch("/{offer_id}", summary="Edit an offer, including turning it on or off")

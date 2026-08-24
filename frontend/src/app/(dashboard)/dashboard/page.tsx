@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { PromoBanner } from '@/components/PromoBanner';
-import { FeatureNudge } from '@/components/FeatureNudge';
+import { NudgeDeck } from '@/components/dashboard/NudgeDeck';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { DataError } from '@/components/ui/data-error';
@@ -119,9 +119,13 @@ export default function DashboardPage() {
         <PromoBanner />
       </motion.div>
 
-      {/* Nudge to try a round they haven't done yet (communication / GD) */}
+      {/* THE NUDGE DECK, replacing the single FeatureNudge card.
+          Same job — point somebody at the round they have not tried — but keyed on their real
+          figures rather than on a static sentence, so it can also say "0 interviews left, one
+          is Rs 49" and "your average is 54 across three interviews" to the people those are
+          true for. It renders nothing when nothing is true, exactly as the old card did. */}
       <motion.div variants={fadeUp}>
-        <FeatureNudge />
+        <NudgeDeck />
       </motion.div>
 
       {/* Stats grid — participation, deliberately BELOW the rating. Hours practised
@@ -298,7 +302,7 @@ export default function DashboardPage() {
  *
  * Renders nothing at all until there is a rating. An empty ladder on day one is a
  * reminder that you have done nothing, which is the opposite of the intended effect —
- * the FeatureNudge below already handles a first-time user.
+ * the nudge deck below already handles a first-time user.
  */
 function StandingBanner() {
   const { data } = useProgress();

@@ -203,7 +203,7 @@ async def quote(
     if (why := _window_message(offer, now)) is not None:
         raise OfferError(why)
 
-    if offer.applies_to and item.id not in offer.applies_to:
+    if not covers(offer, item):
         raise OfferError("That code does not apply to this item.")
 
     # Already used by this account. Checked here for the message; the unique index in
@@ -258,6 +258,25 @@ def _apply(offer: Offer, price_paise: int) -> int:
     return min(charged, price_paise)
 
 
+def covers(offer: Offer, item: Item) -> bool:
+    """
+    Does this offer apply to this item at all?
+
+    ONE PLACE, because the question is now asked twice. `quote` asks it to refuse an item
+    outside the code's scope, and the pricing page's per-item price list asks it to mark that
+    item as untouched and show the full price. Spelling `offer.applies_to and item.id not in
+    offer.applies_to` in two files is how a store ends up advertising a discount the till then
+    refuses — the same class of divergence this whole module exists to prevent for the price
+    itself.
+
+    AN EMPTY `applies_to` MEANS EVERY ITEM, not none. That is the ordinary case — most codes
+    are store-wide — so an empty list has to read as "unrestricted" rather than as a scope
+    that happens to contain nothing. Getting that backwards would silently switch off every
+    existing code in the table.
+    """
+    return not offer.applies_to or item.id in offer.applies_to
+
+
 def charge_for(offer: Offer, item: Item) -> int:
     """
     What this item costs under this offer, recomputed from the offer row.
@@ -266,6 +285,13 @@ def charge_for(offer: Offer, item: Item) -> int:
     than trusting anything that travelled through the payment gateway: the order notes name
     which offer was claimed, and this decides what that offer means. Same arithmetic the
     quote used, so a legitimate payment matches exactly.
+
+    Also used by /billing/quote to price the WHOLE catalogue under one code, so the pricing
+    page can show a live figure on every tile. That path deliberately calls this rather than
+    reimplementing the sums in the browser: a second implementation of what money costs, in
+    the one place we can neither trust nor patch quickly, is how the page comes to advertise
+    a number the till disagrees with. Pair it with `covers` — this answers "how much", and
+    scope is a separate question this function does not ask.
     """
     return _apply(offer, item.price_paise)
 
