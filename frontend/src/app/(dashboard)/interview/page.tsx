@@ -10,8 +10,7 @@ import { toast } from 'sonner';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { InterviewReadiness } from '@/components/interview/InterviewReadiness';
 import { CreditMeter } from '@/components/billing/CreditMeter';
-import { DriveCTA } from '@/components/DriveCTA';
-import { parseIsTechnical } from '@/lib/interview/drive';
+import { parseIsTechnical } from '@/lib/interview/params';
 import { FOCUS_SUGGESTIONS, addFocusTerm, focusMentions } from '@/lib/interview/focus';
 import { cn } from '@/lib/utils';
 import { ProgressBar } from '@/components/ui/progress-bar';
@@ -52,11 +51,6 @@ function InterviewSetup() {
   const requestedFocus = searchParams.get('focus');
   const requestedTechnical = parseIsTechnical(searchParams.get('isTechnical'));
   const requestedAutostart = searchParams.get('autostart') === '1';
-  // Any deep link at all. Used to hide the drive shortcut below — offering a link to the page
-  // you are already standing on, pre-filled the way it is already pre-filled, is noise.
-  const arrivedFromDeepLink =
-    !!requestedTrackId || !!requestedCompany || !!requestedProgram || requestedAutostart;
-
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [company, setCompany] = useState('');
   /*
@@ -450,11 +444,6 @@ function InterviewSetup() {
           setup form and only then learns they have no interviews left has lost the one thing
           they came with. */}
       <CreditMeter />
-      {/* The drive shortcut, for somebody who walked to the generic setup form without knowing
-          there was a one-click path to the interview they are actually sitting. Hidden when any
-          deep-link param is present, because in that case this IS the pre-filled page and the
-          card would be a link to where you already are. */}
-      {!arrivedFromDeepLink && <DriveCTA />}
       <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
         <div className="mb-8">
           <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Start a New Mock Interview</h1>

@@ -33,7 +33,6 @@ import { describe, expect, it } from 'vitest';
 const SRC = join(__dirname, '..');
 const HOOKS = readFileSync(join(SRC, 'hooks/useData.ts'), 'utf8');
 const PAGE = readFileSync(join(SRC, 'app/(dashboard)/report/[id]/page.tsx'), 'utf8');
-const NOTICE = readFileSync(join(SRC, 'components/ReportReadyNotice.tsx'), 'utf8');
 
 /** Source with comments stripped — prose about a rule is not the rule. */
 function code(src: string): string {
@@ -109,33 +108,6 @@ describe('the page generates at most once, and only when there is nothing', () =
     const stripped = code(PAGE);
     expect(stripped).toMatch(/onRetry=\{\(\) => generate\.mutate\(\)\}/);
     expect(stripped).toMatch(/onClick=\{\(\) => generate\.mutate\(\)\}/);
-  });
-});
-
-describe('the dashboard notice tells them without spending anything', () => {
-  it('is a link and calls nothing', () => {
-    const stripped = code(NOTICE);
-    expect(stripped).toMatch(/<Link/);
-    expect(stripped).not.toMatch(/mutate\(|\/generate|useGenerateReport/);
-  });
-
-  it('targets exactly the candidates whose scoring failed but whose answers exist', () => {
-    const stripped = code(NOTICE);
-    expect(stripped).toMatch(/status === 'completed'/);
-    // Answers exist, so the analysis page has something to show — without this the card would
-    // point somebody at an empty page.
-    expect(stripped).toMatch(/questions_asked > 0/);
-    // Null means no report row; 0 means the unscored placeholder. Both are "not scored yet".
-    expect(stripped).toMatch(/overall_score === null/);
-    expect(stripped).toMatch(/overall_score === 0/);
-  });
-
-  it('renders nothing for everybody else', () => {
-    expect(code(NOTICE)).toMatch(/if \(!pending\) return null;/);
-  });
-
-  it('says the answers are saved, which is the thing they are worried about', () => {
-    expect(NOTICE).toMatch(/saved/i);
   });
 });
 

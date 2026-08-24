@@ -11,9 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
-import { DriveCTA } from '@/components/DriveCTA';
 import { PromoBanner } from '@/components/PromoBanner';
-import { ReportReadyNotice } from '@/components/ReportReadyNotice';
 import { FeatureNudge } from '@/components/FeatureNudge';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
@@ -98,31 +96,27 @@ export default function DashboardPage() {
         <StandingBanner />
       </motion.div>
 
-      {/* The named drive, above the general nudge and above the participation stats.
-          Somebody sitting a real interview in a few days has one thing they want from this
-          page, and it is not their hours-practised total. It renders nothing at all when the
-          Cognizant track is not in the catalogue or when it has been dismissed, so on any
-          other day this slot collapses and the layout below is unchanged. */}
-      {/* AN UNFINISHED REPORT, ABOVE EVERYTHING ELSE ON THE PAGE.
-          Somebody whose scoring pass failed saw 0/100 and left, with no way to know their
-          answers were safe or that finishing it would now work. They are the largest group in
-          the admin marketing view, and this is the one thing on this page that is urgent for
-          them. Renders nothing for everybody else. */}
-      <motion.div variants={fadeUp}>
-        <ReportReadyNotice />
-      </motion.div>
+      {/* THE PROMO STRIP, HIGHEST ON THE PAGE.
+          It is the only element here whose value depends on being SEEN — a code nobody
+          notices is a code nobody redeems. It renders nothing at all when there is no live
+          public offer with an image, which is most days, so this slot collapses and
+          everything below is unchanged.
 
-      {/* THE PROMO STRIP, ABOVE THE DRIVE CARD.
-          Highest on the page because it is the only element here whose value depends on being
-          SEEN — a code nobody notices is a code nobody redeems. It renders nothing at all when
-          there is no live public offer with an image, which is most days, so this slot
-          collapses and everything below is unchanged. */}
+          WHAT USED TO SIT HERE, AND WHY IT NO LONGER DOES:
+
+            THE UNFINISHED-REPORT NOTICE. It existed because a failed scoring pass left
+            candidates on 0/100 with no way to know their answers were safe. That population
+            is the one the report fixes were for — reports now complete themselves, and a
+            partial one finishes on the next open — so a permanent banner about it is a
+            standing apology for a bug that is gone.
+
+            THE NAMED-DRIVE CARD. A card naming one company's drive on one date is the most
+            perishable thing a dashboard can carry: the day after, it is an advert for
+            something that has already happened. Its module went with it — the only part worth
+            keeping was the strict ?isTechnical= parse, now lib/interview/params.ts, which the
+            setup page still reads so an existing share link keeps working. */}
       <motion.div variants={fadeUp}>
         <PromoBanner />
-      </motion.div>
-
-      <motion.div variants={fadeUp}>
-        <DriveCTA />
       </motion.div>
 
       {/* Nudge to try a round they haven't done yet (communication / GD) */}
