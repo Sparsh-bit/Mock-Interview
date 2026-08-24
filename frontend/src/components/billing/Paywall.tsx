@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api/errors';
 // user needs it to work.
 import { buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { BuyPanel } from '@/components/billing/BuyPanel';
 
 /**
  * What the candidate sees when their allowance runs out — components/billing/Paywall.tsx
@@ -53,38 +54,87 @@ const FEATURE_COPY: Record<string, string> = {
   communication: 'communication drills',
 };
 
-export function Paywall({ info, className }: { info: PaywallInfo; className?: string }) {
+//: The singular is needed now that the heading can say "Buy a mock interview to continue".
+const FEATURE_COPY_SINGULAR: Record<string, string> = {
+  interview: 'mock interview',
+  gd: 'group discussion',
+  communication: 'communication drill',
+};
+
+export function Paywall({
+  info,
+  className,
+  onPurchased,
+}: {
+  info: PaywallInfo;
+  className?: string;
+  /** Called once an item lands on the account, so the caller can retry what was blocked. */
+  onPurchased?: () => void;
+}) {
   const label = FEATURE_COPY[info.feature] ?? 'sessions';
-  const planName = info.planId === 'free' ? 'Free' : info.planId;
+  const one = FEATURE_COPY_SINGULAR[info.feature] ?? 'session';
+  //: Nothing was ever free for this feature, so nothing has been "used up". See below.
+  const neverHadAny = info.allowance <= 0;
 
   return (
     <Card variant="elevated" padding="lg" className={className}>
-      <div className="flex flex-col items-center gap-4 text-center">
+      <div className="flex flex-col items-center gap-5 text-center">
         <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10">
           <Lock className="h-5 w-5 text-primary" aria-hidden />
         </div>
 
         <div className="space-y-1.5">
           <h2 className="text-lg font-semibold text-foreground">
-            {/* The number, not a euphemism. It is checkable against what they remember. */}
-            You have used all {info.allowance} {label} on the {planName} plan
+            {/*
+              * TWO SENTENCES, BECAUSE THERE ARE TWO SITUATIONS AND ONE OF THEM WAS NONSENSE.
+              *
+              * This read "You have used all {allowance} {label} on the {planId} plan" for
+              * everybody. Once interviews and group discussions went paid their trial
+              * allowance became 0, so the heading a blocked candidate actually saw was "You
+              * have used all 0 mock interviews on the Free plan" — a sentence that is both
+              * untrue and slightly insulting, since they had not used anything.
+              *
+              * The number is still shown where there IS one, because it is checkable against
+              * what they remember doing, which is the whole reason it was put there.
+              */}
+            {neverHadAny
+              ? `Buy a ${one} to continue`
+              : `You have used all ${info.allowance} ${label}`}
           </h2>
           <p className="text-sm text-muted-foreground">
-            Your allowance resets each month. Upgrade now to keep practising today.
+            {/*
+              * "Your allowance resets each month" was here and there is no monthly reset —
+              * this product does not have one and never did. Telling a blocked candidate to
+              * wait for a reset that will not come is the worst of both: they do not buy, and
+              * they come back to find nothing changed.
+              */}
+            {neverHadAny
+              ? 'Nothing is lost — pick one below and carry straight on. What you buy does not expire.'
+              : 'Buy more below and carry straight on. What you buy does not expire.'}
           </p>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Link href="/pricing" className={buttonVariants({ variant: 'primary' })}>
-            See plans
-          </Link>
-          {/* Quizzes are free on every tier, so this is a real alternative rather than a
-              consolation link — somebody blocked from an interview can still do something
-              useful in the next five minutes. */}
-          <Link href="/quiz" className={buttonVariants({ variant: 'outline' })}>
-            Take a free quiz instead
-          </Link>
-        </div>
+        {/*
+          * THE PURCHASE HAPPENS HERE, on the page they were stopped on.
+          *
+          * "See plans" used to be the whole answer: leave, browse six products, find the one
+          * you were already trying to use, come back. Every step there is a place to stop.
+          */}
+        <BuyPanel feature={info.feature} onPurchased={onPurchased} className="text-left" />
+
+        {/*
+          * WHAT USED TO BE THE SECOND BUTTON. "Take a free quiz instead" was offered as a real
+          * alternative, and it is not one: somebody who came to sit a mock interview has not
+          * been helped by being pointed at a quiz, and offering it at the moment of purchase
+          * is an invitation to do the free thing instead of the thing they came for. The link
+          * to the full store stays, for anybody who wants a different product or a bundle.
+          */}
+        <Link
+          href="/pricing"
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          See everything in the store
+        </Link>
       </div>
     </Card>
   );

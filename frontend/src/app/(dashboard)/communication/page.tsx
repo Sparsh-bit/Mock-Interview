@@ -304,7 +304,15 @@ export default function CommunicationPage() {
   if (paywall) {
     return (
       <div className="mx-auto mt-10 max-w-2xl space-y-6">
-        <Paywall info={paywall} />
+        <Paywall
+          info={paywall}
+          /* CLEARING IT IS THE RETRY. The paywall is shown because the SERVER refused with a
+             402; once an item lands on the account that refusal is stale, so dismissing the
+             wall puts the candidate back on the page they were stopped on with the thing they
+             just bought available. Nothing is auto-started — buying and starting are two
+             decisions, and the second one is theirs. */
+          onPurchased={() => setPaywall(null)}
+        />
         <div className="text-center">
           <button
             type="button"
