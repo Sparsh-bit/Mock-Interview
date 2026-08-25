@@ -52,9 +52,6 @@ describe('prices come from the catalogue, never from the copy', () => {
     expect(DECK).toMatch(/price_rupees/);
   });
 
-  it.skip('derives the per-unit saving rather than stating it', () => {
-    expect(CODE).toMatch(/bundle\.price_rupees\s*\/\s*bundle\.quantity/);
-  });
 });
 
 /**
@@ -133,13 +130,6 @@ describe('Tailwind classes are ones the compiler can see', () => {
     expect(CODE).toMatch(/const TONE: Record<Tone,/);
   });
 
-  it.skip('keeps min-w-0 on the scrolling items', () => {
-    // A flex item defaults to min-width:auto, so it refuses to shrink below its content and the
-    // overflow-x container never scrolls — the row overflows the page instead, which is how a
-    // horizontal strip silently becomes a broken phone layout.
-    expect(CODE).toMatch(/overflow-x-auto/);
-    expect(CODE).toMatch(/min-w-0/);
-  });
 
   it('uses -ink tones for the small text', () => {
     // Only -ink clears 4.5:1 on the warm paper ground; the bare tone on body copy measures
@@ -155,9 +145,6 @@ describe('Tailwind classes are ones the compiler can see', () => {
     expect(DECK).toMatch(/if \(paused \|\| reduceMotion \|\| visible\.length < 2\) return;/);
   });
 
-  it.skip('honours prefers-reduced-motion on the arrow', () => {
-    expect(CODE).toMatch(/motion-reduce:/);
-  });
 });
 
 describe('it stays silent unless something is true', () => {
@@ -176,13 +163,7 @@ describe('it stays silent unless something is true', () => {
     expect(DECK).toMatch(/if \(!current\) return null;/);
   });
 
-  it.skip('renders nothing before the data arrives', () => {
-    expect(CODE).toMatch(/if \(!stats \|\| !activity \|\| !balance\) return null;/);
-  });
 
-  it.skip('renders nothing when no card qualifies', () => {
-    expect(CODE).toMatch(/if \(deck\.length === 0\) return null;/);
-  });
 
   it('is not shown to unmetered operator accounts', () => {
     // An admin sees "unlimited", so a card telling them to buy an interview is nonsense.

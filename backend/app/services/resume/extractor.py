@@ -211,8 +211,12 @@ def unreadable_share(text: str) -> float:
 
 def _extract_pdf(data: bytes) -> str:
     """Extract text from every page of a PDF."""
-    from PyPDF2 import PdfReader  # noqa: PLC0415
-    from PyPDF2.errors import PdfReadError  # noqa: PLC0415
+    # pypdf, NOT PyPDF2. PyPDF2 is unmaintained and its last release predates several
+    # parser hardening fixes — which matters here more than almost anywhere else in the
+    # codebase, because this function is handed a file an anonymous user uploaded and asked
+    # to parse it. pypdf is the same project's maintained successor with a compatible API.
+    from pypdf import PdfReader  # noqa: PLC0415
+    from pypdf.errors import PdfReadError  # noqa: PLC0415
 
     try:
         reader = PdfReader(io.BytesIO(data))

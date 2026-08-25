@@ -89,7 +89,7 @@ class ValidationError(AppError):
     def __init__(self, message: str, fields: dict[str, Any] | None = None) -> None:
         super().__init__(
             message=message,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             code="VALIDATION_ERROR",
             details={"fields": fields} if fields else {},
         )
@@ -198,7 +198,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     ) -> ORJSONResponse:
         logger.warning("request_validation_error", errors=exc.errors(), path=request.url.path)
         return _error_response(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "VALIDATION_ERROR",
             "Request validation failed.",
             {"fields": exc.errors()},

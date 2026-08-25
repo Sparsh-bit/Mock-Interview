@@ -926,7 +926,7 @@ async def upload_offer_banner(
         # unacceptable, and the message is written for the person reading it.
         raise AppError(
             message=verdict.reason,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             code="BANNER_REJECTED",
         )
 

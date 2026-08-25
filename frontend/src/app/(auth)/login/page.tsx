@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { getBrowserApiClient } from '@/lib/api';
+import { safeRedirect } from '@/lib/auth/safe-redirect';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -84,7 +85,11 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get('redirectTo') || '/dashboard';
+  // VALIDATED, NOT TRUSTED. This value comes from the query string, and it used to be handed
+  // straight to router.push — so `?redirectTo=https://evil.example` bounced the candidate off
+  // the site the instant their password was accepted, from a link that is genuinely ours up to
+  // the query string. See lib/auth/safe-redirect.ts.
+  const redirectTo = safeRedirect(searchParams.get('redirectTo'));
   const { signIn } = useAuth();
 
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({

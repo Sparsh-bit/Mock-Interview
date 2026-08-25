@@ -18,7 +18,6 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
 
 from app.api.v1.reports import mark_request_served
 from app.core.config import settings
@@ -144,7 +143,16 @@ def create_app() -> FastAPI:
         docs_url="/api/docs" if not settings.is_production else None,
         redoc_url="/api/redoc" if not settings.is_production else None,
         openapi_url="/api/openapi.json" if not settings.is_production else None,
-        default_response_class=ORJSONResponse,
+        # NO `default_response_class=ORJSONResponse`, and it is not an oversight. FastAPI now
+        # serialises to JSON bytes directly whenever a route declares a return type or a
+        # response_model — which every route here does — and its own deprecation notice says
+        # that path is faster than routing through a custom response class. Keeping it emitted
+        # a FastAPIDeprecationWarning per route, eleven of the seventeen warnings in a full
+        # test run, which is how a real warning ends up invisible among the noise.
+        #
+        # Error responses still construct ORJSONResponse explicitly in core/exceptions.py, and
+        # that is unaffected: this setting was only ever the DEFAULT for routes that named
+        # none.
         lifespan=lifespan,
     )
 

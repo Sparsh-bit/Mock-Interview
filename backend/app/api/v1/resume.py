@@ -190,7 +190,7 @@ async def upload_resume(
     # recreate the original bug in a new form: the candidate believes their resume
     # is in use while the interviewer never sees a word of it.
     #
-    # IN A WORKER THREAD, because PyPDF2 and python-docx are pure CPU and pure
+    # IN A WORKER THREAD, because pypdf and python-docx are pure CPU and pure
     # blocking. A 10 MB PDF with a pathological text layer holds the event loop for
     # seconds, and while it does, every other request this worker is serving —
     # interview turns, quiz starts, report polls — is frozen behind it. One upload
