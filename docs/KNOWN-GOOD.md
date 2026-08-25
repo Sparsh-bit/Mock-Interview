@@ -1,15 +1,17 @@
-# Known-good baseline — before the security pass
+# Known-good baseline
 
-This is the state of InterviewOS immediately before penetration testing begins. It exists so
-that when the pen test breaks something, there is a written record of what "working" looked
-like and *why each thing is the way it is* — so a fix restores the behaviour rather than
-merely silencing the finding.
+The state of InterviewOS, and *why each thing is the way it is* — so that a change made under
+pressure restores the behaviour rather than merely silencing the symptom.
+
+Written before the first penetration pass and updated after it. Two rounds are now recorded
+below; the numbers in [How to tell if something is broken](#how-to-tell-if-something-is-broken)
+include their tests.
 
 **Read this before reverting anything.** Several things in here look like bugs and are
 deliberate; several others look deliberate and are the scars of real incidents. Both kinds are
 marked.
 
-- Baseline commit: `d6d2e0b`, plus the hardening described in [Fixed on the way in](#fixed-on-the-way-in)
+- Baseline: `4867027` (round one) plus round two, unpushed at the time of writing
 - Related: [[index]] · [[prompt]] · [[AI-COST-MODEL]] · [[DEPLOY]]
 
 ---
@@ -20,7 +22,7 @@ Run all of it. Anything other than these numbers means something moved.
 
 ```bash
 docker-compose up -d            # Postgres + Redis. Tests ERROR ~70 times without it.
-cd backend && uv run pytest -q --no-cov      # 1761 passed, 2 skipped, 6 warnings
+cd backend && uv run pytest -q --no-cov      # 1835 passed, 2 skipped, 6 warnings
 cd backend && uv run ruff check . && uv run mypy app
 cd frontend && npm test -- --run             # 672 passed
 cd frontend && npx tsc --noEmit && npx next lint && npm run build
@@ -170,6 +172,70 @@ Worth knowing before writing a fix, because it is unusual and deliberate:
   test fails. This is not ceremony: in the last session alone, three guards passed while the
   thing they claimed to protect was broken (a count-based assertion with slack, a regex
   matching anywhere in the file, and a window that reached a neighbouring element's attribute).
+
+---
+
+## The security pass
+
+Two rounds, 74 attacks, all kept as tests so "run it again" is one command.
+
+`test_pentest_authz.py` · `test_pentest_idor.py` · `test_pentest_money.py` ·
+`test_pentest_uploads.py` · `test_pentest_surface.py`
+
+### What was actually vulnerable
+
+**Path traversal into another candidate's storage folder.** `resumes/{user_id}/{file_id}/
+{filename}` was an f-string over the caller's multipart filename, and that user_id segment is
+the tenancy boundary in storage. `../../{other_user}/{their_file_id}/resume.pdf` writes into
+somebody else's folder from an ordinary authenticated upload. Fixed by `safe_filename` — a
+positive character allowlist, because the list of things that mean "parent directory" to some
+backend (`..`, `%2e%2e`, `....//`, a backslash, an overlong UTF-8 sequence) is not one anybody
+can finish writing.
+
+**Open redirect after login**, closed in the previous commit — see [Fixed on the way in](#fixed-on-the-way-in).
+
+### The trap worth remembering
+
+The admin sweep found **zero admin routes** and only its vacuity assertion caught it. This
+FastAPI version does not flatten an included router into the parent list — it keeps an
+`_IncludedRouter` that resolves lazily — so `app.routes` reports **5 routes for an app serving
+90**. Any security sweep walking `app.routes` finds nothing, passes, and reads as full coverage
+forever. `_walk` follows the wrappers; the fixture asserts a floor of 15 admin routes.
+
+### Held under attack
+
+- All 18 admin routes refuse a normal account — including with `is_admin`, `role: admin` and
+  `app_metadata.role` in the token. Admin is read from the users table, never the claims.
+- Forged tokens: wrong secret, expired, `alg: none`, no subject, wrong audience, seven
+  malformed headers. All 401, no 500s.
+- IDOR with **real** ids: report, session, transcript, answer key, and both write paths
+  (generating a report against another session, answering into one).
+- Payments: request models cannot name a price; extra fields are dropped not assigned; forged
+  signature and crafted item ids refused.
+- Uploads: oversized, empty, zip-bomb DOCX, and non-PDF bytes labelled `application/pdf`.
+
+### Not findings — recorded so they are not re-investigated
+
+- **CSRF.** There is no ambient credential: no route reads or sets a cookie, and a Bearer token
+  is not attached automatically. A session cookie would make every state-changing route
+  forgeable, so the *absence* is pinned rather than the mitigation.
+- **Rate-limit bypass.** Limits key on the authenticated user id, never on an address.
+  `request.client.host` is read in two places, both audit records.
+- **SSRF.** Nothing fetches a user-supplied URL.
+- **Stored XSS.** `linkedin_url`, `github_url` and `avatar_url` are stored unvalidated — safe
+  only because nothing binds them to an `href` and nothing uses `dangerouslySetInnerHTML`.
+  Both absences are pinned; the day either changes, the unvalidated storage becomes the bug.
+- **Answer-key leak.** The practice page requests it; the server withholds it until that user
+  has answered that question.
+- **Secrets in the bundle.** None. The only `NEXT_PUBLIC` value shipped is the Turnstile site
+  key.
+- **The public report.** Deliberately narrow — no session id, no transcript, no roadmap.
+
+### Still untested
+
+Round three, if you want it: RLS verified against the live Supabase rather than local
+Postgres, concurrency/race conditions on the credit ledger, and the Razorpay webhook replay
+path.
 
 ---
 

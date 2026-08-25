@@ -10,6 +10,7 @@ PATCH  /api/v1/resume/{id}/primary  — Set as primary resume
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -57,6 +58,66 @@ _resume_upload_rate_limit = rate_limiter(
     key_builder=lambda user_id: CacheKeys.rate_limit_ai(user_id),
     action="uploading a resume",
 )
+
+#: Characters allowed to survive into a stored filename. Everything else becomes an
+#: underscore. An allowlist rather than a blocklist of dangerous characters, because the list
+#: of things that mean "parent directory" to some storage backend is not one anybody can
+#: finish writing — `..`, `%2e%2e`, `....//`, a backslash on Windows, an overlong UTF-8
+#: encoding. A positive set has no such tail.
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: Object keys are not unbounded, and a caller controls this segment.
+_MAX_FILENAME = 120
+
+
+def safe_filename(raw: str | None) -> str:
+    """
+    A caller's filename, reduced to something that cannot be a path.
+
+    THE TENANCY BOUNDARY IN STORAGE IS A DIRECTORY NAME. Files are written to
+    `resumes/{user_id}/{file_id}/{filename}`, so the user_id segment is what keeps one
+    candidate's resumes away from another's — and a filename containing `..` climbs straight
+    out of it. `../../{someone_else}/{their_file_id}/resume.pdf` is a write into another
+    account's folder, from an ordinary authenticated upload.
+
+    Supabase's storage API may well normalise some of this on the way in. That is not a defence
+    anybody should rely on: it is a third-party behaviour, undocumented for this purpose, and
+    it would move a security property out of this codebase and into a vendor's URL parser.
+
+    THE BASENAME IS TAKEN FIRST, on both separators. A backslash is a directory separator on
+    Windows and an ordinary character on Linux, so a value that is one segment on the server
+    can be two on a client that later downloads it.
+    """
+    name = (raw or "").strip()
+    # Both separators, and only the last segment. `resume/../../evil.pdf` is not a filename.
+    #
+    # REDUNDANT TODAY, AND KEPT ON PURPOSE. The allowlist below already replaces `/` and `\`
+    # with underscores, so removing this line changes no behaviour and no test catches it —
+    # verified by mutating it away. It stays because it expresses the intent independently of
+    # that coincidence: the day somebody widens `_SAFE_FILENAME` to permit a separator (for
+    # nested keys, say), this is what keeps the leaf a leaf.
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]
+    name = _SAFE_FILENAME.sub("_", name)
+    # A name made only of dots is `.` or `..`, both of which are directory references rather
+    # than files. Leading dots are also how a file hides itself on a unix listing.
+    name = name.lstrip(".")
+    name = name[:_MAX_FILENAME]
+    # Everything can legitimately be stripped away — a filename of `../` leaves nothing — and
+    # an empty leaf would make the object key end in a slash, which is a directory marker in
+    # object storage rather than a file.
+    return name or "resume"
+
+
+def storage_path_for(user_id, file_id, filename: str | None) -> str:
+    """
+    Where one upload is stored.
+
+    A FUNCTION RATHER THAN AN F-STRING AT THE CALL SITE, so the sanitisation cannot be
+    forgotten by the next person to add an upload, and so it can be tested against hostile
+    filenames without live storage credentials.
+    """
+    return f"resumes/{user_id}/{file_id}/{safe_filename(filename)}"
+
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -235,7 +296,7 @@ async def upload_resume(
     # whole event loop for the duration of a multi-megabyte HTTP PUT — not just this
     # request, every request this worker had in flight.
     file_id = uuid.uuid4()
-    storage_path = f"resumes/{current_user.user_id}/{file_id}/{file.filename}"
+    storage_path = storage_path_for(current_user.user_id, file_id, file.filename)
 
     def _store_file() -> None:
         _storage_client().storage.from_(settings.SUPABASE_STORAGE_BUCKET_RESUMES).upload(
