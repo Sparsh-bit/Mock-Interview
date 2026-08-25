@@ -26,6 +26,7 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
 
 - [[DEPLOY]] — the current deployment runbook: environment variables, the settings that
 - [[KNOWN-GOOD]] — the state everything was in before the security pass, and why each thing is that way
+- [[COMPLIANCE]] — DPDP Act and adjacent regimes: what the code does, and the gaps
   actually matter, and what breaks when each one is wrong.
 - [[DEPLOYMENT]] — the older, longer infrastructure write-up. Overlaps [[DEPLOY]]; where they
   disagree, [[DEPLOY]] is newer.
