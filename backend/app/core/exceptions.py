@@ -18,7 +18,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse
 
 logger = structlog.get_logger(__name__)
 
@@ -134,8 +134,12 @@ def _error_response(
     message: str,
     details: dict | None = None,
     headers: dict[str, str] | None = None,
-) -> ORJSONResponse:
-    return ORJSONResponse(
+) -> JSONResponse:
+    # JSONResponse, not ORJSONResponse. FastAPI deprecated the orjson response class outright,
+    # and it was still firing here after the app-level default was removed — five warnings in a
+    # single test file. Nothing is lost: an error payload is a dict of strings and a status
+    # code, with none of the datetime/UUID/numpy types orjson exists to serialise faster.
+    return JSONResponse(
         status_code=status_code,
         content={
             "error": {
@@ -182,7 +186,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers on the FastAPI app. Call in main.py."""
 
     @app.exception_handler(AppError)
-    async def handle_app_error(request: Request, exc: AppError) -> ORJSONResponse:
+    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         logger.warning(
             "app_error",
             code=exc.code,
@@ -195,7 +199,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
         request: Request, exc: RequestValidationError
-    ) -> ORJSONResponse:
+    ) -> JSONResponse:
         logger.warning("request_validation_error", errors=exc.errors(), path=request.url.path)
         return _error_response(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -207,7 +211,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def handle_unhandled_exception(
         request: Request, exc: Exception
-    ) -> ORJSONResponse:
+    ) -> JSONResponse:
         logger.exception(
             "unhandled_exception",
             path=request.url.path,
