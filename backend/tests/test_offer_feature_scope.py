@@ -206,3 +206,66 @@ class TestThePricePreview:
         assert "db.add" not in src
         assert "flush" not in src
         assert "commit" not in src
+
+
+class TestAFlatCodeMustBeAbleToExcludeBundles:
+    """
+    THE CASE THAT LOSES MONEY, and it is not hypothetical — it was on screen.
+
+    A flat ₹25 code showed: 1 mock interview ₹49 → ₹25, and 5 mock interviews ₹199 → ₹25.
+    Five interviews for half the price of one. The scope was chosen per FEATURE, and a feature
+    holds both the single and the bundle, so "mock interviews" could not mean "the ₹49 one".
+
+    A percentage is safe at any scope — 50% off a five-pack is still five-pack money. A FLAT
+    price is not: it charges bundle-many sessions at single-item money. So the scope has to be
+    expressible per item, and this pins that it is.
+    """
+
+    def _singles(self):
+        return [i.id for i in ITEMS if i.quantity == 1]
+
+    def test_a_flat_code_scoped_to_singles_leaves_bundles_alone(self):
+        singles = self._singles()
+        assert singles, "no single-quantity items — the catalogue changed under this test"
+        terms = OfferTerms(kind="fixed", value=2_500, applies_to=singles)
+        rows = asyncio.run(preview_offer(terms, current_user=None))  # type: ignore[arg-type]
+        for row in rows:
+            item = next(i for i in ITEMS if i.id == row.item_id)
+            if item.quantity == 1:
+                assert row.covered is True
+                # `min(flat, list)`: a flat price never charges MORE than the item costs, so
+                # the ₹19 drill stays ₹19 under a ₹25 code rather than becoming a surcharge.
+                assert row.charged_paise == min(2_500, item.price_paise)
+            else:
+                assert row.covered is False, (
+                    f"{item.id} is a bundle and this code reaches it — a flat ₹25 on a "
+                    f"₹{item.price_paise // 100} pack sells {item.quantity} sessions for ₹25"
+                )
+                assert row.charged_paise == item.price_paise
+
+    def test_the_unscoped_flat_code_is_the_dangerous_one(self):
+        # Not forbidden — "₹99 flat on the five-pack" is a legitimate thing to want, and only
+        # the person typing it knows which they meant. Pinned so the danger is visible in a
+        # test rather than only in a screenshot: with no scope, a flat price reaches everything.
+        rows = asyncio.run(
+            preview_offer(OfferTerms(kind="fixed", value=2_500), current_user=None)  # type: ignore[arg-type]
+        )
+        bundles = [r for r in rows if next(i for i in ITEMS if i.id == r.item_id).quantity > 1]
+        assert bundles, "no bundles in the catalogue"
+        assert all(r.charged_paise == 2_500 for r in bundles)
+
+    def test_a_percentage_is_safe_at_any_scope(self):
+        # The contrast that makes the flat case worth a warning in the UI: a percentage keeps
+        # the bundle proportionally more expensive than the single, whatever it covers.
+        rows = asyncio.run(
+            preview_offer(OfferTerms(kind=KIND_PERCENT, value=50), current_user=None)  # type: ignore[arg-type]
+        )
+        by_id = {r.item_id: r for r in rows}
+        for feature in FEATURES:
+            items = sorted(items_for(feature), key=lambda i: i.quantity)
+            if len(items) < 2:
+                continue
+            single, bundle = items[0], items[-1]
+            assert by_id[bundle.id].charged_paise > by_id[single.id].charged_paise, (
+                f"under a percentage, the {feature} bundle must still cost more than one"
+            )

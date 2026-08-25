@@ -1,9 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowRight, Mic, Users, X, FileText, Zap, Timer } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  ArrowRight,
+  MessageSquare,
+  Mic,
+  Sparkles,
+  Target,
+  TrendingUp,
+  X,
+  Zap,
+} from 'lucide-react';
 
 import { useActivity } from '@/hooks/useActivity';
 import { useBalance, useStoreItems } from '@/hooks/useBilling';
@@ -110,214 +119,268 @@ function dismissed(key: string): boolean {
   }
 }
 
+
+//: How long one card holds the floor before the next takes it.
+//:
+//: NINE SECONDS, and the number is the whole difference between an advert and an irritation.
+//: Short enough that a second message gets seen at all; long enough to read a line of Hinglish
+//: and act on it without the card changing under the cursor. It pauses entirely on hover and
+//: on keyboard focus, so it can never move while somebody is reading or reaching for it.
+const ROTATE_MS = 9_000;
+
+/**
+ * The dashboard's one advert — components/dashboard/NudgeDeck.tsx
+ *
+ * WHAT IT IS FOR. Interviews and group discussions are paid and quizzes are not, so the single
+ * most valuable thing this page can do for the business is tell somebody who has only ever
+ * taken quizzes that the other two exist and what they cost. Doing that in a banner nobody
+ * reads is the same as not doing it.
+ *
+ * WHY IT ROTATES RATHER THAN STACKING. Three cards down the page is three things to ignore;
+ * one card that changes is one thing to glance at. It also lets the deck carry a message for
+ * every state a candidate can be in without any of them costing vertical space.
+ *
+ * WHY IT PAUSES. An advert that moves while you are reading it is worse than one that does not
+ * move at all — you lose the line you were on and there is no way back. Hover and focus both
+ * stop the timer, and `prefers-reduced-motion` stops it starting.
+ *
+ * EVERY PRICE COMES FROM THE SERVER. `useStoreItems` is the catalogue, and plans.py is the
+ * only thing that decides what anything costs. A rupee figure typed into this file is a figure
+ * that goes stale the day a price changes, silently, in the most public place in the product —
+ * there is a test that fails on a hardcoded one.
+ */
 export function NudgeDeck() {
   const { data: stats } = useUserStats();
   const { data: activity } = useActivity(100);
   const { data: balance } = useBalance({ enabled: true });
   const { data: items } = useStoreItems();
   const [hidden, setHidden] = useState<string[]>([]);
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
 
-  // Everything below reads real state, so nothing renders until it has arrived. A card that
-  // appears and then changes its number a moment later reads as a guess.
-  if (!stats || !activity || !balance) return null;
-  if (balance.unlimited) return null; // Operator accounts are not sold to.
+  /*
+   * GATED ON WHAT THE CARD ACTUALLY READS, which is the balance and the catalogue.
+   *
+   * It used to wait for `stats` and `activity` too, and that is why nothing was appearing: any
+   * one of four queries still in flight — or failing, which on a dashboard is routine — meant
+   * the whole deck rendered null and no advert was ever seen. `stats` and `activity` only
+   * refine WHICH card is chosen, so they are read defensively below and never block.
+   */
+  const ready = !!balance && !!items;
+  const unlimited = balance?.unlimited === true;
 
-  const done = new Set(activity.map((a) => a.activity_type));
+  const done = new Set((activity ?? []).map((a) => a.activity_type));
   const left = (feature: string) =>
-    balance.features.find((f) => f.feature === feature)?.remaining ?? 0;
+    balance?.features.find((f) => f.feature === feature)?.remaining ?? 0;
 
+  const priceOf = (feature: string) =>
+    items?.find((i) => i.feature === feature && i.quantity === 1)?.price_rupees ?? null;
+
+  const interviewRs = priceOf('interview');
+  const gdRs = priceOf('gd');
+  const commLeft = left('communication');
   const interviewsLeft = left('interview');
   const gdLeft = left('gd');
 
-  const single = items?.find((i) => i.feature === 'interview' && i.quantity === 1);
-  const bundle = items?.find((i) => i.feature === 'interview' && i.quantity > 1);
-  const perUnit = bundle ? Math.round(bundle.price_rupees / bundle.quantity) : null;
-
-  const candidates: Nudge[] = [];
-
-  /*
-   * OUT OF INTERVIEWS — the only card that is unambiguously an advert, and it is shown to the
-   * one person for whom it is useful information rather than a pitch: somebody with none left.
-   * The saving is computed from the catalogue rather than written down, because a price
-   * written into the frontend is a price that goes stale silently.
-   */
-  if (interviewsLeft === 0 && single && bundle && perUnit) {
-    candidates.push({
-      key: 'buy-interview',
-      tone: 'indigo',
-      icon: Zap,
-      hook: 'Interview khatam. Ek aur chahiye?',
-      fact:
-        `You have 0 mock interviews left. One is ₹${single.price_rupees}; ` +
-        `the pack of ${bundle.quantity} works out at ₹${perUnit} each.`,
-      cta: 'See plans',
-      href: '/pricing',
-      weight: 100,
-    });
-  }
-
-  /*
-   * PAID FOR AND UNUSED. The opposite problem, and worth more to the candidate than to us: an
-   * interview sitting in their account is practice they have already bought and not taken.
-   */
-  if (interviewsLeft > 0) {
-    candidates.push({
-      key: 'use-interview',
-      tone: 'amber',
-      icon: Timer,
-      hook: 'Pade hue hain. Use kar lo.',
-      fact:
-        `${interviewsLeft} mock interview${interviewsLeft === 1 ? '' : 's'} on your account, ` +
-        'unused. Twelve questions and a scored report each.',
-      cta: 'Start one',
-      href: '/interview',
-      weight: 80,
-    });
-  }
-
-  /*
-   * A LOW AVERAGE, STATED PLAINLY. The pitch here is not "improve" — it is that a real panel
-   * never tells you WHY, and the report does. That is the actual product difference, and it
-   * is the sentence DESIGN-RULES.md asks for: one somebody believes, not a feature summary.
-   */
-  if (stats.completed_sessions > 0 && stats.average_score !== null && stats.average_score < 60) {
-    candidates.push({
-      key: 'low-average',
-      tone: 'coral',
-      icon: FileText,
-      hook: 'Panel ye nahi batayega.',
-      fact:
-        `Your average is ${Math.round(stats.average_score)}/100 across ` +
-        `${stats.completed_sessions} interview${stats.completed_sessions === 1 ? '' : 's'}. ` +
-        'The report breaks it down question by question, with the answer you should have given.',
-      cta: 'Open your reports',
-      href: '/report',
-      weight: 90,
-    });
-  }
-
-  /*
-   * THE TWO ROUNDS PEOPLE SKIP. Both are real placement rounds and both are the ones
-   * candidates avoid precisely because they are spoken rather than written. The facts are the
-   * measured mechanics, not adjectives.
-   */
-  if (!done.has('group_discussion')) {
-    candidates.push({
-      key: 'try-gd',
-      tone: 'plum',
-      icon: Users,
-      hook: 'GD mein bolne ka mauka hi nahi milta?',
-      fact:
-        'Eight minutes against three AI panelists who interrupt and argue back, then scored on ' +
-        'contribution and clarity.' +
-        (gdLeft > 0 ? ` You have ${gdLeft} left.` : ''),
-      cta: 'Try a group discussion',
-      href: '/gd',
-      weight: 70,
-    });
-  }
-
-  if (!done.has('communication')) {
-    candidates.push({
-      key: 'try-communication',
-      tone: 'teal',
-      icon: Mic,
-      hook: 'Bolte waqt "matlab" kitni baar aata hai?',
-      fact:
-        'The communication round counts every filler, times your pauses to the second and ' +
-        'measures your pace in words per minute.',
-      cta: 'Speak an answer',
-      href: '/communication',
-      weight: 60,
-    });
-  }
-
-  const deck = candidates
-    .filter((n) => !hidden.includes(n.key) && !dismissed(n.key))
-    .sort((a, b) => b.weight - a.weight)
-    .slice(0, 3);
-
-  if (deck.length === 0) return null;
-
-  const hide = (key: string) => {
-    setHidden((prev) => [...prev, key]);
-    try {
-      localStorage.setItem(DISMISS_PREFIX + key, 'true');
-    } catch {
-      // Dismissal that cannot be persisted still works for this page view. Not worth an error.
+  const deck: Nudge[] = [];
+  if (ready && !unlimited && interviewRs !== null && gdRs !== null) {
+    /*
+     * THE ORDER IS THE PITCH, and it is ordered by how close somebody is to buying rather than
+     * by what we would most like to sell. Somebody holding a free communication drill is one
+     * completed round away from having a reason to care about the paid ones; somebody who has
+     * just finished an interview has already proved they will.
+     */
+    if (commLeft > 0 && !done.has('communication')) {
+      deck.push({
+        key: 'free-comm',
+        tone: 'teal',
+        icon: Mic,
+        hook: 'Ek communication test free hai 👀',
+        fact: 'Free hai. Dekho aap kahan khade ho — pace, clarity aur filler words par score.',
+        cta: 'Take the free test',
+        href: '/communication',
+        weight: 0,
+      });
     }
-  };
+    if (interviewsLeft === 0) {
+      deck.push({
+        key: 'buy-interview',
+        tone: 'indigo',
+        icon: Zap,
+        hook: 'HR se pehle AI interviewer ko face karo 🎤',
+        fact: `Twelve questions, a two-person panel and a full scored report. ₹${interviewRs}.`,
+        cta: 'Start an interview',
+        href: '/pricing#apply-offer',
+        weight: 1,
+      });
+      deck.push({
+        key: 'no-free-trial',
+        tone: 'indigo',
+        icon: Sparkles,
+        hook: 'Interview ka free trial nahi hai 😏',
+        fact: `Real practice starts at ₹${interviewRs} — and unlimited quizzes stay free.`,
+        cta: 'See what you get',
+        href: '/pricing',
+        weight: 3,
+      });
+    }
+    if (gdLeft === 0) {
+      deck.push({
+        key: 'buy-gd',
+        tone: 'plum',
+        icon: MessageSquare,
+        hook: 'GD mein sirf sunna nahi, bolna bhi padta hai 😭',
+        fact: `Eight minutes against three panellists who argue back, then scored. ₹${gdRs}.`,
+        cta: 'Practise a GD',
+        href: '/pricing#apply-offer',
+        weight: 2,
+      });
+    }
+    if (done.has('quiz') && !done.has('interview')) {
+      deck.push({
+        key: 'quiz-to-interview',
+        tone: 'amber',
+        icon: TrendingUp,
+        hook: 'Quiz se knowledge check. AI interview se confidence.',
+        fact: `Quizzes stay free and unlimited. The interview is where you find out if you can say it out loud — ₹${interviewRs}.`,
+        cta: 'Try an interview',
+        href: '/pricing',
+        weight: 4,
+      });
+    }
+    if (done.has('interview')) {
+      deck.push({
+        key: 'placement-soon',
+        tone: 'coral',
+        icon: Target,
+        hook: 'Placement aa rahi hai. Ready ho jao.',
+        fact: `Another interview is ₹${interviewRs}, and a GD is ₹${gdRs}. Both scored, both today.`,
+        cta: 'Add a round',
+        href: '/pricing',
+        weight: 5,
+      });
+    }
+  }
+
+  const visible = deck
+    .filter((n) => !hidden.includes(n.key) && !dismissed(n.key))
+    .sort((a, b) => a.weight - b.weight);
+
+  /*
+   * THE ROTATION.
+   *
+   * Cleared and rebuilt whenever the deck size, the pause state or the index changes, so there
+   * is never more than one timer alive — two would advance the card twice as fast and look
+   * like a flicker. A single-card deck never starts one at all: rotating between one thing and
+   * itself is a re-render for no reason.
+   */
+  const reduceMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  useEffect(() => {
+    if (paused || reduceMotion || visible.length < 2) return;
+    const t = setTimeout(() => setIndex((i) => (i + 1) % visible.length), ROTATE_MS);
+    return () => clearTimeout(t);
+  }, [paused, reduceMotion, visible.length, index]);
+
+  // The deck shrinks when a card is dismissed, so an index held from before can point past the
+  // end. Clamped at read time rather than in an effect: an effect would render one empty frame
+  // first, which is a visible flash of nothing.
+  const current = visible[index % Math.max(1, visible.length)];
+  if (!current) return null;
+
+  const tone = TONE[current.tone];
+  const Icon = current.icon;
 
   return (
-    /*
-     * min-w-0 ON THE ITEMS IS LOAD-BEARING. A flex item defaults to min-width:auto, so it
-     * refuses to shrink below its content and the scroll container never actually scrolls —
-     * the row just overflows the page instead, which is how horizontal scroll silently becomes
-     * a broken layout on a phone.
-     */
     <div
-      className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      aria-label="Suggestions based on your practice"
+      className="relative"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
     >
-      {deck.map((n, i) => {
-        const tone = TONE[n.tone];
-        const Icon = n.icon;
-        return (
-          <motion.div
-            key={n.key}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.28, delay: i * 0.05 }}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={current.key}
+          initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          className={cn(
+            'flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border p-4 sm:p-5',
+            tone.wrap,
+          )}
+        >
+          <span
             className={cn(
-              'relative flex min-w-0 shrink-0 snap-start flex-col justify-between rounded-2xl border p-4',
-              // Deliberately uneven widths. Equal cards in a row is the layout DESIGN-RULES.md
-              // names as the machine-made tell; the first card is also the highest-weighted
-              // one, so the extra width is carrying meaning rather than decorating.
-              i === 0 ? 'w-[19rem] sm:w-[23rem]' : 'w-[17rem] sm:w-[20rem]',
-              tone.wrap,
+              'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+              tone.chip,
             )}
           >
+            <Icon className="h-5 w-5" aria-hidden />
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <p className={cn('text-sm font-semibold', tone.ink)}>{current.hook}</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {current.fact}
+            </p>
+          </div>
+
+          <Link
+            href={current.href}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold',
+              'transition-transform hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              tone.chip,
+            )}
+          >
+            {current.cta}
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+
+          <button
+            type="button"
+            aria-label="Hide this suggestion"
+            onClick={() => {
+              try {
+                localStorage.setItem(DISMISS_PREFIX + current.key, 'true');
+              } catch {
+                // Blocked site data. Hiding it for this visit is still worth doing.
+              }
+              setHidden((h) => [...h, current.key]);
+            }}
+            className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </motion.div>
+      </AnimatePresence>
+
+      {/* WHICH OF HOW MANY. Without it a card that changes on its own reads as a glitch; with
+          it, it reads as a deck, and somebody who wants the one they just saw can tap back to
+          it. Hidden for a single-card deck, where it would be one dot saying nothing. */}
+      {visible.length > 1 && (
+        <div className="mt-2 flex justify-center gap-1.5">
+          {visible.map((n, i) => (
             <button
+              key={n.key}
               type="button"
-              onClick={() => hide(n.key)}
-              aria-label={`Dismiss: ${n.hook}`}
-              className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-black/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
-
-            <div className="min-w-0 pr-6">
-              <span
-                className={cn(
-                  'inline-flex h-7 w-7 items-center justify-center rounded-lg',
-                  tone.chip,
-                )}
-              >
-                <Icon className="h-4 w-4" aria-hidden />
-              </span>
-              {/* The hook is the largest thing on the card and carries no claim. */}
-              <p className={cn('mt-2.5 text-[0.95rem] font-semibold leading-snug', tone.ink)}>
-                {n.hook}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{n.fact}</p>
-            </div>
-
-            <Link
-              href={n.href}
+              aria-label={`Show suggestion ${i + 1} of ${visible.length}`}
+              aria-current={i === index % visible.length}
+              onClick={() => setIndex(i)}
               className={cn(
-                'group mt-3 inline-flex items-center gap-1.5 text-xs font-semibold',
-                tone.ink,
+                'h-1.5 rounded-full transition-all',
+                i === index % visible.length
+                  ? 'w-5 bg-foreground/40'
+                  : 'w-1.5 bg-foreground/15 hover:bg-foreground/30',
               )}
-            >
-              {n.cta}
-              <ArrowRight
-                className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0"
-                aria-hidden
-              />
-            </Link>
-          </motion.div>
-        );
-      })}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

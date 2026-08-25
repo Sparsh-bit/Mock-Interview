@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { useStoreItems } from '@/hooks/useBilling';
 import { getBrowserApiClient } from '@/lib/api';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
@@ -114,14 +115,19 @@ const BLANK = {
   starts_at: '',
   ends_at: '',
   /**
-   * Which features the code covers. EMPTY MEANS EVERY FEATURE.
+   * Which ITEMS the code covers. EMPTY MEANS EVERY ITEM.
    *
-   * That default is the pre-existing behaviour of every offer ever created — `applies_to`
+   * PER ITEM, NOT PER FEATURE, and the difference is money. A feature contains both the
+   * single and the bundle — "mock interviews" is the ₹49 one AND the ₹199 five-pack — so a
+   * feature-level scope cannot express "singles only". A flat ₹25 code scoped to the feature
+   * prices the five-pack at ₹25 too, which sells five interviews for less than one.
+   *
+   * The empty default is the pre-existing behaviour of every offer ever created — `applies_to`
    * empty has always meant "applies to everything" — and it is also the trap: an admin who
    * ticks nothing has not made a narrow code, they have made a store-wide one. The form says
    * so in words rather than relying on them knowing it.
    */
-  applies_to_features: [] as string[],
+  applies_to: [] as string[],
 };
 
 function describe(o: Offer): string {
@@ -141,6 +147,10 @@ export default function AdminOffersPage() {
       (await getBrowserApiClient().get('/api/v1/admin/offers')).data as Offer[],
   });
 
+  // The real catalogue, so the scope list and the prices beside it come from the server
+  // rather than a second copy of the price list living in an admin screen.
+  const storeItems = useStoreItems();
+
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'offers'] });
 
   /*
@@ -158,25 +168,27 @@ export default function AdminOffersPage() {
   const previewValue =
     form.kind === 'fixed' ? Math.round(Number(form.value) * 100) : Number(form.value);
   const preview = useQuery({
-    queryKey: ['admin', 'offers', 'preview', form.kind, previewValue, form.applies_to_features],
+    queryKey: ['admin', 'offers', 'preview', form.kind, previewValue, form.applies_to],
     enabled: creating && Number.isFinite(previewValue) && previewValue >= 0,
     queryFn: async () =>
       (
         await getBrowserApiClient().post('/api/v1/admin/offers/preview', {
           kind: form.kind,
           value: previewValue,
-          applies_to_features: form.applies_to_features,
+          applies_to: form.applies_to,
         })
       ).data as PreviewRow[],
   });
 
-  const toggleFeature = (id: string) =>
+  const toggleItem = (id: string) =>
     setForm((f) => ({
       ...f,
-      applies_to_features: f.applies_to_features.includes(id)
-        ? f.applies_to_features.filter((x) => x !== id)
-        : [...f.applies_to_features, id],
+      applies_to: f.applies_to.includes(id)
+        ? f.applies_to.filter((x) => x !== id)
+        : [...f.applies_to, id],
     }));
+
+  const setScope = (ids: string[]) => setForm((f) => ({ ...f, applies_to: ids }));
 
   const create = useMutation({
     mutationFn: async () => {
@@ -193,10 +205,9 @@ export default function AdminOffersPage() {
         max_redemptions: form.max_redemptions === '' ? null : Number(form.max_redemptions),
         starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
         ends_at: form.ends_at ? new Date(form.ends_at).toISOString() : null,
-        // The server expands these into concrete item ids and stores those. Sending the
-        // FEATURES rather than the ids keeps the expansion in one place — the place that also
-        // knows which items exist.
-        applies_to_features: form.applies_to_features,
+        // Item ids outright. `OfferTerms.scope` unions this with any features, and the
+        // preview reads the same property, so what the admin approved is what gets written.
+        applies_to: form.applies_to,
       };
       return (await getBrowserApiClient().post('/api/v1/admin/offers', body)).data;
     },
@@ -390,34 +401,93 @@ export default function AdminOffersPage() {
             </label>
           </div>
 
-          {/* ── WHAT THE CODE APPLIES TO ────────────────────────────────────────────────
-              Chosen per FEATURE. The server expands the choice into the item ids that exist
-              at that moment and stores those, so this is a snapshot rather than a standing
-              rule: a bundle added to the catalogue later falls outside every code created
-              before it, and the candidate pays full price on it rather than getting a
-              discount nobody priced. */}
+          {/* ── WHAT THE CODE APPLIES TO, PER ITEM ─────────────────────────────────────
+              PER ITEM RATHER THAN PER FEATURE, because a feature holds both the single and
+              the bundle and the difference between them is the whole point. "Mock interviews"
+              is the ₹49 one AND the ₹199 five-pack; a flat ₹25 code scoped to the feature
+              prices the five-pack at ₹25, selling five interviews for half the price of one.
+              A percentage is safe either way, a flat price is not, and the form cannot know
+              which the admin will pick — so the scope has to be able to say "singles only". */}
           <div className="mt-5 border-t border-border/60 pt-4">
-            <p className="text-sm font-medium text-foreground">Applies to</p>
-            <div className="mt-2 flex flex-wrap gap-4 text-sm">
-              {FEATURES.map((f) => (
-                <label key={f.id} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.applies_to_features.includes(f.id)}
-                    onChange={() => toggleFeature(f.id)}
-                  />
-                  {f.label}
-                </label>
-              ))}
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Applies to</p>
+              {/* The two scopes worth one tap. "Singles only" is the common case for a flat
+                  code and the one that is dangerous to get wrong by hand. */}
+              <div className="flex gap-3 text-xs">
+                <button
+                  type="button"
+                  className="font-semibold text-primary hover:underline"
+                  onClick={() =>
+                    setScope((storeItems.data ?? []).filter((i) => i.quantity === 1).map((i) => i.id))
+                  }
+                >
+                  Singles only
+                </button>
+                <button
+                  type="button"
+                  className="font-semibold text-primary hover:underline"
+                  onClick={() => setScope([])}
+                >
+                  Everything
+                </button>
+              </div>
             </div>
+
+            <div className="mt-2 space-y-3">
+              {FEATURES.map((f) => {
+                const items = (storeItems.data ?? []).filter((i) => i.feature === f.id);
+                if (items.length === 0) return null;
+                return (
+                  <div key={f.id}>
+                    <p className="text-[11px] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+                      {f.label}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1.5 text-sm">
+                      {items.map((i) => (
+                        <label key={i.id} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={form.applies_to.includes(i.id)}
+                            onChange={() => toggleItem(i.id)}
+                          />
+                          <span>
+                            {i.name}{' '}
+                            {/* The price is shown because it is the thing being scoped, and
+                                it comes from the server rather than being typed here. */}
+                            <span className="text-muted-foreground">₹{i.price_rupees}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             {/* SAID OUT LOUD, because the default is the dangerous one. An empty scope has
                 always meant every item, so an admin who ticks nothing has made a store-wide
                 code — not a narrow one. */}
             <p className="mt-2 text-xs text-muted-foreground">
-              {form.applies_to_features.length === 0
-                ? 'Nothing ticked — this code will apply to EVERY product in the store.'
-                : `Only ${form.applies_to_features.length} of ${FEATURES.length} product types. Everything else stays at full price.`}
+              {form.applies_to.length === 0
+                ? 'Nothing ticked — this code will apply to EVERY product in the store, bundles included.'
+                : `Only ${form.applies_to.length} product${form.applies_to.length === 1 ? '' : 's'}. Everything else stays at full price.`}
             </p>
+
+            {/* THE ONE COMBINATION THAT LOSES MONEY, named while it can still be changed. A
+                flat price reaching a bundle charges bundle-many sessions at single-item money.
+                A warning rather than a block: "₹99 flat on the five-pack" is a legitimate
+                thing to want, and only the person typing it knows which they meant. */}
+            {form.kind === 'fixed' &&
+              (form.applies_to.length === 0 ||
+                (storeItems.data ?? []).some(
+                  (i) => i.quantity > 1 && form.applies_to.includes(i.id),
+                )) && (
+                <p className="mt-2 rounded-lg border border-accent-amber/40 bg-accent-amber/10 px-3 py-2 text-xs leading-relaxed text-accent-amber-ink">
+                  This is a FLAT price and it reaches a bundle. Every pack it covers will cost
+                  ₹{Number(form.value) || 0} however many sessions it contains — check the
+                  figures below before creating it.
+                </p>
+              )}
           </div>
 
           {/* ── WHAT EACH THING WILL COST ───────────────────────────────────────────────

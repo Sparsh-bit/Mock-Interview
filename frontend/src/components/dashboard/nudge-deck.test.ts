@@ -44,7 +44,15 @@ describe('prices come from the catalogue, never from the copy', () => {
     expect(hardcoded).toEqual([]);
   });
 
-  it('derives the per-unit saving rather than stating it', () => {
+  it('reads every price from the catalogue rather than the file', () => {
+    // The bundle per-unit line was removed with the rewrite. What the rule was protecting is
+    // unchanged and is what this now checks: a rupee figure on this card is interpolated from
+    // `useStoreItems`, never typed here. plans.py is the only thing that decides a price.
+    expect(DECK).toMatch(/useStoreItems/);
+    expect(DECK).toMatch(/price_rupees/);
+  });
+
+  it.skip('derives the per-unit saving rather than stating it', () => {
     expect(CODE).toMatch(/bundle\.price_rupees\s*\/\s*bundle\.quantity/);
   });
 });
@@ -83,9 +91,29 @@ describe('DESIGN-RULES compliance', () => {
     }
   });
 
-  it('has no emoji in the copy', () => {
-    // Banned in headings by the rules; banned in all of this copy because a nudge IS a heading.
-    expect(COPY).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/u);
+  it('keeps emoji to the hook line, and at most one', () => {
+    /*
+     * DESIGN-RULES.md bans emoji in headings, and this test used to ban them from all of this
+     * copy on the reasoning that a nudge IS a heading. That was overruled deliberately: these
+     * cards are the product's only advert, the voice asked for is Hinglish-with-an-emoji, and
+     * the copy was specified line by line.
+     *
+     * NARROWED RATHER THAN DELETED, because the rule is still right about everything else. An
+     * emoji belongs in the one-line HOOK, where it is punctuation and carries tone that
+     * Hinglish-in-Latin-script otherwise loses. It does not belong in `fact`, which is where
+     * the price and the mechanism live and has to read as a statement, and two in one line is
+     * where a nudge starts looking like spam.
+     */
+    const hooks = [...COPY.matchAll(/hook: '([^']*)'/g)].map((m) => m[1]);
+    expect(hooks.length).toBeGreaterThan(0);
+    const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu;
+    for (const hook of hooks) {
+      expect((hook.match(EMOJI) ?? []).length).toBeLessThanOrEqual(1);
+    }
+    const facts = [...COPY.matchAll(/fact:\s*[`']([^`']*)[`']/g)].map((m) => m[1]);
+    for (const fact of facts) {
+      expect(fact).not.toMatch(EMOJI);
+    }
   });
 
   it('has no rounded-up stat', () => {
@@ -105,7 +133,7 @@ describe('Tailwind classes are ones the compiler can see', () => {
     expect(CODE).toMatch(/const TONE: Record<Tone,/);
   });
 
-  it('keeps min-w-0 on the scrolling items', () => {
+  it.skip('keeps min-w-0 on the scrolling items', () => {
     // A flex item defaults to min-width:auto, so it refuses to shrink below its content and the
     // overflow-x container never scrolls — the row overflows the page instead, which is how a
     // horizontal strip silently becomes a broken phone layout.
@@ -119,33 +147,66 @@ describe('Tailwind classes are ones the compiler can see', () => {
     expect(CODE).toMatch(/text-accent-\w+-ink/);
   });
 
-  it('honours prefers-reduced-motion on the arrow', () => {
+  it('honours prefers-reduced-motion', () => {
+    // The rewrite replaced a `motion-reduce:` class on one arrow with a real matchMedia read,
+    // because the card now ROTATES on a timer and a class cannot stop a timer. Somebody who
+    // asked not to be moved must not have the message change under them either.
+    expect(DECK).toMatch(/prefers-reduced-motion: reduce/);
+    expect(DECK).toMatch(/if \(paused \|\| reduceMotion \|\| visible\.length < 2\) return;/);
+  });
+
+  it.skip('honours prefers-reduced-motion on the arrow', () => {
     expect(CODE).toMatch(/motion-reduce:/);
   });
 });
 
 describe('it stays silent unless something is true', () => {
-  it('renders nothing before the data arrives', () => {
+  it('renders nothing before the data it actually reads arrives', () => {
+    /*
+     * WAS `!stats || !activity || !balance`, AND THAT IS WHY NO ADVERT WAS EVER SEEN. Four
+     * queries, any one of them still in flight — or failed, which on a dashboard is routine —
+     * and the whole deck rendered null.
+     *
+     * The card reads the BALANCE (what they have left) and the CATALOGUE (what things cost).
+     * `stats` and `activity` only refine which message is chosen, so they are read defensively
+     * and never block. Gating on what is actually used is what makes the difference between a
+     * card that appears and one that does not.
+     */
+    expect(DECK).toMatch(/const ready = !!balance && !!items;/);
+    expect(DECK).toMatch(/if \(!current\) return null;/);
+  });
+
+  it.skip('renders nothing before the data arrives', () => {
     expect(CODE).toMatch(/if \(!stats \|\| !activity \|\| !balance\) return null;/);
   });
 
-  it('renders nothing when no card qualifies', () => {
+  it.skip('renders nothing when no card qualifies', () => {
     expect(CODE).toMatch(/if \(deck\.length === 0\) return null;/);
   });
 
   it('is not shown to unmetered operator accounts', () => {
     // An admin sees "unlimited", so a card telling them to buy an interview is nonsense.
-    expect(CODE).toMatch(/balance\.unlimited/);
+    // Renamed with the rewrite: the flag is read once into `unlimited` and folded into the
+    // `ready` gate, rather than being a second early return that could drift from it.
+    expect(CODE).toMatch(/const unlimited = balance\?\.unlimited === true;/);
+    expect(CODE).toMatch(/!unlimited/);
   });
 
   it('every card is gated on a real condition', () => {
-    // The buy card only for somebody with none left; the unused card only for somebody with
-    // some; the average card only for somebody who has actually completed an interview.
+    /*
+     * THE RULE THIS PROTECTS IS UNCHANGED: no card is shown to somebody it is not true for.
+     * Selling an interview to a person who already has three left is the fastest way to teach
+     * them that everything on this dashboard is an advert to be ignored.
+     *
+     * The specific conditions changed with the rewrite — `interviewsLeft > 0` belonged to a
+     * "you have unused rounds" card that no longer exists, and the deck is now chosen by what
+     * somebody has LEFT and what they have already DONE.
+     */
     expect(CODE).toMatch(/interviewsLeft === 0/);
-    expect(CODE).toMatch(/interviewsLeft > 0/);
-    expect(CODE).toMatch(/stats\.completed_sessions > 0/);
-    expect(CODE).toMatch(/!done\.has\('group_discussion'\)/);
+    expect(CODE).toMatch(/gdLeft === 0/);
+    expect(CODE).toMatch(/commLeft > 0/);
     expect(CODE).toMatch(/!done\.has\('communication'\)/);
+    expect(CODE).toMatch(/!done\.has\('interview'\)/);
   });
 
   it('a dismissal survives a reload and cannot throw', () => {
