@@ -153,6 +153,27 @@ export function useInterview() {
     },
   });
 
+  /**
+   * Rate the interview that just finished.
+   *
+   * FIRE AND FORGET, BY DESIGN. The caller does not await this and the report does not wait
+   * for it: the candidate has paid for the report and is one tap from it, so a rating that
+   * fails must cost the rating and never the report.
+   *
+   * `retry: false` because a retry would outlive the page — the user is routed to the report
+   * the moment `completeSession` resolves, and a background retry firing after unmount is a
+   * request nobody is listening to. One attempt, and a swallowed failure.
+   */
+  const rateInterview = useMutation({
+    mutationFn: async ({ sessionId, stars }: { sessionId: string; stars: number }) => {
+      await api.post(`/api/v1/interview/${sessionId}/feedback`, { stars });
+    },
+    retry: false,
+    // Swallowed deliberately. There is nothing the candidate can or should do about a rating
+    // that did not save, and a toast here would be an error message on the happy path.
+    onError: () => {},
+  });
+
   const completeSession = useMutation({
     mutationFn: async (sessionId: string) => {
       await api.post(`/api/v1/interview/${sessionId}/complete`, {});
@@ -164,6 +185,7 @@ export function useInterview() {
 
   return {
     startSession,
+    rateInterview,
     createPlan,
     approvePlan,
     submitAnswer,

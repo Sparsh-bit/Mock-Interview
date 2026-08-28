@@ -14,7 +14,16 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -195,4 +204,55 @@ class VoiceTranscript(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # ── Relationships ──────────────────────────────────────────────────────
     session: Mapped[InterviewSession] = relationship(
         "InterviewSession", back_populates="voice_transcripts",
+    )
+
+
+class InterviewFeedback(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    What the candidate thought of the interview, as stars out of five.
+
+    NOT `RatingEvent`, WHICH IS A DIFFERENT THING ENTIRELY. That table is the ELO-style
+    ledger of how well somebody PERFORMED; this is how well the PRODUCT performed. Two
+    "ratings" in one system is exactly the naming collision that produces a query joining the
+    wrong one, so they are named for what they measure rather than for the word they share.
+
+    A SEPARATE TABLE RATHER THAN COLUMNS ON `interview_sessions`, for the deployment reason
+    that migration 021 sets out at length: migrations here are applied BY HAND against
+    Supabase, so there is always a window where the code is live and the schema is not.
+    Columns on `interview_sessions` would put the new field in every SELECT against the single
+    busiest table in the product — the interview itself would 500 until somebody remembered to
+    run this. A new table cannot do that: nothing existing reads it, so before the migration
+    the feature simply has nothing to show and every other path is untouched.
+
+    ONE RATING PER SESSION, enforced by a UNIQUE constraint rather than by the endpoint
+    checking first. A read-then-write check has a window between the read and the write, and
+    two taps on a slow connection land in it.
+
+    CASCADE ON DELETE. Feedback about a deleted interview is feedback about nothing, and
+    account deletion has to be able to remove it — see the note in admin.delete_user about
+    ORM deletes leaving orphans when the cascade is not on the database.
+    """
+
+    __tablename__ = "interview_feedback"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    #: Denormalised from the session so the admin aggregate does not have to join to answer
+    #: "how many distinct people rated us", and so a tenancy check has a column to compare.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    #: 1-5. Constrained in the DATABASE as well as in the request model, because the request
+    #: model is one refactor away from being bypassed by a background job or a fixture.
+    stars: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Optional and length-capped. Free text from a candidate is the one field here that could
+    #: carry personal data they did not mean to publish, so it is never shown outside admin.
+    comment: Mapped[str | None] = mapped_column(String(1000))
+
+    __table_args__ = (
+        CheckConstraint("stars >= 1 AND stars <= 5", name="ck_interview_feedback_stars"),
     )

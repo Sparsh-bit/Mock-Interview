@@ -1574,3 +1574,74 @@ async def marketing_list(
         ],
         users=users,
     )
+
+
+class FeedbackSummary(BaseModel):
+    """What candidates think of the interview, in aggregate."""
+
+    total: int
+    #: None rather than 0 when nobody has rated. A mean of zero is a real value on a 1-5 scale
+    #: — it would read as "everybody hated it" rather than "nobody has said".
+    average: float | None
+    #: Star value -> how many gave it. Every value 1-5 present, including the zeroes, so the
+    #: chart has a bar for each and does not silently omit the ones nobody chose.
+    distribution: dict[int, int]
+    recent: list[dict]
+
+
+@router.get("/feedback", summary="How candidates rated their interviews")
+async def feedback_summary(
+    current_user: AdminUser,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> FeedbackSummary:
+    """
+    Aggregate ratings, plus the most recent comments.
+
+    THREE QUERIES REGARDLESS OF HOW MANY RATINGS EXIST — a grouped count, and one bounded read
+    for the comments. Same rule as the marketing list: a per-row aggregate in a loop is how an
+    admin page starts timing out gradually enough to read as "the admin page is slow lately".
+
+    COMMENTS ARE CANDIDATE FREE TEXT, so they are the one field here that can carry personal
+    data somebody typed without meaning to publish it. They are returned only to an admin, are
+    never joined to an email address, and are capped by `limit`.
+    """
+    from app.models.session import InterviewFeedback  # noqa: PLC0415
+
+    rows = (
+        await db.execute(
+            select(InterviewFeedback.stars, func.count()).group_by(InterviewFeedback.stars)
+        )
+    ).all()
+
+    distribution = dict.fromkeys(range(1, 6), 0)
+    for star, count in rows:
+        distribution[int(star)] = int(count or 0)
+
+    total = sum(distribution.values())
+    average = (
+        round(sum(star * n for star, n in distribution.items()) / total, 2) if total else None
+    )
+
+    recent_rows = (
+        await db.execute(
+            select(
+                InterviewFeedback.stars,
+                InterviewFeedback.comment,
+                InterviewFeedback.created_at,
+            )
+            .where(InterviewFeedback.comment.is_not(None))
+            .order_by(InterviewFeedback.created_at.desc())
+            .limit(max(1, min(limit, 100)))
+        )
+    ).all()
+
+    return FeedbackSummary(
+        total=total,
+        average=average,
+        distribution=distribution,
+        recent=[
+            {"stars": int(s), "comment": c, "at": at.isoformat() if at else None}
+            for s, c, at in recent_rows
+        ],
+    )

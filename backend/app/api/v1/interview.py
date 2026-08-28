@@ -494,3 +494,88 @@ async def complete_session(
     orchestrator = InterviewOrchestrator(db)
     await orchestrator.complete_session(session_id)
     return {"message": "Session completed"}
+
+
+class FeedbackRequest(BaseModel):
+    """How the candidate rated the interview itself."""
+
+    #: 1-5. Bounded here AND by a CHECK constraint on the column, because this model is one
+    #: refactor away from being bypassed by a fixture or a backfill, and a zero-star row would
+    #: skew the only aggregate anybody reads.
+    stars: int = Field(ge=1, le=5)
+    #: Optional, and capped at the column width so a long paste is refused with a 422 rather
+    #: than truncated silently into something the candidate did not write.
+    comment: str = Field(default="", max_length=1000)
+
+
+@router.post(
+    "/{session_id}/feedback",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Rate the interview you just finished",
+)
+async def submit_feedback(
+    session_id: uuid.UUID,
+    request: FeedbackRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> None:
+    """
+    Store one rating for one interview.
+
+    204 AND NO BODY, deliberately. The candidate is one tap from a report they have paid for,
+    and the client fires this WITHOUT AWAITING IT — a rating that fails must cost the rating
+    and never the report. There is nothing for the page to do with a response, so returning
+    one would only invite somebody to start waiting for it.
+
+    OWNERSHIP FIRST, and 404 rather than 403: whether a session exists is itself a fact about
+    another account, so a rating attempt against somebody else's interview gets the same answer
+    as one against an interview that never existed.
+
+    ONE PER SESSION, ENFORCED BY THE DATABASE. The unique index on `session_id` is what makes
+    that true under a double tap on a slow connection; a SELECT-then-INSERT here would have a
+    window between the two. A second rating is treated as success rather than as an error —
+    the candidate's intent ("I rated this") is already satisfied, and 409 on a fire-and-forget
+    call would be logged as a failure by a client that is not listening anyway.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    from app.models.session import InterviewFeedback  # noqa: PLC0415
+
+    await _verify_session_ownership(db, session_id, current_user)
+
+    comment = request.comment.strip()
+    try:
+        # A SAVEPOINT, so a duplicate costs exactly this insert. `get_db` commits the request's
+        # transaction on the way out, and a bare IntegrityError would poison it — which is the
+        # bug that silently discarded a whole report when a duplicate rating rolled back the
+        # transaction it shared. See services/progress/recorder.py.
+        #
+        # THE `add` IS INSIDE THE SAVEPOINT, and that is not cosmetic. Adding it outside leaves
+        # the failed object in `session.new` after the savepoint rolls back, so the request's
+        # final commit flushes it a second time and raises again — turning a handled duplicate
+        # into a 500 at the very end of the request, far from the code that caused it. Inside,
+        # the rollback discards the object with the savepoint.
+        async with db.begin_nested():
+            db.add(
+                InterviewFeedback(
+                    session_id=session_id,
+                    user_id=current_user.user_id,
+                    stars=request.stars,
+                    comment=comment or None,
+                )
+            )
+            await db.flush()
+    except IntegrityError:
+        logger.info(
+            "interview_already_rated",
+            session_id=str(session_id),
+            user_id=str(current_user.user_id),
+        )
+        return
+
+    logger.info(
+        "interview_feedback_recorded",
+        session_id=str(session_id),
+        stars=request.stars,
+        has_comment=bool(comment),
+    )

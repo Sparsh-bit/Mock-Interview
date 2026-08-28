@@ -10,6 +10,7 @@ import { AlertTriangle, Code2, MessageSquare, Mic, MicOff, RefreshCw, Send, Spar
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { StarRating } from '@/components/ui/star-rating';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
 import { PresenceMonitor } from '@/components/interview/PresenceMonitor';
 import { DeliveryTranscript } from '@/components/interview/DeliveryTranscript';
@@ -84,7 +85,10 @@ function GeneratingQuestion({ label }: { label: string }) {
 export default function LiveSessionPage() {
   const params = useParams();
   const sessionId = params.id as string;
-  const { useNextQuestion, submitAnswer, completeSession } = useInterview();
+  const { useNextQuestion, submitAnswer, completeSession, rateInterview } = useInterview();
+  //: The star rating on the completion card. Zero means not yet chosen, which is what
+  //: disables the button — see the card itself for why the SAVE is not on that path.
+  const [stars, setStars] = useState(0);
 
   const { data, isLoading, isFetching, isError, refetch } = useNextQuestion(sessionId);
 
@@ -1240,17 +1244,50 @@ export default function LiveSessionPage() {
             <Sparkles className="h-7 w-7 text-primary" />
           </div>
           <h2 className="mb-3 text-xl font-semibold sm:text-2xl">Interview Complete</h2>
-          <p className="mb-8 text-sm leading-relaxed text-muted-foreground">
+          <p className="mb-6 text-sm leading-relaxed text-muted-foreground">
             Nicely done{answered ? ` — you answered ${answered} question${answered === 1 ? '' : 's'}` : ''}.
             We&apos;ll now score every answer and build your full report.
           </p>
+
+          {/* ── THE RATING, AND WHY IT CANNOT COST THEM THE REPORT ───────────────────────
+              Required to press the button, by decision — but the SAVE is fired without being
+              awaited, so the report is never waiting on it. A rating that fails costs the
+              rating and nothing else.
+
+              That distinction is the whole design. The candidate has paid ₹49 and is one tap
+              from the thing they paid for; putting a network call on the critical path to it
+              would mean a dropped connection strands somebody on this card with no way
+              forward. Requiring the GESTURE and not the RESPONSE gives the response rate a
+              required field buys without the failure mode it usually brings. */}
+          <div className="mb-6">
+            <p className="mb-2 text-sm font-medium text-foreground">How was your interview?</p>
+            <StarRating
+              value={stars}
+              onChange={setStars}
+              label="Rate your interview out of five"
+            />
+          </div>
+
           <Button
             className="w-full"
-            onClick={() => completeSession.mutate(sessionId)}
+            disabled={stars === 0}
+            onClick={() => {
+              // NOT AWAITED, AND THE CATCH IS THE POINT. An unhandled rejection from a
+              // fire-and-forget promise is an error in the console at best and a crashed
+              // render at worst; swallowing it here is what makes "the rating cannot cost
+              // them the report" true rather than merely intended.
+              rateInterview.mutate({ sessionId, stars });
+              completeSession.mutate(sessionId);
+            }}
             loading={completeSession.isPending}
           >
             View Final Report
           </Button>
+          {stars === 0 && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Tap a star to continue.
+            </p>
+          )}
         </motion.div>
       </div>
     );
