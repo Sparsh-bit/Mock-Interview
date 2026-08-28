@@ -22,9 +22,9 @@ Run all of it. Anything other than these numbers means something moved.
 
 ```bash
 docker-compose up -d            # Postgres + Redis. Tests ERROR ~70 times without it.
-cd backend && uv run pytest -q --no-cov      # 1835 passed, 2 skipped, 6 warnings
+cd backend && uv run pytest -q --no-cov      # 1876 passed, 2 skipped, 6 warnings
 cd backend && uv run ruff check . && uv run mypy app
-cd frontend && npm test -- --run             # 672 passed
+cd frontend && npm test -- --run             # 685 passed
 cd frontend && npx tsc --noEmit && npx next lint && npm run build
 ```
 
@@ -231,11 +231,41 @@ forever. `_walk` follows the wrappers; the fixture asserts a floor of 15 admin r
   key.
 - **The public report.** Deliberately narrow — no session id, no transcript, no roadmap.
 
+### Round three — money under concurrency
+
+**One credit cannot be spent twice.** Raced with real transactions, not mocks: a row lock is a
+property of the database, so only live connections contending for the same row prove the second
+one waited. Two simultaneous starts, five simultaneous starts, and — as the vacuity guard —
+three credits against five attempts, which must yield exactly three. It does.
+
+Removing the `FOR UPDATE` is caught. Worth knowing precisely: **only the five-way race catches
+it.** The two-way still passes with the lock gone, because two coroutines on one event loop
+frequently do not overlap enough to collide. The two-way is kept because it is the real gesture
+— a double-click — but the five-way is what holds the property.
+
+**A payment cannot be credited twice.** Five deliveries of one `payment_ref` credit once, which
+is not a hypothetical: Razorpay retries on any non-2xx, so repeated delivery is ordinary
+traffic. The browser's verify call and the webhook also arrive together in the normal case, and
+that pair is raced too.
+
+**The webhook signature is the whole perimeter** — the endpoint is unauthenticated by
+necessity, since Razorpay holds no user token. Forgery, tampering-after-signing, six malformed
+signature shapes, and an unsigned request are all refused; a correct one verifies, which is the
+guard against a function that just returns False and rejects every real payment. The comparison
+is `hmac.compare_digest` — a plain `==` returns on the first differing character and recovers
+the signature one character at a time, and that mutation is caught.
+
+Replay is guarded by the ledger rather than by cryptography, and that is the right layer: a
+replayed body carries a genuine signature, so nothing about HMAC can help.
+
 ### Still untested
 
-Round three, if you want it: RLS verified against the live Supabase rather than local
-Postgres, concurrency/race conditions on the credit ledger, and the Razorpay webhook replay
-path.
+**RLS against live Supabase.** The policies are pinned as existing (`test_rls_coverage.py`) but
+local Postgres does not enforce them, so "they work" is unproven. This is the largest remaining
+gap, because RLS is the actual access-control layer.
+
+Also open, and not code: the Fish and Anthropic keys pasted in plaintext still need rotating
+(deferred deliberately), and migrations **021 and 022** are not yet applied to Supabase.
 
 ---
 
