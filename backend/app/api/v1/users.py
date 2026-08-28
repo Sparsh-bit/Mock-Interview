@@ -385,3 +385,258 @@ async def get_session_history(
             )
         )
     return summaries
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# WHAT A PERSON CAN DO WITH THEIR OWN DATA
+#
+# Both of these existed only as admin actions, which meant the answer to "can I leave?" and
+# "what do you hold on me?" was "email someone and hope". DPDP §11 and §12 make them rights
+# rather than courtesies, and they are also the plainest kind of user experience: an account
+# somebody cannot leave is one they were never fully in control of.
+#
+# THE DELETION REUSES THE ADMIN PATH RATHER THAN REIMPLEMENTING IT. That path is tested and
+# carries two hard-won details — a Core DELETE so the database cascade runs (the ORM NULLs
+# children instead and 500s on any NOT NULL column), and Supabase auth removed BEFORE our rows,
+# because a working login attached to no data silently recreates the account on next sign-in.
+# A second implementation would have neither.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+class ExportedData(BaseModel):
+    """Everything held about one account, as the person themselves may read it."""
+
+    exported_at: datetime
+    account: dict
+    profile: dict | None
+    sessions: list[dict]
+    reports: list[dict]
+    resumes: list[dict]
+    payments: list[dict]
+    feedback: list[dict]
+    #: Named plainly, because §5 requires telling people who their data is shared with and a
+    #: list they have to infer is not a disclosure.
+    shared_with: list[str]
+
+
+@router.get("/me/export", summary="Everything we hold about you")
+async def export_my_data(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> ExportedData:
+    """
+    One JSON document containing this account's data.
+
+    SCOPED TO THE CALLER BY THE TOKEN, never by a parameter. There is deliberately no
+    `user_id` argument — an export endpoint that accepted one would be the single most
+    valuable IDOR in the product, returning another candidate's resume, transcript and
+    assessment in one request.
+
+    WHAT IS DELIBERATELY NOT HERE: the answer keys. `questions.ideal_answer` belongs to the
+    question bank rather than to the candidate, and an export is a supported way to read every
+    one of them if it carries the questions in full. The candidate's OWN answers are included;
+    what a good answer would have been is not.
+
+    RAW ROWS RATHER THAN A RENDERED REPORT, because the purpose is portability — somebody
+    should be able to read it, or hand it to another service, without this product's UI.
+    """
+    from app.models.billing import CreditEvent
+    from app.models.report import Report, ResumeFile
+    from app.models.session import Answer, InterviewFeedback
+    from app.models.user import Profile, User
+
+    uid = current_user.user_id
+
+    user = await db.scalar(select(User).where(User.id == uid))
+    profile = await db.scalar(select(Profile).where(Profile.user_id == uid))
+
+    sessions = (
+        await db.execute(
+            select(InterviewSession).where(InterviewSession.user_id == uid)
+        )
+    ).scalars().all()
+
+    # The candidate's own words, joined through their sessions — `answers` has no user_id.
+    answers = (
+        await db.execute(
+            select(Answer, InterviewSession.id)
+            .join(InterviewSession, Answer.session_id == InterviewSession.id)
+            .where(InterviewSession.user_id == uid)
+        )
+    ).all()
+    answers_by_session: dict[str, list[dict]] = {}
+    for answer, session_id in answers:
+        answers_by_session.setdefault(str(session_id), []).append(
+            {
+                "answered_at": answer.created_at.isoformat() if answer.created_at else None,
+                "answer": answer.content,
+            }
+        )
+
+    reports = (
+        await db.execute(select(Report).where(Report.user_id == uid))
+    ).scalars().all()
+    resumes = (
+        await db.execute(select(ResumeFile).where(ResumeFile.user_id == uid))
+    ).scalars().all()
+    payments = (
+        await db.execute(select(CreditEvent).where(CreditEvent.user_id == uid))
+    ).scalars().all()
+    feedback = (
+        await db.execute(select(InterviewFeedback).where(InterviewFeedback.user_id == uid))
+    ).scalars().all()
+
+    logger.info("user_exported_their_data", user_id=str(uid))
+
+    return ExportedData(
+        exported_at=datetime.now(UTC),
+        account={
+            "email": user.email if user else current_user.email,
+            "joined_at": user.created_at.isoformat() if user and user.created_at else None,
+        },
+        profile=(
+            {
+                "full_name": profile.full_name,
+                "bio": profile.bio,
+                "target_company": profile.target_company,
+                "experience_years": profile.experience_years,
+                "linkedin_url": profile.linkedin_url,
+                "github_url": profile.github_url,
+                "timezone": profile.timezone,
+            }
+            if profile
+            else None
+        ),
+        sessions=[
+            {
+                "id": str(s.id),
+                "status": str(s.status),
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                "your_answers": answers_by_session.get(str(s.id), []),
+            }
+            for s in sessions
+        ],
+        reports=[
+            {
+                "session_id": str(r.session_id),
+                "overall_score": _as_float_or_none(r.overall_score),
+                "readiness_level": r.readiness_level,
+                "summary": r.executive_summary,
+                "strengths": r.strengths,
+                "weaknesses": r.weaknesses,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reports
+        ],
+        resumes=[
+            {
+                "filename": r.filename,
+                "uploaded_at": r.created_at.isoformat() if r.created_at else None,
+                # The extracted TEXT is theirs and is included; the storage path is an internal
+                # location and tells them nothing useful.
+                "extracted_text": getattr(r, "extracted_text", None),
+            }
+            for r in resumes
+        ],
+        payments=[
+            {
+                "at": p.created_at.isoformat() if p.created_at else None,
+                "feature": p.feature,
+                "kind": p.kind,
+                "change": p.delta,
+            }
+            for p in payments
+        ],
+        feedback=[
+            {
+                "session_id": str(f.session_id),
+                "stars": f.stars,
+                "comment": f.comment,
+            }
+            for f in feedback
+        ],
+        shared_with=[
+            "Supabase — database, authentication and file storage",
+            "Razorpay — payments (India)",
+            "Anthropic — AI scoring and interview generation (United States)",
+            "ZhipuAI — standby AI provider (China)",
+            "Cloudflare — bot protection on promotional codes",
+        ],
+    )
+
+
+def _as_float_or_none(value) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+class DeleteAccountRequest(BaseModel):
+    """Typing your own email is the confirmation."""
+
+    #: THE CONFIRMATION IS THEIR EMAIL, NOT A CHECKBOX. This is irreversible and removes the
+    #: interviews, reports and resumes they paid for — a misclick must not be able to do it,
+    #: and a checkbox is one misclick.
+    confirm_email: str
+
+
+@router.post("/me/delete", summary="Delete your account and everything in it")
+async def delete_my_account(
+    request: DeleteAccountRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    Delete the calling account. Irreversible.
+
+    POST RATHER THAN DELETE, because a body is required for the confirmation and proxies and
+    some HTTP clients drop bodies on DELETE — the same reason the admin route is a POST.
+
+    NO `user_id` PARAMETER ANYWHERE. The account deleted is the one the token names. An
+    endpoint that took an id would be a way to delete somebody else.
+
+    THE ORDER MATTERS AND IS NOT ARBITRARY: files, then the Supabase login, then our rows.
+    Removing our rows first would leave a working login attached to nothing, and the next
+    sign-in would recreate the account as though the deletion never happened. Failing to
+    remove the login is therefore fatal to the whole operation rather than tolerated.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy import delete as sa_delete
+
+    from app.api.v1.admin import _delete_stored_files, _delete_supabase_user
+    from app.models.user import User
+
+    user = await db.scalar(select(User).where(User.id == current_user.user_id))
+    if user is None:
+        raise HTTPException(status_code=404, detail="Account not found.")
+
+    if request.confirm_email.strip().lower() != (user.email or "").strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail="Type your account email exactly to confirm deletion.",
+        )
+
+    supabase_uid = user.supabase_uid
+    files_removed = await _delete_stored_files(db, user.id)
+
+    if not await _delete_supabase_user(supabase_uid):
+        # Refused rather than continued: see the ordering note above.
+        raise HTTPException(
+            status_code=502,
+            detail="Could not remove your login. Nothing has been deleted — please try again.",
+        )
+
+    # A CORE DELETE so the database's ON DELETE CASCADE runs. `db.delete(user)` goes through
+    # the ORM, which NULLs children rather than deferring to the database and raises on any
+    # NOT NULL column — this is exactly what made account deletion 500 before.
+    await db.execute(sa_delete(User).where(User.id == current_user.user_id))
+    db.expunge(user)
+
+    logger.warning(
+        "user_deleted_their_own_account",
+        user_id=str(current_user.user_id),
+        resume_files_removed=files_removed,
+    )
+    return {"deleted": True, "resume_files_removed": files_removed}

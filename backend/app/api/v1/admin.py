@@ -60,7 +60,7 @@ from app.db.redis import CacheKeys
 from app.db.session import get_db
 from app.models.billing import CreditEvent
 from app.models.report import Report
-from app.models.session import Answer, InterviewSession, SessionStatus
+from app.models.session import Answer, InterviewFeedback, InterviewSession, SessionStatus
 from app.models.system import AuditLog
 from app.models.user import Profile, User
 from app.services.billing.credits import KIND_PURCHASE
@@ -1054,6 +1054,13 @@ class MarketingRow(BaseModel):
     #: generation fails, so a plain report count would say the product worked for somebody it
     #: did not.
     scored_reports: int
+    #: What this account thinks of US, averaged over the interviews they rated. None when they
+    #: have never rated one — which is a different thing from rating us badly, and the column
+    #: has to be able to show the difference.
+    avg_stars: float | None
+    #: How many interviews they rated. A single one-star from somebody who has sat one
+    #: interview means something different from a one-star average across five.
+    ratings_given: int
     #: Their best scored report, or null. THE ONLY INTERVIEW-DERIVED NUMBER ON THIS ROW, and
     #: the line is drawn there on purpose: a score is a figure about an account, and questions,
     #: answers and transcripts are the candidate's own words. There is a test that greps this
@@ -1326,6 +1333,8 @@ async def _activity_by_user(
             "answers": 0,
             "last_session_at": None,
             "reports": 0,
+            "avg_stars": None,
+            "ratings_given": 0,
             "scored_reports": 0,
             "best_score": None,
             "last_report_at": None,
@@ -1411,6 +1420,28 @@ async def _activity_by_user(
     # without carrying a copy of the revenue query's dedup rule around. `grant` rows are
     # excluded on purpose — a 100%-off code and support goodwill are product given away, and
     # somebody who has never actually paid must not be mailed as a customer.
+    # HOW THEY RATED US, alongside how they performed. One grouped query for the whole list,
+    # same rule as every other aggregate here: a per-user lookup in the loop below is how this
+    # page starts timing out gradually enough to read as "the admin page is slow lately".
+    #
+    # AVG rather than the individual ratings, because a candidate can rate more than one
+    # interview and the column is about the ACCOUNT — "this person rates us 2" is the thing an
+    # operator acts on, not which of their four sessions was the bad one.
+    feedback = (
+        await db.execute(
+            select(
+                InterviewFeedback.user_id,
+                func.avg(InterviewFeedback.stars),
+                func.count(),
+            )
+            .where(InterviewFeedback.user_id.in_(user_ids))
+            .group_by(InterviewFeedback.user_id)
+        )
+    ).all()
+    for uid, avg_stars, n in feedback:
+        out[uid]["avg_stars"] = round(float(avg_stars), 1) if avg_stars is not None else None
+        out[uid]["ratings_given"] = int(n or 0)
+
     ledger = (
         await db.execute(
             select(
@@ -1517,6 +1548,8 @@ async def marketing_list(
                 purchases=int(a.get("purchases") or 0),
                 scored_reports=int(a.get("scored_reports") or 0),
                 best_score=a.get("best_score"),
+                avg_stars=a.get("avg_stars"),
+                ratings_given=int(a.get("ratings_given") or 0),
                 segment=_segment_of(
                     ever_paid,
                     int(a.get("reports") or 0),

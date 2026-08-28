@@ -346,6 +346,7 @@ export default function MarketingPage() {
                     <th className="px-3 py-2.5 text-right font-normal">Sessions</th>
                     <th className="px-3 py-2.5 text-right font-normal">Reports</th>
                     <th className="px-3 py-2.5 text-right font-normal">Best score</th>
+                    <th className="px-3 py-2.5 text-right font-normal">Rated us</th>
                     <th className="px-3 py-2.5 text-right font-normal">Paid</th>
                     <th className="px-5 py-2.5 text-right font-normal">Last active</th>
                   </tr>
@@ -354,7 +355,7 @@ export default function MarketingPage() {
                   {rows.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7 + data.features.length}
+                        colSpan={8 + data.features.length}
                         className="px-5 py-10 text-center text-sm text-muted-foreground"
                       >
                         {list.isLoading ? 'Loading…' : 'No accounts in this view.'}
@@ -448,6 +449,33 @@ function Row({
           <span className="text-xs text-muted-foreground">—</span>
         ) : (
           <span className="font-semibold text-accent-teal-ink">{Math.round(row.best_score)}</span>
+        )}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums">
+        {/* WHAT THEY THINK OF US, beside what we think of them. The count matters as much as
+            the average: one one-star from somebody who sat one interview is a different
+            signal from a one-star average across five, and an operator reading only the mean
+            cannot tell them apart. */}
+        {row.avg_stars === null ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          <span
+            className={cn(
+              'font-semibold',
+              row.avg_stars >= 4
+                ? 'text-accent-emerald-ink'
+                : row.avg_stars >= 3
+                  ? 'text-accent-amber-ink'
+                  : 'text-accent-coral-ink',
+            )}
+          >
+            {row.avg_stars.toFixed(1)}★
+            {row.ratings_given > 1 && (
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                ×{row.ratings_given}
+              </span>
+            )}
+          </span>
         )}
       </td>
       <td className="px-3 py-3 text-right text-xs">

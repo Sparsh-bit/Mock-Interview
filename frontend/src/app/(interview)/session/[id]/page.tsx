@@ -1272,6 +1272,11 @@ export default function LiveSessionPage() {
             className="w-full"
             disabled={stars === 0}
             onClick={() => {
+              // SILENCE FIRST. The closing sequence is often still speaking when the
+              // candidate taps through, and the unmount cleanup in usePanelVoices only fires
+              // once this page actually goes — which is a router transition away. Cancelling
+              // here stops the voice on the tap rather than a beat later.
+              panelVoices.cancelAll();
               // NOT AWAITED, AND THE CATCH IS THE POINT. An unhandled rejection from a
               // fire-and-forget promise is an error in the console at best and a crashed
               // render at worst; swallowing it here is what makes "the rating cannot cost

@@ -62,6 +62,8 @@ function row(over: Partial<MarketingRow> = {}): MarketingRow {
     scored_reports: 1,
     best_score: 71.5,
     purchases: 0,
+    avg_stars: 4.5,
+    ratings_given: 2,
     last_active_at: '2026-08-21T18:30:00Z',
     ever_paid: false,
     last_paid_at: null,

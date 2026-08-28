@@ -192,6 +192,12 @@ class TestNoNewDisclosure:
             "purchases",
             "scored_reports",
             "best_score",
+            # ADDED DELIBERATELY. What the account thinks of US, which is the one thing on
+            # this row that is the candidate's opinion rather than a measurement of them.
+            # `ratings_given` is beside it because a single one-star from somebody who sat one
+            # interview means something different from a one-star average across five.
+            "avg_stars",
+            "ratings_given",
             "segment",
         }
 
@@ -266,10 +272,13 @@ class TestTheAggregatesAreNotPerRow:
 
     def test_activity_is_a_fixed_number_of_grouped_queries(self):
         src = inspect.getsource(_activity_by_user)
-        assert src.count("group_by") == 4, (
-            "one aggregate per table: sessions, answers, reports, ledger"
+        assert src.count("group_by") == 5, (
+            "one aggregate per table: sessions, answers, reports, feedback, ledger"
         )
-        assert src.count("await db.execute") == 4
+        # Five executes for five aggregates. The number may grow when a table is added; what
+        # must never change is that it is a CONSTANT — the test below proves it does not grow
+        # with the number of accounts, which is the property that actually matters.
+        assert src.count("await db.execute") == 5
 
 
 # ── Against a real database ──────────────────────────────────────────────────
@@ -708,16 +717,17 @@ class TestQueryCount:
             f"{one.executions} statements for one account and {several.executions} for the "
             "whole list — something in here is querying per row"
         )
-        # Seven, whatever the size of the list: the total count, the accounts themselves, the
-        # balance aggregate, and one grouped aggregate each for sessions, ANSWERS, reports and
-        # the ledger. Pinned so that adding an eighth is a decision somebody makes on purpose
-        # rather than by reaching for one more query from inside the loop.
+        # Eight, whatever the size of the list: the total count, the accounts themselves, the
+        # balance aggregate, and one grouped aggregate each for sessions, ANSWERS, reports,
+        # FEEDBACK and the ledger. Pinned so that adding a ninth is a decision somebody makes
+        # on purpose rather than by reaching for one more query from inside the loop.
         #
-        # It was six. The answers aggregate was added deliberately, to split what used to be
-        # one `dropped_off` bucket into "answered some, then stopped" and "left before
-        # answering anything" — the same fixed cost for the whole list, and the assertion above
-        # is the one that actually matters: it does not grow with the number of accounts.
-        assert several.executions == 7
+        # It was six, then seven, now eight. The answers aggregate split what used to be one
+        # `dropped_off` bucket into "answered some, then stopped" and "left before answering
+        # anything"; the feedback aggregate carries what the account thinks of us. Each is a
+        # fixed cost for the whole list, and the assertion ABOVE is the one that actually
+        # matters — this number growing is fine, growing WITH THE NUMBER OF ACCOUNTS is not.
+        assert several.executions == 8
 
 
 class TestAScoredReportOutranksHavingPaid:

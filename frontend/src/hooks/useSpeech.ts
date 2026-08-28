@@ -1058,6 +1058,28 @@ export function usePanelVoices(
     chainRef.current = Promise.resolve();
   }, []);
 
+  /*
+   * SILENCE ON THE WAY OUT — reported as "when the interview is closed the speaker's voice
+   * comes after".
+   *
+   * `cancelAll` was correct and had exactly one caller: the "skip to the report" button. So
+   * every OTHER way of leaving left the panel talking. Finishing an interview normally is the
+   * common one — the closing sequence is mid-sentence, the candidate taps through to their
+   * report, this component unmounts, and a voice they can no longer see or stop keeps speaking
+   * over the next page.
+   *
+   * Neither audio path stops itself. `speechSynthesis` is a property of the WINDOW, not of the
+   * React tree: an utterance already queued there outlives every component that queued it. And
+   * neural audio is an `<audio>` element held in a ref, which is not in the DOM at all, so
+   * unmounting removes nothing — `speechSynthesis.cancel()` would not touch it either, which
+   * is why `cancelAll` pauses it explicitly.
+   *
+   * IN THE HOOK RATHER THAN IN THE PAGE, because the hook owns the audio. A page-level
+   * cleanup fixes the one page somebody remembered; this makes it impossible for a consumer to
+   * forget. `cancelAll` is a useCallback with no dependencies, so this runs on unmount only.
+   */
+  useEffect(() => () => cancelAll(), [cancelAll]);
+
   /**
    * Queue one panelist's turn. Resolves when they have finished speaking.
    *

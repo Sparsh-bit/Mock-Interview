@@ -42,6 +42,10 @@ export interface MarketingRow {
   last_paid_at: string | null;
   /** How many purchases. Never a rupee total — /admin/revenue owns the money figure. */
   purchases: number;
+  /** What this account thinks of US, averaged over the interviews they rated, or null. */
+  avg_stars: number | null;
+  /** How many interviews they rated. One one-star is not five one-stars. */
+  ratings_given: number;
   segment: string;
 }
 
@@ -181,6 +185,8 @@ export function toCsv(
     'best_score',
     'ever_paid',
     'purchases',
+    'avg_stars',
+    'ratings_given',
     'last_paid',
     'last_active',
     'joined',
@@ -206,6 +212,11 @@ export function toCsv(
       r.best_score === null ? '' : String(Math.round(r.best_score)),
       yesNo(r.ever_paid),
       String(r.purchases),
+      // Empty rather than a placeholder for "never rated": a spreadsheet can filter and
+      // average an empty cell and can do neither with an em dash. Never negative, which keeps
+      // it clear of the formula-injection guard.
+      r.avg_stars === null ? '' : String(r.avg_stars),
+      String(r.ratings_given),
       isoDay(r.last_paid_at),
       isoDay(r.last_active_at),
       isoDay(r.joined_at),

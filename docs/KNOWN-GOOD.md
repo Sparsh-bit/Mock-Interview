@@ -22,7 +22,7 @@ Run all of it. Anything other than these numbers means something moved.
 
 ```bash
 docker-compose up -d            # Postgres + Redis. Tests ERROR ~70 times without it.
-cd backend && uv run pytest -q --no-cov      # 1876 passed, 2 skipped, 6 warnings
+cd backend && uv run pytest -q --no-cov      # 1889 passed, 2 skipped, 6 warnings
 cd backend && uv run ruff check . && uv run mypy app
 cd frontend && npm test -- --run             # 685 passed
 cd frontend && npx tsc --noEmit && npx next lint && npm run build
@@ -31,6 +31,15 @@ cd frontend && npx tsc --noEmit && npx next lint && npm run build
 **The two skipped backend tests are correct.** `test_error_status_codes.py` parametrises over
 every `AppError` subclass and skips two whose constructors need arguments it cannot invent.
 They are skips, not failures.
+
+**One test is known-flaky, and the cause is understood.**
+`test_admin_delete_user.py::test_the_audit_entry_outlives_the_account` occasionally fails in a
+full run and passes in isolation. Account deletion makes a **live HTTP call to Supabase** to
+remove the login — bounded at 10s, and it treats 200/204/404 as success, so a test user whose
+uid was never in Supabase normally gets a 404 and passes. A transient blip inside that window
+returns something else, the endpoint correctly refuses with 502, and the test fails at its
+first assertion. The behaviour is right (refusing beats orphaning a login); the test is
+network-dependent by design. Re-run before investigating.
 
 **~70 ERRORs mean Docker is not running.** This happened twice during the last session and
 looks alarming — asyncpg raises from inside an SSL connection attempt, so the traceback points
@@ -257,6 +266,32 @@ the signature one character at a time, and that mutation is caught.
 
 Replay is guarded by the ledger rather than by cryptography, and that is the right layer: a
 replayed body carries a genuine signature, so nothing about HMAC can help.
+
+### What a person can do with their own data
+
+Both were admin-only, so the honest answer to "can I leave?" was "email somebody and hope".
+
+- **`GET /users/me/export`** — profile, sessions, their own answers, reports, resumes,
+  payments and feedback, plus a named list of who the data is shared with (DPDP §5 wants that
+  disclosure, and a list people must infer is not one). Scoped by the TOKEN: there is
+  deliberately no `user_id` parameter, and its absence is asserted on the signature — adding
+  one would make this the highest-value IDOR in the product. Answer keys are excluded; they
+  belong to the question bank, not the candidate.
+- **`POST /users/me/delete`** — confirmed by typing your own email, not a checkbox, because it
+  is irreversible and removes interviews somebody paid for. Reuses the tested admin helpers
+  rather than reimplementing: a Core DELETE so the database cascade runs, and Supabase auth
+  removed BEFORE our rows, since a working login attached to no data silently recreates the
+  account on next sign-in. Order is pinned by a test.
+
+Closes DPDP §11 and §12. The remaining gaps there are documents, not code — see [[COMPLIANCE]].
+
+### Fixed: the voice that kept talking after the interview
+
+`cancelAll()` was correct and had exactly one caller — the "skip to report" button — so every
+other way of leaving left the panel speaking over the next page. `speechSynthesis` belongs to
+the WINDOW, not the React tree, and neural audio is an `<audio>` element held in a ref that is
+not in the DOM at all; unmounting removes neither. The cleanup now lives in `usePanelVoices`
+rather than in the page, so a consumer cannot forget it.
 
 ### Still untested
 
