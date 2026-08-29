@@ -105,6 +105,8 @@ const TONE: Record<Tone, { wrap: string; chip: string; ink: string }> = {
   },
 };
 
+// Old name kept deliberately: these keys record which nudges a person has already dismissed.
+// Renaming the prefix would un-dismiss every one of them and re-nag every existing user.
 const DISMISS_PREFIX = 'interviewos:nudge:';
 
 function dismissed(key: string): boolean {

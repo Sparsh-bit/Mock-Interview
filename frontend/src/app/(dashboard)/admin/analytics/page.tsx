@@ -217,7 +217,9 @@ export default function AdminAnalyticsPage() {
                   </span>
                   <div className="h-4 flex-1 overflow-hidden rounded bg-muted">
                     <div
-                      className="h-full rounded bg-green-500/70"
+                      /* Stock Tailwind green, off-palette, and it also read as "passed" — which emerald means
+                         everywhere else in the product. Revenue is amber: money and effort. */
+                      className="h-full rounded bg-accent-amber/70"
                       style={{ width: `${(d.inr / peakDay) * 100}%` }}
                     />
                   </div>
@@ -336,8 +338,11 @@ export default function AdminAnalyticsPage() {
                           <span className="font-medium">{c.feature}</span>
                           <span className="tabular-nums text-muted-foreground">
                             {c.entries.toLocaleString()} / {storage.max_rows_per_feature.toLocaleString()}
+                            {/* The `dark:` half of this was dead code — darkMode is
+                                configured but globals.css defines no dark palette, so the
+                                variant could never apply. */}
                             {c.never_hit > 0 && (
-                              <span className="ml-2 text-amber-600 dark:text-amber-500">
+                              <span className="ml-2 text-accent-amber-ink">
                                 {c.never_hit} never hit
                               </span>
                             )}
@@ -347,7 +352,7 @@ export default function AdminAnalyticsPage() {
                           <div
                             className={cn(
                               'h-full rounded',
-                              pct >= 90 ? 'bg-amber-500' : 'bg-blue-500/70',
+                              pct >= 90 ? 'bg-accent-amber' : 'bg-accent-indigo/70',
                             )}
                             style={{ width: `${pct}%` }}
                           />
@@ -432,7 +437,8 @@ export default function AdminAnalyticsPage() {
                       <td
                         className={cn(
                           'py-2 text-right tabular-nums',
-                          f.hits_per_entry >= 2 && 'text-green-600 dark:text-green-500',
+                          // A cache earning its keep: emerald, which is 'verified/working' throughout.
+                          f.hits_per_entry >= 2 && 'text-accent-emerald-ink',
                         )}
                       >
                         {f.hits_per_entry.toFixed(2)}

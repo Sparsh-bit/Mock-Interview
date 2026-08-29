@@ -58,7 +58,7 @@ export default function ProfilePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
       </div>
     );
   }
@@ -203,8 +203,11 @@ export default function ProfilePage() {
                 </h3>
                 <p className="w-full break-all text-xs text-muted-foreground">{user?.email}</p>
 
+                {/* Amber, which means preparation everywhere else in the product — this chip
+                    states what the person is working toward. `text-primary` said "primary
+                    action", and it is not an action at all. */}
                 {formData.target_company && (
-                  <span className="mt-3 max-w-full break-words rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-semibold text-primary">
+                  <span className="mt-3 max-w-full break-words rounded-full border border-accent-amber/30 bg-accent-amber-soft px-3 py-1 text-[11px] font-semibold text-accent-amber-ink">
                     Targeting {formData.target_company}
                   </span>
                 )}

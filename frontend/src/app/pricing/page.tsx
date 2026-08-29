@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
+import { Wordmark } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
 import { useAuth } from '@/hooks/useAuth';
 import {
   useBalance,
@@ -99,7 +101,16 @@ function ItemCard({
     <Card
       variant={isBundle ? 'elevated' : 'flat'}
       padding="md"
-      className={cn('flex flex-col gap-4', isBundle && 'ring-1 ring-primary/30')}
+      /*
+       * THE BUNDLE IS THE LIT ONE, and it is the only lit thing on the page — see
+       * docs/DESIGN-LANGUAGE §1. A pricing page whose tiles all look equally recommended
+       * makes the reader do the arithmetic, and most people will not.
+       *
+       * Amber rather than the indigo ring it had: in this palette amber means money and
+       * indigo means "primary action". A ring in the action colour around a tile promises
+       * the tile itself is clickable, which it is not — the button inside it is.
+       */
+      className={cn('flex flex-col gap-4', isBundle && 'lit lit-hover')}
     >
       <div className="space-y-1">
         <div className="flex items-center gap-2">
@@ -110,7 +121,10 @@ function ItemCard({
       </div>
 
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-2xl font-semibold tabular-nums text-foreground">
+        {/* Monospace, like every other figure in this product. These are numbers a reader
+            compares down a column — the tabular figures keep the rupee amounts aligned, and
+            proportional digits make two prices of the same length different widths. */}
+        <span className="font-mono text-2xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
           ₹{nowRupees}
         </span>
         {discounted && (
@@ -302,7 +316,7 @@ export default function StorePage() {
           orderId: order.order_id,
           amountPaise: order.amount_paise,
           keyId: order.key_id,
-          itemName: items?.find((i) => i.id === itemId)?.name ?? 'InterviewOS',
+          itemName: items?.find((i) => i.id === itemId)?.name ?? 'Hotseat',
           prefill: { email: session?.user?.email ?? undefined },
           onSuccess: (proof) => {
             /*
@@ -369,8 +383,8 @@ export default function StorePage() {
     <div className="min-h-screen bg-background paper-grain">
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5 sm:px-10">
-          <Link href="/" className="text-sm font-semibold tracking-tight text-foreground">
-            InterviewOS
+          <Link href="/" aria-label={`${BRAND.name} home`}>
+            <Wordmark />
           </Link>
           {!authLoading && (
             <Link
@@ -385,6 +399,7 @@ export default function StorePage() {
 
       <div className="mx-auto w-full max-w-5xl space-y-10 px-6 py-10 sm:px-10 sm:py-14">
         <PageHeader
+          eyebrow="Plans"
           title="Buy what you need"
           description="No subscription. Pay per session, and what you buy never expires."
         />
@@ -513,7 +528,7 @@ export default function StorePage() {
                   item.trial_allowance === 1 ? item.feature_label_singular : item.feature_label;
                 return (
                   <span key={feature} className="flex items-center gap-1.5 text-muted-foreground">
-                    <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
+                    <Check className="h-3.5 w-3.5 shrink-0 text-accent-emerald-ink" aria-hidden />
                     {item.trial_allowance} {label}
                   </span>
                 );

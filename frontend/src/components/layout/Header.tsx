@@ -2,12 +2,14 @@
 
 import { useCallback, useRef, useState } from 'react';
 
-import { HelpCircle, LogOut, Menu, Sparkles } from 'lucide-react';
+import { HelpCircle, LogOut, Menu } from 'lucide-react';
 import Link from 'next/link';
 import { MOBILE_NAV_ID, MobileNav } from '@/components/layout/MobileNav';
 import { ADMIN_NAV_ITEMS, NAV_ITEMS, useIsAdmin } from '@/components/layout/Sidebar';
-import { buttonVariants } from '@/components/ui/button';
+import { BalanceChip } from '@/components/billing/BalanceChip';
+import { Wordmark } from '@/components/brand/Brandmark';
 import { useAuth } from '@/hooks/useAuth';
+import { BRAND } from '@/lib/brand';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { usePathname } from 'next/navigation';
 
@@ -26,7 +28,7 @@ function getPageTitle(pathname: string): string {
   for (const [route, label] of Object.entries(ROUTE_LABELS)) {
     if (pathname.startsWith(route)) return label;
   }
-  return 'InterviewOS';
+  return BRAND.name;
 }
 
 interface HeaderProps {
@@ -102,6 +104,16 @@ export function AppHeader({ user }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
+        {/*
+          * THE MARK APPEARS ONLY BELOW `lg`, and that is not a stylistic choice.
+          * At `lg` and up the rail is on screen with the wordmark at the top of it, so a
+          * second copy here would be the product name twice in the same 56px band. Below
+          * `lg` the rail is gone and the only thing identifying the page would be a
+          * hamburger and the word "Dashboard" — which is every app ever made.
+          */}
+        <Link href="/dashboard" aria-label={`${BRAND.name} home`} className="lg:hidden">
+          <Wordmark collapsed className="pointer-events-none" />
+        </Link>
         <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
       </div>
 
@@ -116,7 +128,7 @@ export function AppHeader({ user }: HeaderProps) {
       <div className="flex items-center gap-1">
         {/* Help — real support link */}
         <a
-          href="mailto:support@interviewos.app?subject=InterviewOS%20Help"
+          href="mailto:support@interviewos.app?subject=Hotseat%20Help"
           title="Get help"
           className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
@@ -124,41 +136,22 @@ export function AppHeader({ user }: HeaderProps) {
         </a>
 
         {/*
-          * PLANS — and it is in the header because the header is the only chrome that is
-          * always on screen.
+          * WHAT YOU HAVE LEFT — and it used to be a button that said "Plans".
           *
-          * The rail already carries a { href: '/pricing', label: 'Plans' } entry, so on a
-          * desktop this is the second way to the same page. Below `lg` the rail is `hidden
-          * lg:flex` and that entry exists only inside the drawer, which means the one action
-          * that resolves a 402 was two taps and a guess away on precisely the devices most
-          * candidates use. A blocked user who cannot find the way to unblock themselves
-          * reads it as the product being broken, not as a purchase they have not made yet.
+          * The reasoning for putting a route to pricing in the header still holds exactly as
+          * it did: this is the only chrome that is always on screen, and below `lg` the rail's
+          * own Plans entry is buried in a drawer, so a candidate hitting a 402 had the one
+          * action that unblocks them two taps and a guess away — on precisely the devices most
+          * of them use. A blocked person who cannot find the way to unblock themselves
+          * concludes the product is broken, not that they have not bought anything.
           *
-          * Styled `secondary`, not `primary`: buying is a real action and should look like a
-          * control rather than a link, but it is never the thing the candidate came to this
-          * page to do. A filled primary pill on every dashboard page would be shouting, and
-          * the label is the plain noun the rail uses — nothing to unlock or supercharge.
+          * What changed is what it says. "Plans" said the same thing whether you had ten
+          * interviews left or none, so it was an advert and people stopped seeing it within a
+          * day. "2 interviews left" is information the reader actually wants, and it happens
+          * to be far more persuasive than the word Plans has ever been. Same destination,
+          * earned rather than begged.
           */}
-        <Link
-          href="/pricing"
-          /*
-           * The name has to survive the label being hidden. `hidden` removes the span from
-           * the accessibility tree as well as from the layout, so between 0 and 640px this
-           * would otherwise be an anchor announced as "link" with no indication of where it
-           * goes — and that is the width band the link exists for in the first place.
-           * "Plans and pricing" rather than something else entirely because an accessible
-           * name that does not contain the visible word breaks voice control: a user saying
-           * "click Plans" must hit the thing that reads Plans.
-           */
-          aria-label="Plans and pricing"
-          className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-        >
-          {/* shrink-0 for the same reason the Button's own spinner has it — the label beside
-              it is allowed to wrap, and a flex row shrinks whatever will let it, so without
-              this the icon goes oval before the text gives up any width. */}
-          <Sparkles className="h-3.5 w-3.5 shrink-0" />
-          <span className="hidden sm:inline">Plans</span>
-        </Link>
+        <BalanceChip />
 
         {/* Divider */}
         <div className="mx-2 h-4 w-px bg-border/70" />

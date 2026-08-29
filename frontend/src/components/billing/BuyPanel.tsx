@@ -141,7 +141,7 @@ export function BuyPanel({
             orderId: order.order_id,
             amountPaise: order.amount_paise,
             keyId: order.key_id,
-            itemName: forFeature.find((i) => i.id === itemId)?.name ?? 'InterviewOS',
+            itemName: forFeature.find((i) => i.id === itemId)?.name ?? 'Hotseat',
             onSuccess: (proof) => {
               // Verified server-side immediately. The webhook is still the primary path and
               // still grants on its own; this is the second, independent one, because a

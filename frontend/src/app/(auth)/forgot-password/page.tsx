@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
+import { Wordmark } from '@/components/brand/Brandmark';
 
 export const runtime = 'edge';
 const schema = z.object({
@@ -66,11 +67,16 @@ export default function ForgotPasswordPage() {
         container grows to the content and the page scrolls.
       */}
       <motion.div initial="hidden" animate="visible" variants={scalePop} className="w-full max-w-sm">
+        {/* The mark, not the name set in mono. These four screens are where somebody meets
+            the product for the first time after clicking a link from somewhere else, and a
+            wordmark typed in the same face as the body copy is indistinguishable from a
+            heading — it identifies nothing. */}
         <Link
           href="/"
-          className="mb-6 block font-mono text-sm font-semibold tracking-tight transition-opacity hover:opacity-70 sm:mb-10"
+          aria-label="Hotseat home"
+          className="mb-6 block w-fit transition-opacity hover:opacity-70 sm:mb-10"
         >
-          InterviewOS
+          <Wordmark />
         </Link>
 
         <div>

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
  * The landing page's one visual idea: it marks up its own sentences using the
  * product's own annotation language.
  *
- * InterviewOS annotates speech — it boxes your filler words, drops a timed chip
+ * Hotseat annotates speech — it boxes your filler words, drops a timed chip
  * where you paused, strikes what was wrong and writes the better version beside
  * it. So the page does that to its own copy. The move escalates down the page and
  * ends by striking through the two claims this site itself used to make falsely

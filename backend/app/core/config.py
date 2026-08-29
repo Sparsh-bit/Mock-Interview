@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     #: a deployment that forgot to set it accepted forged tokens the first time the JWKS
     #: endpoint hiccuped. Never set this outside local development.
     ALLOW_UNVERIFIED_JWT: bool = False
-    APP_NAME: str = "InterviewOS"
+    APP_NAME: str = "Hotseat"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"

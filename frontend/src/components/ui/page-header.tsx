@@ -1,4 +1,10 @@
+'use client';
+
 import * as React from 'react';
+
+import { usePathname } from 'next/navigation';
+
+import { ROUTE_TONE, TONES, type Tone } from '@/lib/tones';
 import { cn } from '@/lib/utils';
 
 /**
@@ -25,6 +31,7 @@ export function PageHeader({
   title,
   description,
   actions,
+  tone,
   className,
 }: {
   eyebrow?: string;
@@ -32,8 +39,31 @@ export function PageHeader({
   description?: React.ReactNode;
   /** Buttons or controls, right-aligned on desktop and wrapped underneath on mobile. */
   actions?: React.ReactNode;
+  /**
+   * Overrides the colour the eyebrow is drawn in. Almost never needed — the tone is derived
+   * from the route, so a page cannot accidentally disagree with its own rail entry. Pass it
+   * only for a surface that has no rail entry of its own.
+   */
+  tone?: Tone;
   className?: string;
 }) {
+  /*
+   * THE EYEBROW IS THE COLOUR OF THE RAIL ENTRY THAT BROUGHT YOU HERE, derived from the path
+   * rather than passed in — a prop would be one more thing for a new page to forget, and a
+   * page whose header disagrees with its rail is worse than one with no colour, because it
+   * teaches the reader that the colours mean nothing.
+   *
+   * It is wayfinding, not decoration: on a product with fourteen destinations that share one
+   * layout, the top-left of the page is where you check which one you are in. Longest matching
+   * prefix, so /report/<id> inherits /report.
+   */
+  const pathname = usePathname();
+  const matched = Object.keys(ROUTE_TONE)
+    .filter((r) => pathname === r || pathname.startsWith(r + '/'))
+    .sort((a, b) => b.length - a.length)[0];
+  const resolved = tone ?? (matched ? ROUTE_TONE[matched] : undefined);
+  const t = resolved ? TONES[resolved] : null;
+
   return (
     <header
       className={cn(
@@ -43,7 +73,16 @@ export function PageHeader({
     >
       <div className="min-w-0">
         {eyebrow && (
-          <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+          <p
+            className={cn(
+              'mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em]',
+              t ? t.ink : 'text-muted-foreground',
+            )}
+          >
+            {/* A 14px rule rather than a dot or an icon. It reads as a printed section mark,
+                which is the register the rest of this type is in — and unlike an icon it needs
+                no meaning of its own. */}
+            {t && <span aria-hidden className={cn('h-px w-3.5 shrink-0', t.rail)} />}
             {eyebrow}
           </p>
         )}

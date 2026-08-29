@@ -6,6 +6,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 
+import { Wordmark } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
+import { ROUTE_TONE, TONES } from '@/lib/tones';
 import { cn } from '@/lib/utils';
 
 /**
@@ -159,13 +162,8 @@ export function MobileNav({ open, onClose, groups, triggerRef }: MobileNavProps)
             )}
           >
             <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-border/60 px-4">
-              <Link href="/dashboard" className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold text-background">
-                  IO
-                </span>
-                <span className="truncate font-mono text-[13px] font-semibold tracking-tight">
-                  InterviewOS
-                </span>
+              <Link href="/dashboard" aria-label={`${BRAND.name} home`} className="min-w-0">
+                <Wordmark />
               </Link>
               <button
                 type="button"
@@ -186,6 +184,19 @@ export function MobileNav({ open, onClose, groups, triggerRef }: MobileNavProps)
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    /*
+                     * THE TONE IS LOOKED UP BY HREF rather than added to `MobileNavItem`.
+                     *
+                     * A new field on the type would have to be set here, in the rail's own
+                     * item list, and by every future caller — three places to keep in
+                     * agreement, which is three places to disagree. Keyed on the route, the
+                     * drawer and the rail cannot drift apart because they are reading the
+                     * same table. `tones.test.ts` pins that table against the rail's source.
+                     *
+                     * Undefined for Profile and Settings, which are deliberately uncoloured,
+                     * and those fall back to the neutral treatment.
+                     */
+                    const t = ROUTE_TONE[item.href] ? TONES[ROUTE_TONE[item.href]] : null;
                     return (
                       <Link
                         key={item.href}
@@ -197,11 +208,22 @@ export function MobileNav({ open, onClose, groups, triggerRef }: MobileNavProps)
                           // precise and a thumb is not.
                           'flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm transition-colors',
                           active
-                            ? 'bg-primary/10 font-medium text-primary'
+                            ? cn('font-medium', t ? `${t.activeBg} ${t.activeText}` : 'bg-primary/10 text-primary')
                             : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
                         )}
                       >
-                        <Icon className="h-4 w-4 flex-shrink-0" />
+                        {/* Coloured whether or not the row is active, exactly as in the
+                            desktop rail. A column of identical grey icons teaches nothing
+                            about where things are; coloured, the list becomes a map you can
+                            read without reading the words — which matters more here, since
+                            this drawer is the ONLY navigation below lg. */}
+                        <Icon
+                          className={cn(
+                            'h-4 w-4 flex-shrink-0',
+                            t ? t.icon : 'text-muted-foreground',
+                            !active && 'opacity-70',
+                          )}
+                        />
                         <span className="truncate">{item.label}</span>
                       </Link>
                     );

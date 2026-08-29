@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Lock } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
 import { ApiError } from '@/lib/api/errors';
 // buttonVariants rather than <Button asChild> — this Button is a plain forwardRef around a
 // <button> with no Slot support, so wrapping a Link in it would nest an anchor inside a
@@ -77,10 +78,25 @@ export function Paywall({
   const neverHadAny = info.allowance <= 0;
 
   return (
-    <Card variant="elevated" padding="lg" className={className}>
-      <div className="flex flex-col items-center gap-5 text-center">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10">
-          <Lock className="h-5 w-5 text-primary" aria-hidden />
+    /*
+     * LIT, because when this is on screen it IS the subject of the page — the candidate came
+     * to start something and this is the only thing standing between them and it. One lit
+     * element per view (docs/DESIGN-LANGUAGE §1); a paywall rendered as one more flat card
+     * among several is a paywall people scroll past without reading, which helps nobody.
+     */
+    <Card variant="elevated" padding="lg" className={cn('lit', className)}>
+      <div className="flex flex-col gap-5">
+        {/*
+          * LEFT-ALIGNED, not centred. DESIGN-RULES bans "everything centred" as a tell, and
+          * there is a specific reason it matters here: this block is followed by BuyPanel,
+          * which is a left-aligned list of priced options. A centred heading over a
+          * left-aligned list reads as two components stacked by accident.
+          */}
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-amber-soft">
+          {/* Amber, not the primary indigo. In this palette amber means money and indigo
+              means "the product / a primary action" — and an indigo padlock said "this is
+              the main thing to click", which is the opposite of what a wall is. */}
+          <Lock className="h-[18px] w-[18px] text-accent-amber-ink" aria-hidden />
         </div>
 
         <div className="space-y-1.5">

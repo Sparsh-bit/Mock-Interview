@@ -73,7 +73,17 @@ export function CreditMeter({ className }: { className?: string }) {
                 <span
                   className={cn(
                     'font-medium tabular-nums',
-                    gone ? 'text-destructive' : low ? 'text-amber-500' : 'text-foreground',
+                    /* `text-amber-500` was Tailwind's stock amber, not this product's.
+                       Two problems, and the second is the serious one: it is a different hue
+                       from every other warning in the app, and it measures about 2:1 on the
+                       paper ground — the warning that tells somebody they are nearly out of
+                       interviews was the least readable text on the card. `-ink` is the only
+                       accent tone that clears 4.5:1 at this size. */
+                    gone
+                      ? 'text-accent-coral-ink'
+                      : low
+                        ? 'text-accent-amber-ink'
+                        : 'text-foreground',
                   )}
                 >
                   {f.remaining} left
@@ -88,7 +98,9 @@ export function CreditMeter({ className }: { className?: string }) {
                 <div
                   className={cn(
                     'h-full rounded-full transition-[width] duration-500',
-                    gone ? 'bg-destructive' : low ? 'bg-amber-500' : 'bg-primary',
+                    /* The bare accent tone rather than `-ink` here: this is a fill, not
+                       text, and 3:1 is the bar for a meaningful graphic. */
+                    gone ? 'bg-accent-coral' : low ? 'bg-accent-amber' : 'bg-accent-indigo',
                   )}
                   style={{ width: `${Math.max(0, Math.min(100, fraction * 100))}%` }}
                 />

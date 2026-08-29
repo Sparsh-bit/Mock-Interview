@@ -16,6 +16,7 @@ import FloatingLabelInput from '@/components/lightswind-pro/floating-label-input
 import PasswordStrength from '@/components/lightswind-pro/password-strength';
 import { Button } from '@/components/ui/button';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
+import { Wordmark } from '@/components/brand/Brandmark';
 
 export const runtime = 'edge';
 /*
@@ -135,7 +136,7 @@ export default function RegisterPage() {
             the logo is on the page exactly once instead of twice. */}
         <motion.div variants={fadeUp} className="order-2 space-y-6 md:order-1">
           <Link href="/" className="hidden items-center gap-2 md:flex">
-            <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
+            <Wordmark />
           </Link>
           <div>
             <h2 className="mb-3 text-3xl font-medium tracking-[-0.03em]">
@@ -164,7 +165,7 @@ export default function RegisterPage() {
         {/* Right on desktop, FIRST on a phone — see the ordering note on the panel above. */}
         <motion.div variants={fadeUp} className="order-1 md:order-2">
           <Link href="/" className="mb-6 flex items-center gap-2 md:hidden">
-            <span className="font-mono text-sm font-semibold tracking-tight">InterviewOS</span>
+            <Wordmark />
           </Link>
 
           <div>

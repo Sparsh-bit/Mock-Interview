@@ -64,7 +64,7 @@ export function ShareMenu({
   }, [open]);
 
   const url = publicUrl(reportId);
-  const title = `My ${trackName ?? 'mock interview'} report on InterviewOS`;
+  const title = `My ${trackName ?? 'mock interview'} report on Hotseat`;
   const text = summary ? `${title} — ${summary}` : title;
 
   const copyLink = async () => {

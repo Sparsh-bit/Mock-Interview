@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from 'next';
+
+import { BRAND } from '@/lib/brand';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from '@/components/providers';
@@ -18,11 +20,15 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: 'InterviewOS — AI-Powered Mock Interviews',
-    template: '%s | InterviewOS',
+    /*
+     * "AI-Powered Mock Interviews" was the exact shape DESIGN-RULES bans — adjective-noun-AI,
+     * which says nothing and appears on every generated landing page since 2023. The tagline
+     * says what the product does instead, and it is the same line the mark carries.
+     */
+    default: `${BRAND.name} — ${BRAND.tagline}`,
+    template: `%s · ${BRAND.name}`,
   },
-  description:
-    'Practice technical interviews with AI. Adaptive questions, real-time evaluation, and expert feedback for Cognizant, TCS, Infosys, and Wipro.',
+  description: BRAND.promise,
   keywords: [
     'mock interview',
     'technical interview',
@@ -31,29 +37,48 @@ export const metadata: Metadata = {
     'AI interview simulator',
     'coding interview prep',
   ],
-  authors: [{ name: 'InterviewOS' }],
-  creator: 'InterviewOS',
+  authors: [{ name: BRAND.name }],
+  creator: BRAND.name,
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://interviewos.dev'),
   openGraph: {
     type: 'website',
     locale: 'en_US',
     url: 'https://interviewos.dev',
-    title: 'InterviewOS — AI-Powered Mock Interviews',
-    description:
-      'The interview simulator built for real offers. Adaptive AI questioning, resume personalization, and detailed performance reports.',
-    siteName: 'InterviewOS',
+    title: `${BRAND.name} — ${BRAND.tagline}`,
+    description: BRAND.promise,
+    siteName: BRAND.name,
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'InterviewOS — AI-Powered Mock Interviews',
-    description: 'Practice technical interviews with AI and land your dream offer.',
+    title: `${BRAND.name} — ${BRAND.tagline}`,
+    // "land your dream offer" was a phrase, not a claim. This one is checkable.
+    description:
+      'Practise against a panel that sounds like the one you are about to face, then read what they would have said about you.',
   },
   robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0a0d14',
-  colorScheme: 'dark',
+  /*
+   * A REAL BUG, not a restyle. These two lines still described the dark theme the product had
+   * before the retheme to warm paper, and both are things the BROWSER acts on rather than the
+   * page:
+   *
+   *   `themeColor` paints the address bar and the task-switcher card on Android Chrome. A
+   *   near-black bar sat directly above a #F9F6F0 page — the join looked like a rendering
+   *   fault, on the surface a candidate sees before anything else has loaded.
+   *
+   *   `colorScheme: 'dark'` is stronger and worse: it tells the engine to render form controls,
+   *   scrollbars and the canvas under the page in its dark palette. Native selects, date
+   *   inputs and the scrollbar were dark-on-light, and on a slow connection the page flashed
+   *   a dark ground before the CSS arrived.
+   *
+   * #F9F6F0 is `--background` (38 44% 96%) converted to hex. It has to be a literal — this
+   * object is read at build time and cannot resolve a CSS custom property — so if the ground
+   * is ever retoned, retone this with it.
+   */
+  themeColor: '#F9F6F0',
+  colorScheme: 'light',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

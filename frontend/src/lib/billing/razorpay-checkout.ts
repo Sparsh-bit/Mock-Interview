@@ -107,7 +107,7 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<boolean> {
     // here — this is display only, and the order was created server-side.
     amount: args.amountPaise,
     currency: 'INR',
-    name: 'InterviewOS',
+    name: 'Hotseat',
     description: args.itemName,
     prefill: args.prefill ?? {},
     theme: { color: '#4f46e5' },

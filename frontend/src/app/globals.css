@@ -41,11 +41,20 @@
 
 @layer base {
   :root {
-    /* Ground — warm paper, white cards lifted off it */
-    --background: 38 38% 98%;
-    /* #fbf9f6 warm paper */
-    --surface: 36 26% 95%;
-    /* recessed / grouped fills */
+    /* ── Ground → recessed → raised, and they are now three DIFFERENT values ──────────
+       These were 98% / 95% / 100%: five points of range, with the "elevated" card lighter
+       than its ground by two. Nothing read as layered, which is most of why the interface
+       felt flat — six carefully chosen accents cannot rescue a page where every surface is
+       the same value.
+
+       Deepened so the ladder is legible: the paper ground carries more of its own warmth,
+       the recessed fill is properly recessed, and a white card genuinely lifts off both.
+       Checked by theme-contrast.test.ts rather than by eye, because every one of these
+       numbers moves a contrast ratio somewhere else. */
+    --background: 38 44% 96%;
+    /* warm paper, with the warmth actually visible */
+    --surface: 36 30% 91%;
+    /* recessed / grouped fills — clearly below the ground */
     --surface-elevated: 0 0% 100%;
     /* white cards */
     --surface-overlay: 0 0% 100%;
@@ -53,8 +62,8 @@
     /* Foreground hierarchy — ink, not black */
     --foreground: 228 24% 13%;
     /* #1a1d2b */
-    --muted: 36 20% 91%;
-    --muted-foreground: 228 9% 44%;
+    --muted: 36 26% 88%;
+    --muted-foreground: 228 12% 40%;
     /* #676b7a — 5.9:1 on paper */
 
     /* Component tokens */
@@ -69,11 +78,11 @@
     --primary-foreground: 0 0% 100%;
 
     /* Secondary — warm fill (secondary buttons/chips) */
-    --secondary: 36 24% 93%;
+    --secondary: 36 28% 90%;
     --secondary-foreground: 228 24% 13%;
 
     /* Accent (hover fills) */
-    --accent: 36 26% 94%;
+    --accent: 36 28% 91%;
     --accent-foreground: 228 24% 13%;
 
     /* Semantic — bound to the accents below so one meaning has one colour */
@@ -85,8 +94,8 @@
     --warning-foreground: 0 0% 100%;
 
     /* Borders — warm hairline, so edges read as paper not as grey plastic */
-    --border: 34 18% 87%;
-    --input: 34 18% 84%;
+    --border: 34 24% 83%;
+    --input: 34 24% 80%;
     --ring: 231 48% 45%;
 
     /* Radius — Apple card/control curvature (softened/rounder) */
@@ -116,9 +125,12 @@
        Each level pairs a near-invisible ambient shadow with a tighter contact
        shadow — the way a real object sits on a surface. Level 0 is flat with a
        border only, which is where most of the interface should live.          */
-    --elev-1: 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 1px 3px 0 rgb(0 0 0 / 0.04);
-    --elev-2: 0 2px 4px -2px rgb(0 0 0 / 0.08), 0 4px 12px -2px rgb(0 0 0 / 0.06);
-    --elev-3: 0 8px 16px -8px rgb(0 0 0 / 0.12), 0 16px 40px -12px rgb(0 0 0 / 0.10);
+    /* Weighted up with the ground. A shadow tuned against a 98% near-white is nearly
+       invisible on a 96% warm paper, so the same ladder had to be re-struck — the shapes
+       are unchanged, only the alphas. Still ambient + contact rather than one heavy blur. */
+    --elev-1: 0 1px 2px -1px rgb(28 22 14 / 0.10), 0 1px 3px 0 rgb(28 22 14 / 0.07);
+    --elev-2: 0 2px 4px -2px rgb(28 22 14 / 0.12), 0 6px 16px -3px rgb(28 22 14 / 0.10);
+    --elev-3: 0 10px 20px -8px rgb(28 22 14 / 0.18), 0 20px 48px -14px rgb(28 22 14 / 0.14);
 
     /* ── The six working colours ─────────────────────────────────────────
        Sampled from the photography; each bound to one meaning. Use `-ink` for
@@ -129,14 +141,14 @@
     --accent-indigo: 231 48% 45%;
     --accent-indigo-ink: 231 52% 38%;
     /* 9.2:1 */
-    --accent-indigo-soft: 231 54% 96%;
+    --accent-indigo-soft: 231 60% 91%;
 
     /* preparation, in progress, hours and effort — the oak desk and window light */
     --accent-amber: 32 88% 46%;
     /* graphics only: 2.9:1 */
     --accent-amber-ink: 30 84% 30%;
     /* 6.4:1 */
-    --accent-amber-soft: 38 82% 94%;
+    --accent-amber-soft: 38 86% 89%;
     /* The hot end of the warning ramp — burnt orange, 5.0:1. A fourth TONE of
        amber, not a seventh colour. It exists because the score scale has five
        bands and the palette has four usable text colours for them; without it
@@ -148,25 +160,25 @@
     --accent-emerald: 158 58% 34%;
     --accent-emerald-ink: 158 64% 26%;
     /* 6.3:1 */
-    --accent-emerald-soft: 152 44% 94%;
+    --accent-emerald-soft: 152 46% 86%;
 
     /* flagged, bluffing, wrong — the ring drawn round the score */
     --accent-coral: 6 74% 52%;
     --accent-coral-ink: 6 68% 42%;
     /* 5.5:1 */
-    --accent-coral-soft: 8 76% 96%;
+    --accent-coral-soft: 8 80% 91%;
 
     /* data, analytics, measurement — the chart teal */
     --accent-teal: 187 62% 32%;
     --accent-teal-ink: 189 68% 26%;
     /* 6.6:1 */
-    --accent-teal-soft: 184 44% 94%;
+    --accent-teal-soft: 184 48% 86%;
 
     /* HR and behavioural rounds */
     --accent-plum: 282 34% 46%;
     --accent-plum-ink: 282 38% 38%;
     /* 6.9:1 */
-    --accent-plum-soft: 282 40% 96%;
+    --accent-plum-soft: 282 48% 91%;
 
     /* `accent-violet` and `accent-cyan` remain valid class names — the Tailwind
        config maps them onto plum and teal — so the screens still using them
@@ -320,6 +332,89 @@
     background: hsl(var(--surface-elevated));
     border: 1px solid hsl(var(--border) / 0.7);
     box-shadow: 0 1px 2px hsl(28 20% 12% / 0.05), 0 8px 24px hsl(28 20% 12% / 0.06);
+  }
+
+  /*
+   * THE HOTSEAT. One element per page sits in the light; everything else is on paper.
+   *
+   * This exists because the complaint that started the redesign was that every page looked
+   * the same — and it did, because every block was the same white card at the same elevation,
+   * so no page had a subject. `.lit` is the answer, and it is deliberately a single class
+   * rather than a set of utilities: a rule you can only apply whole is a rule that survives
+   * contact with a hurry.
+   *
+   * THREE PARTS, and each is doing a job the other two cannot:
+   *
+   *   The gradient falls from the TOP EDGE only, over about the first 40%. Light comes from
+   *   somewhere. A tint applied evenly across a card is a coloured card; a tint that decays
+   *   downward is a lit one, and the eye reads the difference immediately without being able
+   *   to say why.
+   *
+   *   The shadow is `--elev-3` — the largest in the system, reserved for this. Depth is a
+   *   scarce resource: if three things on a page cast a big shadow, none of them is raised.
+   *
+   *   The border warms rather than brightening. A lit object catches colour from its light;
+   *   a white outline would read as a sticker sitting on top of the page.
+   *
+   * AMBER, not the primary indigo. Amber is the product's warmth and the heat the name is
+   * about, and using indigo here would collide with "this is a primary action" — the light is
+   * about importance, not about what to click.
+   *
+   * TWO LIT THINGS ARE NONE. If a page seems to need a second, the page has two subjects and
+   * the fix is upstream, in the layout.
+   */
+  .lit {
+    position: relative;
+    background:
+      linear-gradient(
+        to bottom,
+        hsl(var(--accent-amber-soft) / 0.55) 0%,
+        hsl(var(--accent-amber-soft) / 0.16) 22%,
+        transparent 42%
+      ),
+      hsl(var(--surface-elevated));
+    border: 1px solid hsl(var(--accent-amber) / 0.22);
+    box-shadow: var(--elev-3);
+  }
+
+  /*
+   * The catch of light along the top edge — a one-pixel highlight where the surface turns
+   * toward the source. It is what stops the gradient reading as a printed band, and it is the
+   * detail that makes the whole thing look lit rather than filled.
+   *
+   * `inset-x-0` at the very top, and `pointer-events: none` so it can never eat a click on
+   * whatever is underneath it. The parent sets `position: relative` above for this alone.
+   */
+  .lit::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--accent-amber) / 0.45) 18%,
+      hsl(var(--accent-amber) / 0.45) 82%,
+      transparent
+    );
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  /* Hover state for a lit element that is also a link — the light comes up slightly rather
+     than the card moving. A thing standing in a spotlight does not levitate when you point at
+     it; the light gets stronger. */
+  .lit-hover {
+    transition:
+      box-shadow 300ms cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .lit-hover:hover {
+    border-color: hsl(var(--accent-amber) / 0.42);
+    box-shadow:
+      var(--elev-3),
+      0 0 0 4px hsl(var(--accent-amber) / 0.07);
   }
 
   /* Frosted translucent bar — for sticky headers / navbars only. */

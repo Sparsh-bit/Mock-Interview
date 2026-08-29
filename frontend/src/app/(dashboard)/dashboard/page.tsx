@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Loader2, Play, Plus, TrendingUp } from 'lucide-react';
+import { ArrowRight, BarChart2, BookOpen, CheckCircle2, Clock, FileText, Flame, Loader2, Play, Plus } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FocusGroup, FocusItem } from '@/components/lightswind-pro/focus-cards';
 import { useProgress, useTracks, useUserSessions, useUserStats } from '@/hooks/useData';
@@ -14,6 +14,7 @@ import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { PromoBanner } from '@/components/PromoBanner';
 import { NudgeDeck } from '@/components/dashboard/NudgeDeck';
 import { fadeUp, staggerContainer } from '@/lib/motion';
+import { scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 import { DataError } from '@/components/ui/data-error';
 import { StatCard } from '@/components/ui/stat-card';
@@ -153,11 +154,17 @@ export default function DashboardPage() {
           sub="total time"
           color="violet"
         />
+        {/* THE EMOJI IS GONE FROM THE VALUE. `7🔥` is not a number — it does not align in a
+            tabular-nums column, it renders at a different size on every platform, and it is
+            the single clearest tell that nobody chose the typography. The flame moved into
+            the icon tile, which is what the tile is for. */}
         <StatCard
           label="Day Streak"
-          value={statsLoading ? '…' : `${stats?.streak_days ?? 0}🔥`}
-          icon={<TrendingUp className="h-4 w-4" />}
-          sub="keep it up"
+          value={statsLoading ? '…' : String(stats?.streak_days ?? 0)}
+          icon={<Flame className="h-4 w-4" />}
+          sub={
+            (stats?.streak_days ?? 0) > 0 ? 'days in a row' : 'practise today to start one'
+          }
           color="amber"
         />
       </div>
@@ -220,7 +227,25 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
                       {sess.overall_score !== null && (
-                        <span className="text-sm font-bold text-primary">{sess.overall_score}/100</span>
+                        /* BANDED, not one colour for every score. `text-primary` on a 34 and
+                           on an 82 said the same thing about two opposite outcomes, and the
+                           score is the only reason most people open this list.
+
+                           The bands come from lib/score-bands, which mirrors the backend's —
+                           so a round is the same colour here, on its own report page, and in
+                           the word the report prints for it. I first wrote these thresholds
+                           by hand and got them wrong: I used 70/50 and asserted in a comment
+                           that they matched the report, which used 75/50/30, which in turn
+                           did not match the backend's 85/70/55/40. Three sets, no agreement. */
+                        <span
+                          className={cn(
+                            'rounded-md px-1.5 py-0.5 font-mono text-sm font-bold tabular-nums',
+                            scoreChipTone(sess.overall_score),
+                          )}
+                        >
+                          {sess.overall_score}
+                          <span className="text-[10px] font-medium opacity-60">/100</span>
+                        </span>
                       )}
                       <Link
                         href={sess.status === 'completed' ? `/report/${sess.id}` : `/session/${sess.id}`}
@@ -295,37 +320,109 @@ export default function DashboardPage() {
 /**
  * The rating, at the top of the dashboard.
  *
- * Deliberately compact and deliberately specific: the number, what it claims, and
- * the exact points to the next rung. "Keep practising" is not a goal; "38 points to
- * Offer Ready" is, and it is the difference between a stat and something someone
- * comes back for.
+ * THE ONE ELEMENT ON THIS PAGE THAT IS SUPPOSED TO PULL SOMEBODY BACK TOMORROW, and until now
+ * it was styled exactly like the six cards underneath it — same white, same border, same
+ * radius. A credential that looks like a statistics tile is a statistics tile.
  *
- * Renders nothing at all until there is a rating. An empty ladder on day one is a
- * reminder that you have done nothing, which is the opposite of the intended effect —
- * the nudge deck below already handles a first-time user.
+ * So it is the only block on the dashboard with the brand gradient on it, and the gradient is
+ * spent on the LADDER rather than on the background. That distinction is the whole design:
+ *
+ *   A tinted panel is decoration — it makes the block look important without making it mean
+ *   more. A filled bar is information: the fill IS how far up you are, the gap to the right
+ *   IS what is left, and the number under it says exactly how much. You can read your position
+ *   without reading a word.
+ *
+ * `rank.floor` and `next_rank.floor` are what make it honest. The fill is computed from where
+ * the rating actually sits between the two rungs, so it cannot flatter — somebody one point
+ * into a rank sees a nearly empty bar, which is true and is the point.
+ *
+ * Renders nothing at all until there is a rating. An empty ladder on day one is a reminder
+ * that you have done nothing, which is the opposite of the intended effect — the nudge deck
+ * below already handles a first-time user.
  */
 function StandingBanner() {
   const { data } = useProgress();
   if (!data || data.rated_rounds === 0) return null;
 
   const last = data.recent[0];
+
+  /*
+   * Guarded three ways, because this is division by data from the network.
+   *
+   * A malformed or reordered ladder — next_rank.floor at or below rank.floor — would make the
+   * span zero or negative and put NaN or Infinity into a CSS width, which renders as a bar
+   * that is either invisible or the full width of the page. Clamped to [0,1] so a rating that
+   * has somehow overshot its own rung still draws something sane.
+   */
+  const span = data.next_rank ? data.next_rank.floor - data.rank.floor : 0;
+  const climbed = span > 0 ? (data.rating - data.rank.floor) / span : 1;
+  const progress = Math.max(0, Math.min(1, climbed));
+
+  /*
+   * THE FILL COLOUR IS HOW HIGH YOU ARE ON THE WHOLE LADDER, not how far through the current
+   * rung — that second thing is already said by the bar's length, and saying it twice is
+   * decoration.
+   *
+   * I had this as a fixed indigo→plum gradient, which is exactly what DESIGN-RULES bans: apply
+   * its own test — "if this were greyscale, would information be lost?" — and the answer was
+   * no, because the length carried everything. Keyed to the rung instead, the colour carries
+   * something the length cannot: the bar is amber near the bottom and emerald at the top, so a
+   * glance tells you where you stand across the entire ladder rather than inside one step of
+   * it. It also gives the climb a visible destination, which is the point of drawing it.
+   *
+   * Falls back to indigo when the ladder is missing or has one rung, rather than dividing by
+   * zero and colouring the bar NaN.
+   */
+  const rung = data.ladder?.findIndex((r) => r.name === data.rank.name) ?? -1;
+  const height = data.ladder && data.ladder.length > 1 && rung >= 0
+    ? rung / (data.ladder.length - 1)
+    : null;
+  const fillTone =
+    height === null
+      ? 'bg-accent-indigo'
+      : height >= 0.75
+        ? 'bg-accent-emerald'
+        : height >= 0.5
+          ? 'bg-accent-teal'
+          : height >= 0.25
+            ? 'bg-accent-indigo'
+            : 'bg-accent-amber';
+
   return (
     <Link
       href="/achievements"
-      className="ease-out-expo group block rounded-2xl border border-border/60 bg-card p-5 transition-colors hover:border-primary/40"
+      /* THE LIT ELEMENT ON THIS PAGE, and the only one — see docs/DESIGN-LANGUAGE §1. The
+         rating is what the dashboard is for; the six tiles beneath it are evidence for it.
+         Previously this was the same white card at the same elevation as everything else,
+         which is precisely why the page read as flat. */
+      className="lit lit-hover group block rounded-2xl p-5 sm:p-6"
     >
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Your standing
+        </p>
+        <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors group-hover:text-accent-indigo-ink">
+          Full record
+          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
         <div className="flex items-end gap-2.5">
-          <p className="font-mono text-4xl font-bold leading-none tracking-tight tabular-nums">
+          {/* The rating is the largest thing on the dashboard on purpose. It is the number the
+              product is FOR; everything else on this page is evidence for it. */}
+          <p className="font-mono text-[44px] font-bold leading-[0.85] tracking-[-0.04em] tabular-nums sm:text-[52px]">
             {data.rating}
           </p>
-          {/* The delta from the most recent round, so the dashboard shows movement
-              rather than a static figure. Movement is what makes a number habit-forming. */}
+          {/* Movement, not just position. A static figure is a fact; a figure that moved is a
+              habit. Emerald and coral carry the direction so it reads before it is parsed. */}
           {!!last && last.delta !== 0 && (
             <span
               className={cn(
-                'pb-1 font-mono text-xs font-bold tabular-nums',
-                last.delta > 0 ? 'text-accent-emerald-ink' : 'text-accent-coral-ink'
+                'mb-1 rounded-full px-1.5 py-0.5 font-mono text-[11px] font-bold tabular-nums',
+                last.delta > 0
+                  ? 'bg-accent-emerald-soft text-accent-emerald-ink'
+                  : 'bg-accent-coral-soft text-accent-coral-ink',
               )}
             >
               {last.delta > 0 ? '+' : ''}
@@ -335,25 +432,72 @@ function StandingBanner() {
         </div>
 
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold uppercase tracking-wider text-primary">
-            {data.rank.name}
-          </p>
+          <p className="text-sm font-semibold tracking-tight">{data.rank.name}</p>
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            {data.next_rank
-              ? `${data.points_to_next} points to ${data.next_rank.name}`
-              : 'Top of the ladder — hold it.'}
-            {data.percentile != null && ` · ${data.percentile}th percentile`}
+            {data.rank.meaning}
           </p>
         </div>
 
         <div className="flex items-center gap-5">
           <div className="text-right">
-            <p className="font-mono text-lg font-bold tabular-nums">{data.total_cleared}</p>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p className="font-mono text-lg font-bold leading-none tabular-nums">
+              {data.total_cleared}
+            </p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               cleared
             </p>
           </div>
-          <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+          {data.percentile != null && (
+            <div className="text-right">
+              <p className="font-mono text-lg font-bold leading-none tabular-nums">
+                {data.percentile}
+                <span className="text-[11px] font-medium text-muted-foreground">th</span>
+              </p>
+              <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                percentile
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* THE LADDER. Named at both ends, because a bar with no labels is a progress
+          indicator for nothing — the reason to keep going is the name on the right. */}
+      <div className="mt-5">
+        <div
+          // The bar states a measurement, so it is announced as one. Without this a screen
+          // reader gets two rank names and no sense of the distance between them.
+          role="progressbar"
+          aria-valuemin={data.rank.floor}
+          aria-valuemax={data.next_rank ? data.next_rank.floor : data.rating}
+          aria-valuenow={data.rating}
+          aria-valuetext={
+            data.next_rank
+              ? `${data.rating}, ${data.points_to_next} points to ${data.next_rank.name}`
+              : `${data.rating}, top of the ladder`
+          }
+          className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        >
+          <div
+            className={cn(
+              'h-full rounded-full transition-[width,background-color] duration-700 ease-out',
+              fillTone,
+            )}
+            style={{ width: `${progress * 100}%` }}
+          />
+        </div>
+        <div className="mt-2 flex items-baseline justify-between gap-3 text-[11px]">
+          <span className="font-medium text-muted-foreground">{data.rank.name}</span>
+          {data.next_rank ? (
+            <span className="text-center font-medium text-foreground">
+              {data.points_to_next} to go
+            </span>
+          ) : (
+            <span className="font-medium text-accent-emerald-ink">Top of the ladder</span>
+          )}
+          <span className="truncate text-right font-medium text-muted-foreground">
+            {data.next_rank ? data.next_rank.name : '—'}
+          </span>
         </div>
       </div>
     </Link>

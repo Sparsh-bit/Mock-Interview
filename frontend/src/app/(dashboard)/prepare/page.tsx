@@ -353,7 +353,12 @@ export default function PreparePage() {
 
         {/* Title block */}
         <header className="mb-10">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          {/* The same 14px coloured rule PageHeader draws before every other eyebrow in the
+              product, in this page's own tone (amber — preparation and effort, per
+              ROUTE_TONE). This flow sets its own title treatment for the reason given on
+              FLOW_TITLE, but there is no reason for it to opt out of the wayfinding. */}
+          <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-amber-ink">
+            <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-amber" />
             Study plan
           </p>
           <h1 className={FLOW_TITLE}>
@@ -521,7 +526,8 @@ export default function PreparePage() {
   return (
     <div className="mx-auto max-w-5xl pb-20">
       <header className="mb-10">
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-amber-ink">
+          <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-amber" />
           Step one
         </p>
         <h1 className={FLOW_TITLE}>

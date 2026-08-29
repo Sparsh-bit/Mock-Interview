@@ -3,8 +3,12 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
+import type { LucideIcon } from 'lucide-react';
 import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, Loader2, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
 
+import { Wordmark } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
+import { TONES } from '@/lib/tones';
 import { useBalance } from '@/hooks/useBilling';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
@@ -14,32 +18,66 @@ import type { User as SupabaseUser } from '@supabase/supabase-js';
  * The navigation. Exported so the mobile drawer renders the SAME list — two copies of a nav
  * is two navs that drift, and the one that drifts is always the one you look at less.
  */
-export const NAV_ITEMS = [
+/**
+ * Tone → the classes for a nav row, resolved eagerly.
+ *
+ * NEVER INTERPOLATED. Tailwind compiles the classes it can SEE, so `text-accent-${tone}-ink`
+ * is invisible to the scanner: it survives dev, where the JIT has already met the literal
+ * somewhere else, and silently loses its colour in a production build. That is the worst
+ * failure mode available here, because the component still renders.
+ */
+/* The tone table moved to lib/tones.ts so page headers can agree with the rail.
+   Aliased rather than renamed at every use site, which would be churn for nothing. */
+const NAV_TONE = TONES;
+
+/**
+ * Every row carries the colour of the thing it leads to.
+ *
+ * THIS IS THE PALETTE RULE APPLIED, NOT DECORATION. DESIGN-RULES.md gives six colours each
+ * bound to ONE meaning; the rail was rendering all fourteen destinations in the same grey,
+ * which is the single largest reason a sidebar reads as a list of words rather than as a
+ * product. Interviews are the product (indigo). A quiz is effort (amber). A group discussion
+ * is a behavioural round (plum). A report is measurement (teal). Nothing here invents a
+ * seventh colour or uses one for two meanings.
+ *
+ * The account group stays neutral on purpose: Profile and Settings are not features, and
+ * colouring them would spend the palette on the two rows nobody comes here for. Plans is the
+ * exception — it is the thing the business needs found, so it keeps amber.
+ */
+/** One row in the rail. `tone` is optional: Profile and Settings are deliberately neutral. */
+export interface NavItem {
+  href: string;
+  icon: LucideIcon;
+  label: string;
+  tone?: keyof typeof NAV_TONE;
+}
+
+export const NAV_ITEMS: Array<{ group: string; items: NavItem[] }> = [
   {
     group: 'Main',
     items: [
-      { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-      { href: '/prepare', icon: Target, label: 'Target Company' },
-      { href: '/interview', icon: Play, label: 'Start Interview' },
-      { href: '/quiz', icon: ListChecks, label: 'Practice Quiz' },
-      { href: '/communication', icon: MessageSquare, label: 'Communication' },
-      { href: '/gd', icon: Users, label: 'Group Discussion' },
-      { href: '/report', icon: FileText, label: 'Reports' },
+      { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', tone: 'indigo' },
+      { href: '/prepare', icon: Target, label: 'Target Company', tone: 'amber' },
+      { href: '/interview', icon: Play, label: 'Start Interview', tone: 'indigo' },
+      { href: '/quiz', icon: ListChecks, label: 'Practice Quiz', tone: 'amber' },
+      { href: '/communication', icon: MessageSquare, label: 'Communication', tone: 'teal' },
+      { href: '/gd', icon: Users, label: 'Group Discussion', tone: 'plum' },
+      { href: '/report', icon: FileText, label: 'Reports', tone: 'teal' },
     ],
   },
   {
     group: 'Practice',
     items: [
-      { href: '/tracks', icon: BookOpen, label: 'Interview Tracks' },
-      { href: '/analytics', icon: BarChart3, label: 'Analytics' },
-      { href: '/achievements', icon: Trophy, label: 'Standing' },
+      { href: '/tracks', icon: BookOpen, label: 'Interview Tracks', tone: 'indigo' },
+      { href: '/analytics', icon: BarChart3, label: 'Analytics', tone: 'teal' },
+      { href: '/achievements', icon: Trophy, label: 'Standing', tone: 'emerald' },
     ],
   },
   {
     group: 'Account',
     items: [
       { href: '/profile', icon: User, label: 'Profile' },
-      { href: '/pricing', icon: Sparkles, label: 'Plans' },
+      { href: '/pricing', icon: Sparkles, label: 'Plans', tone: 'amber' },
       { href: '/settings', icon: Settings, label: 'Settings' },
     ],
   },
@@ -47,7 +85,7 @@ export const NAV_ITEMS = [
 
 // Admin-only. `Users` is permanent; `AI cost` goes when the temporary ledger
 // does — see docs/TEMPORARY-token-counter.md.
-export const ADMIN_NAV_ITEMS = [
+export const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', icon: ShieldCheck, label: 'Users' },
   { href: '/admin/offers', icon: Tag, label: 'Offers' },
   // Revenue, vector-cache storage, and cost avoided. Distinct from `AI cost` above, which
@@ -181,13 +219,8 @@ export function AppSidebar({ user }: SidebarProps) {
     >
       {/* Logo */}
       <div className={cn('flex h-14 items-center px-3', collapsed && 'justify-center')}>
-        <Link href="/dashboard" className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-foreground font-mono text-[11px] font-bold text-background">
-            IO
-          </span>
-          {!collapsed && (
-            <span className="truncate font-mono text-[13px] font-semibold tracking-tight">InterviewOS</span>
-          )}
+        <Link href="/dashboard" aria-label={`${BRAND.name} home`} className="min-w-0">
+          <Wordmark collapsed={collapsed} />
         </Link>
       </div>
 
@@ -206,13 +239,15 @@ export function AppSidebar({ user }: SidebarProps) {
               {(group === 'Account' && isAdmin
                 ? [...baseItems, ...ADMIN_NAV_ITEMS]
                 : baseItems
-              ).map(({ href, icon: Icon, label }) => {
+              ).map(({ href, icon: Icon, label, tone }) => {
                 const isActive = pathname === href || pathname.startsWith(href + '/');
+                const t = tone ? NAV_TONE[tone] : null;
                 return (
                   <li key={href} className="relative">
                     <Link
                       href={href}
                       title={collapsed ? label : undefined}
+                      data-nav-tone={tone ?? 'neutral'}
                       // Not set when the item is already active: that click starts no
                       // navigation, so the pathname never changes, so nothing would ever
                       // clear it except the timeout above — eight seconds of a spinner for
@@ -223,10 +258,10 @@ export function AppSidebar({ user }: SidebarProps) {
                       className={cn(
                         // 30px rows on an 8pt rhythm, rounded-md (10px) because
                         // they sit inside a 12px-padded rail — the nesting rule.
-                        'relative z-10 flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] transition-colors',
+                        'group/nav relative z-10 flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13px] transition-colors',
                         collapsed && 'justify-center px-2',
                         isActive
-                          ? 'font-medium text-foreground'
+                          ? cn('font-medium', t ? t.activeText : 'text-foreground')
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
@@ -239,14 +274,32 @@ export function AppSidebar({ user }: SidebarProps) {
                           strokeWidth={1.9}
                         />
                       ) : (
-                        <Icon className="h-[15px] w-[15px] flex-shrink-0" strokeWidth={1.9} />
+                        <Icon
+                          className={cn(
+                            'h-[15px] w-[15px] flex-shrink-0 transition-colors',
+                            // Colour ALWAYS, not only when active. An icon that is grey until
+                            // you land on it teaches nothing about where things are; coloured,
+                            // the rail becomes a map you can read without reading the words.
+                            t ? t.icon : 'text-muted-foreground',
+                            // Idle rows sit back a little so the active one still leads.
+                            !isActive && 'opacity-70 group-hover/nav:opacity-100',
+                          )}
+                          strokeWidth={1.9}
+                        />
                       )}
                       {!collapsed && <span className="truncate">{label}</span>}
                     </Link>
                     {isActive && (
                       <motion.div
                         layoutId="sidebar-active-pill"
-                        className="absolute inset-0 rounded-md bg-foreground/[0.07]"
+                        // Tinted with the destination rather than grey. The pill travels
+                        // between rows on a shared layoutId, so it also changes colour as it
+                        // moves — which is the cheapest possible way to make navigation feel
+                        // like a place rather than a page swap.
+                        className={cn(
+                          'absolute inset-0 rounded-md',
+                          t ? t.activeBg : 'bg-foreground/[0.07]',
+                        )}
                         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                       />
                     )}

@@ -2,7 +2,7 @@
 
 import { useInterview } from '@/hooks/useInterview';
 import { useTracks, usePrimaryResume, useUploadResume } from '@/hooks/useData';
-import { Play, Code2, Loader2, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2, Upload } from 'lucide-react';
+import { Play, Code2, Loader2, Check, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2, Plus, Upload } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { InterviewReadiness } from '@/components/interview/InterviewReadiness';
 import { CreditMeter } from '@/components/billing/CreditMeter';
+import { PageHeader } from '@/components/ui/page-header';
 import { parseIsTechnical } from '@/lib/interview/params';
 import { FOCUS_SUGGESTIONS, addFocusTerm, focusMentions } from '@/lib/interview/focus';
 import { cn } from '@/lib/utils';
@@ -25,6 +26,16 @@ export default function InterviewSetupPage() {
   );
 }
 
+/**
+ * Interview setup.
+ *
+ * @lit-exclusive-views — this route renders THREE mutually exclusive screens from one file,
+ * each with its own early `return`: the setup form, the "your plan is ready" confirmation,
+ * and the paywall. Each is a whole screen with a single subject, so each carries its own
+ * `.lit` element, and no two can ever be on screen at the same time. Declared because
+ * lit-hierarchy.test.ts otherwise enforces one per file — see its EXCLUSIVE_MARKER comment
+ * for why the exception is a declaration rather than a larger allowance.
+ */
 function InterviewSetup() {
   const { createPlan, approvePlan } = useInterview();
   const { data: tracks, isLoading: tracksLoading } = useTracks();
@@ -376,10 +387,15 @@ function InterviewSetup() {
   if (plan) {
     return (
       <div className="mx-auto mt-10 max-w-3xl space-y-6">
-        <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
+        {/* Lit for the same reason the setup form is: this view has exactly one purpose,
+            which is to get somebody to press Begin. It REPLACES the setup panel rather than
+            sitting beside it, so there is still only one lit thing on screen. */}
+        <div className="lit rounded-xl p-6">
           <div className="mb-6 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-              <ListChecks className="h-5 w-5 text-primary" />
+            {/* Emerald: the plan is BUILT — a finished, verified thing. Indigo here would say
+                "primary action", and the action is the Begin button further down. */}
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-emerald-soft">
+              <ListChecks className="h-5 w-5 text-accent-emerald-ink" />
             </div>
             <div>
               <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Your interview plan is ready</h1>
@@ -482,14 +498,24 @@ function InterviewSetup() {
           setup form and only then learns they have no interviews left has lost the one thing
           they came with. */}
       <CreditMeter />
-      <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-elev-1">
-        <div className="mb-8">
-          <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">Start a New Mock Interview</h1>
-          <p className="mt-2 text-muted-foreground">
-            Tell us who you&apos;re preparing for. The AI builds a realistic, ordered interview —
-            warm-up first, then technical, then scenario and HR — and can pull from your resume.
-          </p>
-        </div>
+      {/*
+        * THE LIT ELEMENT ON THIS VIEW — and if any page in the product earns it, this one
+        * does: everything here exists to get somebody into the chair, and this panel is the
+        * chair. See docs/DESIGN-LANGUAGE §1. The credit meter above it stays flat, so there
+        * is never a second thing competing to be the subject.
+        *
+        * The heading was a hand-rolled `<h1>` with the type values copied out of PageHeader,
+        * which is why this was the one page in the product with no eyebrow and no colour at
+        * the top-left: nothing was wrong with it, it had simply never been connected to the
+        * system the other thirteen pages share.
+        */}
+      <div className="lit rounded-xl p-6">
+        <PageHeader
+          className="mb-8"
+          eyebrow="New interview"
+          title="Start a new mock interview"
+          description="Tell us who you're preparing for. The panel builds a realistic, ordered interview — warm-up first, then technical, then scenario and HR — and can pull from your resume."
+        />
 
         {/* ── Company, then program ────────────────────────────────────────
             Two compact levels instead of one grid of every track. With twelve
@@ -730,13 +756,21 @@ function InterviewSetup() {
                   disabled={added}
                   onClick={() => addFocus(term)}
                   className={cn(
-                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                     added
-                      ? 'cursor-default border-primary/30 bg-primary/10 text-primary'
+                      ? 'cursor-default border-accent-indigo/30 bg-accent-indigo-soft text-accent-indigo-ink'
                       : 'border-border/60 bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground',
                   )}
                 >
-                  {added ? '✓ ' : '+ '}
+                  {/* Icons, not the characters ✓ and +. A glyph inside a label sets at the
+                      font's own weight and baseline rather than the icon set's, so these two
+                      chips were visibly heavier than every other control on the page — and ✓
+                      renders differently on Android, iOS and Windows. */}
+                  {added ? (
+                    <Check className="h-3 w-3 shrink-0" strokeWidth={2.5} />
+                  ) : (
+                    <Plus className="h-3 w-3 shrink-0" strokeWidth={2.5} />
+                  )}
                   {term}
                 </button>
               );

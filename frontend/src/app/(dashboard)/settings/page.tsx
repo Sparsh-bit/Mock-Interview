@@ -65,7 +65,13 @@ export default function SettingsPage() {
         <motion.div variants={fadeUp}>
           <Card className="space-y-4 p-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              {/* PROFILE AND SETTINGS ARE DELIBERATELY UNCOLOURED ROUTES — they are the
+                  account, not a feature, and there are only six colours to spend (lib/tones).
+                  So the section tiles carry the meaning of the SECTION rather than of the
+                  page: emerald is "verified / secure", which is what a lock is about. Two
+                  identical indigo tiles told the reader these two sections were the same kind
+                  of thing, which is the only thing they are not. */}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-emerald-soft text-accent-emerald-ink">
                 <Lock className="h-5 w-5" />
               </div>
               <div className="min-w-0">
@@ -105,7 +111,9 @@ export default function SettingsPage() {
         <motion.div variants={fadeUp}>
           <Card className="space-y-4 p-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              {/* Amber: notifications are about what reaches you and when — the same
+                  "in progress / ongoing" register amber carries elsewhere. */}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-amber-soft text-accent-amber-ink">
                 <Bell className="h-5 w-5" />
               </div>
               <div className="min-w-0">

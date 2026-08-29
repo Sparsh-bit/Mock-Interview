@@ -24,6 +24,7 @@ import {
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
+import { scoreBand } from '@/lib/score-bands';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 
 export const runtime = 'edge';
@@ -66,11 +67,15 @@ const fmtClock = (s: number) =>
  * added. Order is stable within a discussion, which is all consistency requires.
  */
 const PANEL_TONES = [
-  'bg-accent-violet/15 text-accent-violet',
-  'bg-primary/15 text-primary',
-  'bg-accent-emerald/15 text-accent-emerald-ink',
-  'bg-accent-amber/15 text-accent-amber-ink',
-  'bg-accent-teal/15 text-accent-teal-ink',
+  // `-soft` backgrounds with `-ink` text, not bare tones at 15% opacity. Two of these set
+  // small text in the BARE accent (`text-accent-violet`, `text-primary`), which DESIGN-RULES
+  // names as a bug rather than a style choice: the bare tones measure around 3:1 and only
+  // `-ink` clears 4.5:1. These labels are 11px panelist names.
+  'bg-accent-plum-soft text-accent-plum-ink',
+  'bg-accent-indigo-soft text-accent-indigo-ink',
+  'bg-accent-emerald-soft text-accent-emerald-ink',
+  'bg-accent-amber-soft text-accent-amber-ink',
+  'bg-accent-teal-soft text-accent-teal-ink',
 ];
 
 function panelTone(speaker: string, panel: GDPanelist[]): string {
@@ -79,15 +84,32 @@ function panelTone(speaker: string, panel: GDPanelist[]): string {
 }
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
+  /*
+   * BANDED, NOT GRADIENT-FILLED.
+   *
+   * This bar was `from-primary to-accent-violet` — two hues blended across an 8px strip. Apply
+   * DESIGN-RULES' own test: if this were greyscale, would information be lost? No, because the
+   * WIDTH already says the value. The gradient was decoration, and it also made a 3.1 and a
+   * 9.4 the same colour, which is the one thing a score bar must not do.
+   *
+   * The bands come from lib/score-bands so a 7.2 here is the same colour as a 72 on a report —
+   * these are the same scale printed at different precisions, and a candidate should not have
+   * to learn two colour schemes for one number.
+   */
+  const tone = scoreBand(value * 10);
+
   return (
     <div className="space-y-1.5">
       <div className="flex justify-between text-xs font-semibold">
         <span>{label}</span>
-        <span className="text-primary">{value.toFixed(1)}/10</span>
+        <span className={cn('rounded px-1 py-px font-mono tabular-nums', tone.chip)}>
+          {value.toFixed(1)}
+          <span className="text-[10px] font-medium opacity-60">/10</span>
+        </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
         <motion.div
-          className="h-full rounded-full bg-gradient-to-r from-primary to-accent-violet"
+          className={cn('h-full rounded-full', tone.bar)}
           initial={{ width: 0 }}
           animate={{ width: `${Math.min(value * 10, 100)}%` }}
           transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
@@ -138,7 +160,7 @@ function PanelStrip({
             className={cn(
               'flex items-center gap-2.5 rounded-xl border px-3 py-2 transition-colors duration-300',
               speaking
-                ? 'border-primary/60 bg-primary/10'
+                ? 'border-accent-plum/50 bg-accent-plum-soft'
                 : opening
                   ? 'border-primary/35 bg-primary/5'
                   : waitingOnYou
@@ -170,7 +192,7 @@ function PanelStrip({
                 className={cn(
                   'truncate text-[10px] font-medium leading-tight',
                   speaking || opening
-                    ? 'text-primary'
+                    ? 'text-accent-plum-ink'
                     : waitingOnYou
                       ? 'text-accent-emerald-ink'
                       : 'text-muted-foreground'
@@ -673,7 +695,10 @@ export default function GDPage() {
         )}
 
         <motion.div variants={fadeUp}>
-          <Card className="space-y-5 p-5 sm:p-8">
+          {/* THE LIT ELEMENT on the setup view — docs/DESIGN-LANGUAGE §1. Everything else here
+              (the header, the credit meter, the tips) exists to get somebody into this panel
+              and press start. */}
+          <Card variant="outline" className="lit space-y-5 p-5 sm:p-8">
             {/* Two ways in: a topic off the shelf, or one of your own that the AI
                 turns into something actually arguable. */}
             <div className="flex gap-1 rounded-xl bg-secondary p-1">
@@ -704,7 +729,7 @@ export default function GDPage() {
                           className={cn(
                             'w-full rounded-xl border px-4 py-2.5 text-left text-sm transition-colors',
                             topicIdx === index
-                              ? 'border-primary bg-primary/10 text-foreground'
+                              ? 'border-accent-plum/50 bg-accent-plum-soft text-foreground'
                               : 'border-border hover:border-primary/40'
                           )}
                         >
@@ -956,7 +981,7 @@ export default function GDPage() {
           animate={{ opacity: 1, y: 0 }}
           className="rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3"
         >
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-accent-plum-ink">
             Over to you
           </p>
           {lastPanelLine && (
@@ -995,11 +1020,11 @@ export default function GDPage() {
             return (
               <div key={i} className={cn('flex gap-3', mine && 'flex-row-reverse')}>
                 <div className={cn('flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold',
-                  mine ? 'bg-primary text-primary-foreground' : panelTone(t.speaker, panel ?? []))}>
+                  mine ? 'bg-accent-plum text-white' : panelTone(t.speaker, panel ?? []))}>
                   {t.speaker[0]}
                 </div>
                 <div className={cn('min-w-0 max-w-[80%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-shadow',
-                  mine ? 'bg-primary/10 text-foreground' : 'bg-surface-elevated',
+                  mine ? 'bg-accent-plum-soft text-foreground' : 'bg-surface-elevated',
                   // Ring the line currently being read aloud, so the text and the
                   // voice are visibly the same contribution.
                   !mine && panelVoices.speakingNow === t.speaker && i === lastSpokenIdx && 'ring-1 ring-primary/40')}>

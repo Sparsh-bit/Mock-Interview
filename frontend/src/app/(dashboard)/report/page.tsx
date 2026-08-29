@@ -6,6 +6,9 @@ import { useUserSessions } from '@/hooks/useData';
 import { useActivity, type ActivityType, type ActivityItem } from '@/hooks/useActivity';
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
+import { buttonVariants } from '@/components/ui/button';
+import { scoreChipTone } from '@/lib/score-bands';
+import { cn } from '@/lib/utils';
 import {
   FileText,
   Loader2,
@@ -24,10 +27,10 @@ const ACTIVITY_META: Record<
   ActivityType,
   { label: string; icon: typeof FileText; tint: string }
 > = {
-  interview: { label: 'Interview', icon: GraduationCap, tint: 'text-primary bg-primary/10' },
-  group_discussion: { label: 'Group Discussion', icon: MessageSquare, tint: 'text-accent-plum-ink bg-accent-plum/10' },
-  communication: { label: 'Communication', icon: Mic, tint: 'text-accent-emerald-ink bg-accent-emerald/10' },
-  quiz: { label: 'Quiz', icon: ListChecks, tint: 'text-accent-amber-ink bg-accent-amber/10' },
+  interview: { label: 'Interview', icon: GraduationCap, tint: 'text-accent-indigo-ink bg-accent-indigo-soft' },
+  group_discussion: { label: 'Group Discussion', icon: MessageSquare, tint: 'text-accent-plum-ink bg-accent-plum-soft' },
+  communication: { label: 'Communication', icon: Mic, tint: 'text-accent-emerald-ink bg-accent-emerald-soft' },
+  quiz: { label: 'Quiz', icon: ListChecks, tint: 'text-accent-amber-ink bg-accent-amber-soft' },
 };
 
 const SCORE_LABELS: Record<string, string> = {
@@ -117,9 +120,19 @@ function ActivityRow({ a }: { a: ActivityItem }) {
           </div>
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-[10px] uppercase text-muted-foreground">Score</p>
-          <p className="text-lg font-bold">
-            {Math.round(a.score)}<span className="text-xs text-muted-foreground">/100</span>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Score</p>
+          {/* BANDED AND MONOSPACED. Every score on this page was the same weight of black,
+              which throws away the only thing anybody scans this list for. The bands come
+              from lib/score-bands, so a round is the same colour here as on its own report
+              page and as in the word the report prints for it. */}
+          <p
+            className={cn(
+              'mt-0.5 inline-block rounded-md px-1.5 py-0.5 font-mono text-base font-bold tabular-nums',
+              scoreChipTone(a.score),
+            )}
+          >
+            {Math.round(a.score)}
+            <span className="text-[10px] font-medium opacity-60">/100</span>
           </p>
         </div>
         {a.activity_type === 'interview' && sessionId ? (
@@ -194,8 +207,8 @@ export default function ReportsListPage() {
     <div className="max-w-5xl mx-auto space-y-8">
       <PageHeader
           eyebrow="History"
-          title="Interview Performance Reports"
-          description="Review detailed AI evaluations, score breakdowns, and recommendations for all your completed sessions."
+          title="Your reports"
+          description="Every round you have sat, what it scored, and what the panel would have said."
         />
 
       {error ? (
@@ -210,17 +223,21 @@ export default function ReportsListPage() {
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       ) : !sessions || sessions.length === 0 ? (
-        <div className="mx-auto max-w-lg rounded-xl border border-border bg-surface-elevated p-10 text-center shadow-elev-1">
-          <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="font-semibold text-lg mb-2">No Reports Available Yet</h3>
-          <p className="text-sm text-muted-foreground mb-6">
-            Complete your first mock interview session to generate a detailed performance report.
+        /* The empty state is the only thing on the page, so it is the lit element — see
+           docs/DESIGN-LANGUAGE §1. It is also left-aligned now: it was centred inside a
+           centred box on a page whose every other block is left-aligned, which is the
+           "everything centred" tell DESIGN-RULES bans. */
+        <div className="lit max-w-xl rounded-2xl p-8">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-teal-soft">
+            <FileText className="h-5 w-5 text-accent-teal-ink" />
+          </div>
+          <h3 className="text-lg font-medium tracking-tight">You haven&apos;t taken the seat yet</h3>
+          <p className="mb-6 mt-2 text-sm leading-relaxed text-muted-foreground">
+            Sit one interview and a full report lands here: what you said, what you should have
+            said, and the score a panel would have given you.
           </p>
-          <Link
-            href="/interview"
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-primary-foreground hover:bg-primary/90 transition-[color,background-color,border-color,box-shadow,transform,opacity] shadow-glow"
-          >
-            <Play className="h-4 w-4" /> Start Interview
+          <Link href="/interview" className={cn(buttonVariants({ size: 'md' }))}>
+            <Play className="h-4 w-4" /> Start interview
           </Link>
         </div>
       ) : (
@@ -232,7 +249,9 @@ export default function ReportsListPage() {
             >
               <div>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="min-w-0 break-words text-xs font-bold uppercase text-primary">{sess.company_name}</span>
+                  <span className="min-w-0 break-words text-xs font-bold uppercase tracking-wide text-accent-indigo-ink">
+                    {sess.company_name}
+                  </span>
                   <span
                     className={`text-[10px] px-2.5 py-0.5 rounded-full font-semibold border ${
                       sess.status === 'completed'
@@ -276,10 +295,28 @@ export default function ReportsListPage() {
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-4">
                 <div>
-                  <p className="text-[10px] text-muted-foreground uppercase">Overall Score</p>
-                  <p className="text-xl font-bold text-foreground">
-                    {sess.overall_score !== null ? `${sess.overall_score}/100` : '—'}
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Overall score
                   </p>
+                  {/* A ROUND WITH NO SCORE IS NOT A ROUND THAT SCORED NOTHING, and the two
+                      must not look alike. Reports stranded at 0/100 with no explanation is an
+                      incident this product has already had; part of the fix was never letting
+                      "pending" render as a number. */}
+                  {sess.overall_score !== null ? (
+                    <p
+                      className={cn(
+                        'mt-0.5 inline-block rounded-md px-1.5 py-0.5 font-mono text-lg font-bold tabular-nums',
+                        scoreChipTone(sess.overall_score),
+                      )}
+                    >
+                      {sess.overall_score}
+                      <span className="text-[10px] font-medium opacity-60">/100</span>
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs font-medium text-muted-foreground">
+                      Not scored yet
+                    </p>
+                  )}
                 </div>
                 <Link
                   href={sess.status === 'completed' ? `/report/${sess.id}` : `/session/${sess.id}`}

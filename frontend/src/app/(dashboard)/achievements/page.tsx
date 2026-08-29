@@ -1,17 +1,21 @@
 'use client';
 
+import Link from 'next/link';
+
 import { motion } from 'framer-motion';
 import {
   CheckCircle2,
   Flame,
   Lock,
   Minus,
+  Play,
   TrendingDown,
   TrendingUp,
   Trophy,
   Users,
 } from 'lucide-react';
 
+import { buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
@@ -63,6 +67,28 @@ export default function StandingPage() {
   const rungFilled =
     rating === null ? 0 : Math.max(0, Math.min(100, ((rating - rungFloor) / rungSpan) * 100));
 
+  /*
+   * Where this rank sits across the WHOLE ladder, which is a different question from
+   * `rungFilled` above — that one is progress inside the current rung. The colour answers
+   * "how far have I come", the bar answers "how close am I to the next one", and neither can
+   * say the other's thing.
+   *
+   * Guarded against a one-rung or missing ladder rather than dividing by zero and colouring
+   * the rank NaN.
+   */
+  const rungIndex = ladder.findIndex((r) => r.name === progress?.rank.name);
+  const climbed = ladder.length > 1 && rungIndex >= 0 ? rungIndex / (ladder.length - 1) : null;
+  const rankTone =
+    climbed === null
+      ? 'text-muted-foreground'
+      : climbed >= 0.75
+        ? 'text-accent-emerald-ink'
+        : climbed >= 0.5
+          ? 'text-accent-teal-ink'
+          : climbed >= 0.25
+            ? 'text-accent-indigo-ink'
+            : 'text-accent-amber-ink';
+
   return (
     <motion.div
       initial="hidden"
@@ -80,7 +106,11 @@ export default function StandingPage() {
 
       {/* ── The number ─────────────────────────────────────────────────────── */}
       <motion.div variants={fadeUp}>
-        <Card className="overflow-hidden p-0">
+        {/* THE LIT ELEMENT — docs/DESIGN-LANGUAGE §1. This page has one subject and it is
+            this number; the tier ledger and recent rounds below are evidence for it. It read
+            as a peer of those because it was the same card at the same elevation, which is
+            why a page built to bring people back did not feel like it had a prize on it. */}
+        <Card variant="outline" className="lit overflow-hidden p-0">
           <div className="grid gap-0 sm:grid-cols-[1.15fr_1fr]">
             <div className="space-y-4 border-b border-border/60 p-7 sm:border-b-0 sm:border-r">
               <div className="flex items-end gap-3">
@@ -98,7 +128,12 @@ export default function StandingPage() {
               </div>
 
               <div>
-                <p className="text-sm font-bold uppercase tracking-wider text-primary">
+                {/* The rank's colour is HOW HIGH IT IS on the ladder, the same mapping the
+                    dashboard's ladder bar uses — amber near the bottom, emerald at the top. It
+                    was `text-primary`, which made "Unrated" and "Offer Ready" the identical
+                    indigo and threw away the one place the rank could say something without
+                    words. Falls back to neutral when there is no ladder to place it on. */}
+                <p className={cn('text-sm font-bold uppercase tracking-wider', rankTone)}>
                   {progress?.rank.name ?? 'Unrated'}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -204,7 +239,7 @@ export default function StandingPage() {
                     className={cn(
                       'flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors',
                       isCurrent
-                        ? 'border-primary/50 bg-primary/10'
+                        ? 'border-accent-indigo/45 bg-accent-indigo-soft'
                         : reached
                           ? 'border-accent-emerald/30 bg-accent-emerald/5'
                           : 'border-border/60'
@@ -215,7 +250,7 @@ export default function StandingPage() {
                         <CheckCircle2
                           className={cn(
                             'h-4 w-4',
-                            isCurrent ? 'text-primary' : 'text-accent-emerald-ink'
+                            isCurrent ? 'text-accent-indigo-ink' : 'text-accent-emerald-ink'
                           )}
                         />
                       ) : (
@@ -232,7 +267,7 @@ export default function StandingPage() {
                         >
                           {r.name}
                           {isCurrent && (
-                            <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-primary">
+                            <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-accent-indigo-ink">
                               you are here
                             </span>
                           )}
@@ -280,12 +315,19 @@ export default function StandingPage() {
 
       {progress?.rated_rounds === 0 && (
         <motion.div variants={fadeUp}>
-          <Card className="flex flex-col items-center gap-2 p-8 text-center">
-            <p className="text-sm font-semibold">You have no rated rounds yet</p>
-            <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-              Finish a mock interview or a group discussion and you get a rating. The first few
-              rounds move it the most — the number settles as it learns where you actually are.
-            </p>
+          <Card variant="flat" className="flex flex-wrap items-center justify-between gap-4 p-6">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">You have no rated rounds yet</p>
+              <p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+                Finish a mock interview or a group discussion and you get a rating. The first
+                few rounds move it the most — the number settles as it learns where you are.
+              </p>
+            </div>
+            {/* An empty state with nothing to press is a notice, not a state. */}
+            <Link href="/interview" className={cn(buttonVariants({ size: 'md' }), 'shrink-0')}>
+              <Play className="h-4 w-4" />
+              Start interview
+            </Link>
           </Card>
         </motion.div>
       )}

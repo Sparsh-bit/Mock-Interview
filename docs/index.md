@@ -66,3 +66,6 @@ knowing about:
   the vault and will show in the graph, which is useful, but treat them as source.
 - `backend/knowledge/` — hand-maintained YAML reference data (the recruiter catalogue, study
   subtopics, per-company research) read at runtime.
+
+- [[DESIGN-LANGUAGE]] — what Hotseat looks like, and why
+- [[REDESIGN]] — page-by-page progress

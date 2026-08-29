@@ -16,6 +16,23 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
+
+/**
+ * How hard a quiz runs, in colour. See docs/DESIGN-LANGUAGE §2 — heat means difficulty and
+ * only difficulty, so this is the same scale the tracks page uses for its panels.
+ *
+ * Every class is written out in full rather than assembled from the level name: Tailwind
+ * compiles the classes it can literally see, and `bg-accent-${level}-soft` would produce a
+ * string it never encountered — the colour survives dev, where the JIT has usually seen the
+ * class elsewhere, and vanishes from the production build with no error anywhere.
+ */
+const HEAT_SELECTED: Record<string, string> = {
+  any: 'border-accent-indigo bg-accent-indigo text-white',
+  easy: 'border-accent-teal bg-accent-teal text-white',
+  medium: 'border-accent-amber bg-accent-amber text-white',
+  hard: 'border-accent-coral bg-accent-coral text-white',
+};
+
 type Phase = 'setup' | 'exam' | 'results';
 type Mode = 'instant' | 'ai';
 
@@ -258,8 +275,19 @@ function Quiz() {
                           onClick={() => setBankDifficulty(level)}
                           className={cn(
                             'rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-colors',
+                            /*
+                             * THE HEAT SCALE — docs/DESIGN-LANGUAGE §2. Every level was the
+                             * same indigo, so the one control on this page whose entire
+                             * purpose is "how hard do you want this" said nothing until you
+                             * read the words. Teal is a warm-up, amber is the real thing,
+                             * coral is the round that decides it, and "Any" stays neutral
+                             * because it is the absence of a choice rather than a level.
+                             *
+                             * Deliberately NOT emerald/coral, which mean passed and failed on
+                             * the score bands. Hard is not bad.
+                             */
                             bankDifficulty === level
-                              ? 'border-accent-indigo bg-accent-indigo text-white'
+                              ? HEAT_SELECTED[level ?? 'any']
                               : 'border-border bg-surface-elevated text-muted-foreground hover:text-foreground',
                             !available && 'cursor-not-allowed opacity-40 hover:text-muted-foreground',
                           )}
@@ -309,7 +337,7 @@ function Quiz() {
                           className={cn(
                             'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                             active
-                              ? 'border-primary bg-primary/10 text-primary'
+                              ? 'border-accent-indigo/50 bg-accent-indigo-soft text-accent-indigo-ink'
                               : 'border-border text-muted-foreground hover:text-foreground'
                           )}
                         >
@@ -333,7 +361,9 @@ function Quiz() {
                     onClick={() => setCount(c)}
                     className={cn(
                       'rounded-lg border px-4 py-2 text-sm font-medium transition-colors',
-                      count === c ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                      count === c
+                        ? 'border-accent-indigo/50 bg-accent-indigo-soft text-accent-indigo-ink'
+                        : 'border-border text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {c}
@@ -353,7 +383,9 @@ function Quiz() {
                     onClick={() => setMinutes(m)}
                     className={cn(
                       'rounded-lg border px-4 py-2 text-sm font-medium transition-colors',
-                      minutes === m ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'
+                      minutes === m
+                        ? 'border-accent-indigo/50 bg-accent-indigo-soft text-accent-indigo-ink'
+                        : 'border-border text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {m}
@@ -435,13 +467,17 @@ function Quiz() {
                     onClick={() => setAnswers((a) => ({ ...a, [q.id]: oi }))}
                     className={cn(
                       'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm transition-colors',
-                      selected ? 'border-primary bg-primary/10 text-foreground' : 'border-border hover:border-primary/40'
+                      selected
+                        ? 'border-accent-indigo/50 bg-accent-indigo-soft text-foreground'
+                        : 'border-border hover:border-accent-indigo/40'
                     )}
                   >
                     <span
                       className={cn(
                         'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border text-[11px] font-bold',
-                        selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
+                        selected
+                          ? 'border-accent-indigo bg-accent-indigo text-white'
+                          : 'border-border text-muted-foreground'
                       )}
                     >
                       {String.fromCharCode(65 + oi)}
@@ -544,7 +580,7 @@ function Quiz() {
 
   return (
     <div className="flex items-center justify-center py-16">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <Loader2 className="h-8 w-8 animate-spin text-accent-amber" />
     </div>
   );
 }
