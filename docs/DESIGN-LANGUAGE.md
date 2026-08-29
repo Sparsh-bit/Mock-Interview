@@ -137,7 +137,16 @@ word printed beside it must never disagree.
 Checked page by page in [[REDESIGN]]:
 
 1. **An eyebrow in its own tone**, so the top-left says where you are.
-2. **Exactly one lit element.** See §1. This is the one most pages were missing.
+2. **At most one lit element**, and one wherever the page has a subject. See §1.
+   This is the thing most pages were missing.
+
+   **Some pages genuinely have no subject, and must not fake one.** Settings is a
+   list of independent controls; the admin tables and the AI-usage breakdown are
+   dense operator surfaces where every row is a peer. Lighting one of those would
+   claim an importance nothing supports, which is the same dishonesty as an
+   invented statistic. Those pages get their hierarchy from typography, grouping
+   and spacing instead — and `lit-hierarchy.test.ts` enforces the ceiling of one,
+   never a floor of one, precisely so this stays a legitimate answer.
 3. **A real empty state** — what to do, in this product's voice, with a route out.
 4. **A real error state** that does not read as zero. `0/100` and "we could not
    load this" are opposite messages, and confusing them has already cost an

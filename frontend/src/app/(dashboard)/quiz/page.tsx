@@ -198,7 +198,10 @@ function Quiz() {
         </motion.div>
 
         <motion.div variants={fadeUp}>
-          <Card className="space-y-6 p-5 sm:p-8">
+          {/* THE LIT ELEMENT on the setup view — docs/DESIGN-LANGUAGE §1. Everything on this
+              screen exists to configure one quiz and press start, so this panel is the
+              subject and the copy around it is not. */}
+          <Card variant="outline" className="lit space-y-6 p-5 sm:p-8">
             {/* Mode toggle */}
             {/* Stacked below sm. Two 104px columns cannot hold "Instant practice" and
                 "AI-generated" at text-sm without breaking mid-word. */}

@@ -224,6 +224,15 @@ function fmt(s: number) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
+/**
+ * The communication round.
+ *
+ * @lit-exclusive-views — two whole screens live in this file and only one is ever rendered:
+ * the STAGE, where the prompt, the mic and the transcript are, and the SCORECARD that
+ * replaces it once feedback comes back. Each is a complete view with a single subject, so
+ * each carries its own `.lit` element. Declared because lit-hierarchy.test.ts otherwise
+ * enforces one per file.
+ */
 export default function CommunicationPage() {
   // Only `data` was destructured here before. The extra fields are read off the SAME query —
   // no new call, no new key — because a page cannot have a real error state while the only
@@ -430,9 +439,14 @@ export default function CommunicationPage() {
             height is a page where nothing was decided. */}
         <motion.div variants={fadeUp}>
           <Card
-            variant="elevated"
+            variant="outline"
             padding="none"
-            className="overflow-hidden shadow-elev-2 ring-1 ring-accent-teal/20"
+            // `.lit` rather than the hand-rolled elevated-plus-teal-ring this had. Same
+            // intent — one surface ahead of everything else — but expressed in the class the
+            // rest of the product uses, so the light is identical in every room and
+            // lit-hierarchy.test.ts can see it. The light is warm everywhere; what changes
+            // per page is the accent, which the teal rule below already carries.
+            className="lit overflow-hidden"
           >
             {/* The long horizontal rule, in the round's own colour. Same mark as the eyebrow's
                 dash, at page width — a rule the eye can follow, not a header flourish. */}
@@ -686,9 +700,11 @@ export default function CommunicationPage() {
           elevated surface, and it is where the whole task happens. */}
       <motion.div variants={fadeUp}>
         <Card
-          variant="elevated"
+          variant="outline"
           padding="none"
-          className="overflow-hidden shadow-elev-2 ring-1 ring-accent-teal/20"
+          // See the note on the scorecard above: same treatment, and the two are mutually
+          // exclusive views of this route.
+          className="lit overflow-hidden"
         >
           <div aria-hidden className="h-0.5 w-full bg-accent-teal" />
 

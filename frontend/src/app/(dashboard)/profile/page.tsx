@@ -80,7 +80,10 @@ export default function ProfilePage() {
               visible above the fold. */}
           <div className="grid items-stretch gap-6 lg:grid-cols-[1.15fr_1fr]">
             {/* ── Left: the details ─────────────────────────────────────── */}
-            <Card className="order-2 space-y-6 p-5 sm:p-8 lg:order-1">
+            {/* THE FORM IS THE PAGE. The identity card beside it is a summary of what the
+                form contains, so lighting the form rather than the card puts the light on the
+                thing you came here to change. */}
+            <Card variant="outline" className="lit order-2 space-y-6 p-5 sm:p-8 lg:order-1">
               <div className="grid gap-6 sm:grid-cols-2">
               <FloatingLabelInput
                   label="Full Name"
