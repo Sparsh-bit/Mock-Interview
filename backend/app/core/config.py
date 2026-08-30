@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     #: a deployment that forgot to set it accepted forged tokens the first time the JWKS
     #: endpoint hiccuped. Never set this outside local development.
     ALLOW_UNVERIFIED_JWT: bool = False
-    APP_NAME: str = "Hotseat"
+    APP_NAME: str = "InterviewOS"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
@@ -741,6 +741,39 @@ class Settings(BaseSettings):
     #: dashboard that refetches on focus — but it stops an authenticated retry loop from
     #: issuing unbounded queries against a shared database.
     RATE_LIMIT_READ_PER_MINUTE: int = 120
+
+    #: Account provisioning, per calling address, per minute.
+    #:
+    #: 5, against a general read budget of 120. A real person triggers this ONCE per
+    #: sign-up and once per login, so five a minute is invisible to them and is two orders
+    #: of magnitude below what a script wants. It has to stay strictly below
+    #: RATE_LIMIT_READ_PER_MINUTE or it can never trip first, which is asserted by
+    #: tests/test_auth_rate_limit.py rather than left to whoever edits this next.
+    RATE_LIMIT_AUTH_PER_MINUTE: int = 5
+
+    #: The same, per hour. A per-minute limit on its own is beaten by waiting; this is what
+    #: makes the total cost of minting accounts from one place bounded rather than paced.
+    #:
+    #: 40 is deliberately generous for a shared address — a campus lab or a college NAT can
+    #: put a whole cohort behind one IP on results day, and locking that cohort out is a
+    #: worse outcome than the abuse. Revisit if a real campus ever trips it.
+    RATE_LIMIT_AUTH_PER_HOUR: int = 40
+
+    #: Unauthenticated reads of a shared report, per calling address, per minute.
+    RATE_LIMIT_PUBLIC_PER_MINUTE: int = 30
+
+    #: The header a TRUSTED proxy writes the caller's address into, or "" to read none.
+    #:
+    #: EMPTY BY DEFAULT AND THAT IS THE SAFE SETTING. A header is only worth reading when
+    #: something we operate is known to overwrite it; unset, `core/client_ip.py` ignores
+    #: every header and uses the peer address. Set it to `cf-connecting-ip` behind
+    #: Cloudflare, or `x-forwarded-for` behind a platform load balancer.
+    TRUSTED_PROXY_HEADER: str = ""
+
+    #: How many proxies of our own sit in front, when TRUSTED_PROXY_HEADER is
+    #: `x-forwarded-for`. Counted from the RIGHT-hand end of the list, because that header
+    #: is append-only: a caller controls its left and our infrastructure writes its right.
+    TRUSTED_PROXY_HOPS: int = 1
 
     # ── Neural text-to-speech ────────────────────────────────────────────────
     #

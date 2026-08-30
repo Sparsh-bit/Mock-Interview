@@ -188,7 +188,13 @@ class TestFindingsAreTraceable:
             assert any(s in heading for s in ("**high**", "**medium**", "**low**")), (
                 f"{heading!r} has no severity"
             )
-            assert any(s in heading for s in ("open", "closed", "accepted", "mitigated")), (
+            #: "blocked" is a first-class state, not a synonym for open: it means the
+            #: remaining work is not in this repository. SR-2026Q3-04 is the case — brute
+            #: force protection for login is a Supabase console setting — and a review that
+            #: cannot say so has to either lie or leave it looking un-triaged.
+            assert any(
+                s in heading for s in ("open", "closed", "accepted", "mitigated", "blocked")
+            ), (
                 f"{heading!r} does not say whether it is open"
             )
 

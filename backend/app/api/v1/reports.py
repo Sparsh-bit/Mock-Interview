@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 from app.core.config import settings
-from app.core.rate_limit import enforce_limit
+from app.core.rate_limit import enforce_limit, ip_rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys, get_redis
 from app.db.session import AsyncSession, get_db
@@ -2252,7 +2252,23 @@ class PublicReport(BaseModel):
     created_at: datetime
 
 
-@router.get("/public/{report_id}", response_model=PublicReport)
+#: The one route here a stranger can reach. The share id is an unguessable UUID and that is
+#: the real control; this bounds how fast somebody can test that claim, because
+#: "unguessable" is a statement about a rate as much as about entropy. Keyed on the address
+#: because there is no user to key on — see core/client_ip.py.
+_public_report_rate_limit = ip_rate_limiter(
+    limit=settings.RATE_LIMIT_PUBLIC_PER_MINUTE,
+    window_seconds=60,
+    key_builder=CacheKeys.rate_limit_public_ip,
+    action="opening a shared report",
+)
+
+
+@router.get(
+    "/public/{report_id}",
+    response_model=PublicReport,
+    dependencies=[Depends(_public_report_rate_limit)],
+)
 async def get_public_report(
     report_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

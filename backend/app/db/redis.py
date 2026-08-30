@@ -341,6 +341,32 @@ class CacheKeys:
         """Admin mutations. Own namespace so it cannot borrow another budget."""
         return f"rate_limit:admin:{user_id}"
 
+    @staticmethod
+    def rate_limit_auth_ip(ip: str) -> str:
+        """
+        Account provisioning, keyed on the CALLER rather than on a user.
+
+        `POST /auth/profile` is what creates the application's `users` row, so it is the
+        account-creation surface — and it cannot key on a user id, because a script minting
+        accounts presents a different, entirely valid one every time. The address is the
+        only thing the requests have in common.
+
+        Its own namespace so it cannot borrow the AI or read budget: the whole point is
+        that it is far stricter than either.
+        """
+        return f"rate_limit:auth_ip:{ip}"
+
+    @staticmethod
+    def rate_limit_public_ip(ip: str) -> str:
+        """
+        Unauthenticated reads of a shared report.
+
+        The share id is an unguessable UUID and that is the real control. This bounds how
+        fast somebody can test that claim — "unguessable" is a statement about a rate as
+        much as about entropy.
+        """
+        return f"rate_limit:public_ip:{ip}"
+
 
 # ─── Health check ─────────────────────────────────────────────────────────────
 

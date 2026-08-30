@@ -164,15 +164,49 @@ XSS is one `<a href={profile.linkedin_url}>` written by somebody who reasonably 
 field called `linkedin_url` contains a LinkedIn URL. A scheme allowlist at the schema is a
 few lines and removes the assumption.
 
-### SR-2026Q3-04 — no auth-specific rate limiting · **high** · open → Task 4
+### SR-2026Q3-04 — no auth-specific rate limiting · **high** · partly fixed, **blocked on a human**
 
 Every limiter built by `core/rate_limit.rate_limiter()` takes `CurrentUser` as a dependency,
 so it can only key on an **authenticated** caller. Login, signup and password reset are
 unauthenticated by definition, and in this architecture they are not backend routes at all —
-they are Supabase GoTrue, called directly from the browser. The consequence is that
-credential-stuffing defence for this product currently rests entirely on GoTrue's own
-limits, which are a hosting-console setting nothing in this repository asserts, reads or
-can prove. Assigned to Task 4.
+`hooks/useAuth.ts` calls `supabase.auth.signInWithPassword`, `signUp` and
+`resetPasswordForEmail` straight from the browser, so those three requests never reach
+FastAPI.
+
+**What was fixed in code.** The codebase had no way to rate-limit *any* unauthenticated
+route, which is why two of them had nothing at all. `core/client_ip.py` and
+`rate_limit.ip_rate_limiter()` close that, and two routes now carry dedicated limits:
+`POST /api/v1/auth/profile`, which is what actually provisions the `users` row and is
+therefore the account-creation surface, and `GET /api/v1/reports/public/{id}`, the share
+link. A test asserts every other route reachable without a token either has a limiter or is
+listed as exempt with a reason.
+
+The address is taken from a proxy header **only when `TRUSTED_PROXY_HEADER` is configured**,
+and `x-forwarded-for` hops are counted from the right-hand end, because that header is
+append-only and a caller controls its left. Unset — the default — no header is read at all.
+This does not overturn the standing decision recorded in [[COMPLIANCE]] that authenticated
+limits never key on an IP; it adds a key for routes that have no user to key on.
+
+**What is still open, and cannot be closed from here.**
+
+> **BLOCKER — requires somebody with access to the Supabase project.** Brute-force and
+> credential-stuffing protection for login, signup and password reset is a GoTrue setting.
+> Nothing in this repository can set it, read it, or write a test that proves it. Until it
+> is configured and verified in the console, this product's defence against somebody
+> grinding a stolen credential list against its login is **whatever the Supabase project
+> defaults happen to be**, which is not a thing anybody here has checked.
+>
+> What to set, in Authentication → Rate Limits:
+> - **sign-in / sign-up per hour per IP** — the credential-stuffing control
+> - **token refresh per hour** — bounds a stolen refresh token
+> - **e-mails sent per hour** — password-reset flooding, which is an abuse of a real
+>   person's inbox as much as an attack on us
+> - **CAPTCHA on sign-in and sign-up** — Turnstile is already integrated for offers, so the
+>   provider account exists. Note that SR-2026Q3-01 must be fixed first or the challenge
+>   will be blocked by the CSP exactly as it is on the offers path.
+>
+> Record the values here once set, so a later review can tell "configured" from "never
+> looked".
 
 ### SR-2026Q3-05 — the log retention clock is a constant, not a job · **medium** · open → Task 6
 

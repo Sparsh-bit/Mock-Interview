@@ -16,7 +16,10 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.core.rate_limit import ip_rate_limiter
 from app.core.security import CurrentUser
+from app.db.redis import CacheKeys
 from app.db.session import AsyncSession, get_db
 from app.models.user import Profile, User
 
@@ -54,11 +57,47 @@ class ProfileResponse(BaseModel):
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
+#: ── THE ACCOUNT-CREATION SURFACE, AND IT HAD NO LIMIT ──────────────────────────
+#:
+#: This endpoint is called after every successful Supabase auth event and is what writes
+#: the application's `users` row, so it is where a script minting accounts arrives — once
+#: per account, from one place, with a different perfectly-valid token every time.
+#:
+#: KEYED ON THE ADDRESS, NOT THE USER, for exactly that reason: the user id is the thing
+#: the attacker is varying. `docs/COMPLIANCE.md` records a standing decision against IP
+#: keying and it is right for authenticated routes, which is why `core/client_ip.py` only
+#: reads a proxy header when a trusted proxy is configured to have written it.
+#:
+#: TWO WINDOWS. The minute bucket paces a burst; the hour bucket bounds a slow grind, which
+#: a per-minute limit alone does nothing about.
+#:
+#: WHAT THIS IS NOT. It is not a credential-stuffing defence for LOGIN. Login, signup and
+#: password reset are Supabase GoTrue calls made straight from the browser and never reach
+#: this application — that gap is a console setting and is recorded as a human blocker in
+#: docs/SECURITY-REVIEW.md (SR-2026Q3-04) rather than papered over here.
+_auth_provision_rate_limit = ip_rate_limiter(
+    limit=settings.RATE_LIMIT_AUTH_PER_MINUTE,
+    window_seconds=60,
+    key_builder=CacheKeys.rate_limit_auth_ip,
+    action="creating an account",
+)
+_auth_provision_hourly_limit = ip_rate_limiter(
+    limit=settings.RATE_LIMIT_AUTH_PER_HOUR,
+    window_seconds=3600,
+    key_builder=lambda ip: f"{CacheKeys.rate_limit_auth_ip(ip)}:hourly",
+    action="creating an account",
+)
+
+
 @router.post(
     "/profile",
     response_model=UserResponse,
     status_code=status.HTTP_200_OK,
     summary="Sync Supabase auth user to application DB",
+    dependencies=[
+        Depends(_auth_provision_rate_limit),
+        Depends(_auth_provision_hourly_limit),
+    ],
 )
 async def sync_profile(
     body: SyncProfileRequest,

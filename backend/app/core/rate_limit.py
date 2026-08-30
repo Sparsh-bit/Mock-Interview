@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -53,6 +53,46 @@ def rate_limiter(
         await enforce_limit(
             redis,
             key=key_builder(str(current_user.user_id)),
+            limit=limit,
+            window_seconds=window_seconds,
+            action=action,
+        )
+
+    return _check
+
+
+def ip_rate_limiter(
+    *,
+    limit: int,
+    window_seconds: int,
+    key_builder: Callable[[str], str],
+    action: str,
+) -> Callable:
+    """
+    A limiter for a route with NO authenticated caller.
+
+    `rate_limiter()` above depends on `CurrentUser`, so it cannot be applied to login-
+    adjacent or public routes — which is why account provisioning and the public share link
+    had no limit of any kind. This keys on `core.client_ip.client_ip` instead: a validated
+    address, taken from a proxy header only when a trusted proxy is configured to have
+    written it, and never from a header a caller can simply assert. Read that module before
+    changing this; `docs/COMPLIANCE.md` records a standing decision against IP keying and
+    the reasoning there is right for authenticated routes.
+
+    Fails OPEN on a Redis error, exactly like `rate_limiter`. That consistency matters more
+    than it looks: an IP limiter that failed CLOSED would lock every candidate out of
+    signing in during a Redis blip, which is a worse outage than the abuse it prevents.
+    """
+
+    async def _check(
+        request: Request,
+        redis: Redis = Depends(get_redis),
+    ) -> None:
+        from app.core.client_ip import client_ip  # noqa: PLC0415 - avoids a settings cycle
+
+        await enforce_limit(
+            redis,
+            key=key_builder(client_ip(request)),
             limit=limit,
             window_seconds=window_seconds,
             action=action,
