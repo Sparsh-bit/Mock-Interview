@@ -102,3 +102,47 @@ describe('a failed segment does not take the app with it', () => {
     expect(src).not.toMatch(/from '@\/components/);
   });
 });
+
+describe('a wrong URL lands somewhere that looks like the product', () => {
+  /**
+   * WHAT THIS REPLACED: Next.js's built-in 404 — "404: This page could not be found." in the
+   * framework's own type, on a white page, with no branding and no link anywhere.
+   *
+   * On a public product that is what a candidate sees after a mistyped URL or a stale link
+   * someone shared, and it reads as a broken deployment rather than as a wrong address. Those
+   * are materially different conclusions to reach about something you were about to pay for.
+   */
+  it('a custom not-found page exists', () => {
+    expect(existsSync(join(APP, 'not-found.tsx'))).toBe(true);
+  });
+
+  it('it is branded and offers a way out', () => {
+    const src = readFileSync(join(APP, 'not-found.tsx'), 'utf8');
+    expect(src).toMatch(/Wordmark/);
+    // TWO routes, not one: the reader is either signed in and mis-navigated, or arrived from
+    // outside on a dead link. Offering only one of those strands the other.
+    expect(src).toContain('href="/dashboard"');
+    expect(src).toContain('href="/"');
+  });
+
+  it('it says nothing about the deployment', () => {
+    /*
+     * Same rule the error boundaries are held to above, and for the same reason: a hostname or
+     * an internal path on an error screen is a free map of the infrastructure, handed to
+     * whoever typed the wrong URL.
+     *
+     * COMMENTS STRIPPED FIRST — and this assertion failed on correct code before I did that,
+     * because the comment above explaining why traces must not leak contained the very word it
+     * was banning. That is the fourth time in this repository a source scan has matched the
+     * prose describing the rule rather than the code breaking it (docs/MISTAKES.md P5).
+     */
+    const src = readFileSync(join(APP, 'not-found.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\/.*$/gm, '')
+      .toLowerCase();
+    for (const leak of ['onrender.com', 'pages.dev', 'supabase.co', 'localhost', 'stacktrace', '.env']) {
+      expect(src, `the 404 page mentions ${leak}`).not.toContain(leak);
+    }
+  });
+});

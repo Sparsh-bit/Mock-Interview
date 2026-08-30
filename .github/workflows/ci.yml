@@ -103,6 +103,20 @@ jobs:
         run: cd backend && uv run ruff check .
       - name: Typecheck (MyPy)
         run: cd backend && uv run mypy app
+      - name: Create the test database
+        # tests/conftest.py DELIBERATELY REPOINTS AT A SEPARATE DATABASE, and says why: the
+        # integration tests drop and truncate schema between runs, so pointing them at the dev
+        # database would wipe tables out from under a running dev server mid-request. It
+        # derives the name by swapping `_dev` for `_test` on whatever DATABASE_URL names.
+        #
+        # The service container above only creates the database in POSTGRES_DB, so
+        # `interviewos_test` does not exist and every test fails at connect — which is what
+        # this job did on its first run with tests enabled. A developer's machine has both
+        # because somebody created the second one by hand once.
+        run: |
+          PGPASSWORD=password psql -h localhost -p 5433 -U interviewos -d postgres \
+            -c 'CREATE DATABASE interviewos_test'
+
       - name: Tests
         run: cd backend && uv run pytest -q
         env:

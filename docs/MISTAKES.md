@@ -540,6 +540,41 @@ thing CI does not have.
 **Lesson:** when a command passes locally and fails in CI, the difference is the ENVIRONMENT,
 and the fastest way to see it is to build CI's environment rather than to re-read the command.
 
+### M24 — A server component importing from a `'use client'` module
+
+Adding a branded 404, I imported `buttonVariants` from `components/ui/button.tsx`. `tsc` passed.
+ESLint passed. The suite passed. `next build` failed:
+
+    Attempted to call buttonVariants() from the server but buttonVariants is on the client.
+
+`buttonVariants` is a pure `cva()` call with no state and no browser API — but `'use client'`
+marks EVERY export of its module as client-only, and `button.tsx` carries the directive because
+the Button component uses framer-motion. So a static page with no interactivity could not use
+the app's own button styling without becoming a client component and shipping React to render
+a 404.
+
+**Only the build catches this**, which is precisely the argument for the build step added to CI
+in the same session — and I found it because that step now exists locally in my own checklist.
+
+Fixed at the cause rather than by adding `'use client'`: the variants moved to
+`components/ui/button-variants.ts`, with `button.tsx` re-exporting them so the ten existing
+importers were untouched. `/_not-found` now builds as a 153 B static page.
+
+**Pattern:** [P11](#p11--a-200-is-not-a-rendered-page) — the same shape one level earlier. A
+typecheck describes the types; it does not describe the runtime boundary the framework enforces.
+
+### M25 — The comment-matching trap, a fourth time
+
+Writing the guard for the 404, I asserted the page leaks nothing about the deployment by
+banning a list of strings including `stack`. It failed — on the comment directly above it,
+where I had written that "a stack frame … is a free map of the infrastructure".
+
+Fourth occurrence in this repository ([P5](#p5--my-assertions-are-often-stricter-than-the-property)
+has the running table). Caught in seconds this time, because the rule is written down and I now
+reach for comment-stripping by reflex — but the fact that I still wrote it says the reflex
+belongs in the helper, not in my memory. Any new source-scanning assertion should start from a
+comment-stripped string, not add stripping after the first false positive.
+
 ---
 
 ## Additions
