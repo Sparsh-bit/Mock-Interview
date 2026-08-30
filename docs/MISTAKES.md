@@ -516,6 +516,30 @@ surfaced as a 402 at the moment of purchase intent.
 the note in CLAUDE.md now says to read `plans.py` and not to trust any restatement, including
 its own.
 
+### M23 — CI had been failing for weeks, and the message pointed at the wrong thing
+
+Making CI run the test suites immediately turned the build red at `Lint (Ruff)` — and checking
+the history showed the two runs before mine had failed at the same step. It had been broken for
+some time and nobody had reason to look, because a red tick on a job that only ran lint and
+typecheck is easy to assume is a lint problem.
+
+`ruff check .` passed locally. It passed in a fresh clone. It failed in CI.
+
+The cause: `ruff`, `mypy` and `pytest` all live in `[project.optional-dependencies] dev`, and
+plain `uv sync` — what the workflow ran — installs **only the main dependency set**. CI was
+linting in an environment with no linter in it. `uv run ruff` then falls back to resolving the
+tool ephemerally, which works on a developer's machine and does not survive the runner.
+
+**The failure named the linter, so it read as a lint error.** It was a missing linter.
+
+**How it was actually found:** by reproducing the environment rather than the command. A fresh
+clone plus plain `uv sync`, then `ls .venv/bin/` — ruff, mypy and pytest all absent. Running the
+command in my own environment could never have shown this, because my environment is the one
+thing CI does not have.
+
+**Lesson:** when a command passes locally and fails in CI, the difference is the ENVIRONMENT,
+and the fastest way to see it is to build CI's environment rather than to re-read the command.
+
 ---
 
 ## Additions

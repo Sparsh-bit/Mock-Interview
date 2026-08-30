@@ -87,7 +87,18 @@ jobs:
         with:
           python-version-file: "backend/pyproject.toml"
       - name: Install dependencies
-        run: cd backend && uv sync
+        # `--extra dev` IS LOAD-BEARING, and its absence is why this job had been failing on
+        # every run for weeks — the failure predates this workflow rewrite.
+        #
+        # ruff, mypy and pytest all live in `[project.optional-dependencies] dev`, and plain
+        # `uv sync` installs only the main dependency set. So the environment CI linted in had
+        # no linter in it. `uv run ruff` then falls back to resolving the tool ephemerally,
+        # which succeeds on a developer's machine and does not survive a CI runner — leaving a
+        # red build whose message pointed at the lint rules rather than at the missing lint.
+        #
+        # Verified rather than assumed: a fresh clone plus plain `uv sync` leaves
+        # .venv/bin/{ruff,mypy,pytest} all absent.
+        run: cd backend && uv sync --extra dev
       - name: Lint (Ruff)
         run: cd backend && uv run ruff check .
       - name: Typecheck (MyPy)
