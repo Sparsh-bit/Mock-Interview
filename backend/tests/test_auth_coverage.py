@@ -41,6 +41,13 @@ INTENTIONALLY_PUBLIC = {
     # A shared report. Gated on the OWNER having explicitly enabled sharing plus knowledge of
     # an unguessable UUID, and 404s rather than 403s so it cannot confirm a report exists.
     "get_public_report",
+    # The privacy notice, the processor list and the grievance contact. PUBLIC BECAUSE DPDP §5
+    # requires notice BEFORE processing begins — which is before there is an account to
+    # authenticate, and the register page links to it. Contains no user data: the processor
+    # list is derived from this deployment's own configuration and the contact is a published
+    # one. Every other route in api/v1/legal.py takes CurrentUser, because those are about
+    # one person's answers.
+    "get_disclosure",
 }
 
 

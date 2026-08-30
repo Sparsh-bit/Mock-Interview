@@ -704,6 +704,17 @@ async def delete_user(
     #
     # The pending AuditLog above is flushed by autoflush before this statement runs, so the
     # record of the deletion is written first and survives it.
+    #
+    # THE SAME RETENTION RULE AS THE SELF-SERVICE ROUTE, and it has to be here too or
+    # the obligation depends on which button was pressed. `credit_events`,
+    # `offer_redemptions` and `consent_events` are ON DELETE SET NULL since migration
+    # 023 because the Companies Act requires eight financial years of books; this
+    # stamps them with a salted one-way digest first, while their user_id is still
+    # readable. After the DELETE there is nothing left to match on.
+    # See services/legal/retention.py.
+    from app.services.legal.retention import deidentify_retained_records  # noqa: PLC0415
+
+    retained = await deidentify_retained_records(db, user_id)
     await db.execute(sa_delete(User).where(User.id == user_id))
     # Dropped from the identity map so nothing downstream can lazy-load a row that no longer
     # exists — every value this endpoint still returns was captured before the delete.
@@ -713,6 +724,7 @@ async def delete_user(
         "admin_user_deleted",
         actor=str(current_user.user_id),
         target=str(user_id),
+        retained_deidentified=retained,
         target_email=target_email,
         files_removed=files_removed,
     )

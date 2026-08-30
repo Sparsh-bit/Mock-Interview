@@ -154,10 +154,32 @@ class CreditEvent(Base, UUIDPrimaryKeyMixin):
         index=True,
     )
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+    #: NULLABLE, AND SET NULL RATHER THAN CASCADE, since migration 023. This is a
+    #: financial record: the Companies Act §128(5) requires eight financial years of
+    #: books, and DPDP §8(7) makes erasure yield to a retention obligation under
+    #: another law. Cascading it away on account deletion destroyed records the
+    #: business is required to hold. It is NULL for exactly one reason — the account
+    #: was erased — and `retained_subject` is then what identifies the row's cohort.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
+    )
+
+    #: Set only when the owning account is erased: a salted one-way digest of the user
+    #: id, written by services/legal/retention.py in the same transaction as the
+    #: delete. Keeps the surviving financial rows joinable to each other — which is
+    #: what makes a later refund dispute reconcilable — and to nobody.
+    #:
+    #: `deferred=True` IS LOAD-BEARING, NOT A PERFORMANCE TWEAK. models/user.py
+    #: records what happens when a mapped column ships before its migration: SQLAlchemy
+    #: names every mapped column in its SELECT, so the reads against this table would
+    #: 500 in the window between deploying the code and running 023 by hand against
+    #: Supabase — and the read on this table sits between a candidate pressing Start
+    #: and the interview beginning. Deferred columns are left out of the default
+    #: SELECT, so only the erasure path touches this one, and only that path can fail.
+    retained_subject: Mapped[str | None] = mapped_column(
+        String(64), index=True, deferred=True
     )
 
     #: "interview" | "gd" | "communication" — see plans.Feature.
@@ -356,8 +378,28 @@ class OfferRedemption(Base, UUIDPrimaryKeyMixin):
     offer_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("offers.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    #: NULLABLE and SET NULL since 023, for the reason on CreditEvent.user_id, plus one
+    #: that is not about law at all: the unique constraint below is what stops a
+    #: single-use code being redeemed twice, so cascading the row away made
+    #: delete-and-re-register a way to reuse any code.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    #: Set only when the owning account is erased: a salted one-way digest of the user
+    #: id, written by services/legal/retention.py in the same transaction as the
+    #: delete. Keeps the surviving financial rows joinable to each other — which is
+    #: what makes a later refund dispute reconcilable — and to nobody.
+    #:
+    #: `deferred=True` IS LOAD-BEARING, NOT A PERFORMANCE TWEAK. models/user.py
+    #: records what happens when a mapped column ships before its migration: SQLAlchemy
+    #: names every mapped column in its SELECT, so the reads against this table would
+    #: 500 in the window between deploying the code and running 023 by hand against
+    #: Supabase — and the read on this table sits between a candidate pressing Start
+    #: and the interview beginning. Deferred columns are left out of the default
+    #: SELECT, so only the erasure path touches this one, and only that path can fail.
+    retained_subject: Mapped[str | None] = mapped_column(
+        String(64), index=True, deferred=True
     )
 
     #: What they bought with it, and what it saved them. Kept for the audit trail: "why is

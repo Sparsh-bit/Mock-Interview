@@ -766,6 +766,34 @@ class Settings(BaseSettings):
     # ── Sentry (error tracking, optional) ─────────────────────────────────
     SENTRY_DSN: str = Field(default="", description="Sentry DSN for error tracking")
 
+    # ── Data protection contact (DPDP §8(9)–(10)) ─────────────────────────
+    #
+    # A NAMED HUMAN, NOT A ROLE MAILBOX. §8(9) asks for the contact of the person
+    # who can answer questions about processing, and §8(10) for a grievance route.
+    # "support@" satisfies neither: the statute is asking who is accountable.
+    #
+    # Empty by default, and empty is a VISIBLE state rather than a silent one — the
+    # disclosure payload carries `configured: false`, the UI says the contact has
+    # not been appointed yet, and a test asserts the app does not invent one. That
+    # is deliberate: a made-up name in a compliance notice is worse than an obvious
+    # gap, because it looks discharged.
+    DPO_NAME: str = Field(
+        default="",
+        description="Name of the grievance officer / data-protection contact (DPDP §8(9))",
+    )
+    DPO_EMAIL: str = Field(
+        default="",
+        description="Mailbox that person actually reads (DPDP §8(10))",
+    )
+    GRIEVANCE_RESPONSE_DAYS: int = Field(
+        default=30,
+        description=(
+            "Published SLA for answering a grievance. DPDP Rules propose 90 days as "
+            "the outer limit for a Consent Manager; 30 is the ordinary commitment and "
+            "is what the notice promises. Change the number here, not in the copy."
+        ),
+    )
+
     # ── Computed properties ───────────────────────────────────────────────
 
     @property

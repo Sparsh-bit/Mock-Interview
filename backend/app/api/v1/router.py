@@ -20,6 +20,7 @@ from app.api.v1 import (
     gd,
     health,
     interview,
+    legal,
     panel,
     progress,
     questions,
@@ -35,6 +36,10 @@ v1_router = APIRouter()
 # No auth required
 v1_router.include_router(health.router, prefix="/health", tags=["Health"])
 v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+# The privacy notice and the grievance contact. `GET /legal/disclosure` is public
+# BECAUSE §5 requires notice BEFORE processing begins — which is before there is an
+# account to authenticate. The other routes in this module take CurrentUser.
+v1_router.include_router(legal.router, tags=["Legal"])
 # Billing: /plans is public (a pricing page behind a login loses the sale) and
 # /webhook is authenticated by Razorpay's HMAC rather than by a user token. The
 # remaining routes take CurrentUser individually.

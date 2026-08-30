@@ -164,12 +164,37 @@ class TestExportingYourOwnData:
         assert "belongs to the bank" not in r.text
 
     async def test_it_names_who_the_data_is_shared_with(self, world):
-        # DPDP §5 requires telling people who their data goes to. A list they have to infer is
-        # not a disclosure.
+        """
+        DPDP §5 requires telling people who their data goes to. A list they have to infer
+        is not a disclosure.
+
+        STRENGTHENED, NOT RELAXED. This used to assert three vendor names as literals —
+        razorpay, anthropic, supabase — against a hardcoded list in the endpoint. Both
+        halves were wrong in the same way: the list described ZhipuAI as the "standby"
+        provider while AI_PROVIDER defaults to `glm`, which makes ZhipuAI the PRIMARY
+        recipient of every resume, in China. A test asserting fixed names cannot notice
+        that, because it is checking the disclosure against itself.
+
+        The assertion is now that the disclosure matches the DEPLOYMENT: whichever
+        provider this configuration actually sends the resume to must be named, whatever
+        that provider is. That fails on drift, which the old one could not.
+        """
+        from app.core.config import settings
+        from app.services.legal.disclosure import _CATALOGUE
+
         r = await self._export(world["owner"], "own@example.test")
         shared = " ".join(r.json()["shared_with"]).lower()
-        for processor in ("razorpay", "anthropic", "supabase"):
+
+        # Always true of this deployment, whatever the toggles say.
+        for processor in ("razorpay", "supabase"):
             assert processor in shared, f"{processor} is not disclosed in the export"
+
+        # And the model provider actually configured — the one the resume goes to.
+        active = _CATALOGUE[settings.AI_PROVIDER.strip().lower()]
+        assert active.name.split()[0].lower() in shared, (
+            f"AI_PROVIDER is {settings.AI_PROVIDER!r} but the export does not name "
+            f"{active.name}. The disclosure has drifted from where the data goes."
+        )
 
     async def test_export_requires_authentication(self):
         transport = ASGITransport(app=app, raise_app_exceptions=False)

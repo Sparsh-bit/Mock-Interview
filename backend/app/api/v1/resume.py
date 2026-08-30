@@ -225,7 +225,32 @@ async def upload_resume(
                        that drives question selection.
     """
 
+    from app.api.v1.legal import require_consent  # noqa: PLC0415
+    from app.models.consent import PURPOSE_RESUME_PROCESSING  # noqa: PLC0415
     from app.models.report import ResumeFile  # noqa: PLC0415
+
+    # ── CONSENT BEFORE BYTES, AND BEFORE ANYTHING LEAVES THE COUNTRY ─────────
+    #
+    # THE FIRST STATEMENT IN THIS HANDLER, deliberately. A resume is the most
+    # sensitive thing this product holds — education, employers, often a phone
+    # number and an address — and the analysis that follows sends its full text to a
+    # model provider outside India. DPDP §5 wants that said before it happens, not
+    # after, and §16 wants the destination named.
+    #
+    # Checked here rather than trusted from the client, because the client-side modal
+    # is a UI affordance and this endpoint is reachable without it.
+    #
+    # 428 rather than 403: the browser can tell "you must do something first" from
+    # "you may not", and open the disclosure instead of showing an error.
+    await require_consent(
+        db,
+        current_user.user_id,
+        PURPOSE_RESUME_PROCESSING,
+        what=(
+            "Before your first upload, please read what happens to your resume and "
+            "who processes it."
+        ),
+    )
 
     # Validate file type
     if file.content_type not in ALLOWED_MIME_TYPES:

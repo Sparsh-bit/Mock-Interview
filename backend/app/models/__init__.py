@@ -11,6 +11,7 @@ from .ai_usage import AIUsage  # TEMPORARY — token counter
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from .billing import CreditEvent, OfferBanner, UserPlan
 from .company import Company, InterviewTrack, QuestionCategory
+from .consent import ConsentEvent
 from .prep import PrepProgress
 from .progress import RatingEvent
 from .question import FollowUpQuestion, Question, Subtopic, Topic
@@ -50,6 +51,8 @@ __all__ = [
     "Report",
     "CompanyResearch",
     "ResumeFile",
+    # Consent (DPDP §6 evidence ledger)
+    "ConsentEvent",
     # System
     "AuditLog",
     "SystemPrompt",

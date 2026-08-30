@@ -417,6 +417,10 @@ class ExportedData(BaseModel):
     #: Named plainly, because §5 requires telling people who their data is shared with and a
     #: list they have to infer is not a disclosure.
     shared_with: list[str]
+    #: Every consent answer, including the purposes never asked. DPDP §11 gives a right
+    #: to a summary of the data held, and "what did I agree to" is the part of that a
+    #: person is most likely to actually want.
+    consents: list[dict]
 
 
 @router.get("/me/export", summary="Everything we hold about you")
@@ -444,6 +448,8 @@ async def export_my_data(
     from app.models.report import Report, ResumeFile
     from app.models.session import Answer, InterviewFeedback
     from app.models.user import Profile, User
+    from app.services.legal.consent import summary as consent_summary
+    from app.services.legal.disclosure import active_processors
 
     uid = current_user.user_id
 
@@ -556,13 +562,16 @@ async def export_my_data(
             }
             for f in feedback
         ],
+        # DERIVED, NOT WRITTEN OUT. This list used to be five hardcoded strings, and
+        # they had already drifted: it described ZhipuAI as the "standby" provider
+        # when AI_PROVIDER defaults to `glm`, i.e. ZhipuAI is the PRIMARY one and the
+        # resume goes there first. A §5 disclosure that names the wrong recipient is
+        # worse than none, because it is a statement the candidate relied on.
+        # services/legal/disclosure.py reads the same settings the request path reads.
         shared_with=[
-            "Supabase — database, authentication and file storage",
-            "Razorpay — payments (India)",
-            "Anthropic — AI scoring and interview generation (United States)",
-            "ZhipuAI — standby AI provider (China)",
-            "Cloudflare — bot protection on promotional codes",
+            f"{p.name} ({p.country}) — {p.purpose}" for p in active_processors()
         ],
+        consents=await consent_summary(db, uid),
     )
 
 
@@ -609,6 +618,7 @@ async def delete_my_account(
 
     from app.api.v1.admin import _delete_stored_files, _delete_supabase_user
     from app.models.user import User
+    from app.services.legal.retention import deidentify_retained_records
 
     user = await db.scalar(select(User).where(User.id == current_user.user_id))
     if user is None:
@@ -646,6 +656,29 @@ async def delete_my_account(
 
     files_removed = await _delete_stored_files(db, user.id)
 
+    # ── WHAT SURVIVES, AND WHY IT HAS TO ─────────────────────────────────────
+    #
+    # BEFORE the delete, not after: `credit_events`, `offer_redemptions` and
+    # `consent_events` are ON DELETE SET NULL since migration 023, so the moment the
+    # user row goes their `user_id` is NULL and there is nothing left to match on.
+    #
+    # These are financial and evidential records. The Companies Act §128(5) requires
+    # eight financial years of books and DPDP §8(7) makes erasure yield to a
+    # retention obligation under another law, so the previous behaviour — cascading
+    # them away — destroyed records the business is required to hold, silently, on a
+    # path the user triggers themselves. It also made a single-use offer code
+    # reusable by deleting and re-registering.
+    #
+    # Retaining them still identified would be a rename of the problem rather than a
+    # fix, so the identity is replaced by a salted one-way digest: the amounts and
+    # dates remain, the person does not. Same transaction as the delete, so it is
+    # both or neither.
+    #
+    # The resume, its text, the file, every answer, transcript, score and report are
+    # NOT retained. They are the sensitive data, nothing requires keeping them, and
+    # they cascade away exactly as before.
+    retained = await deidentify_retained_records(db, current_user.user_id)
+
     # A CORE DELETE so the database's ON DELETE CASCADE runs. `db.delete(user)` goes through
     # the ORM, which NULLs children rather than deferring to the database and raises on any
     # NOT NULL column — this is exactly what made account deletion 500 before.
@@ -656,5 +689,16 @@ async def delete_my_account(
         "user_deleted_their_own_account",
         user_id=str(current_user.user_id),
         resume_files_removed=files_removed,
+        retained_deidentified=retained,
     )
-    return {"deleted": True, "resume_files_removed": files_removed}
+    return {
+        "deleted": True,
+        "resume_files_removed": files_removed,
+        # Told to the user, not just logged. Somebody exercising an erasure right is
+        # entitled to know that the financial records do not go, and why.
+        "retained_deidentified": retained,
+        "retention_note": (
+            "Payment and credit records are kept for 8 years as company law requires, "
+            "with your identity removed from them. Everything else is gone."
+        ),
+    }

@@ -10,7 +10,11 @@ by writing code — those are flagged as such, and a lawyer should confirm the i
 before you rely on any of it.
 
 - Audited at commit `c4ebe95`
-- Related: [[KNOWN-GOOD]] · [[index]] · [[DEPLOY]]
+- **Partly remediated since.** See [[#What has since been built]] at the bottom — the
+  mechanisms for notice, consent, age, export, erasure and retention now exist in code. The
+  table below is kept as the original audit; the status column is annotated where it has
+  moved.
+- Related: [[KNOWN-GOOD]] · [[index]] · [[DEPLOY]] · [[ERROR-TRACKING]]
 
 ---
 
@@ -213,3 +217,127 @@ The gaps are mostly cheap. The first four are the ones that turn "unlawful" into
   definitions will move.
 - "Reasonable security safeguards" is a legal standard, not a technical one. The controls
   listed above are strong, but whether they clear the bar is a lawyer's call, not mine.
+
+
+---
+
+## What has since been built
+
+The audit above found the mechanisms absent. They now exist. This section records what the
+code does, so the two halves of this note can be read against each other rather than
+replacing one with the other.
+
+### Migration 023 — `consent_and_retention`
+
+Two changes that belong together.
+
+**`consent_events`** is an append-only ledger, deliberately shaped like `credit_events`
+rather than as booleans on `users`. Every row carries the purpose, whether it was granted,
+the notice version it was answered against, where it was answered, and when. Withdrawal is a
+**new row with `granted = false`**, never an update — the history is the evidence that the
+processing which already happened was lawful at the time, and overwriting it destroys that.
+
+It is a new TABLE and not columns on `users` for the deployment reason `models/user.py`
+records: migrations here are applied by hand, so there is always a window where the code is
+live and the schema is not, and a new column on `users` puts itself into every SELECT on the
+table `get_current_user` reads on every request — which takes the whole application down for
+the length of that window.
+
+**Retention.** `credit_events`, `offer_redemptions` and `consent_events` moved from
+`ON DELETE CASCADE` to `ON DELETE SET NULL` and gained a `retained_subject` column.
+
+> **This fixed a real defect, not a theoretical one.** `POST /users/me/delete` cascaded the
+> financial ledger away. Those are books of account — Companies Act §128(5) wants eight
+> financial years, and DPDP §8(7) makes erasure yield to a retention obligation under another
+> law — so a person exercising their erasure right destroyed records the business is required
+> to hold, silently, on a path they trigger themselves. Cascading `offer_redemptions` was
+> also a live abuse vector with nothing to do with law: that table's unique index is what
+> stops a single-use code being redeemed twice, so deleting the row made delete-and-
+> re-register a way to reuse any code.
+
+Retaining a row that still names the person would be a rename of the problem, so
+`services/legal/retention.py` replaces the identity with a **salted one-way digest** in the
+same transaction as the delete. Amounts and dates remain; the person does not. The resume,
+its extracted text, the stored file, every answer, transcript, score and report are **not**
+retained — they are the sensitive data, nothing requires keeping them, and they cascade away
+as before.
+
+### What each audit finding now maps to
+
+| § | Was | Now |
+|---|---|---|
+| 5 | No notice anywhere | `GET /api/v1/legal/disclosure` (public) and `/privacy`. **Derived from the running configuration**, not written out — see below |
+| 6 | Nothing recorded | `consent_events`, three separate unticked boxes at signup, version-stamped |
+| 6(4)–(6) | No withdrawal | `POST /api/v1/legal/consent` with `granted: false` — the same endpoint as giving it |
+| 8(7) | Nothing ever deleted | Self-service deletion, with the retention carve-out above |
+| 8(9)–(10) | No contact | `DPO_NAME` / `DPO_EMAIL` / `GRIEVANCE_RESPONSE_DAYS`, surfaced on `/privacy`. **Still unset** — see the blocker list |
+| 9 | No age gate | Unticked "I am 18 or older" at signup, refused rather than recorded if false |
+| 11 | No export | `GET /api/v1/users/me/export`, now including the consent history |
+| 12 | Admin-only erasure | Self-service, and the admin path takes the same retention rule |
+| 16 | No transfer disclosure | Country named per processor, shown before the first resume upload |
+
+### The disclosure is derived, and that is the point
+
+`services/legal/disclosure.py` builds the processor list from `AI_PROVIDER`,
+`AI_FALLBACK_PROVIDER`, `TTS_PROVIDER` and `CODE_EXEC_PROVIDER` — the same settings the
+request path reads.
+
+This replaced a hardcoded list in the export endpoint that **had already drifted**: it
+described ZhipuAI as the "standby" provider while `AI_PROVIDER` defaults to `glm`, which
+makes ZhipuAI the *primary* recipient of every resume, in China. A notice naming the wrong
+recipient is worse than no notice, because it is a statement the candidate relied on. A test
+now fails if a provider the factory can build has no disclosure entry.
+
+### Still needs a human — this is the blocker list
+
+None of these can be closed from the repository, and the first two are the ones that keep
+the position unlawful rather than merely imperfect.
+
+1. **Appoint a grievance officer and set `DPO_NAME` / `DPO_EMAIL`.** Until then `/privacy`
+   says, in as many words, that no officer has been appointed. That is deliberate — an
+   obvious gap beats a plausible fabrication, because a made-up name looks like the
+   obligation was discharged. *DPDP §8(9)–(10).*
+2. **Have a lawyer review and adopt the notice wording.** Everything shipped is marked
+   `draft: true` in the payload and rendered as a banner. It states facts an engineer
+   verified from the code; it does not attempt the parts that are a legal judgment:
+   - the **lawful basis** for each processing purpose;
+   - the retention periods as a **commitment** rather than a description of current
+     behaviour;
+   - whether **self-declared 18+** discharges §9, or whether verifiable parental consent
+     machinery is required for a product aimed at campus placement where a meaningful share
+     of first-years are 17;
+   - the **§16 position on ZhipuAI**. The restricted-country list is not notified and may
+     include China. The code names the destination; whether to keep sending resumes there is
+     a business decision somebody should make on purpose.
+   - **§6(3)** — the notice in English plus the 8th Schedule languages. Only English exists.
+3. **Decide and document the retention *policy*.** `FINANCIAL_RETENTION_YEARS = 8` and
+   `SECURITY_LOG_RETENTION_DAYS = 180` are in `services/legal/retention.py` and are what the
+   disclosure promises, but **nothing purges on those clocks yet** — there is no scheduled
+   job. Today the constants describe an intention, and the code only enforces the
+   *de-identification* half. A purge job is real engineering and needs the policy settled
+   first.
+4. **CERT-In log localisation.** 180 days of logs held *within India*. Logs currently live
+   wherever Render puts them. This is a hosting decision.
+5. **§14 nominee.** Still absent. Small, and easy to forget entirely.
+6. **Breach runbook** with the 6-hour CERT-In clock. Detection exists; the process does not.
+7. **DPAs with the processors.** Whether signed agreements exist with Supabase, Razorpay,
+   Anthropic and ZhipuAI is not visible from the repository and changes the analysis for
+   each of them.
+
+### Known limits of what was built
+
+Stated plainly, because a remediation note that only lists wins is the same failure mode as
+the stale trial-allowance note in `CLAUDE.md`.
+
+- **Consent is recorded after the Supabase account exists**, because a consent row needs a
+  user to belong to. An account created and then abandoned before that call leaves an
+  account with no consent record. The signup form surfaces the failure and asks the person to
+  confirm in Settings; the gap is real and is why age is *also* enforced at the paths that do
+  behavioural monitoring rather than only at signup.
+- **Age is self-declared.** No document check, no parental-consent flow. Whether that is
+  enough is item 2 above.
+- **Nothing purges yet.** See item 3.
+- **Accounts created before migration 023** have no consent rows at all. They are not
+  retroactively blocked, because locking a paying customer out of a product they already
+  bought is not a remedy — they read as "never asked", and the resume gate will ask them at
+  their next upload.

@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
@@ -14,7 +15,8 @@ import {
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { usePrimaryResume, useUploadResume, useDeleteResume, type StoredResume } from '@/hooks/useData';
+import { usePrimaryResume, useUploadResume, useDeleteResume, useResumeConsent, type StoredResume } from '@/hooks/useData';
+import { ResumeConsentGate } from '@/components/legal/ResumeConsentGate';
 import { formatDate } from '@/lib/format-date';
 import { cn } from '@/lib/utils';
 
@@ -90,6 +92,18 @@ export function ResumeUploadCard() {
   const remove = useDeleteResume();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  /*
+   * The file the candidate picked, held back until they have been told where it goes.
+   *
+   * HELD RATHER THAN UPLOADED-THEN-EXPLAINED. The upload endpoint answers 428 without
+   * consent, so uploading first would fail anyway — but the reason this is in front of the
+   * request rather than reacting to its refusal is that the bytes must not leave the browser
+   * before the person has seen who receives them. Reacting to a 428 would mean the file was
+   * already sent once.
+   */
+  const [awaitingConsent, setAwaitingConsent] = useState<File | null>(null);
+  const { data: hasConsented } = useResumeConsent();
+  const queryClient = useQueryClient();
 
   const submit = (file: File) => {
     // Check locally first. Uploading 40 MB just to be told the limit is 10 is a
@@ -105,6 +119,17 @@ export function ResumeUploadCard() {
       return;
     }
 
+    // The bytes stay in the browser until they have been told where the bytes go.
+    // `undefined` is "still loading" and is treated as not-yet-consented, so a slow
+    // consent read delays the upload rather than skipping the explanation.
+    if (hasConsented !== true) {
+      setAwaitingConsent(file);
+      return;
+    }
+    send(file);
+  };
+
+  const send = (file: File) => {
     upload.mutate(file, {
       onSuccess: (result) => {
         const skills = result.parsed_skills?.length ?? 0;
@@ -126,6 +151,14 @@ export function ResumeUploadCard() {
         }
       },
       onError: (err: unknown) => {
+        // 428 PRECONDITION REQUIRED is not a failure — it is the server saying consent has
+        // not been recorded yet. Opening the disclosure is the right response; a red toast
+        // would be a dead end. This is the backstop for the case the local check below
+        // missed, notably a consent withdrawn in another tab.
+        if ((err as { status?: number })?.status === 428) {
+          setAwaitingConsent(file);
+          return;
+        }
         // The server explains exactly why a file could not be read ("that PDF is
         // a scan — upload the original export"). Showing a generic failure would
         // throw away the one message the candidate can act on.
@@ -143,6 +176,23 @@ export function ResumeUploadCard() {
   };
 
   const meta = resume ? statusMeta(resume) : null;
+
+  if (awaitingConsent) {
+    return (
+      <Card className="p-6">
+        <ResumeConsentGate
+          onGranted={() => {
+            const file = awaitingConsent;
+            setAwaitingConsent(null);
+            // So the gate does not reappear for the next upload in this tab.
+            queryClient.invalidateQueries({ queryKey: ['legal', 'consent'] });
+            send(file);
+          }}
+          onCancel={() => setAwaitingConsent(null)}
+        />
+      </Card>
+    );
+  }
 
   return (
     <Card className="p-6">

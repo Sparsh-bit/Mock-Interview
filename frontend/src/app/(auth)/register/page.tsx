@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -16,7 +16,8 @@ import FloatingLabelInput from '@/components/lightswind-pro/floating-label-input
 import PasswordStrength from '@/components/lightswind-pro/password-strength';
 import { Button } from '@/components/ui/button';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
-import { Wordmark } from '@/components/brand/Brandmark';
+import { Lockup } from '@/components/brand/Brandmark';
+import ConsentCheckbox from '@/components/legal/ConsentCheckbox';
 
 export const runtime = 'edge';
 /*
@@ -28,11 +29,35 @@ export const runtime = 'edge';
  * registration, "forgot password" would be a documented route to a weaker password than this
  * form accepts — a bypass rather than an inconsistency. One definition, imported by both.
  */
+/*
+ * THE THREE CONSENT ANSWERS ARE SEPARATE FIELDS, AND NONE OF THEM DEFAULTS TO TRUE.
+ *
+ * DPDP §6 wants consent by clear affirmative action, and a checkbox that starts ticked is a
+ * pre-ticked box in a different costume — the one thing §6 names explicitly as not consent.
+ * `literal(true)` rather than `boolean()` so an unticked box fails validation with a message
+ * rather than submitting a false the server would have to interpret.
+ *
+ * SEPARATE RATHER THAN ONE "I AGREE TO EVERYTHING". §5 notice and §6 consent are distinct
+ * obligations, and §9 age is a third question entirely; bundling them makes it impossible to
+ * show afterwards which one a person actually answered — and the consent ledger records them
+ * as three rows for exactly that reason.
+ */
 const schema = z.object({
   full_name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Enter a valid email address'),
   password: passwordRules,
   confirmPassword: z.string(),
+  privacy_notice: z.literal(true, {
+    errorMap: () => ({ message: 'Please read what happens to your data before continuing' }),
+  }),
+  terms: z.literal(true, {
+    errorMap: () => ({ message: 'Please accept the terms to continue' }),
+  }),
+  age_18_plus: z.literal(true, {
+    errorMap: () => ({
+      message: 'This service measures how you speak and present, which we may not do for under-18s',
+    }),
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ['confirmPassword'],
@@ -51,6 +76,23 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [done, setDone] = useState(false);
   const { signUp } = useAuth();
+  /*
+   * The version of the notice THIS TAB SHOWED, sent with the consent rather than assumed
+   * server-side. A tab left open across a notice change would otherwise record agreement to
+   * wording the person never saw — which is precisely what the version stamp exists to
+   * prevent. `undefined` until the disclosure loads; the server falls back to its own current
+   * version, which is correct for a tab that was opened after the change.
+   */
+  const [noticeVersion, setNoticeVersion] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    getBrowserApiClient()
+      .get<{ notice_version: string }>('/api/v1/legal/disclosure')
+      .then((r) => setNoticeVersion(r.data.notice_version))
+      .catch(() => {
+        /* The form still works; the server stamps its own current version. */
+      });
+  }, []);
 
   const { register, handleSubmit, watch, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -72,6 +114,29 @@ export default function RegisterPage() {
       await api.post('/api/v1/auth/profile', { full_name: data.full_name });
     } catch {
       // Non-fatal
+    }
+
+    /*
+     * Record the consent, AFTER the account exists — a consent row needs a user to belong to.
+     *
+     * NOT SILENTLY SWALLOWED like the profile call above. A failure here means the account
+     * exists with no evidence of consent, which is the state DPDP §6 is about, so it is
+     * surfaced and retried from Settings rather than left to look like it worked. The
+     * registration itself still succeeds: tearing down a created account because a follow-up
+     * call failed would lose them the password they just chose.
+     */
+    try {
+      const api = getBrowserApiClient();
+      await api.post('/api/v1/legal/consent/signup', {
+        privacy_notice: data.privacy_notice,
+        terms: data.terms,
+        age_18_plus: data.age_18_plus,
+        notice_version: noticeVersion,
+      });
+    } catch {
+      toast.warning(
+        'Your account was created, but we could not record your privacy choices. Please confirm them in Settings.'
+      );
     }
 
     setDone(true);
@@ -136,7 +201,7 @@ export default function RegisterPage() {
             the logo is on the page exactly once instead of twice. */}
         <motion.div variants={fadeUp} className="order-2 space-y-6 md:order-1">
           <Link href="/" className="hidden items-center gap-2 md:flex">
-            <Wordmark />
+            <Lockup width={190} priority />
           </Link>
           <div>
             <h2 className="mb-3 text-3xl font-medium tracking-[-0.03em]">
@@ -165,7 +230,7 @@ export default function RegisterPage() {
         {/* Right on desktop, FIRST on a phone — see the ordering note on the panel above. */}
         <motion.div variants={fadeUp} className="order-1 md:order-2">
           <Link href="/" className="mb-6 flex items-center gap-2 md:hidden">
-            <Wordmark />
+            <Lockup width={190} priority />
           </Link>
 
           <div>
@@ -242,6 +307,38 @@ export default function RegisterPage() {
                 error={errors.confirmPassword?.message}
                 {...register('confirmPassword')}
               />
+
+              {/*
+                * Plain checkboxes, above the button and not behind a "show more". A consent
+                * control a person has to go looking for is not consent given by clear
+                * affirmative action.
+                */}
+              <div className="space-y-3 rounded-xl border border-border/60 p-4 text-sm">
+                <ConsentCheckbox
+                  id="age_18_plus"
+                  error={errors.age_18_plus?.message}
+                  {...register('age_18_plus')}
+                >
+                  I am 18 or older.
+                </ConsentCheckbox>
+
+                <ConsentCheckbox
+                  id="privacy_notice"
+                  error={errors.privacy_notice?.message}
+                  {...register('privacy_notice')}
+                >
+                  I have read{' '}
+                  <Link href="/privacy" target="_blank" className="font-medium text-primary underline">
+                    what happens to my data
+                  </Link>
+                  , including that my resume and answers are processed by AI providers outside
+                  India.
+                </ConsentCheckbox>
+
+                <ConsentCheckbox id="terms" error={errors.terms?.message} {...register('terms')}>
+                  I accept the terms of use.
+                </ConsentCheckbox>
+              </div>
 
               <Button type="submit" className="w-full" loading={isSubmitting}>
                 {isSubmitting ? 'Creating account…' : 'Create free account'}

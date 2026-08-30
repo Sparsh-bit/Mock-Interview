@@ -337,6 +337,30 @@ export function usePrimaryResume() {
   });
 }
 
+/**
+ * Whether this account has consented to its resume being processed.
+ *
+ * READ RATHER THAN REMEMBERED IN THE BROWSER. localStorage would survive a withdrawal made on
+ * another device and would be wrong in the direction that matters — showing no prompt to
+ * somebody who has withdrawn. The server is the only thing that knows, and the upload
+ * endpoint enforces it regardless of what this returns.
+ */
+export function useResumeConsent() {
+  return useQuery({
+    queryKey: ['legal', 'consent'],
+    queryFn: async () => {
+      const api = getBrowserApiClient();
+      const res = await api.get<{
+        consents: { purpose: string; granted: boolean | null }[];
+      }>('/api/v1/legal/consent');
+      const row = res.data.consents.find((c) => c.purpose === 'resume_processing');
+      // `null` means never asked, which is not consent. Only an explicit grant is.
+      return row?.granted === true;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useUploadResume() {
   const queryClient = useQueryClient();
   return useMutation({
