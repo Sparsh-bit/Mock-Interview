@@ -35,6 +35,9 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   disagree, [[DEPLOY]] is newer.
 - [[OBSERVABILITY]] — what a log line is allowed to contain (the PII audit and its result),
   and how the logs get somewhere durable: Render's native drain, not an in-process shipper.
+- [[REDIS-CUTOVER]] — moving Redis from localhost to a managed, replicated instance:
+  the two numbers to read off the plan page first, how to prove `rediss://` works before
+  production depends on it, and what stops protecting you while it is broken.
 - [[UPTIME]] — the monitoring runbook: which endpoints, what a healthy response looks like,
   how often, and who gets woken up. Written to be followed by a non-engineer. Its central
   point: `/api/v1/health` returns 200 while the database is down, so a status-code-only

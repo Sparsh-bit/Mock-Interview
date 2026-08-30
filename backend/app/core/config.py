@@ -95,13 +95,49 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = 1500
     DB_ECHO: bool = False  # Set True to log all SQL queries
 
+    # ── Deployment topology ───────────────────────────────────────────────
+    #: How many copies of this process the platform runs. NOT read by the app to
+    #: change behaviour — it is read by the startup audits that multiply a per-process
+    #: budget by it, because every connection ceiling in this file is a PER-FLEET
+    #: number that the code can only see one Nth of. Keep it equal to the replica
+    #: count in render.yaml; a stale value here makes the audits silently wrong in
+    #: the optimistic direction.
+    WEB_REPLICA_COUNT: int = 1
+
     # ── Redis ─────────────────────────────────────────────────────────────
     REDIS_URL: str = Field(
         default="redis://localhost:6379/0",
-        description="Redis connection URL (Upstash: rediss://...)",
+        description="Redis connection URL. Managed providers require TLS: rediss://...",
     )
+    #: PER PROCESS. The number that matters to a managed provider is this times
+    #: WEB_REPLICA_COUNT, checked at startup against REDIS_CONNECTION_CEILING.
     REDIS_MAX_CONNECTIONS: int = 20
     REDIS_DEFAULT_TTL_SECONDS: int = 3600
+    #: The provider's own per-plan limit on simultaneous client connections. There is
+    #: deliberately NO default: every provider and plan has a different number, they
+    #: change, and a guessed ceiling produces an audit that is confidently wrong. 0
+    #: means "not configured" and the startup audit says so rather than inventing one.
+    #: Read it off the plan page during cutover — docs/REDIS-CUTOVER.md §1.
+    REDIS_CONNECTION_CEILING: int = 0
+    #: Path to a CA bundle, for a provider that presents a certificate the system trust
+    #: store does not chain to. Ignored for a plaintext redis:// URL, where redis-py's
+    #: non-TLS Connection would reject the kwarg outright.
+    REDIS_TLS_CA_CERTS: str | None = None
+    #: Seconds between PINGs on an idle pooled connection. THE FAILOVER SETTING: when a
+    #: managed provider promotes a replica, sockets to the old node stay open and look
+    #: healthy until a command uses one. Without this the first request after every
+    #: failover fails; with it redis-py checks the connection before handing it out.
+    #: Must stay well below the provider's idle-connection timeout.
+    REDIS_HEALTH_CHECK_INTERVAL_SECONDS: int = 30
+    #: Hard deadline on the PING behind GET /api/v1/health. Connect timeout multiplied
+    #: by retries plus backoff runs past 20s, and a health check that slow reads to the
+    #: platform as a dead instance — so the liveness probe gets its own bound, separate
+    #: from the retry budget that real traffic is allowed to spend.
+    REDIS_HEALTH_PING_TIMEOUT_SECONDS: float = 3.0
+    #: Retries redis-py makes per command before surfacing the error. Sized for a
+    #: failover blip (seconds), not for an outage — the callers all degrade rather than
+    #: break, so spending longer here would just hold a worker.
+    REDIS_MAX_RETRIES: int = 3
 
     # ── Supabase ──────────────────────────────────────────────────────────
     SUPABASE_URL: str = Field(description="Your Supabase project URL")

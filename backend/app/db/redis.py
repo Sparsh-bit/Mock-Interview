@@ -2,21 +2,37 @@
 Redis Client — db/redis.py
 
 Async Redis connection using redis-py with asyncio support.
-Compatible with Upstash Redis (serverless, TLS required for cloud URLs).
 
-All cache operations in this application go through get_redis() dependency.
+WRITTEN FOR A REDIS SOMEBODY ELSE OPERATES, not for one on localhost. That changes three
+things, and none of them announces itself at the point of failure:
+
+  * the connection is TLS (`rediss://`), and a trust-store problem surfaces as a timeout
+    rather than as a certificate error
+  * the server can move underneath a live pool. A pooled socket open to the node that was
+    just replaced is indistinguishable from a healthy one until a command uses it, which is
+    why `health_check_interval` below is load-bearing rather than tuning
+  * the connection budget is (pool size x replicas) against a ceiling the provider enforces,
+    not against a local machine that has no ceiling. `audit_redis_configuration` does that
+    arithmetic at startup because nothing else in the process can see past its own pool
+
+All cache operations in this application go through the get_redis() dependency.
 Never create Redis connections manually in services.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
+from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import structlog
 from redis.asyncio import ConnectionPool, Redis
 from redis.asyncio.retry import Retry
-from redis.backoff import ExponentialBackoff
+from redis.backoff import ExponentialWithJitterBackoff
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.core.config import settings
 
@@ -27,21 +43,64 @@ logger = structlog.get_logger(__name__)
 _pool: ConnectionPool | None = None
 
 
+def url_is_tls(url: str) -> bool:
+    """True when the URL selects redis-py's SSLConnection."""
+    return urlsplit(url).scheme == "rediss"
+
+
+def _tls_kwargs(url: str) -> dict[str, object]:
+    """
+    TLS options, and ONLY for a rediss:// URL.
+
+    redis-py's plaintext Connection forwards unknown kwargs to AbstractConnection, which
+    raises TypeError on them — so handing `ssl_ca_certs` to a redis:// pool does not
+    "get ignored", it stops the process from building a pool at all. Production setting
+    a CA path must not break a developer running against localhost.
+
+    The two verification options are redis-py 8 defaults; they are stated anyway because
+    they are the whole security value of the scheme, and a default that is never written
+    down is a default nobody notices changing.
+    """
+    if not url_is_tls(url):
+        return {}
+    kwargs: dict[str, object] = {
+        "ssl_cert_reqs": "required",
+        "ssl_check_hostname": True,
+    }
+    if settings.REDIS_TLS_CA_CERTS:
+        kwargs["ssl_ca_certs"] = settings.REDIS_TLS_CA_CERTS
+    return kwargs
+
+
 def _create_pool() -> ConnectionPool:
     """Create the Redis connection pool from settings."""
     redis_url = settings.REDIS_URL
 
-    # The rediss:// scheme automatically enables TLS; don't pass ssl manually
-    # (ConnectionPool.from_url handles it). Upstash requires TLS, so ensure URL
-    # uses rediss://, not redis://.
     return ConnectionPool.from_url(
         redis_url,
         max_connections=settings.REDIS_MAX_CONNECTIONS,
         decode_responses=True,
-        retry=Retry(ExponentialBackoff(cap=2, base=0.1), retries=3),
-        retry_on_error=[ConnectionRefusedError, TimeoutError],
+        # JITTERED, and that is the point of choosing this over ExponentialBackoff.
+        # Every replica loses the same server at the same instant during a failover, so a
+        # deterministic schedule has all of them retrying on the same tick — a herd
+        # arriving at a node that has only just come back.
+        retry=Retry(
+            ExponentialWithJitterBackoff(cap=2.0, base=0.1),
+            retries=settings.REDIS_MAX_RETRIES,
+            supported_errors=(RedisConnectionError, RedisTimeoutError),
+        ),
+        # THE REDIS EXCEPTIONS, not the builtins. This list previously held
+        # ConnectionRefusedError and TimeoutError from builtins; redis-py raises
+        # redis.exceptions.ConnectionError / TimeoutError, neither of which inherits from
+        # a builtin, so the list matched nothing it was written to match. It only ever
+        # worked because Retry's own defaults already cover these two.
+        retry_on_error=[RedisConnectionError, RedisTimeoutError],
+        # See REDIS_HEALTH_CHECK_INTERVAL_SECONDS: without this, the first request after
+        # every provider failover is served a socket to a node that no longer exists.
+        health_check_interval=settings.REDIS_HEALTH_CHECK_INTERVAL_SECONDS,
         socket_timeout=5.0,
         socket_connect_timeout=5.0,
+        **_tls_kwargs(redis_url),
     )
 
 
@@ -272,11 +331,142 @@ async def check_redis_connection() -> bool:
     """
     Verify the Redis server is reachable.
     Used by GET /api/v1/health. Never raises — returns False on failure.
+
+    Bounded by its OWN deadline rather than by the retry budget. Real traffic is allowed to
+    spend socket_connect_timeout x retries plus backoff riding out a failover blip — that is
+    the whole point of the retry configuration — but a liveness probe that takes twenty
+    seconds to answer is read by the platform as a dead instance and the replica is recycled
+    while it is in fact healthy. So the probe gives up early and reports degraded.
     """
     try:
         redis = get_redis()
-        await redis.ping()
+        await asyncio.wait_for(
+            redis.ping(), timeout=settings.REDIS_HEALTH_PING_TIMEOUT_SECONDS
+        )
         return True
     except Exception:
-        logger.exception("redis_health_check_failed")
+        logger.warning("redis_health_check_failed", exc_info=True)
         return False
+
+
+# ─── Startup configuration audit ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class RedisConfigIssue:
+    """One thing about the Redis configuration worth telling an operator at boot."""
+
+    code: str
+    message: str
+    hint: str
+
+
+#: Fraction of the provider ceiling at which the budget is called out before it is breached.
+#: Breaching it is not a graceful degradation — the provider refuses new connections and the
+#: symptom is scattered errors on random requests, so the warning has to arrive early enough
+#: to act on.
+_CEILING_WARN_RATIO = 0.8
+
+#: Hosts where plaintext Redis is a developer's docker-compose rather than a password
+#: crossing the public internet in the clear.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
+
+
+def audit_redis_configuration(
+    *,
+    url: str,
+    environment: str,
+    max_connections: int,
+    replicas: int,
+    ceiling: int,
+) -> list[RedisConfigIssue]:
+    """
+    Everything about the Redis configuration that a single process cannot see for itself.
+
+    Pure — takes the numbers rather than reading settings — so every threshold can be tested
+    at the boundary instead of by contriving an environment.
+
+    Returns issues to LOG, never to raise on. main.py's lifespan already refuses to make
+    Redis fatal, for the stated reason that every Redis-backed feature degrades rather than
+    breaks; a misconfiguration warning has no business being stricter than an outage.
+    """
+    issues: list[RedisConfigIssue] = []
+    host = (urlsplit(url).hostname or "").lower()
+    managed = host not in _LOOPBACK_HOSTS
+
+    if environment == "production" and managed and not url_is_tls(url):
+        issues.append(
+            RedisConfigIssue(
+                code="redis_plaintext_in_production",
+                message=(
+                    f"REDIS_URL points at {host} over plaintext redis://. The AUTH "
+                    "password and every cached value cross the network in the clear."
+                ),
+                hint="Change the scheme to rediss:// — managed providers serve both ports.",
+            )
+        )
+
+    if managed and ceiling <= 0:
+        issues.append(
+            RedisConfigIssue(
+                code="redis_connection_ceiling_unknown",
+                message=(
+                    "REDIS_CONNECTION_CEILING is unset, so the connection budget "
+                    f"({max_connections} x {replicas} replicas = {max_connections * replicas}) "
+                    "is not being checked against anything."
+                ),
+                hint=(
+                    "Set it to the simultaneous-connection limit on your Redis plan. "
+                    "See docs/REDIS-CUTOVER.md §1."
+                ),
+            )
+        )
+        return issues
+
+    if not managed:
+        return issues
+
+    budget = max_connections * replicas
+    if budget > ceiling:
+        issues.append(
+            RedisConfigIssue(
+                code="redis_pool_budget_over_ceiling",
+                message=(
+                    f"Redis connection budget {max_connections} x {replicas} replicas = "
+                    f"{budget}, over the provider ceiling of {ceiling}."
+                ),
+                hint=(
+                    "Lower REDIS_MAX_CONNECTIONS or WEB_REPLICA_COUNT. Past the ceiling "
+                    "the provider refuses new connections and the symptom is scattered "
+                    "errors on random requests, not a clean slowdown."
+                ),
+            )
+        )
+    elif budget >= ceiling * _CEILING_WARN_RATIO:
+        issues.append(
+            RedisConfigIssue(
+                code="redis_pool_budget_near_ceiling",
+                message=(
+                    f"Redis connection budget {max_connections} x {replicas} replicas = "
+                    f"{budget}, within {int((1 - _CEILING_WARN_RATIO) * 100)}% of the "
+                    f"provider ceiling of {ceiling}."
+                ),
+                hint="One more replica breaches it. Lower REDIS_MAX_CONNECTIONS first.",
+            )
+        )
+
+    return issues
+
+
+def log_redis_configuration_audit() -> list[RedisConfigIssue]:
+    """Run the audit against live settings and log each issue. Called from the lifespan."""
+    issues = audit_redis_configuration(
+        url=settings.REDIS_URL,
+        environment=settings.ENVIRONMENT,
+        max_connections=settings.REDIS_MAX_CONNECTIONS,
+        replicas=settings.WEB_REPLICA_COUNT,
+        ceiling=settings.REDIS_CONNECTION_CEILING,
+    )
+    for issue in issues:
+        logger.warning(issue.code, message=issue.message, hint=issue.hint)
+    return issues

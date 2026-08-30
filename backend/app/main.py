@@ -98,7 +98,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     #     so every plan is bought again at ~$0.065
     #
     # The first two are the ones that cost money, which is why this is loud.
-    from app.db.redis import check_redis_connection
+    from app.db.redis import check_redis_connection, log_redis_configuration_audit
+
+    # Configuration first, reachability second. The things this reports — plaintext in
+    # production, a connection budget over the provider's ceiling — are invisible to a
+    # process that can only see its own pool, and they are exactly the failures that a
+    # successful PING does not rule out.
+    log_redis_configuration_audit()
+
     redis_ok = await check_redis_connection()
     if redis_ok:
         logger.info("redis_connected")
