@@ -5,6 +5,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '@/lib/api';
+import { initSentry } from '@/lib/observability/sentry';
 import { createClient } from '@/lib/supabase/client';
 
 // Some browser extensions (translate / save-page tools) inject content
@@ -101,7 +102,22 @@ function useClearCacheOnAccountChange(queryClient: QueryClient) {
   }, [queryClient]);
 }
 
+/**
+ * Start error tracking, once per tab.
+ *
+ * In an effect rather than at module scope because this module is imported by the
+ * server render too, and `@sentry/browser` installs global handlers on `window`.
+ * `initSentry` is itself idempotent and a no-op without NEXT_PUBLIC_SENTRY_DSN, so
+ * neither StrictMode's double-invoke nor an unconfigured environment does anything.
+ */
+function useErrorTracking() {
+  useEffect(() => {
+    initSentry();
+  }, []);
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
+  useErrorTracking();
   useSilenceExtensionNoise();
   const [queryClient] = useState(
     () =>

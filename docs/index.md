@@ -30,6 +30,9 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   actually matter, and what breaks when each one is wrong.
 - [[DEPLOYMENT]] — the older, longer infrastructure write-up. Overlaps [[DEPLOY]]; where they
   disagree, [[DEPLOY]] is newer.
+- [[ERROR-TRACKING]] — Sentry on both halves of the app, the five layers that keep a
+  candidate's resume and answers out of every event, and how to verify it on a live
+  deployment.
 
 ## Money
 

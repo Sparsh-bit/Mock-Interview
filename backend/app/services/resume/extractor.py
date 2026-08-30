@@ -31,6 +31,8 @@ import re
 
 import structlog
 
+from app.core.observability import register_sensitive_text
+
 logger = structlog.get_logger(__name__)
 
 #: MIME types we can actually extract, mapped to a short kind for dispatch.
@@ -362,5 +364,10 @@ def extract_text(data: bytes, mime_type: str, *, filename: str = "") -> str:
             kept_chars=MAX_RESUME_CHARS,
         )
         text = text[:MAX_RESUME_CHARS]
+
+    # Never send this to the error tracker. This is the single place resume text
+    # comes into existence, so registering it here covers every caller — including
+    # ones that do not exist yet. See app/core/observability.py.
+    register_sensitive_text(text)
 
     return text

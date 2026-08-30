@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.observability import register_sensitive_text
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys
@@ -474,6 +475,12 @@ async def submit_answer(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
+    # Never send this to the error tracker, wherever it ends up. An answer has no
+    # recognisable shape, so no pattern can find it once it has been interpolated
+    # into an exception message — it has to be registered at the door.
+    # See app/core/observability.py.
+    register_sensitive_text(request.content)
+
     await _verify_session_ownership(db, session_id, current_user)
     orchestrator = InterviewOrchestrator(db)
     result = await orchestrator.submit_answer(

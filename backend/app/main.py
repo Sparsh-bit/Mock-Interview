@@ -23,12 +23,19 @@ from app.api.v1.reports import mark_request_served
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.observability import init_sentry
 
 # Configure logging before anything else
 configure_logging(
     log_level=settings.LOG_LEVEL,
     log_format=settings.LOG_FORMAT,
 )
+
+# Then error tracking, at import time rather than in the lifespan hook: an exception
+# raised while the app object is being constructed — a bad setting, a router that
+# fails to import — happens before any lifespan runs, and that is exactly the class
+# of failure worth a report. No-op when SENTRY_DSN is unset.
+init_sentry()
 
 logger = structlog.get_logger(__name__)
 

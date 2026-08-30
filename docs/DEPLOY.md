@@ -240,5 +240,6 @@ Worth knowing before traffic arrives, rather than after:
   not be (it would serve returning candidates a quiz they have already answered). Both are
   explained in `services/ai/vector_cache.py`.
 - **CI runs lint and typecheck only.** A green pipeline does not mean the tests passed.
-- **No error tracking or uptime monitoring.** At a thousand users the first sign of trouble
-  should not be a user telling you.
+- **No uptime monitoring.** At a thousand users the first sign of trouble should not be a
+  user telling you. Error tracking is now wired — see [[ERROR-TRACKING]] — but it reports
+  what broke, not that the service is down.

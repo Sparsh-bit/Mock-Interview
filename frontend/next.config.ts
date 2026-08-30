@@ -34,6 +34,20 @@ function connectOrigins(): string[] {
   origins.add('https://api.razorpay.com');
   origins.add('https://lumberjack.razorpay.com');
   origins.add('https://challenges.cloudflare.com');
+  // Sentry's ingest host, derived from the DSN rather than hardcoded — it is
+  // per-organisation (`https://<key>@o<org>.ingest.<region>.sentry.io/<project>`),
+  // so a literal would be wrong for anybody else's project.
+  //
+  // THIS IS NOT OPTIONAL DECORATION. Without it the CSP blocks the POST and the SDK
+  // fails exactly the way that is hardest to notice: the page works, no console
+  // error the user would report, and the dashboard is simply empty forever.
+  if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+    try {
+      origins.add(new URL(process.env.NEXT_PUBLIC_SENTRY_DSN).origin);
+    } catch {
+      // Malformed DSN. The SDK will refuse it too; do not take the build down.
+    }
+  }
   return [...origins];
 }
 

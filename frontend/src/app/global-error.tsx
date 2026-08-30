@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect } from 'react';
+
 /**
  * The last boundary. Catches what the root layout itself throws.
  *
@@ -17,6 +19,16 @@
  *
  * A hard reload rather than `reset()`. If the root layout failed, re-rendering it is likely
  * to fail identically; replacing the document is the honest recovery.
+ *
+ * THE SENTRY REPORT IS A DYNAMIC IMPORT, and that is the "no imports" rule being kept
+ * rather than broken. A static `import` of the tracker would put it in this file's module
+ * graph, so a tracker that fails to load takes the error screen down with it — the exact
+ * failure this file exists to survive. Imported inside the effect and swallowed on failure,
+ * the worst case is a missing report on a page that still renders.
+ *
+ * React does not report an error caught by an error boundary to `window.onerror`, so
+ * without this call the most serious class of frontend failure — the one that blanks the
+ * whole app — would be the one thing the tracker never heard about.
  */
 export default function GlobalError({
   error,
@@ -24,6 +36,14 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    void import('@/lib/observability/sentry')
+      .then(({ reportError }) => reportError(error, { boundary: 'global' }))
+      .catch(() => {
+        /* Tracker unavailable. The error screen still renders, which matters more. */
+      });
+  }, [error]);
+
   return (
     <html lang="en">
       <body
