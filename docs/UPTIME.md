@@ -73,6 +73,7 @@ A healthy response looks like this:
   "database": "connected",
   "redis": "connected",
   "supabase": "connected",
+  "ai_providers": { "anthropic": "reachable", "glm": "reachable" },
   "dependencies_healthy": true
 }
 ```
@@ -104,6 +105,30 @@ dependency broke, because the three are **not** equally serious:
 
 A longer window (3 failures) is right here because a dependency check crossing the network to
 Supabase is legitimately flaky in a way a local process check is not.
+
+### 2b. Is the model provider reachable? — **report it, do not page on it**
+
+`ai_providers` names each provider in the configured chain and says `reachable`,
+`unreachable`, `unknown` (the probe timed out) or the whole field is `not_configured`.
+
+**It is deliberately NOT part of `dependencies_healthy`, and therefore not wired to check 2's
+alert.** The three dependencies in that field share a property the model providers do not: if
+any of them is down, the service cannot serve at all. A model provider being unreachable is a
+**degradation** — quizzes, existing reports, the dashboard, sign-in and payment all keep
+working, and the provider chain falls back to the standby by itself. Paging on it would wake
+somebody for another company's incident that the fallback already handled, and `unknown` — a
+provider merely being slow — would read as an outage. That is the false alarm that gets a
+pager muted.
+
+**What to do with it instead:** chart it, or set a *low-urgency* notification for
+`"unreachable"` appearing on **both** providers at once, which does mean interviews cannot be
+graded. One provider down is the fallback working as designed.
+
+**The probe costs nothing.** It is an authenticated `GET /models` — no inference, no tokens,
+no entry in the `ai_usage` ledger — cached for four minutes, and bounded to three seconds so a
+slow provider cannot make this endpoint slow. It is explicitly *not* the
+`BaseAIProvider.health_check()` that already exists, which sends a real completion and would
+have cost ~480 billable calls a day per provider at the interval above.
 
 ### 3. Can a browser actually load the site?
 
