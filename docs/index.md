@@ -33,6 +33,10 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   and the blocker list that needs a lawyer and a named officer rather than more code
 - [[DEPLOYMENT]] — the older, longer infrastructure write-up. Overlaps [[DEPLOY]]; where they
   disagree, [[DEPLOY]] is newer.
+- [[UPTIME]] — the monitoring runbook: which endpoints, what a healthy response looks like,
+  how often, and who gets woken up. Written to be followed by a non-engineer. Its central
+  point: `/api/v1/health` returns 200 while the database is down, so a status-code-only
+  monitor is green through a total outage.
 - [[ERROR-TRACKING]] — Sentry on both halves of the app, the five layers that keep a
   candidate's resume and answers out of every event, and how to verify it on a live
   deployment.

@@ -260,6 +260,9 @@ Worth knowing before traffic arrives, rather than after:
   tests against a real Postgres with pgvector, and 841 frontend tests plus a production build.
   The gate has been verified in both directions on a throwaway branch: a deliberate failure
   turns it red, and the control run turns it green.
-- **No uptime monitoring.** At a thousand users the first sign of trouble should not be a
-  user telling you. Error tracking is now wired — see [[ERROR-TRACKING]] — but it reports
-  what broke, not that the service is down.
+- **Uptime monitoring is specified but not switched on.** [[UPTIME]] is the runbook —
+  endpoints, healthy responses, frequencies, alert routing — and `monitoring/` holds the
+  check definitions as code. What remains is a human step: create the account and confirm an
+  alert channel. Until somebody does, the only external check is still the keep-warm ping,
+  which alerts nobody. Error tracking IS wired ([[ERROR-TRACKING]]), but it reports what
+  broke, not that the service is down.
