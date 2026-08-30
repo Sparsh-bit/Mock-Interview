@@ -2,7 +2,7 @@
  * Where a login is allowed to send somebody — lib/auth/safe-redirect.ts
  *
  * THE HOLE THIS CLOSES. `/login?redirectTo=…` was read from the query string and handed
- * straight to `router.push`, so `?redirectTo=https://interviewos-login.example` bounced the
+ * straight to `router.push`, so `?redirectTo=https://hotseat-login.example` bounced the
  * candidate to somebody else's site the instant their password was accepted.
  *
  * That is the useful shape of an open redirect rather than the theoretical one. The victim

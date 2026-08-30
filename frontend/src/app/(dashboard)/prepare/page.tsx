@@ -28,6 +28,7 @@ import {
   type Recruiter,
   type RoadmapTopic,
 } from '@/hooks/useData';
+import { formatDayMonth } from '@/lib/format-date';
 import { cn } from '@/lib/utils';
 import { brandFill, brandInk } from '@/lib/brand-accent';
 
@@ -371,7 +372,7 @@ export default function PreparePage() {
           <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-border pt-5 sm:grid-cols-4">
             {[
               { k: 'Total', v: `${roadmap?.total_hours ?? 0}h` },
-              { k: 'Ready by', v: roadmap ? new Date(roadmap.target_date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—' },
+              { k: 'Ready by', v: roadmap ? formatDayMonth(roadmap.target_date) : '—' },
               { k: 'Topics', v: `${roadmap?.phases.reduce((n, p) => n + p.topics.length, 0) ?? 0}` },
               { k: 'Done', v: `${pct}%` },
             ].map((s) => (
@@ -425,8 +426,8 @@ export default function PreparePage() {
             <div className="mb-5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-foreground/15 pb-2">
               <h2 className="text-base font-semibold tracking-[-0.01em]">{phase.title}</h2>
               <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
-                {new Date(phase.starts_on).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} –{' '}
-                {new Date(phase.ends_on).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {phase.hours}h
+                {formatDayMonth(phase.starts_on)} –{' '}
+                {formatDayMonth(phase.ends_on)} · {phase.hours}h
               </span>
             </div>
 

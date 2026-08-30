@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useStoreItems } from '@/hooks/useBilling';
+import { formatDate } from '@/lib/format-date';
 import { getBrowserApiClient } from '@/lib/api';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
@@ -592,7 +593,7 @@ export default function AdminOffersPage() {
                   {o.requires_captcha && <Badge variant="warning">captcha</Badge>}
                   {o.ends_at && (
                     <span className="text-[11px] text-muted-foreground">
-                      ends {new Date(o.ends_at).toLocaleDateString()}
+                      ends {formatDate(o.ends_at)}
                     </span>
                   )}
                 </div>

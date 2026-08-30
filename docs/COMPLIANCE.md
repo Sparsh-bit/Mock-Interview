@@ -1,4 +1,4 @@
-# Data protection compliance — where InterviewOS actually stands
+# Data protection compliance — where Hotseat actually stands
 
 An audit of the codebase against India's **Digital Personal Data Protection Act, 2023** and the
 regimes that sit alongside it. Written from what the code does, not from what a policy says,

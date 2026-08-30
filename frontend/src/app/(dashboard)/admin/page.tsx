@@ -39,6 +39,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatDate } from '@/lib/format-date';
 import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/card';
@@ -101,7 +102,7 @@ function when(iso: string | null): string {
   if (days === 0) return 'today';
   if (days === 1) return 'yesterday';
   if (days < 30) return `${days}d ago`;
-  return d.toLocaleDateString();
+  return formatDate(d);
 }
 
 export default function AdminPage() {
@@ -558,7 +559,7 @@ export default function AdminPage() {
                       className="flex items-baseline justify-between gap-4 border-b border-border/60 pb-1.5 last:border-0"
                     >
                       <span className="text-xs">
-                        {new Date(s.created_at).toLocaleDateString()}
+                        {formatDate(s.created_at)}
                         <span className="ml-2 text-muted-foreground">{s.status}</span>
                       </span>
                       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">

@@ -5,6 +5,7 @@ export const runtime = 'edge';
 import Link from 'next/link';
 import { ArrowLeft, Calendar, FileText, TrendingUp } from 'lucide-react';
 
+import { formatDate } from '@/lib/format-date';
 import { scoreBand } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 
@@ -86,7 +87,7 @@ export default function DemoReportPage() {
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
-                {new Date(sampleReport.started_at).toLocaleDateString()}
+                {formatDate(sampleReport.started_at)}
               </span>
               <span>•</span>
               <span>{sampleReport.questions_asked} questions asked</span>
@@ -111,7 +112,8 @@ export default function DemoReportPage() {
         {/* THE LIT ELEMENT — docs/DESIGN-LANGUAGE §1. This page is linked from the landing
             page, so for a lot of people it is the first real thing they see the product
             produce. The score is what they came to look at; the transcript below is evidence
-            for it. It was one of four identical glass panels. */}
+            for it. It was one of several identical glass panels, which DESIGN-RULES names as
+            a tell: one glass surface is a choice, six is a preset. */}
         <div className="lit rounded-2xl p-8">
           <div className="grid gap-8 sm:grid-cols-3">
             <div>
@@ -163,20 +165,38 @@ export default function DemoReportPage() {
         <div>
           <h2 className="mb-4 text-xl font-semibold">Performance Breakdown</h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            {scoreBreakdown.map(({ label, value }) => (
-              <div key={label} className="glass rounded-lg border border-border/50 p-4">
-                <p className="text-sm font-medium text-muted-foreground">{label}</p>
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex-1 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-2 bg-gradient-to-r from-primary to-accent-violet transition-[color,background-color,border-color,box-shadow,transform,opacity]"
-                      style={{ width: `${(value / 10) * 100}%` }}
-                    />
+            {scoreBreakdown.map(({ label, value }) => {
+              /*
+               * BANDED, NOT GRADIENT-FILLED — the same treatment the real report and the group
+               * discussion use, from lib/score-bands.
+               *
+               * These bars were `from-primary to-accent-violet`: two hues blended across an 8px
+               * strip. Apply DESIGN-RULES' own test — if this were greyscale, would information
+               * be lost? No, because the WIDTH already says the value. The gradient was
+               * decoration, and worse, it made a 7.5 and an 8.3 exactly the same colour on the
+               * page we use to show a prospective candidate what a report looks like.
+               *
+               * ×10 because these are the 0–10 sub-scores; lib/score-bands works in 0–100, and
+               * they are the same scale printed at different precisions.
+               */
+              const band = scoreBand(value * 10);
+              return (
+                <div key={label} className="rounded-xl border border-border bg-surface-elevated p-4">
+                  <p className="text-sm font-medium text-muted-foreground">{label}</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn('h-full rounded-full transition-[width]', band.bar)}
+                        style={{ width: `${(value / 10) * 100}%` }}
+                      />
+                    </div>
+                    <span className={cn('font-mono font-bold tabular-nums', band.ink)}>
+                      {value.toFixed(1)}
+                    </span>
                   </div>
-                  <span className="font-semibold">{value.toFixed(1)}</span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -185,7 +205,7 @@ export default function DemoReportPage() {
           <h2 className="mb-4 text-xl font-semibold">Question-by-Question Review</h2>
           <div className="space-y-4">
             {answers.map((item, idx) => (
-              <div key={idx} className="glass rounded-lg border border-border/50 p-6">
+              <div key={idx} className="rounded-xl border border-border bg-surface-elevated p-6">
                 <div className="mb-4 flex items-start justify-between">
                   <h3 className="text-sm font-semibold">Q{idx + 1}: {item.q}</h3>
                   <div className="flex gap-3 text-right">
@@ -220,7 +240,7 @@ export default function DemoReportPage() {
 
         {/* Strengths & Improvements */}
         <div className="grid gap-6 sm:grid-cols-2">
-          <div className="glass rounded-lg border border-accent-emerald/20 bg-accent-emerald/5 p-6">
+          <div className="rounded-xl border border-accent-emerald/25 bg-accent-emerald-soft/50 p-6">
             <h3 className="mb-4 font-semibold text-accent-emerald-ink">Strengths</h3>
             <ul className="space-y-2">
               {strengths.map((s, i) => (
@@ -232,7 +252,7 @@ export default function DemoReportPage() {
             </ul>
           </div>
 
-          <div className="glass rounded-lg border border-accent-amber/20 bg-accent-amber/5 p-6">
+          <div className="rounded-xl border border-accent-amber/25 bg-accent-amber-soft/50 p-6">
             <h3 className="mb-4 font-semibold text-accent-amber-ink">To Improve</h3>
             <ul className="space-y-2">
               {improvements.map((im, i) => (

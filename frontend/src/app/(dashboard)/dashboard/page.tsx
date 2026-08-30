@@ -13,6 +13,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { IconTile, type IconTileProps } from '@/components/ui/icon-tile';
 import { PromoBanner } from '@/components/PromoBanner';
 import { NudgeDeck } from '@/components/dashboard/NudgeDeck';
+import { formatDate } from '@/lib/format-date';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
@@ -222,7 +223,7 @@ export default function DashboardPage() {
                         <Badge variant={sess.status === 'completed' ? 'success' : 'warning'}>{sess.status}</Badge>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        {sess.questions_asked} questions asked • {sess.started_at ? new Date(sess.started_at).toLocaleDateString() : 'Recent'}
+                        {sess.questions_asked} questions asked • {sess.started_at ? formatDate(sess.started_at) : 'Recent'}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">

@@ -1,6 +1,6 @@
 # Known-good baseline
 
-The state of InterviewOS, and *why each thing is the way it is* — so that a change made under
+The state of Hotseat, and *why each thing is the way it is* — so that a change made under
 pressure restores the behaviour rather than merely silencing the symptom.
 
 Written before the first penetration pass and updated after it. Two rounds are now recorded

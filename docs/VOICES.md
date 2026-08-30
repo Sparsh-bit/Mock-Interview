@@ -1,4 +1,4 @@
-> Part of the [[index|InterviewOS documentation]].
+> Part of the [[index|Hotseat documentation]].
 
 # Voices
 

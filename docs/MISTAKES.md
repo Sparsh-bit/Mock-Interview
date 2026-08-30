@@ -12,6 +12,16 @@ pattern; if it does, that is a warning, not a coincidence. When something new go
 it with its own entry and check whether it is really a new pattern or an old one wearing a
 different hat.
 
+**Reading it is not applying it.** Twice now a mistake has been committed in the very file
+written to prevent that class of mistake — see [M14](#m14--i-re-committed-two-documented-mistakes-inside-the-test-written-to-prevent-drift)
+and [M19](#m19--two-guards-that-fired-on-correct-code-in-the-test-written-to-catch-m18). Before
+writing any assertion that scans source, ask the two questions this file keeps having to
+re-learn: *can this match something outside the thing I mean?* and *would this fail on code
+that is already correct?*
+
+**Before saying anything is done, run the checklist at the bottom.** Most of the entries below
+were found by one of those steps and would not have been found by the others.
+
 - Related: [[KNOWN-GOOD]] · [[COMPLIANCE]] · [[index]]
 
 ---
@@ -173,6 +183,38 @@ Three things made it worse than it needed to be:
    and is not a push.
 3. **A destructive command gets its own call and its own read-through.** Not the tail of a loop,
    not after `&&`, and never behind `|| true`.
+
+### P11 — A 200 is not a rendered page
+
+I verified this redesign with `tsc`, `eslint`, 807 unit tests, a full `next build` of all 33
+routes, and a `curl` of every public URL returning 200. All of it passed. Then I took one
+screenshot and the browser was showing a **"1 Issue"** badge: React had thrown away the entire
+server-rendered tree on `/demo` because the server's date text did not match the client's.
+
+Every check I had run was blind to it by construction:
+
+| check | why it could not see this |
+|---|---|
+| `tsc` / `eslint` | both renderings are valid TypeScript |
+| unit tests | they render components in one environment, so there is no second one to disagree with |
+| `next build` | it compiles and prerenders; nothing compares that output to a browser's |
+| `curl … → 200` | the server produced HTML. That is all a 200 means. |
+
+**The bug lived in the gap between the server rendering and the browser accepting it, and only
+a browser sits in that gap.** Hydration mismatches, layout that collapses at a real viewport,
+a font that never loads, a click handler that throws — none of them have a server-side symptom.
+
+**Run a headless browser and read the console.** It is three lines:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu \
+  --virtual-time-budget=9000 --enable-logging=stderr --v=0 --dump-dom http://localhost:3000/PAGE \
+  2>console.txt >/dev/null
+grep -i "hydration\|error\|warning" console.txt
+```
+
+Screenshot it too. The screenshot is what caught this: I was looking at the design and the
+overlay badge was sitting in the corner of it.
 
 ---
 
@@ -416,6 +458,56 @@ Both in `browser-storage.test.ts`, both [P5](#p5--my-assertions-are-often-strict
 Both would have trained me to "fix" working code, which is the specific damage a
 false-positive assertion does.
 
+### M20 — A hydration mismatch that every green check missed
+
+`/demo` — linked from the landing page, so one of the first things a prospective candidate sees
+— was throwing away its whole server-rendered tree on load. `new Date(x).toLocaleDateString()`
+formats in the AMBIENT locale: Node's on the server, the browser's on the client. Node said
+`7/20/2026`, the browser said `20/07/2026`, React saw the text differ and re-rendered
+everything.
+
+The same call appeared at **14 sites**, and it was a correctness bug quite apart from
+hydration: with no locale pinned, one candidate saw `20/07/2026` and another `07/20/2026` for
+the same report — and for the first nineteen days of a month **both are valid readings of the
+same string**, so neither can tell which they are looking at.
+
+Fixed at the cause: `lib/format-date.ts` pins `en-IN` and prints the month as a word
+(`20 Jul 2026`), which removes the ambiguity rather than merely making it consistent. It also
+returns `—` for an unparseable value, because `new Date('nonsense')` does not throw — it
+produces an Invalid Date whose formatter returns the literal string "Invalid Date".
+
+**Pattern:** [P11](#p11--a-200-is-not-a-rendered-page).
+
+### M21 — An assertion whose arithmetic was wrong
+
+Editing the real `.env`, I guarded the change so that only the product name could differ:
+
+```python
+assert len(before) - len(s) == 3   # "InterviewOS" → "Hotseat"
+```
+
+The delta is 4, not 3. The guard fired on a correct edit and stopped the whole script.
+
+Harmless because it failed closed on a file holding live credentials — which is exactly what I
+wanted it to do — but it is [P5](#p5--my-assertions-are-often-stricter-than-the-property) once
+more, and in its purest form: I wrote a number instead of computing one. The fix was to say
+what I meant, `len("InterviewOS") - len("Hotseat")`, which cannot be wrong.
+
+### M22 — Documentation that promised more than the code allows
+
+`CLAUDE.md` stated the free tier as "2 interviews, 1 GD, 5 communications". The real
+`TRIAL_ALLOWANCE` is `interview: 0, gd: 0, communication: 1` — interviews and group discussions
+were made paid-only and the note was never updated.
+
+Not my error, but worth recording because of the DIRECTION it was wrong in: it described a
+product **more generous** than the ledger will permit. Anybody trusting it would have "fixed"
+the pricing page to promise interviews that a new account cannot start, and the bug would have
+surfaced as a 402 at the moment of purchase intent.
+
+**Lesson:** a restatement of a constant is a copy of it. `plans.py` says so in its own header;
+the note in CLAUDE.md now says to read `plans.py` and not to trust any restatement, including
+its own.
+
 ---
 
 ## Additions
@@ -423,3 +515,32 @@ false-positive assertion does.
 New entries go here with a date, then get promoted into the numbered list once the pattern is
 clear. If a new mistake matches an existing pattern, say so explicitly — a repeat is a
 stronger signal than a novelty.
+
+---
+
+## The verification checklist
+
+Each line exists because something below was missed by every check above it. Run them in
+order; the cheap ones first, but none of them substitutes for a later one.
+
+1. **`npx tsc --noEmit` and `npx next lint`** — catches types and dead code. Catches no
+   behaviour.
+2. **`npm test -- --run` and `uv run pytest`** — and if a mass of tests errors, check whether
+   Docker and the project's Postgres are actually running before diagnosing anything
+   ([P8](#p8--not-checking-the-environment-before-believing-the-output)). Twice ~70-119 errors
+   have been a stopped container.
+3. **Break every new guard on purpose and watch it fail**
+   ([P1](#p1--a-guard-that-cannot-fail-is-worse-than-no-guard)). Also break something it must
+   NOT flag, or you will ship a false positive that trains you to damage working code.
+4. **`npm run build`** — compiles every route, and it is the only place a Tailwind class that
+   is assembled at runtime disappears. Grep the emitted CSS for the classes you added.
+   Do NOT run it while a dev server is using `.next`; it replaces the directory underneath it
+   and the dev server starts 500-ing.
+5. **A headless browser with the console captured, and a screenshot**
+   ([P11](#p11--a-200-is-not-a-rendered-page)). A 200 means HTML was produced, nothing more.
+6. **The real end-to-end path** ([P7](#p7--declaring-a-thing-fixed-without-exercising-it)) —
+   `/api/v1/health` should report database, redis and supabase all connected, and the
+   frontend's own `/api/v1/*` proxy should return the same.
+7. **Commit before any experiment that writes to many files**
+   ([P10](#p10--i-put-a-destructive-command-in-a-cleanup-line-and-ran-it-without-reading-it)).
+   A local commit is free and is not a push. Not doing this cost an entire session's work once.

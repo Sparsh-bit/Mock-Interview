@@ -1,5 +1,5 @@
 """
-Integration tests for InterviewOS backend.
+Integration tests for Hotseat backend.
 Run with: pytest tests/test_integration.py -v --tb=short
 """
 import sys

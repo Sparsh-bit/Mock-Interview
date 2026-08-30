@@ -316,7 +316,7 @@ class Syllabus(TypedDict):
     areas: tuple[Area, ...]
     #: SHAPES of spoken coding tasks, fourteen words maximum. A shape, not a
     #: problem: "a hash map tally over characters" steers, "reverse the string
-    #: interviewos" is a canned question with extra steps.
+    #: hotseat" is a canned question with extra steps.
     code_shapes: tuple[str, ...]
     #: What to dig at in the candidate's own work.
     project_probes: tuple[str, ...]

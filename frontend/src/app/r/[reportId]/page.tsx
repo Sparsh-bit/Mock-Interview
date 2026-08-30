@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Code2, Download, Loader2, Lock } from 'lucide-react';
+import { formatDate } from '@/lib/format-date';
 import { getBrowserApiClient } from '@/lib/api';
 import { scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
@@ -151,7 +152,7 @@ export default function PublicReportPage() {
               </p>
               <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">{data.candidate_name}</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Mock interview assessment · {new Date(data.created_at).toLocaleDateString()}
+                Mock interview assessment · {formatDate(data.created_at)}
               </p>
               <span className="mt-3 inline-block rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
                 {label(data.readiness_level)}

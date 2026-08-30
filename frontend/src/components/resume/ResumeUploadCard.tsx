@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { usePrimaryResume, useUploadResume, useDeleteResume, type StoredResume } from '@/hooks/useData';
+import { formatDate } from '@/lib/format-date';
 import { cn } from '@/lib/utils';
 
 /** Mirrors the server's MAX_UPLOAD_SIZE_MB so we can reject before uploading. */
@@ -172,7 +173,7 @@ export function ResumeUploadCard() {
               <p className="break-all text-sm font-semibold">{resume.filename}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {formatSize(resume.file_size_bytes)} · uploaded{' '}
-                {new Date(resume.created_at).toLocaleDateString()}
+                {formatDate(resume.created_at)}
               </p>
 
               <div className={cn('mt-3 flex items-center gap-1.5 text-xs font-semibold', meta.tone)}>

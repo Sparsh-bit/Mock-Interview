@@ -1,7 +1,7 @@
 """
 Initial Schema Migration — 001_initial_schema.py
 Revision: 001
-Creates all 17 tables for the InterviewOS platform.
+Creates all 17 tables for the Hotseat platform.
 
 Tables (in dependency order):
   users, profiles, companies, interview_tracks, question_categories,

@@ -241,11 +241,11 @@ export function toCsv(
  * A filename that says what the file is and when it was taken.
  *
  * The date is in it because these get downloaded repeatedly as the drive approaches, and
- * `interviewos-marketing.csv (3)` in a downloads folder is three files nobody can tell apart —
+ * `hotseat-marketing.csv (3)` in a downloads folder is three files nobody can tell apart —
  * while the whole point of the list is that it changes daily.
  */
 export function csvFilename(now: Date, scope: string): string {
   const day = now.toISOString().slice(0, 10);
   const suffix = scope && scope !== 'all' ? `-${scope}` : '';
-  return `interviewos-marketing-${day}${suffix}.csv`;
+  return `hotseat-marketing-${day}${suffix}.csv`;
 }

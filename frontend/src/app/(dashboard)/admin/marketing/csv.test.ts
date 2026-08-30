@@ -256,13 +256,13 @@ describe('the mechanics that stop Excel mangling the file', () => {
 describe('the filename tells the two files apart', () => {
   it('carries the day, because this list changes daily as a drive approaches', () => {
     expect(csvFilename(new Date('2026-08-22T11:00:00Z'), 'all')).toBe(
-      'interviewos-marketing-2026-08-22.csv',
+      'hotseat-marketing-2026-08-22.csv',
     );
   });
 
   it('names the segment when the export is filtered to one', () => {
     expect(csvFilename(new Date('2026-08-22T11:00:00Z'), 'report_waiting')).toBe(
-      'interviewos-marketing-2026-08-22-report_waiting.csv',
+      'hotseat-marketing-2026-08-22-report_waiting.csv',
     );
   });
 });

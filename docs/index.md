@@ -1,4 +1,4 @@
-# InterviewOS — documentation
+# Hotseat — documentation
 
 The hub note. Open the vault at the repo root and this is the page the graph hangs off.
 

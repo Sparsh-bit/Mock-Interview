@@ -1,10 +1,10 @@
-> Part of the [[index|InterviewOS documentation]].
+> Part of the [[index|Hotseat documentation]].
 
-# InterviewOS — Project Summary & Blueprint
+# Hotseat — Project Summary & Blueprint
 
 ## Product Vision & Main Idea
-**InterviewOS** is a production-grade, AI-powered mock interview platform, starting with a focus on **Cognizant Digital Nurture (Java FSE)**. 
-Unlike standard chatbots or static Q&A banks, InterviewOS is an **interview simulation engine**. It reproduces the full experience of a real technical interview:
+**Hotseat** is a production-grade, AI-powered mock interview platform, starting with a focus on **Cognizant Digital Nurture (Java FSE)**. 
+Unlike standard chatbots or static Q&A banks, Hotseat is an **interview simulation engine**. It reproduces the full experience of a real technical interview:
 - **Adaptive Questioning**: Questions adapt to the candidate's performance. Strong answers trigger deeper, more difficult follow-ups; weak answers prompt hints or easier concepts.
 - **Resume-Personalized Sessions**: AI analyzes the candidate's uploaded resume to tailor questions to their specific experience and projects.
 - **Real-Time Structured Evaluation**: Every answer is scored across multiple vectors (technical accuracy, communication clarity, completeness, confidence).

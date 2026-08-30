@@ -7,6 +7,7 @@ import { useActivity, type ActivityType, type ActivityItem } from '@/hooks/useAc
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
 import { buttonVariants } from '@/components/ui/button';
+import { formatDateTime } from '@/lib/format-date';
 import { scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 import {
@@ -109,13 +110,7 @@ function ActivityRow({ a }: { a: ActivityItem }) {
             <span className="font-medium uppercase tracking-wide">{meta.label}</span>
             <span className="flex items-center gap-1">
               <Calendar className="h-3 w-3" />
-              {new Date(a.created_at).toLocaleString([], {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+              {formatDateTime(a.created_at)}
             </span>
           </div>
         </div>
@@ -267,13 +262,7 @@ export default function ReportsListPage() {
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3.5 w-3.5" />
                     {sess.started_at
-                      ? new Date(sess.started_at).toLocaleString([], {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
+                      ? formatDateTime(sess.started_at)
                       : 'N/A'}
                   </span>
                   <span>•</span>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-InterviewOS is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `docs/prompt.md` — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
+Hotseat (formerly InterviewOS) is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `docs/prompt.md` — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
 
 This is an npm workspaces monorepo: `frontend` (Next.js) + `backend` (FastAPI/Python, managed with `uv`).
 
@@ -73,6 +73,25 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 - Frontend talks to the backend via `NEXT_PUBLIC_API_URL` (browser) / `INTERNAL_API_URL` (Next.js server-side rewrites in dev); both point at the FastAPI server on port 8000 locally. `next.config.ts` proxies `/api/v1/:path*` to the backend in dev, so client code can call same-origin paths.
 - `components/` is currently thin (only `layout/{Header,Sidebar}.tsx` and `providers.tsx`) — the shadcn/ui component library described in `docs/prompt.md` is aspirational/in-progress, not fully built out yet.
 
+## Branding
+
+The product is **Hotseat**. The name lives in exactly one place — `frontend/src/lib/brand.ts`
+(`BRAND.name`) — and the backend's `APP_NAME` setting. Never retype it: it used to be written
+out in 33 files, and it has since been renamed twice.
+
+`docs/DESIGN-LANGUAGE.md` is what the name means visually and is not optional reading before
+UI work: one lit element per page, heat means difficulty and only difficulty, and the six
+colours each bind to one meaning (`frontend/src/lib/tones.ts`).
+
+**Four things deliberately keep the old name and must not be "fixed":**
+
+| Thing | Why |
+|---|---|
+| `support@interviewos.app` | A live mailbox people already write to. Move it with a forwarding rule, not a rename. |
+| `interviewos:*` localStorage keys | Already written in people's browsers. Renaming resets every existing user's notification preference and un-dismisses every nudge. |
+| Postgres user/db `interviewos` | Matches `docker-compose.yml` and the `conftest.py` fallback. Renaming means recreating every local dev database for nothing. |
+| `interviewos.dev` / `wrangler.toml` name | The deployed domain and the Cloudflare Worker's identity. Changing them is a migration, not a rename. |
+
 ## Documentation
 
 All product documentation lives in `docs/`, which is also an **Obsidian vault** (the vault
@@ -102,8 +121,15 @@ the AI says.
   charge. Never `db.commit()` between charging and doing the work.
 - Usage is a COUNT over the ledger within the current period, never a stored counter — so the
   monthly reset is a query predicate rather than a cron job that can fail.
-- Free tier: 2 interviews, 1 GD, 5 communications, unlimited quizzes. Quizzes are never
-  charged on any tier.
+- **Trial allowance** (`TRIAL_ALLOWANCE` in `plans.py`, the only place it is decided):
+  `interview: 0`, `gd: 0`, `communication: 1`. Quizzes are unlimited and never charged on any
+  tier.
+
+  This note previously read "2 interviews, 1 GD, 5 communications" — stale from before
+  interviews and group discussions were made paid-only, and wrong in the direction that
+  matters: it describes a product more generous than the ledger will actually allow. Anybody
+  trusting it would have "fixed" the pricing page to promise interviews a new account cannot
+  start. Read `plans.py`; do not trust a restatement of it, including this one.
 - `services/billing/razorpay.py` — signature verification and payment→plan mapping are pure
   functions and fully tested; only `create_order` needs live keys.
 

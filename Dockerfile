@@ -1,4 +1,4 @@
-# Production image for the InterviewOS FastAPI backend.
+# Production image for the Hotseat FastAPI backend.
 # Build context must be the REPO ROOT (not backend/), because Alembic migrations
 # live in ../database/migrations relative to backend/ (see backend/alembic.ini).
 #

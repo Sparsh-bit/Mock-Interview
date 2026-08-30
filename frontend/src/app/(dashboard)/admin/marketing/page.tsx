@@ -61,6 +61,7 @@ import { Card } from '@/components/ui/card';
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
+import { formatDate } from '@/lib/format-date';
 import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -108,7 +109,7 @@ function when(iso: string | null): string {
   if (days <= 0) return 'today';
   if (days === 1) return 'yesterday';
   if (days < 30) return `${days}d ago`;
-  return d.toLocaleDateString();
+  return formatDate(d);
 }
 
 export default function MarketingPage() {

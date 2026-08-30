@@ -17,6 +17,7 @@ import { ShareMenu } from '@/components/report/ShareMenu';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
+import { formatDate } from '@/lib/format-date';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
 import { scoreBand, scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
@@ -316,7 +317,7 @@ export default function ReportDetailPage() {
               <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <Badge variant={readiness.variant}>{readiness.label}</Badge>
                 <span className="text-xs text-muted-foreground">
-                  Evaluated on {new Date(report.created_at).toLocaleDateString()}
+                  Evaluated on {formatDate(report.created_at)}
                 </span>
               </div>
               {/* The same coloured rule PageHeader draws before every eyebrow in the app — this
