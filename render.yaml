@@ -237,6 +237,12 @@ services:
         sync: false
       - key: DB_MAX_OVERFLOW
         sync: false
+      # The pooler's own limit on simultaneous client connections, off the Supabase
+      # dashboard. Startup checks (DB_POOL_SIZE + DB_MAX_OVERFLOW) x WEB_REPLICA_COUNT
+      # against it and warns rather than crashing. Unset, nothing is checked and the boot
+      # log says so (`db_connection_ceiling_unknown`).
+      - key: DB_CONNECTION_CEILING
+        sync: false
 
       # ── Redis connection budget ───────────────────────────────────────────
       # REDIS_MAX_CONNECTIONS x WEB_REPLICA_COUNT is checked against this at startup. Read

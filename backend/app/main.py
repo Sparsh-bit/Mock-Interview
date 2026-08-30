@@ -78,6 +78,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.info("schema_matches_models")
 
+    # The connection budget, which a reachable database does not vouch for.
+    #
+    # (DB_POOL_SIZE + DB_MAX_OVERFLOW) x WEB_REPLICA_COUNT against the pooler's own limit is
+    # arithmetic no single process can do — it sees its own pool and nothing else. Warned,
+    # never fatal: an over-subscribed pool still serves every request that gets a connection,
+    # so refusing to boot would trade a degradation that might never be reached for a certain
+    # outage, during a deploy.
+    from app.db.session import log_db_connection_budget_audit  # noqa: PLC0415
+
+    log_db_connection_budget_audit()
+
     # Verify Redis connection.
     #
     # NOT a hard failure — unlike the database, every Redis-backed feature degrades

@@ -143,6 +143,20 @@ is "too many connections" on random requests rather than a clean slowdown. `5 + 
 four replicas is 60 server connections, which a paid Supabase instance serves comfortably;
 let the pooler do the multiplexing.
 
+**Set `DB_CONNECTION_CEILING` and the app checks that formula for you at boot.** Read the
+pooler's simultaneous client-connection limit off the Supabase dashboard (Database →
+Connection pooling) and set it; startup then logs `db_connection_budget_near_ceiling` at 80%
+and `db_connection_budget_over_ceiling` at or past it, with the arithmetic in the message.
+
+It **warns and never crashes**, deliberately: an over-subscribed pool still serves every
+request that gets a connection, so refusing to boot would trade a degradation that might
+never be reached for a certain outage — during a deploy, when a replica is least able to
+explain itself. Same reasoning the Redis check already uses.
+
+There is no default ceiling, and that is also deliberate: every provider and plan has a
+different number and they change, so a guessed one would be a check that is confidently
+wrong. Left at `0`, startup logs `db_connection_ceiling_unknown` rather than inventing one.
+
 ---
 
 ## 3. Run the migrations

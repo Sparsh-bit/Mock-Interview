@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     #: before 30 minutes, so 25 minutes is the safe side of it.
     DB_POOL_RECYCLE: int = 1500
     DB_ECHO: bool = False  # Set True to log all SQL queries
+    #: The pooler's own limit on simultaneous CLIENT connections, off the Supabase
+    #: dashboard. Startup checks (DB_POOL_SIZE + DB_MAX_OVERFLOW) x WEB_REPLICA_COUNT
+    #: against it and WARNS — never crashes; an over-subscribed pool still serves every
+    #: request that gets a connection, and refusing to boot would turn a degradation that
+    #: might never be reached into a certain outage, during a deploy.
+    #:
+    #: NO DEFAULT, for the same reason as REDIS_CONNECTION_CEILING: every provider and plan
+    #: has a different number, they change, and a guessed ceiling is a check that is
+    #: confidently wrong. 0 means "not configured" and startup says exactly that.
+    DB_CONNECTION_CEILING: int = 0
 
     # ── Deployment topology ───────────────────────────────────────────────
     #: How many copies of this process the platform runs. NOT read by the app to

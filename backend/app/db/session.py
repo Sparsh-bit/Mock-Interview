@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 import orjson
 import structlog
@@ -140,6 +141,121 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+# ─── Connection budget audit ──────────────────────────────────────────────────
+#
+# THE ARITHMETIC NO SINGLE PROCESS CAN DO. A replica can see its own pool and nothing else,
+# but the number the pooler enforces is the whole fleet's:
+#
+#     (DB_POOL_SIZE + DB_MAX_OVERFLOW) x WEB_REPLICA_COUNT  <=  DB_CONNECTION_CEILING
+#
+# Past that ceiling Postgres refuses new connections, and the symptom is specifically nasty:
+# "too many connections" on scattered random requests rather than a clean slowdown, appearing
+# at exactly the traffic that caused it. The engine comment above already explains why the
+# pool size matters more than it looks; this is the part that checks it.
+
+
+@dataclass(frozen=True)
+class DbConfigIssue:
+    """One thing about the connection budget worth telling an operator at boot."""
+
+    code: str
+    message: str
+    hint: str
+
+
+#: Fraction of the ceiling at which the budget is called out before it is breached. Early,
+#: because breaching it is not graceful: the pooler starts refusing, and by then the service
+#: is already failing requests.
+_CEILING_WARN_RATIO = 0.8
+
+
+def audit_db_connection_budget(
+    *,
+    pool_size: int,
+    max_overflow: int,
+    replicas: int,
+    ceiling: int,
+) -> list[DbConfigIssue]:
+    """
+    Check the fleet-wide connection budget against the pooler's limit.
+
+    Pure — takes the numbers rather than reading settings — so every threshold can be tested
+    at its edge instead of by contriving an environment.
+
+    RETURNS ISSUES TO LOG. NEVER RAISES. An over-subscribed pool still serves every request
+    that gets a connection, so this is a degradation that might never be reached; refusing to
+    boot would trade it for a certain outage, and would do it during a deploy, when a replica
+    is least able to explain itself. Same reasoning main.py already applies to Redis.
+    """
+    budget = (pool_size + max_overflow) * replicas
+    arithmetic = f"({pool_size} + {max_overflow}) x {replicas} replicas = {budget}"
+
+    if ceiling <= 0:
+        return [
+            DbConfigIssue(
+                code="db_connection_ceiling_unknown",
+                message=(
+                    f"DB_CONNECTION_CEILING is unset, so the connection budget "
+                    f"{arithmetic} is not being checked against anything."
+                ),
+                hint=(
+                    "Set it to the pooler's simultaneous client-connection limit "
+                    "(Supabase dashboard -> Database -> Connection pooling). See "
+                    "docs/DEPLOY.md section 2."
+                ),
+            )
+        ]
+
+    if budget >= ceiling:
+        return [
+            DbConfigIssue(
+                code="db_connection_budget_over_ceiling",
+                message=(
+                    f"Database connection budget {arithmetic}, at or over the pooler "
+                    f"ceiling of {ceiling}."
+                ),
+                hint=(
+                    "Lower DB_POOL_SIZE / DB_MAX_OVERFLOW before lowering WEB_REPLICA_COUNT "
+                    "— behind a transaction pooler the app should hold FEW server "
+                    "connections and let the pooler multiplex. Past the ceiling Postgres "
+                    "refuses new connections and the symptom is 'too many connections' on "
+                    "random requests, not a clean slowdown."
+                ),
+            )
+        ]
+
+    if budget >= ceiling * _CEILING_WARN_RATIO:
+        return [
+            DbConfigIssue(
+                code="db_connection_budget_near_ceiling",
+                message=(
+                    f"Database connection budget {arithmetic}, within "
+                    f"{int((1 - _CEILING_WARN_RATIO) * 100)}% of the pooler ceiling of "
+                    f"{ceiling}."
+                ),
+                hint=(
+                    "One more replica breaches it. Anything else sharing the pooler — a "
+                    "migration, a psql session, a second service — eats the same headroom."
+                ),
+            )
+        ]
+
+    return []
+
+
+def log_db_connection_budget_audit() -> list[DbConfigIssue]:
+    """Run the audit against live settings and log each issue. Called from the lifespan."""
+    issues = audit_db_connection_budget(
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        replicas=settings.WEB_REPLICA_COUNT,
+        ceiling=settings.DB_CONNECTION_CEILING,
+    )
+    for issue in issues:
+        logger.warning(issue.code, message=issue.message, hint=issue.hint)
+    return issues
 
 
 # ─── Health check ─────────────────────────────────────────────────────────────
