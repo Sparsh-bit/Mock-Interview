@@ -74,8 +74,19 @@ class JSONValidator:
                 "ai_response_validation_failed",
                 schema=schema.__name__,
                 error_count=len(errors),
-                first_error=errors[0] if errors else None,
-                raw_data_preview=str(data)[:300],
+                # `errors[0]` carries pydantic's `input` — the offending VALUE — so the
+                # error is reduced to the parts that describe the problem rather than the
+                # data. `loc` is the field path and `type` is the rule that failed, which is
+                # everything needed to fix a prompt.
+                first_error=(
+                    {"loc": errors[0].get("loc"), "type": errors[0].get("type")}
+                    if errors
+                    else None
+                ),
+                # `raw_data_preview=str(data)[:300]` USED TO BE HERE. On a report schema that
+                # is 300 characters of a candidate's assessment. The keys diagnose a shape
+                # mismatch without carrying any of the values.
+                keys=sorted(data)[:15] if isinstance(data, dict) else None,
             )
             raise AIValidationError(
                 schema_name=schema.__name__,

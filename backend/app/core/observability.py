@@ -333,6 +333,95 @@ def reset_sensitive_text() -> None:
     _SENSITIVE.set(())
 
 
+# ── The same rules, applied to the log stream ────────────────────────────────
+
+
+#: Patterns applied to log values. A SUBSET of `_redact_text`'s: log lines keep their UUIDs.
+#:
+#: `user_id` and `session_id` are the entire mechanism for triaging an incident, they are
+#: pseudonymous already, and hashing them buys little against an operator who can also read
+#: the database — while making the logs useless to the person they exist for. An e-mail
+#: address is different: it identifies a person directly, and a `user_id` on the same line
+#: already answers "who". See the docstring on `core/logging._redact_pii`.
+def _redact_log_text(value: str) -> str:
+    for secret in _SENSITIVE.get():
+        if secret in value:
+            value = value.replace(secret, REDACTED)
+    value = _JWT.sub(REDACTED, value)
+    value = _BEARER.sub(REDACTED, value)
+    value = _PROVIDER_KEY.sub(REDACTED, value)
+    value = _EMAIL.sub("[email]", value)
+    if len(value) > MAX_LOG_STRING_LENGTH:
+        value = value[:MAX_LOG_STRING_LENGTH] + "…[truncated]"
+    return value
+
+
+#: Shorter than MAX_STRING_LENGTH. A log line is read in a terminal or a search UI, and a
+#: 1 KB field pushes everything else off the screen; it is also the backstop against a whole
+#: document arriving under a key nobody thought to deny.
+MAX_LOG_STRING_LENGTH = 512
+
+
+def _is_identifier_key(key: str) -> bool:
+    """
+    True for `user_id`, `session_id`, `resume_id`, `id` — a reference to a row, not content.
+
+    NEEDED BECAUSE THE DENYLIST IS INTENTIONALLY BROAD. `resume_id` contains "resume" and
+    `answer_id` contains "answer", so both match `_is_pii_key`, and redacting them would take
+    away the only handle anybody has on the thing the log line is about. An id is a
+    pseudonymous reference; the content it points at is what the denylist is for.
+    """
+    lowered = key.lower()
+    return lowered == "id" or lowered.endswith(("_id", "_ids", "_uid", "_uuid"))
+
+
+def redact_log_value(key: str, value: Any, depth: int = 0) -> Any:
+    """
+    Redact one key/value pair from a log record.
+
+    Takes the KEY as well as the value, because the strongest signal is the field name —
+    `preview` and `content` say nothing about their contents, which is exactly why they are
+    on the denylist. Structure-aware for the nested case: `detail={"answer": ...}` must be
+    caught as surely as `answer=...`.
+
+    TWO EXEMPTIONS FROM THE KEY DENYLIST, both found by the test that asserts redaction does
+    not make the logs useless:
+
+      A NON-STRING VALUE IS NEVER REDACTED BY KEY. `input_tokens=3100` matches the denylist
+      on "token" and is a count. So does `output_tokens`, `cache_write_tokens`,
+      `prompt_tokens` and every other field the AI cost ledger is built from — blanking them
+      would leave the spend numbers in docs/AI-COST-MODEL.md underivable. An integer cannot
+      be a resume, an answer or a credential, so the key does not need to be consulted.
+
+      AN ID KEY IS NEVER REDACTED BY KEY. See `_is_identifier_key`.
+    """
+    if depth > 8:
+        return REDACTED
+
+    # `isinstance(value, ...)` is part of the condition, not a nested check: only a string
+    # or a container can carry content, so a numeric value skips the key rules entirely.
+    if (
+        isinstance(key, str)
+        and _is_pii_key(key)
+        and not _is_identifier_key(key)
+        and isinstance(value, (str, dict, list, tuple))
+    ):
+        return REDACTED
+
+    if isinstance(value, dict):
+        return {k: redact_log_value(k, v, depth + 1) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        # The key applies to the whole collection, and it has already been cleared above.
+        scrubbed = [redact_log_value("", item, depth + 1) for item in value]
+        return type(value)(scrubbed) if isinstance(value, tuple) else scrubbed
+
+    if isinstance(value, str):
+        return _redact_log_text(value)
+
+    return value
+
+
 def init_sentry() -> bool:
     """
     Initialise Sentry if a DSN is configured.

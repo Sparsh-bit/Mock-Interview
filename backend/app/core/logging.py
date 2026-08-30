@@ -44,6 +44,56 @@ def _drop_color_message_key(
     return event_dict
 
 
+#: Fields that carry no personal data and MUST survive redaction, whatever their name
+#: suggests. Without this, `request_id` — a UUID — would be replaced by a one-way handle
+#: while the `X-Request-ID` response header still carried the raw value, so the one thing
+#: a person can quote from a failed request would no longer find anything in the logs.
+_NEVER_REDACT: frozenset[str] = frozenset({"request_id", "event", "level", "logger", "timestamp"})
+
+
+def _redact_pii(
+    logger: Any, method_name: str, event_dict: EventDict
+) -> EventDict:
+    """
+    Take the candidate out of the log line.
+
+    WHY THIS IS A PROCESSOR AND NOT A REVIEW OF EVERY CALL SITE. An audit of the 300-odd
+    logger calls in this codebase found four real leaks — 120 characters of a resume on a
+    parse failure, 400 characters of raw model output on a JSON failure, the parsed response
+    on a validation failure, and e-mail addresses on three auth paths. Fixing those four and
+    stopping would leave the next one to whoever writes it, and the failure is silent: a log
+    line with somebody's CV in it looks exactly like a log line without one.
+
+    So it is enforced here, once, on the way out. The call sites were fixed too — a redacted
+    field is safe but useless, and the useful version is usually a length or a reason — but
+    this is what makes the guarantee hold for code that does not exist yet.
+
+    IT SHARES ITS DENYLIST AND ITS REGISTRY WITH THE SENTRY SCRUBBER
+    (`core/observability.py`) rather than keeping a second copy. Two lists of "what counts as
+    personal data here" would drift, and the drift would be invisible on both sides.
+    `register_sensitive_text()` is already called where resume text is extracted and where an
+    answer is submitted, so those exact strings are removed from log lines as well.
+
+    WHAT IS DELIBERATELY NOT REDACTED: UUIDs. `user_id` and `session_id` stay readable, and
+    that is a judgement rather than an oversight. They are pseudonymous, they are the entire
+    mechanism for triaging an incident, and hashing them would buy little against an operator
+    who can also read the database — while making the logs unusable for the person the logs
+    exist for. E-mail addresses ARE redacted, because those identify a person directly and a
+    `user_id` in the same line already answers "who".
+
+    THE MOMENT LOGS LEAVE THE HOST THIS BALANCE CHANGES. A drain to a third party makes that
+    party a processor, which is a §5 disclosure question, not a logging question — see
+    docs/OBSERVABILITY.md.
+    """
+    from app.core.observability import redact_log_value  # noqa: PLC0415
+
+    for key in list(event_dict):
+        if key in _NEVER_REDACT:
+            continue
+        event_dict[key] = redact_log_value(key, event_dict[key])
+    return event_dict
+
+
 def configure_logging(log_level: str = "INFO", log_format: str = "console") -> None:
     """
     Configure structlog + stdlib logging.
@@ -62,6 +112,11 @@ def configure_logging(log_level: str = "INFO", log_format: str = "console") -> N
         structlog.processors.StackInfoRenderer(),
         _add_app_info,
         _drop_color_message_key,
+        # LAST OF THE SHARED PROCESSORS, so it sees everything the ones above added and
+        # everything the caller passed. Before the renderer, so it applies identically to
+        # JSON in production and to the console in development — a leak that only exists on
+        # a developer's machine is still a leak, and it is the one people copy into a ticket.
+        _redact_pii,
     ]
 
     if log_format == "json":

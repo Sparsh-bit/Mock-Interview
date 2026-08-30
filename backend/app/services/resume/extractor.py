@@ -347,7 +347,13 @@ def extract_text(data: bytes, mime_type: str, *, filename: str = "") -> str:
         logger.warning(
             "resume_content_not_a_resume",
             chars=len(text),
-            preview=text[:120],
+            # `preview=text[:120]` USED TO BE HERE, and 120 characters off the top of a CV is
+            # the name, the e-mail and the phone number. The redaction processor in
+            # core/logging.py would blank it now, but the honest fix is not to build the
+            # field: what a reader actually needs is why it was rejected, and the marker
+            # count is the thing the decision was made on.
+            resume_markers=resume_marker_count(text),
+            unreadable_share=round(unreadable_share(text), 3),
         )
         raise ResumeExtractionError(
             "Only a little text could be read from that file, and it does not look "

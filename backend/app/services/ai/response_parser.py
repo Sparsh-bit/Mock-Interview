@@ -191,7 +191,15 @@ class ResponseParser:
             # AI returned a JSON array instead of object — wrap for debugging
             logger.warning(
                 "ai_response_is_array",
-                content_preview=stripped[:100],
+                # NOT the content. The model's output IS the candidate's report, their
+                # model answer or the panel's assessment of what they said, so a preview of
+                # it is a preview of them. The shape is what diagnoses this — a top-level
+                # array instead of an object — and the shape is what is logged.
+                chars=len(stripped),
+                # `json.loads` also parses a bare `5` or `"text"`, neither of which has a
+                # length — so the type is reported and the count only when there is one.
+                parsed_type=type(result).__name__,
+                element_count=len(result) if isinstance(result, (list, str)) else None,
             )
         except json.JSONDecodeError:
             pass
@@ -267,7 +275,13 @@ class ResponseParser:
 
         logger.error(
             "ai_json_extraction_failed",
-            content_preview=content[:400],
+            # See the note above: 400 characters of model output is 400 characters of
+            # somebody's assessment. What a reader needs is whether it looked like JSON at
+            # all, which the delimiters answer without quoting anything.
+            chars=len(content),
+            starts_with=content.lstrip()[:1],
+            has_open_brace="{" in content,
+            has_close_brace="}" in content,
         )
         raise AIValidationError(
             schema_name="<json_extraction>",
