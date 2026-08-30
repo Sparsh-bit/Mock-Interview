@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { useQuiz, useBankTopics, type QuizDifficulty, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
 import { fadeUp, staggerContainer } from '@/lib/motion';
+import { scoreBand } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 
@@ -25,12 +26,20 @@ export const runtime = 'edge';
  * compiles the classes it can literally see, and `bg-accent-${level}-soft` would produce a
  * string it never encountered — the colour survives dev, where the JIT has usually seen the
  * class elsewhere, and vanishes from the production build with no error anywhere.
+ *
+ * `-soft` FILL WITH `-ink` TEXT, NOT WHITE ON THE SOLID TONE. I wrote these as
+ * `bg-accent-amber text-white` first, which measures 3.02:1 — amber is the lightest tone in
+ * the palette and `tailwind.config.ts` says in its own comment that the bare tones are for
+ * graphics rather than text. Coral came out at 4.35:1 and emerald at 4.34:1; only indigo,
+ * teal and plum are dark enough for white. Picking per-tone would have made four chips in one
+ * row inconsistent for a reason no reader could see, so all four use the pairing the rest of
+ * the product uses, and the solid border carries the selected state instead of the fill.
  */
 const HEAT_SELECTED: Record<string, string> = {
-  any: 'border-accent-indigo bg-accent-indigo text-white',
-  easy: 'border-accent-teal bg-accent-teal text-white',
-  medium: 'border-accent-amber bg-accent-amber text-white',
-  hard: 'border-accent-coral bg-accent-coral text-white',
+  any: 'border-accent-indigo bg-accent-indigo-soft text-accent-indigo-ink',
+  easy: 'border-accent-teal bg-accent-teal-soft text-accent-teal-ink',
+  medium: 'border-accent-amber bg-accent-amber-soft text-accent-amber-ink',
+  hard: 'border-accent-coral bg-accent-coral-soft text-accent-coral-ink',
 };
 
 type Phase = 'setup' | 'exam' | 'results';
@@ -514,7 +523,16 @@ function Quiz() {
   // ─── Results ──────────────────────────────────────────────────────────────
   if (phase === 'results' && results) {
     const pct = results.percentage;
-    const tone = pct >= 70 ? 'text-accent-emerald-ink' : pct >= 40 ? 'text-accent-amber-ink' : 'text-accent-coral-ink';
+    /*
+     * The shared bands, not thresholds of this page's own. `percentage` is a candidate's
+     * performance out of 100 — the same kind of number as an interview score — so a 72% quiz
+     * and a 72 interview must not be different colours, and until now they were: this used
+     * 70/40 against lib/score-bands' 85/70/55/40.
+     *
+     * That made this the sixth independent answer in the product to "what does this score
+     * mean". score-bands.test.ts now fails the build if a seventh appears.
+     */
+    const tone = scoreBand(pct).ink;
     return (
       <motion.div initial="hidden" animate="visible" variants={staggerContainer(0.06)} className="mx-auto max-w-3xl space-y-6 pb-12">
         <motion.div variants={fadeUp}>

@@ -445,7 +445,7 @@ function Row({
         {/* Their best scored report. The only interview-DERIVED number on this row — a score is
             a figure about an account; questions, answers and transcripts are the candidate's
             own words and are not reachable through a mailing list. */}
-        {row.best_score === null ? (
+        {row.best_score == null ? (
           <span className="text-xs text-muted-foreground">—</span>
         ) : (
           <span className="font-semibold text-accent-teal-ink">{Math.round(row.best_score)}</span>
@@ -456,7 +456,11 @@ function Row({
             the average: one one-star from somebody who sat one interview is a different
             signal from a one-star average across five, and an operator reading only the mean
             cannot tell them apart. */}
-        {row.avg_stars === null ? (
+        {/* `== null` rather than `=== null` — see the note in csv.ts. Strict equality lets
+            `undefined` through to `.toFixed()` below, which throws and takes the whole admin
+            table down; a frontend deployed ahead of its backend is the realistic way that
+            happens. */}
+        {row.avg_stars == null ? (
           <span className="text-xs text-muted-foreground">—</span>
         ) : (
           <span

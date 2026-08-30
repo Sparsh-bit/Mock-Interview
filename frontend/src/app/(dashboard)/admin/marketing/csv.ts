@@ -209,13 +209,19 @@ export function toCsv(
       // Empty rather than a placeholder for "never scored": a spreadsheet can filter and
       // average an empty cell correctly and cannot do either with an em dash. Rounded, and
       // never negative, which is what keeps it clear of the formula-injection guard below.
-      r.best_score === null ? '' : String(Math.round(r.best_score)),
+      // `== null`, not `=== null`. The server types this `float | None` and always sends the
+      // key, so `undefined` should be impossible — but "should be impossible" is exactly the
+      // assumption a rolling deploy breaks, and the frontend goes out ahead of the backend.
+      // Strict equality would miss `undefined` and fall through to the branch that calls
+      // `.toFixed()` on it, which throws and white-screens the whole admin table. The loose
+      // form costs nothing and turns a broken page into a dash.
+      r.best_score == null ? '' : String(Math.round(r.best_score)),
       yesNo(r.ever_paid),
       String(r.purchases),
       // Empty rather than a placeholder for "never rated": a spreadsheet can filter and
       // average an empty cell and can do neither with an em dash. Never negative, which keeps
       // it clear of the formula-injection guard.
-      r.avg_stars === null ? '' : String(r.avg_stars),
+      r.avg_stars == null ? '' : String(r.avg_stars),
       String(r.ratings_given),
       isoDay(r.last_paid_at),
       isoDay(r.last_active_at),

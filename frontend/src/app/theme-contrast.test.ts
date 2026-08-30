@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -255,3 +255,86 @@ describe('the browser is told the same theme the page actually is', () => {
     expect(declared).toBe(lightness > 50 ? 'light' : 'dark');
   });
 });
+
+describe('nothing sets text on a bare accent fill unless it is dark enough', () => {
+  /**
+   * THE GAP THIS FILE HAD, and it let a real bug through.
+   *
+   * Every test above checks the `-ink` tones, because `-ink` is the only tone the design
+   * system permits for small text on a light ground. But there is a second, entirely legal
+   * pairing — WHITE text on the SOLID accent, used for a selected chip or a filled button —
+   * and nothing measured it. I shipped `bg-accent-amber text-white` on the quiz difficulty
+   * chips at 3.02:1, well under the floor, and every existing assertion here passed.
+   *
+   * The palette is not uniform in lightness: indigo, teal and plum are dark enough to carry
+   * white, and amber, coral and emerald are not. So this cannot be a blanket rule — it has to
+   * be a measurement, and the code has to be checked against it.
+   */
+  const SOLID_TEXT = /(?:bg-accent-(\w+))(?=[^"'`]*\btext-white\b)/g;
+
+  const WHITE: [number, number, number] = [0, 0, 100];
+
+  function ratioTo(tone: string): number {
+    const [x, y] = [luminance(hsl(tone)), luminance(WHITE)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  }
+
+  it('measures the tones correctly', () => {
+    // Sanity: indigo is known-good for white and amber is known-bad. If both came out the
+    // same the assertion below would be measuring nothing.
+    expect(ratioTo('accent-indigo')).toBeGreaterThan(4.5);
+    expect(ratioTo('accent-amber')).toBeLessThan(4.5);
+  });
+
+  it.each(['indigo', 'teal', 'plum'])('accent-%s is dark enough for white text', (name) => {
+    expect(ratioTo(`accent-${name}`)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('no component pairs text-white with a tone that cannot carry it', () => {
+    /*
+     * Scans the real source. Comments stripped first — the note in quiz/page.tsx explaining
+     * this very bug contains the string `bg-accent-amber text-white`, and without stripping,
+     * the file documenting the fix would be reported as committing it. That has happened
+     * three separate times in this repo; see docs/MISTAKES.md P5.
+     */
+    const files = sourceFiles();
+    expect(files.length).toBeGreaterThan(40); // the scan must actually find the app
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const code = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/.*$/gm, '')
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+      for (const m of code.matchAll(SOLID_TEXT)) {
+        const tone = `accent-${m[1]}`;
+        // -soft and -ink are not solid fills; only the bare tone is in question here.
+        if (m[1].endsWith('-soft') || m[1].endsWith('-ink') || m[1].endsWith('-hot')) continue;
+        let r: number;
+        try {
+          r = ratioTo(tone);
+        } catch {
+          continue; // not a real token — a longer utility name that merely starts this way
+        }
+        if (r < 4.5) {
+          offenders.push(`${file.replace(process.cwd() + '/', '')}: text-white on ${tone} is ${r.toFixed(2)}:1`);
+        }
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+});
+
+/** Every .tsx under src, for the source scan above. */
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (entry.endsWith('.tsx')) out.push(full);
+    }
+  };
+  walk(join(process.cwd(), 'src'));
+  return out;
+}

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -114,3 +114,126 @@ describe('a score always lands somewhere sensible', () => {
     }
   });
 });
+
+describe('every band carries the tones its call sites need', () => {
+  it('has a stroke for the report ring and an ink for its numeral', () => {
+    /*
+     * BOTH WERE ONCE DERIVED BY STRING SURGERY on other fields — `bar.replace('bg-','stroke-')`
+     * for the ring and `chip.split(' ').find(c => c.startsWith('text-'))` for the numeral.
+     * Both worked, and both made the colour of the product's headline score depend on the
+     * internal spelling and CLASS ORDER of unrelated strings: reordering `chip` for
+     * readability would have silently changed it.
+     */
+    for (const band of SCORE_BANDS) {
+      expect(band.stroke, band.label).toMatch(/^stroke-accent-\w+$/);
+      expect(band.ink, band.label).toMatch(/^text-accent-\w+-ink$/);
+    }
+  });
+
+  it('stroke, bar, chip and ink all name the same hue', () => {
+    // A band whose ring is emerald and whose numeral is teal would be reporting two different
+    // verdicts about one score, which is the exact failure this module was created to end.
+    for (const band of SCORE_BANDS) {
+      const hue = band.bar.replace('bg-accent-', '');
+      expect(band.stroke, band.label).toBe(`stroke-accent-${hue}`);
+      expect(band.ink, band.label).toBe(`text-accent-${hue}-ink`);
+      expect(band.chip, band.label).toContain(`accent-${hue}-soft`);
+      expect(band.chip, band.label).toContain(`accent-${hue}-ink`);
+    }
+  });
+
+  it('no call site rebuilds a tone from another field', () => {
+    // The habit, not just the instance. Scans the pages that draw scores.
+    const files = [
+      'src/app/(dashboard)/report/[id]/page.tsx',
+      'src/app/(dashboard)/report/page.tsx',
+      'src/app/(dashboard)/dashboard/page.tsx',
+      'src/app/(dashboard)/gd/page.tsx',
+    ];
+    for (const f of files) {
+      const src = readFileSync(join(process.cwd(), f), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+        .replace(/\/\/.*$/gm, '');
+      expect(src, `${f} rebuilds a class from another band field`).not.toMatch(
+        /\.(bar|chip|ink|stroke)\s*\.\s*(replace|split)\s*\(/,
+      );
+    }
+  });
+});
+
+describe('nowhere else decides what a score means', () => {
+  /**
+   * FIVE SEPARATE ANSWERS TO ONE QUESTION existed in this codebase, and I found the fourth and
+   * fifth only because I went looking after fixing the first three:
+   *
+   *   composer.py            85 / 70 / 55 / 40   the words the candidate reads
+   *   report/[id]/page.tsx   75 / 50 / 30        the bars on the report
+   *   r/[reportId]/page.tsx  75 / 50 / 30        the PUBLIC shared report
+   *   lib/utils.ts           85 / 70 / 55 / 40   right numbers, different words, no callers
+   *   dashboard (mine)       70 / 50             invented while "fixing" the problem
+   *
+   * Each was written by somebody solving a local problem correctly. Nothing in either language
+   * could see two of them at once, so the drift was invisible until a 72 printed "Good" beside
+   * a bar the colour of a 51.
+   *
+   * This scans for the SHAPE — a comparison of a score-ish name against a threshold that then
+   * chooses an accent class — rather than for the specific numbers, because the next copy will
+   * have different numbers. That is the whole point.
+   */
+  const THRESHOLD_THEN_TONE =
+    /(?:score|pct|percent|overall|rating|avg)\w*\s*>=\s*\d{2}[\s\S]{0,80}?accent-\w+/gi;
+
+  it('finds the pages it means to scan', () => {
+    const files = scorePages();
+    expect(files.length).toBeGreaterThanOrEqual(8);
+    expect(files.some((f) => f.includes('report'))).toBe(true);
+  });
+
+  it('no page bands a score with its own thresholds', () => {
+    const offenders: string[] = [];
+    for (const file of scorePages()) {
+      const code = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+        .replace(/\/\/.*$/gm, '');
+      for (const m of code.matchAll(THRESHOLD_THEN_TONE)) {
+        /*
+         * NOT EVERY THRESHOLDED PERCENTAGE IS A SCORE. The admin page shades cache saturation
+         * — how full a table is against its row cap — where 90% is a WARNING, the opposite of
+         * what 90 means as a score. Loosening the regex to miss it would also miss the next
+         * real one, so the exception is declared in the source instead, on the line above.
+         *
+         * Checked against the ORIGINAL source rather than the comment-stripped copy, because
+         * the marker is itself a comment.
+         */
+        const raw = readFileSync(file, 'utf8');
+        const idx = raw.indexOf(m[0].slice(0, 30));
+        const near = idx >= 0 ? raw.slice(Math.max(0, idx - 400), idx) : '';
+        if (near.includes('@not-a-score')) continue;
+        offenders.push(`${file.replace(process.cwd() + '/', '')}: ${m[0].replace(/\s+/g, ' ').slice(0, 90)}`);
+      }
+    }
+    expect(
+      offenders,
+      'These pick a colour from a score using thresholds of their own. Import from ' +
+        'lib/score-bands instead — it mirrors composer.py, which produces the WORD printed ' +
+        'next to the colour:\n' + offenders.join('\n'),
+    ).toEqual([]);
+  });
+});
+
+/** Source files that draw scores. */
+function scorePages(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry) && !entry.includes('.test.') && !full.includes('score-bands'))
+        out.push(full);
+    }
+  };
+  walk(join(process.cwd(), 'src'));
+  return out;
+}

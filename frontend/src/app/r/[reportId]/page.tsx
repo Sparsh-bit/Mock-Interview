@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Code2, Download, Loader2, Lock } from 'lucide-react';
 import { getBrowserApiClient } from '@/lib/api';
+import { scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
@@ -36,12 +37,16 @@ function label(key: string): string {
   return READINESS_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function tone(score: number): string {
-  if (score >= 75) return 'bg-accent-emerald';
-  if (score >= 50) return 'bg-accent-indigo';
-  if (score >= 30) return 'bg-accent-amber';
-  return 'bg-accent-coral';
-}
+/*
+ * A FOURTH COPY OF THESE THRESHOLDS lived here — 75 / 50 / 30, matching neither the backend's
+ * 85 / 70 / 55 / 40 (which produces the words) nor the two other frontend copies. This is the
+ * PUBLIC report: the page a candidate shares with a friend or a placement cell, so it is the
+ * one surface where our own numbers disagreeing with each other is visible to somebody who
+ * does not have an account and cannot check.
+ *
+ * lib/score-bands.ts is the only answer now, pinned against composer.py by a test.
+ */
+const tone = scoreBarTone;
 
 function Bars({ scores }: { scores: Record<string, number> }) {
   return (
@@ -50,7 +55,15 @@ function Bars({ scores }: { scores: Record<string, number> }) {
         <div key={name} className="space-y-1">
           <div className="flex items-baseline justify-between text-xs">
             <span className="font-medium">{label(name)}</span>
-            <span className="font-semibold tabular-nums">{Math.round(score)}/100</span>
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums',
+                scoreChipTone(score),
+              )}
+            >
+              {Math.round(score)}
+              <span className="text-[10px] font-medium opacity-60">/100</span>
+            </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
             <div

@@ -289,6 +289,31 @@ class TestTheShapeOfTheseEndpoints:
         assert "_delete_supabase_user" in src
         assert "sa_delete(User)" in src, "not a Core delete — the ORM path NULLs children"
 
+    def test_nothing_destructive_happens_before_the_login_is_removed(self):
+        """
+        THE 502 HAS TO BE TRUE.
+
+        Removing the login is fatal to the whole operation — it is the one failure the endpoint
+        refuses to continue past, and it answers with "Nothing has been deleted." That sentence
+        is a promise, and it was false: the stored resumes were deleted FIRST, so a Supabase
+        failure left the CVs gone from the bucket while `get_db` rolled the transaction back,
+        stranding `resume_files` rows pointing at objects that no longer existed. The person was
+        told nothing had happened and then found a resume they could not download.
+
+        So the ordering rule is stronger than "login before rows": nothing irreversible may
+        happen before the step that is allowed to abort.
+        """
+        import inspect
+
+        from app.api.v1.users import delete_my_account
+
+        src = inspect.getsource(delete_my_account)
+        assert src.index("_delete_supabase_user") < src.index("_delete_stored_files(db"), (
+            "stored files are deleted before the Supabase login. If that login call then "
+            "fails, the endpoint answers 502 'Nothing has been deleted' while the candidate's "
+            "resumes are already gone from the bucket."
+        )
+
     def test_the_login_is_removed_before_our_rows(self):
         # Order is the whole correctness of this: rows first would leave a working login with
         # no data, and the next sign-in silently recreates the account.

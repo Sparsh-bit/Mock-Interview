@@ -352,6 +352,10 @@ export default function AdminAnalyticsPage() {
                           <div
                             className={cn(
                               'h-full rounded',
+                              // @not-a-score — this `pct` is CACHE SATURATION, how full a feature's cache table is
+                              // against its row cap. It is an operational threshold, not a
+                              // candidate's performance, so it must NOT use the score bands:
+                              // 90% full is a warning, whereas a score of 90 is excellent.
                               pct >= 90 ? 'bg-accent-amber' : 'bg-accent-indigo/70',
                             )}
                             style={{ width: `${pct}%` }}

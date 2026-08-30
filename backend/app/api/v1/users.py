@@ -597,10 +597,12 @@ async def delete_my_account(
     NO `user_id` PARAMETER ANYWHERE. The account deleted is the one the token names. An
     endpoint that took an id would be a way to delete somebody else.
 
-    THE ORDER MATTERS AND IS NOT ARBITRARY: files, then the Supabase login, then our rows.
+    THE ORDER MATTERS AND IS NOT ARBITRARY: the Supabase login, then the files, then our rows.
     Removing our rows first would leave a working login attached to nothing, and the next
     sign-in would recreate the account as though the deletion never happened. Failing to
-    remove the login is therefore fatal to the whole operation rather than tolerated.
+    remove the login is therefore fatal to the whole operation rather than tolerated — and
+    because it is fatal, nothing destructive may happen before it, or the refusal lies about
+    what has already been lost.
     """
     from fastapi import HTTPException
     from sqlalchemy import delete as sa_delete
@@ -619,14 +621,30 @@ async def delete_my_account(
         )
 
     supabase_uid = user.supabase_uid
-    files_removed = await _delete_stored_files(db, user.id)
 
+    # THE LOGIN GOES FIRST, AND THE FILES ONLY ONCE IT IS GONE.
+    #
+    # This used to delete the stored resumes first and then, if the Supabase call failed,
+    # raise a 502 saying "Nothing has been deleted". That sentence was false: the CVs were
+    # already gone from the bucket, and because `get_db` rolls the transaction back on the
+    # exception, the `resume_files` rows survived pointing at objects that no longer existed.
+    # A person who retried then saw a resume listed that could not be downloaded, and the
+    # message had told them nothing had happened.
+    #
+    # Deleting the login first makes the failure path honest — a 502 now genuinely means
+    # nothing was removed — and costs nothing, because `_delete_stored_files` reads the file
+    # paths out of rows this function has not deleted yet.
+    #
+    # The ordering constraint that motivated the original note is unchanged and is the reason
+    # this cannot simply be reordered the other way: our ROWS must go after the login, or the
+    # next sign-in silently recreates the account. Files are not part of that constraint.
     if not await _delete_supabase_user(supabase_uid):
-        # Refused rather than continued: see the ordering note above.
         raise HTTPException(
             status_code=502,
             detail="Could not remove your login. Nothing has been deleted — please try again.",
         )
+
+    files_removed = await _delete_stored_files(db, user.id)
 
     # A CORE DELETE so the database's ON DELETE CASCADE runs. `db.delete(user)` goes through
     # the ORM, which NULLs children rather than deferring to the database and raises on any

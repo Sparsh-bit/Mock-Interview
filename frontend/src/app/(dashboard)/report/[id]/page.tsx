@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
+import { scoreBand, scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
@@ -69,21 +70,25 @@ function orderedDimensions(scores: Record<string, number>): Array<[string, numbe
   });
 }
 
-/**
+/*
  * Bar colour by band, so the breakdown is readable at a glance.
  *
- * Flat fills, not gradients. These were two-stop gradients between adjacent
- * steps of the same Tailwind hue (emerald-500 → emerald-400), a difference of
- * about 8% lightness across a 6px bar — invisible, and it cost a paint layer
- * per bar. The bands are what carry the meaning; a gradient inside one band
- * says nothing.
+ * Flat fills, not gradients. These were two-stop gradients between adjacent steps of the same
+ * Tailwind hue (emerald-500 → emerald-400), a difference of about 8% lightness across a 6px
+ * bar — invisible, and it cost a paint layer per bar. The bands are what carry the meaning; a
+ * gradient inside one band says nothing.
+ *
+ * THE THRESHOLDS NO LONGER LIVE HERE. They were 75 / 50 / 30, invented in this file and
+ * independent of `composer.score_label`'s 85 / 70 / 55 / 40 — which is what produces the WORDS
+ * printed on this very page. A 72 was therefore labelled "Good" beside a bar the same colour
+ * as a 51, and a 76 turned green while the 71 next to it stayed amber under an identical
+ * label. Neither set was wrong on its own; they had simply never been compared, and nothing in
+ * either language could notice.
+ *
+ * lib/score-bands.ts is now the only answer, and score-bands.test.ts reads the thresholds back
+ * out of composer.py so the two cannot drift again.
  */
-function scoreTone(score: number): string {
-  if (score >= 75) return 'bg-accent-emerald';
-  if (score >= 50) return 'bg-accent-indigo';
-  if (score >= 30) return 'bg-accent-amber';
-  return 'bg-accent-coral';
-}
+const scoreTone = scoreBarTone;
 
 const READINESS_META: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' }> = {
   interview_ready: { label: 'Interview Ready', variant: 'success' },
@@ -107,17 +112,33 @@ function resourceHref(res: { title: string; url: string | null; author: string |
   return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
 }
 
+/**
+ * The number this whole product exists to produce.
+ *
+ * IT WAS `text-primary` AND `stroke-primary` — the same indigo whether the candidate scored 34
+ * or 88. Somebody paid for this figure, and the one visual property that could have told them
+ * what it meant before they read a word was spent saying nothing.
+ *
+ * The band comes from lib/score-bands, which mirrors the backend's own thresholds, so the ring
+ * agrees with the word printed inside it, with the readiness badge beside it, and with the
+ * same round's chip on the reports list. Those four had drifted into two different colour
+ * schemes over one number.
+ *
+ * The ring uses the BARE tone (a graphic, 3:1 is the bar) and the numeral uses `-ink` (text
+ * under 18px, 4.5:1), which is the split the palette defines.
+ */
 function OverallScoreRing({ score, label }: { score: number; label: string }) {
   const circumference = 2 * Math.PI * 54;
   const offset = circumference - (score / 100) * circumference;
+  const band = scoreBand(score);
 
   return (
-    <div className="relative flex h-36 w-36 items-center justify-center">
+    <div className="relative flex h-36 w-36 shrink-0 items-center justify-center">
       <svg className="h-36 w-36 -rotate-90" viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="54" strokeWidth="8" className="stroke-border/50" fill="none" />
         <motion.circle
           cx="60" cy="60" r="54" strokeWidth="8" fill="none" strokeLinecap="round"
-          className="stroke-primary"
+          className={cn('transition-colors', band.stroke)}
           strokeDasharray={circumference}
           initial={{ strokeDashoffset: circumference }}
           animate={{ strokeDashoffset: offset }}
@@ -125,8 +146,12 @@ function OverallScoreRing({ score, label }: { score: number; label: string }) {
         />
       </svg>
       <div className="absolute flex flex-col items-center">
-        <span className="text-3xl font-medium tracking-[-0.025em] text-primary">{score}</span>
-        <span className="text-[10px] text-muted-foreground">/ 100 · {label}</span>
+        <span
+          className={cn('font-mono text-4xl font-bold tracking-[-0.04em] tabular-nums', band.ink)}
+        >
+          {score}
+        </span>
+        <span className="mt-0.5 text-[10px] text-muted-foreground">/ 100 · {label}</span>
       </div>
     </div>
   );
@@ -190,7 +215,7 @@ export default function ReportDetailPage() {
   if (isLoading || generate.isPending) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
         <AIWorkingIndicator messages={REPORT_GENERATION_MESSAGES} intervalMs={5000} />
       </div>
     );
@@ -278,7 +303,11 @@ export default function ReportDetailPage() {
 
       {/* Header Banner */}
       <motion.div variants={fadeUp}>
-        <Card className="relative overflow-hidden p-6">
+        {/* THE LIT ELEMENT — docs/DESIGN-LANGUAGE §1. Everything below this card is evidence
+            for the number inside it, and until now the header, the strengths, the weaknesses
+            and the topic breakdown were all the same white card at the same elevation, so the
+            page had no answer to "what am I looking at first". */}
+        <Card variant="outline" className="lit relative overflow-hidden p-6">
           <div className="relative flex flex-col items-start justify-between gap-8 md:flex-row md:items-center">
             {/* `min-w-0` so the summary paragraph can narrow instead of widening the column,
                 and the badge row wraps: a readiness pill plus "Evaluated on 22/08/2026" is
@@ -322,14 +351,14 @@ export default function ReportDetailPage() {
               the header is enough, and repeating it here would be noise. */}
           <Link
             href={`/report/${sessionId}/analysis`}
-            className="group mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-primary/25 bg-primary/[0.06] px-4 py-3 transition-colors hover:bg-primary/[0.1]"
+            className="group mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-accent-indigo/25 bg-accent-indigo-soft/60 px-4 py-3 transition-colors hover:bg-accent-indigo-soft"
           >
-            <ListChecks className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+            <ListChecks className="h-4 w-4 shrink-0 text-accent-indigo-ink" aria-hidden />
             <span className="min-w-0 flex-1 text-sm text-foreground">
               <strong className="font-semibold">Your answers are all saved.</strong>{' '}
               See the question-by-question breakdown while the score finishes.
             </span>
-            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-primary">
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-accent-indigo-ink">
               Detailed Analysis
               <ArrowRight
                 className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
@@ -490,7 +519,7 @@ export default function ReportDetailPage() {
           <Card className="p-6">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <h3 className="flex items-center gap-2 text-base font-semibold">
-                <ShieldCheck className="h-5 w-5 text-primary" /> Competency Assessment
+                <ShieldCheck className="h-5 w-5 shrink-0 text-accent-teal-ink" /> Competency Assessment
               </h3>
               {!!report.performance_percentile && (
                 // Stated as "better than N%", not "top N%". A 3rd-percentile
@@ -531,14 +560,22 @@ export default function ReportDetailPage() {
         <motion.div variants={fadeUp}>
           <Card className="p-6">
             <h3 className="mb-6 flex items-center gap-2 text-base font-semibold">
-              <Award className="h-5 w-5 text-primary" /> Topic Performance Breakdown
+              <Award className="h-5 w-5 shrink-0 text-accent-teal-ink" /> Topic Performance Breakdown
             </h3>
             <div className="space-y-4">
               {Object.entries(report.topic_scores).map(([topic, score]) => (
                 <div key={topic} className="space-y-1.5">
                   <div className="flex justify-between gap-3 text-xs font-semibold">
                     <span className="min-w-0 break-words">{topic}</span>
-                    <span className="shrink-0 text-primary">{score}/100</span>
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums',
+                        scoreChipTone(score),
+                      )}
+                    >
+                      {score}
+                      <span className="text-[10px] font-medium opacity-60">/100</span>
+                    </span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                     <motion.div
@@ -560,7 +597,7 @@ export default function ReportDetailPage() {
         <motion.div variants={fadeUp}>
           <Card className="p-6">
             <h3 className="mb-6 flex items-center gap-2 text-base font-semibold">
-              <ShieldCheck className="h-5 w-5 text-primary" /> Question-by-Question Analysis
+              <ShieldCheck className="h-5 w-5 shrink-0 text-accent-indigo-ink" /> Question-by-Question Analysis
             </h3>
             <div className="space-y-4">
               {report.question_analysis.map((qa, idx) => (
