@@ -30,7 +30,7 @@ from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
 from app.services.interview import focus as focus_service
-from app.services.interview import open_domain
+from app.services.interview import off_script, open_domain
 from app.services.interview.context import decide_technical
 from app.services.interview.dont_know import said_dont_know
 from app.services.interview.open_domain import OpenDomain
@@ -2661,6 +2661,31 @@ class InterviewOrchestrator:
         if question.session_id is not None and question.session_id != session_id:
             raise ValueError("That question belongs to a different interview session.")
 
+        # ── THEY ASKED US SOMETHING. THE QUESTION HAS NOT BEEN ANSWERED YET. ──────────────
+        #
+        # "Sorry, could you repeat that?" is not an answer, and until this branch existed it
+        # was filed as one: an Answer row on that topic, one of the twelve questions the
+        # dashboard promised spent, and "can you say that again?" read out to the report
+        # generator as their attempt. The panel's next turn then corrected a wrong answer
+        # they had never given.
+        #
+        # ORDER MATTERS AND IS NOT INTERCHANGEABLE. `said_dont_know` runs first, below, on
+        # every path that reaches it — but it must beat this one, so it is evaluated here.
+        # "I don't know, can we move on?" is both a decline and a question, and the decline
+        # is the better reaction: it pivots the candidate onto ground they can stand on,
+        # where this branch would merely re-put the question they have just said they cannot
+        # answer.
+        #
+        # NARROW ON PURPOSE. Off-topic, gibberish, another language and an attempt to talk
+        # the interviewer out of its instructions are all still ANSWERS and all still consume
+        # the question, because that is what a real panel does — it reacts and moves on
+        # rather than un-asking. Their reactions live in interview_panel.md, which already
+        # receives what the candidate last said. See off_script.py's docstring.
+        declined_early = said_dont_know(content)
+        asked_us = "" if declined_early else off_script.classify(content)
+        if asked_us:
+            return await self._record_off_script(session, question, content, asked_us)
+
         ans = Answer(
             id=uuid.uuid4(),
             session_id=session_id,
@@ -2718,7 +2743,11 @@ class InterviewOrchestrator:
         # live signals and has no roadmap to prune; it is _adaptive_signals' job to steer
         # there, and pruning a plan that does not exist would be a silent no-op wearing the
         # costume of a feature.
-        declined = said_dont_know(content)
+        # Computed once, above, before the off-script branch that has to lose to it. Calling
+        # `said_dont_know` twice on the same text is an invitation for the pivot and the
+        # pruning to disagree about whether the candidate declined at all — which is the
+        # reason the return value below already says it is reused rather than recomputed.
+        declined = declined_early
         if declined and (session.session_metadata or {}).get("planned_question_ids") is not None:
             meta = dict(session.session_metadata or {})
             dropped = await self._drop_declined_topic(session, question, meta)
@@ -2772,6 +2801,120 @@ class InterviewOrchestrator:
             # The answer is still recorded and scored exactly as it always was, because
             # "I don't know" IS an answer to a question and is graded as one.
             "declined": declined,
+            # Empty on this path by construction — the off-script branch returns before
+            # reaching here. Present in both shapes so the caller reads one field on every
+            # response rather than testing for its existence.
+            "off_script": "",
+            "question_still_open": False,
+        }
+
+    #: How many times one question may be re-put before the interview moves on regardless.
+    #:
+    #: A CAP, BECAUSE THE ALTERNATIVE IS A LOOP THAT NEVER ENDS. Not consuming the question is
+    #: the right behaviour for a genuine clarification and it is also, unguarded, an
+    #: instruction the candidate can repeat forever — and it would be reached by accident long
+    #: before it was reached deliberately: a microphone that keeps transcribing "sorry what"
+    #: from room noise would hold somebody on question three until they closed the tab.
+    #:
+    #: Two, because a real panel repeats a question once, rephrases it once, and then expects
+    #: an answer. Past that the third attempt is recorded as the answer it is, and the
+    #: interview proceeds — which is also what a real panel does.
+    _MAX_CLARIFICATIONS_PER_QUESTION = 2
+
+    async def _record_off_script(
+        self,
+        session: InterviewSession,
+        question: Question,
+        content: str,
+        kind: str,
+    ) -> dict:
+        """
+        The candidate asked the panel something. Record it, and leave the question open.
+
+        NOTHING IS DROPPED, and that is the point of writing it to the session rather than
+        simply returning. What they said is kept, with which question it was against and what
+        kind of turn it was, so the exchange is recoverable — by the panel, by anybody asking
+        why an interview ran short, and by a future report that wants to say "you asked for two
+        clarifications" as the genuinely useful delivery note that it is.
+
+        NO `Answer` ROW AND NO `questions_asked` INCREMENT. Those two are what make the
+        question still open: `_next_planned_question` serves from the plan minus what has been
+        answered, so with no Answer row it hands back the same question, which is exactly the
+        behaviour wanted. Reached by not writing rather than by a flag somewhere that another
+        path has to remember to read.
+
+        PAST THE CAP IT IS AN ANSWER. `_MAX_CLARIFICATIONS_PER_QUESTION` above says why.
+        Returning `question_still_open=False` sends the caller back through `submit_answer`'s
+        normal path on the next attempt, where the text is recorded and scored like any other.
+        """
+        meta = dict(session.session_metadata or {})
+        log = list(meta.get("off_script") or [])
+        qid = str(question.id)
+
+        already = sum(1 for e in log if e.get("question_id") == qid)
+        if already >= self._MAX_CLARIFICATIONS_PER_QUESTION:
+            logger.info(
+                "interview_off_script_cap_reached",
+                session_id=str(session.id),
+                question_id=qid,
+                asked=already,
+            )
+            return {
+                "status": "recorded",
+                "questions_answered": await self.db.scalar(
+                    select(func.count()).select_from(Answer).where(
+                        Answer.session_id == session.id
+                    )
+                )
+                or 0,
+                "declined": False,
+                # Reported so the caller can say something honest — the panel re-puts the
+                # question one last time and then takes whatever comes.
+                "off_script": kind,
+                "question_still_open": False,
+            }
+
+        log.append(
+            {
+                "question_id": qid,
+                "kind": kind,
+                # TRUNCATED, NOT SUMMARISED. This lands in JSONB on a row that is read on
+                # every /next, and an unbounded field there is an unbounded row.
+                "said": content.strip()[:500],
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
+        # Capped overall as well as per question: a session cannot grow this without bound
+        # even if every question is clarified twice.
+        meta["off_script"] = log[-40:]
+        session.session_metadata = meta
+        # SQLAlchemy does not track in-place mutation of a JSONB dict; the reassignment above
+        # is what marks it dirty, and this says so explicitly because the reassignment is easy
+        # to tidy away in a later refactor and the failure would be a silent no-write.
+        flag_modified(session, "session_metadata")
+        await self.db.commit()
+
+        answered = await self.db.scalar(
+            select(func.count()).select_from(Answer).where(Answer.session_id == session.id)
+        )
+        logger.info(
+            "interview_off_script",
+            session_id=str(session.id),
+            question_id=qid,
+            kind=kind,
+        )
+        return {
+            "status": "recorded",
+            "questions_answered": answered or 0,
+            "declined": False,
+            #: What kind of non-answer this was. The caller runs the panel's `off_script`
+            #: stage on it rather than advancing.
+            "off_script": kind,
+            #: The candidate has not been asked their question yet. The caller must NOT
+            #: refetch — `/next` would hand back the same question anyway, but a refetch
+            #: would also re-run the cross-question injector against an answer that does not
+            #: exist.
+            "question_still_open": True,
         }
 
     async def complete_session(self, session_id: uuid.UUID):

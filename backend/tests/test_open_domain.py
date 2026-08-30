@@ -262,6 +262,35 @@ async def _never_cached(_key: str) -> None:
     return None
 
 
+def _no_plan_cache(monkeypatch) -> None:
+    """
+    Force `create_plan` to actually build a brief instead of reusing a stored plan.
+
+    NOT TIDINESS — this file failed without it, on the third run and not the first. The plan
+    variant cache lives in Postgres and is keyed by a SEMANTIC signature of
+    (company, program, focus), so once a couple of runs of this test have registered
+    "Firmware bring-up for RISC-V microcontrollers", the next run is served a stored plan,
+    `generate_structured` is never called, and the assertion about what the planner was told
+    fails with a KeyError about the test's own capture dict.
+
+    That is a genuinely good behaviour of the product — the second candidate to ask for a
+    field should not pay to plan it again — and a genuinely bad dependency for a test, because
+    it makes the result a function of how many times the suite has been run before. What is
+    under test here is the brief, so the cache is taken out of the picture rather than worked
+    around with a unique company name, which would only move the accumulation somewhere else.
+    """
+    from app.services.ai import semantic_cache
+
+    async def _miss(*_a, **_kw):
+        return None
+
+    async def _register(*_a, **_kw):
+        return "test-signature-not-stored"
+
+    monkeypatch.setattr(semantic_cache, "find_similar_key", _miss)
+    monkeypatch.setattr(semantic_cache, "register", _register)
+
+
 class TestTheSchemaIsNotRelaxedForBeingOpenDomain:
     """
     RULE 2. Free-form in SUBJECT is not free-form in SHAPE.
@@ -869,6 +898,7 @@ class TestEndToEndAgainstARealDatabase:
 
         monkeypatch.setattr(open_domain, "_write_cache", _no_write)
         monkeypatch.setattr(orch, "generate_structured", _plan_call)
+        _no_plan_cache(monkeypatch)
 
         result = await InterviewOrchestrator(db).create_plan(
             user_id=candidate,
@@ -948,6 +978,7 @@ class TestEndToEndAgainstARealDatabase:
         monkeypatch.setattr(open_domain, "_generate", _boom)
         monkeypatch.setattr(open_domain, "_read_cache", _never_cached)
         monkeypatch.setattr(orch, "generate_structured", _plan_call)
+        _no_plan_cache(monkeypatch)
 
         result = await InterviewOrchestrator(db).create_plan(
             user_id=candidate,

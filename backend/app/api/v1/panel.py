@@ -265,7 +265,7 @@ class PanelTurnRequest(BaseModel):
     stage: str = Field(
         default="mid",
         pattern=(
-            "^(opening|skill_check|mid|follow_up|pivot|code_review|wrapping"
+            "^(opening|skill_check|mid|follow_up|pivot|off_script|code_review|wrapping"
             "|candidate_questions|answering_candidate)$"
         ),
     )
@@ -302,6 +302,16 @@ class PanelTurnResponse(BaseModel):
     #: knows what this session has already covered, and a client-chosen pivot could offer a
     #: candidate the topic they just failed.
     pivot_topic: str = ""
+    #: The panel's read of what the CANDIDATE last said — "answered", "off_topic",
+    #: "unintelligible", "other_language", "asked_us" or "adversarial".
+    #:
+    #: Surfaced rather than kept internal because it is the only account anything downstream
+    #: has of a turn that was not an answer. `off_script.classify` catches the one case that
+    #: must not consume a question and is deliberately narrow; the other four are semantic and
+    #: only the model can see them. Defaults to "answered" everywhere, including when the
+    #: panel could not be generated at all — asserting that somebody did not answer is a claim
+    #: worth having evidence for.
+    candidate_turn: str = "answered"
 
 
 async def _last_exchange(
@@ -891,6 +901,22 @@ async def panel_turn(
             "",
             f"### What the candidate just asked you\n{request.candidate_question or '(nothing)'}",
             "",
+            # SAID OUT LOUD FOR THE ONE STAGE WHERE GETTING IT WRONG IS INVISIBLE. On
+            # `off_script` the question above is the SAME one the candidate has already heard,
+            # and a panel that reads it as a new question says "right, next one" to somebody
+            # who has just asked for a repeat.
+            (
+                "### About the question above\n"
+                + (
+                    "This is the SAME question they were already asked. They asked you "
+                    "something instead of answering it, so you are putting it to them again "
+                    "— in different words, without any suggestion that they have used up a "
+                    "chance."
+                    if request.stage == "off_script"
+                    else "(a new question — put it normally)"
+                )
+            ),
+            "",
             f"### Topic to offer instead (pivot stage only)\n{pivot_topic or '(none available)'}",
             "",
             (
@@ -959,6 +985,9 @@ async def panel_turn(
                 asked_question=bool(payload.get("asked_question")),
                 pivot_topic=pivot_topic,
                 rating_subject=rating_subject,
+                # Absent on an entry written before this field existed, which is a cache hit
+                # from the previous deploy rather than an error.
+                candidate_turn=str(payload.get("candidate_turn") or "answered"),
             )
         except Exception as exc:  # noqa: BLE001
             # A malformed cache entry must never cost somebody their turn. Fall through and
@@ -1029,7 +1058,14 @@ async def panel_turn(
             consequence="client speaks the bare question itself",
         )
         return PanelTurnResponse(
-            turns=[], asked_question=False, pivot_topic=pivot_topic, rating_subject=rating_subject
+            turns=[],
+            asked_question=False,
+            pivot_topic=pivot_topic,
+            rating_subject=rating_subject,
+            # No turn means no read of the candidate either. "answered" is the honest default:
+            # the interview should not record that somebody failed to answer on the strength
+            # of a provider outage.
+            candidate_turn="answered",
         )
 
     # Only real panel members may speak. The model must never be able to put words in the
@@ -1114,7 +1150,17 @@ async def panel_turn(
             await cache_set(
                 get_redis(),
                 turn_key,
-                json.dumps({"turns": valid, "asked_question": asked_question}),
+                json.dumps(
+                    {
+                        "turns": valid,
+                        "asked_question": asked_question,
+                        # STORED, because a cache hit that dropped this would report
+                        # "answered" for a turn whose whole point was that they did not.
+                        # The key already includes the candidate's last answer, so the read
+                        # belongs to the same moment as the words.
+                        "candidate_turn": turn.candidate_turn,
+                    }
+                ),
                 ttl=900,
             )
         except Exception as exc:  # noqa: BLE001 — a cache write must never fail a turn
@@ -1129,4 +1175,7 @@ async def panel_turn(
         asked_question=asked_question,
         pivot_topic=pivot_topic,
         rating_subject=rating_subject,
+        # Only when the panel actually spoke. A read attached to a turn that was dropped for
+        # having no valid speakers is a judgement about an exchange that never happened.
+        candidate_turn=turn.candidate_turn if valid else "answered",
     )

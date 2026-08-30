@@ -28,6 +28,7 @@ from app.db.session import get_db
 from app.services.activity import log_activity
 from app.services.ai import vector_cache
 from app.services.billing.credits import consume
+from app.services.interview import off_script
 from app.services.progress.rating import Tier
 from app.services.progress.recorder import record_round
 
@@ -444,9 +445,37 @@ def _describe_situation(request: GDTurnRequest) -> str:
             "Keep the discussion moving on your own, then invite them in by name."
         )
 
+    # WHAT IF THE LAST THING THEY SAID WAS NOT A CONTRIBUTION?
+    #
+    # Everything above this line branches on SILENCE — how long, how many questions ignored.
+    # The final branch then assumed that anything else was a point worth engaging, and told
+    # the panel to "engage their point directly". So a candidate who typed nonsense, asked the
+    # panel what the topic meant, or drifted onto something else had that engaged AS an
+    # argument: three people agreeing and extending a fragment the recogniser invented.
+    #
+    # The panel is told what happened and left to react. It is NOT told what to say — a GD
+    # panel that asks somebody to repeat themselves and one that talks over them are both
+    # realistic, and which is right depends on the room. gd_panel.md carries that judgement.
+    #
+    # `off_script.classify` is reused rather than reimplemented for the one case it is narrow
+    # enough to be sure about. The rest — gibberish, another language, off-topic — is left to
+    # the model, exactly as it is in the interview, and for the same reason: a keyword list
+    # deciding whether somebody's contribution counted is the wrong shape of authority.
+    last_from_candidate = next(
+        (t.text for t in reversed(request.history) if t.speaker == _YOU), ""
+    )
+    if last_from_candidate and off_script.classify(last_from_candidate) == "asked_panel":
+        return (
+            "The candidate's last turn was not a contribution — they asked the panel "
+            "something, or asked to have something repeated. Deal with it in one short line "
+            "and carry the discussion on. A GD does not stop for it."
+        )
+
     return (
-        "The candidate has just contributed. Engage their point directly — "
-        "agree and extend it, or push back with a concrete reason."
+        "The candidate has just contributed — but read it before engaging it. If it is a real "
+        "point, engage it directly: agree and extend it, or push back with a concrete reason. "
+        "If it is off the topic, unintelligible, or in another language, follow the rule for "
+        "that in your instructions instead of engaging it as an argument."
     )
 
 

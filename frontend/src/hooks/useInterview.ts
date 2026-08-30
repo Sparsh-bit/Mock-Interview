@@ -185,6 +185,27 @@ export function useInterview() {
          * drift and start offering an easier topic in the middle of a correct answer.
          */
         declined?: boolean;
+        /**
+         * What the candidate said was not an answer — they asked the panel something.
+         *
+         * "" on almost every submission. When set, the question HAS NOT BEEN ASKED yet as far
+         * as the candidate is concerned: no answer was recorded, none of the twelve questions
+         * was spent, and the caller must run the panel's `off_script` stage on the SAME
+         * question rather than advancing.
+         *
+         * Decided server-side, like `declined`, and for the same reason — the rule is subtle
+         * (backend/app/services/interview/off_script.py) and a client-side copy would drift
+         * into re-asking questions people have already answered.
+         */
+        off_script?: string;
+        /**
+         * True when the candidate still owes an answer to the question they were just given.
+         *
+         * Read this rather than `off_script` before deciding whether to refetch: past the
+         * server's clarification cap `off_script` is still reported — so the panel can say
+         * something honest — while the interview does move on.
+         */
+        question_still_open?: boolean;
       };
     },
   });

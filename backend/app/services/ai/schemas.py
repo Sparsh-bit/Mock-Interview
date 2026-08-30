@@ -74,6 +74,28 @@ class InterviewPanelTurn(BaseModel):
     """Matches the output of app/prompts/interview_panel.md."""
 
     turns: list[PanelUtterance] = Field(default_factory=list)
+    #: The model's read of what the CANDIDATE last said. The one field here that is not about
+    #: what the panel says.
+    #:
+    #: WHY IT IS AN OUTPUT OF THIS CALL AND NOT A CALL OF ITS OWN. The panel turn already
+    #: receives the candidate's last answer — it has to, to correct it — so this is a
+    #: judgement the model is already making in order to write the turn, asked for out loud.
+    #: A separate classification call would bill a second model call per answer for something
+    #: this one has in hand, and would be able to disagree with the turn that was actually
+    #: spoken.
+    #:
+    #: DEFAULTS TO "answered", and that default is the safe one for the same reason
+    #: `dont_know.py` fails to False: the other values all mean "this question was not really
+    #: put to the candidate", and asserting that about an answer they did give is worse than
+    #: missing one they did not. An older model that omits the field entirely lands here.
+    candidate_turn: Literal[
+        "answered",
+        "off_topic",
+        "unintelligible",
+        "other_language",
+        "asked_us",
+        "adversarial",
+    ] = "answered"
     #: True when one of these turns actually puts the given question to the candidate.
     #: False for a stage that does not ask one — a wrap-up decline, the "any questions for
     #: us?" prompt, or answering something the candidate asked. The caller uses it to decide

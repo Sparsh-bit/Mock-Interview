@@ -1044,6 +1044,62 @@ export default function LiveSessionPage() {
           speakSecondsRef.current = 0;
 
           /*
+           * THEY ASKED US SOMETHING. THE QUESTION HAS NOT BEEN ASKED YET.
+           *
+           * "Sorry, could you repeat that?" used to be filed as their answer to the question
+           * — one of the twelve spent, an Answer row scored in the report, and the panel's
+           * next turn correcting a wrong answer they had never given.
+           *
+           * The server records what they said, does NOT write an answer, and reports
+           * `question_still_open`. So there is nothing to refetch: `question` is unchanged
+           * and `panelForRef` still holds its id, which is what stops the normal asking
+           * effect from firing a second time. The panel answers what they asked and re-puts
+           * the same question in different words.
+           *
+           * `question_still_open` rather than `off_script`, because past the server's
+           * clarification cap the kind is still reported — so the panel can say something
+           * honest — while the interview does move on.
+           */
+          if (res.question_still_open) {
+            void (async () => {
+              /*
+               * WRAPPED, FOR THE REASON THE PIVOT BELOW IS. A throw here would leave the
+               * phase on `asking` with `panelForRef` already claimed for this question, so
+               * nothing would ever speak again and the candidate would sit on a question
+               * with no way forward but End Interview.
+               *
+               * The catch does the only thing that is always right: put the question back on
+               * screen itself. They lose the panel's clarification, which is a real loss;
+               * they do not also lose the interview.
+               */
+              try {
+                const { spoke } = await speakTurn({
+                  stage: 'off_script',
+                  // THE SAME QUESTION. Not the next one — they have not been asked this one
+                  // yet, and handing the panel a new question here is what would make
+                  // "can you repeat that?" cost somebody a question.
+                  question: questionText ?? '',
+                  candidate_question: content,
+                  reset: false,
+                });
+                if (spoke) return;
+              } catch {
+                // Fall through to the same place a silent panel goes.
+              }
+              const lead = interviewers?.[0]?.name ?? 'Interviewer';
+              const text = questionText ?? '';
+              if (text) {
+                setPanelLines((prev) => [
+                  ...prev,
+                  { speaker: lead, text, tone: 'asking' },
+                ]);
+                void voicesRef.current.speakAs(lead, text, { tone: 'asking' });
+              }
+            })();
+            return;
+          }
+
+          /*
            * THEY SAID THEY DID NOT KNOW. Offer them somewhere else to stand.
            *
            * `declined` is decided SERVER-side (dont_know.py, forty tests) because the rule

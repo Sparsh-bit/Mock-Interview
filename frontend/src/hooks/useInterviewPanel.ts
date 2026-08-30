@@ -60,6 +60,9 @@ export type PanelStage =
   // the single moment the interview visibly listened to them.
   | 'follow_up'
   | 'pivot'
+  // The candidate asked the panel something instead of answering. The panel answers it in a
+  // line and re-puts the SAME question — see backend/app/prompts/interview_panel.md.
+  | 'off_script'
   | 'code_review'
   | 'wrapping'
   | 'candidate_questions'
@@ -107,6 +110,15 @@ export interface PanelTurnResult {
    * Recorded alongside the number so the report can say which subject a 7 refers to.
    */
   rating_subject?: string;
+  /**
+   * The panel's read of what the candidate last said: "answered" (almost always),
+   * "off_topic", "unintelligible", "other_language", "asked_us" or "adversarial".
+   *
+   * The model's judgement, not a keyword match — only it can see that an answer was about the
+   * wrong thing. Defaults to "answered" whenever the panel could not speak, because recording
+   * that somebody failed to answer on the strength of a provider outage would be a lie.
+   */
+  candidate_turn?: string;
 }
 
 /**
