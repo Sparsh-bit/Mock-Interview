@@ -121,3 +121,52 @@ def _fmt(size: float) -> bytes:
     """Trim a float to the shortest form the PDF tokenizer accepts."""
     text = f"{size:g}"
     return text.encode("ascii")
+
+
+def build_pdf_with_catalog(content_stream: bytes, catalog_extra: bytes, extra_objects: list[bytes] | None = None) -> bytes:
+    """
+    A one-page PDF whose /Catalog carries `catalog_extra` — the shape every document-level
+    active-content attack takes.
+
+    `/OpenAction`, `/Names << /JavaScript … >>`, `/AA` (additional actions) and `/AcroForm`
+    all hang off the catalog, so being able to write arbitrary catalog entries is what makes
+    the malware fixtures below real documents rather than strings in a file.
+
+    `extra_objects` are appended after the fixed five, numbered from 6, so a fixture can
+    reference `6 0 R` for an action dictionary.
+    """
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R " + catalog_extra + b" >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        (
+            b"<< /Length "
+            + str(len(content_stream)).encode()
+            + b" >>\nstream\n"
+            + content_stream
+            + b"\nendstream"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        *(extra_objects or []),
+    ]
+
+    out = io.BytesIO()
+    out.write(b"%PDF-1.7\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(out.tell())
+        out.write(f"{number} 0 obj\n".encode() + body + b"\nendobj\n")
+
+    xref_at = out.tell()
+    out.write(f"xref\n0 {len(objects) + 1}\n".encode())
+    out.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        out.write(f"{offset:010d} 00000 n \n".encode())
+    out.write(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_at}\n%%EOF\n".encode()
+    )
+    return out.getvalue()

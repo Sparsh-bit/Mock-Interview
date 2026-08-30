@@ -32,10 +32,16 @@ import re
 import structlog
 
 from app.core.observability import register_sensitive_text
+from app.services.resume.file_safety import UnsafeDocument, verify
 
 logger = structlog.get_logger(__name__)
 
-#: MIME types we can actually extract, mapped to a short kind for dispatch.
+#: The MIME types this module is willing to be handed.
+#:
+#: NO LONGER USED FOR DISPATCH. `file_safety.verify` decides the format from the bytes, so
+#: these are kept only as the shape of what the API advertises — `api/v1/resume.py` builds
+#: its allowlist from the same idea. Read the note in `extract_text` for why the declared
+#: type stopped being trusted.
 _PDF_MIMES = frozenset(
     {
         "application/pdf",
@@ -294,22 +300,29 @@ def extract_text(data: bytes, mime_type: str, *, filename: str = "") -> str:
             reason="empty_file",
         )
 
-    kind = mime_type.split(";")[0].strip().lower()
-    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    # ── WHAT THE BYTES ARE, AND WHETHER THEY ARE SAFE TO OPEN ───────────────
+    #
+    # THIS USED TO DISPATCH ON THE DECLARED MIME TYPE AND THE FILENAME EXTENSION, with
+    # "does the parser cope" as the real check. That works by accident — a DOCX named .pdf
+    # fails in the PDF parser — but it meant a string the caller wrote decided which parser
+    # saw the bytes, and it gave a candidate who mis-named their own file a parse error
+    # about a format they never chose.
+    #
+    # `verify` decides from the content, and refuses the three things a resume has no
+    # business carrying before any parser touches the data: active content (PDF JavaScript,
+    # launch actions, embedded files; DOCX macros and auto-resolved remote templates), a
+    # decompression bomb, and bytes that are not a document at all. Each of the first two
+    # was measured getting through this function before it existed — see file_safety.py.
+    #
+    # BEFORE THE PARSER, NOT AFTER, and that ordering is the whole point for the bomb: a
+    # 399 KB archive was measured taking resident memory from 440 MB to 834 MB, because
+    # python-docx refused it only once it had expanded it.
+    try:
+        kind = verify(data, declared_mime=mime_type, filename=filename)
+    except UnsafeDocument as exc:
+        raise ResumeExtractionError(str(exc), reason=exc.reason) from exc
 
-    # Browsers occasionally send a generic or wrong content type (notably
-    # application/octet-stream from some file managers), so fall back to the
-    # extension rather than rejecting a perfectly good PDF.
-    if kind in _PDF_MIMES or (kind not in _DOCX_MIMES and suffix == "pdf"):
-        raw = _extract_pdf(data)
-    elif kind in _DOCX_MIMES or suffix == "docx":
-        raw = _extract_docx(data)
-    else:
-        raise ResumeExtractionError(
-            f"Unsupported resume format ({mime_type or 'unknown'}). Upload a PDF "
-            "or DOCX.",
-            reason="unsupported_type",
-        )
+    raw = _extract_pdf(data) if kind == "pdf" else _extract_docx(data)
 
     text = normalise_whitespace(raw)
 

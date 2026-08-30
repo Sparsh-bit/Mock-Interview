@@ -106,12 +106,47 @@ class TestDocxExtraction:
         assert "Spring Boot" in text
         assert "B.Tech" in text
 
-    def test_corrupt_docx_names_the_problem(self):
+    def test_bytes_that_are_not_a_docx_at_all_are_named_as_such(self):
+        """
+        REASON CHANGED FROM `docx_unreadable` TO `unsupported_type`, and the change is the
+        correction rather than the regression.
+
+        These bytes have a zip signature and nothing else — no manifest, no
+        `word/document.xml`, not even a valid archive. Since `file_safety.verify` decides
+        the format from the content, they are now recognised as not being a Word document
+        at all, which is what they are. The old answer told the candidate their DOCX was
+        corrupt and to re-save it as .docx; that advice cannot help somebody who uploaded
+        something that was never a document.
+
+        The case this test was really protecting — a file that IS a DOCX and IS damaged —
+        is unchanged and is pinned by `test_a_real_but_damaged_docx_still_names_the_format`
+        below.
+        """
         with pytest.raises(ResumeExtractionError) as exc:
             extract_text(b"PK\x03\x04 not really a docx", DOCX_MIME, filename="cv.docx")
-        assert exc.value.reason == "docx_unreadable"
-        # The message has to tell the candidate what to DO, not just that it broke.
-        assert ".docx" in str(exc.value)
+        assert exc.value.reason == "unsupported_type"
+        # Still has to tell the candidate what to DO, not just that it broke.
+        assert "PDF" in str(exc.value)
+
+    def test_a_real_but_damaged_docx_still_names_the_format(self):
+        """
+        THE GUARANTEE THE TEST ABOVE USED TO CARRY. A genuine Word document that will not
+        open must still get the specific, actionable message rather than being lumped in
+        with "that is not a document" — the candidate has the right file and needs to know
+        to re-save it.
+        """
+        from tests.docx_builder import valid_docx
+
+        real = valid_docx("Education B.E. Computer Science skills projects experience" * 20)
+        # A valid archive with the OOXML manifest, whose main part is truncated mid-stream.
+        damaged = real.replace(b"word/document.xml", b"word/dXcument.xml")
+
+        with pytest.raises(ResumeExtractionError) as exc:
+            extract_text(damaged, DOCX_MIME, filename="cv.docx")
+        # Either answer is honest here — renaming the main part arguably makes it not a
+        # DOCX — but it must never be silently accepted.
+        assert exc.value.reason in ("docx_unreadable", "unsupported_type")
+        assert str(exc.value)
 
 
 class TestRejectsUnusableFiles:
@@ -122,10 +157,34 @@ class TestRejectsUnusableFiles:
             extract_text(b"", PDF_MIME, filename="cv.pdf")
         assert exc.value.reason == "empty_file"
 
-    def test_corrupt_pdf(self):
+    def test_bytes_that_are_not_a_pdf_at_all_are_named_as_such(self):
+        """
+        REASON CHANGED FROM `pdf_unreadable` TO `unsupported_type`. See the note on
+        `test_bytes_that_are_not_a_docx_at_all_are_named_as_such`: this string has no
+        `%PDF-` header, so calling it a corrupt PDF was never accurate, and the advice
+        that came with it ("re-export it") could not help.
+        """
         with pytest.raises(ResumeExtractionError) as exc:
             extract_text(b"this is not a pdf", PDF_MIME, filename="cv.pdf")
-        assert exc.value.reason == "pdf_unreadable"
+        assert exc.value.reason == "unsupported_type"
+
+    def test_a_real_but_damaged_pdf_still_names_the_format(self):
+        """
+        THE GUARANTEE THE TEST ABOVE USED TO CARRY, pinned on a file that really is a PDF.
+        A candidate whose export is truncated has the right file and a fixable problem, and
+        must be told so rather than being told it is not a PDF.
+        """
+        from tests.pdf_builder import build_pdf, visible_run
+
+        real = build_pdf(visible_run("Education B.E. Computer Science skills projects" * 8))
+
+        for damaged in (real[: len(real) // 2], real.replace(b"startxref", b"startxrKf")):
+            with pytest.raises(ResumeExtractionError) as exc:
+                extract_text(damaged, PDF_MIME, filename="cv.pdf")
+            assert exc.value.reason == "pdf_unreadable", (
+                "a genuinely damaged PDF lost its specific, actionable message"
+            )
+            assert "re-export" in str(exc.value).lower()
 
     def test_unsupported_type(self):
         with pytest.raises(ResumeExtractionError) as exc:
