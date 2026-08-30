@@ -235,3 +235,43 @@ def trial_allowance(feature: str) -> int:
     quietly become a free allowance.
     """
     return TRIAL_ALLOWANCE.get(feature, 0)
+
+
+@dataclass(frozen=True)
+class ReferralReward:
+    """What one qualified referral pays out, to one side of it."""
+
+    feature: str
+    quantity: int
+
+
+#: WHAT A REFERRAL PAYS, AND IT IS DELIBERATELY THE CHEAP ITEM ON BOTH SIDES.
+#:
+#: Here rather than in `services/billing/referrals.py` for the rule this module exists to
+#: enforce: an allowance is decided in exactly one file. A referral grant is an allowance —
+#: it is entitlement given away — so the quantity belongs beside `TRIAL_ALLOWANCE`, not in
+#: the service that happens to write the ledger row.
+#:
+#: THE ARITHMETIC, because "one free interview each" is the obvious choice and it loses money.
+#: `scripts/item_margin.py` prices a delivered item against BOTH its AI and its speech cost:
+#:
+#:     interview      $0.154 AI + $0.018 speech  ≈ $0.172 to hand over
+#:     communication  $0.020 AI + $0.005 speech  ≈ $0.025 to hand over
+#:
+#: A referral only ever pays out after the referred account has BOUGHT and CONSUMED something
+#: (see services/billing/referrals.py — signup does not qualify, and neither does the trial).
+#: The cheapest thing they can have bought is a ₹19 drill, which nets roughly $0.195 after the
+#: payment fee and the cost of serving it. So:
+#:
+#:     two interviews granted   = $0.344 against $0.195 earned   → LOSS on every referral
+#:                                                                  whose first purchase was
+#:                                                                  a drill
+#:     two drills granted       = $0.050 against $0.195 earned   → positive on every path
+#:
+#: This is the number to raise once there is data saying referred accounts are worth more
+#: than one drill — and raising it is one edit here, because nothing else decides it.
+#:
+#: SYMMETRIC ON BOTH SIDES, which is a copy decision as much as an economic one: "you both
+#: get a free drill" is a sentence somebody will actually pass on. An asymmetric reward needs
+#: explaining, and a referral programme that needs explaining does not spread.
+REFERRAL_REWARD: ReferralReward = ReferralReward(feature="communication", quantity=1)

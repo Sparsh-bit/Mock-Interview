@@ -210,6 +210,25 @@ async def get_balance(db: AsyncSession, user_id: uuid.UUID) -> Balance:
     request out of date is harmless. `consume` does its own locked read and never trusts this.
     """
     await _plan_row(db, user_id, lock=False)
+
+    # ── PAY OUT ANY REFERRALS THIS ACCOUNT HAS EARNED, BEFORE COUNTING ──────────────────
+    #
+    # A write on a read path, and it is deliberate — see `referrals.settle_referrer_grants`
+    # for the full argument. In short: the referrer's half of a referral is granted in the
+    # REFERRER's own transaction rather than in the referred account's, so that no
+    # transaction ever locks a plan row belonging to somebody else. This is where the
+    # referrer's transaction usually is.
+    #
+    # BEFORE `_totals`, not after, or the balance this returns would be one referral behind
+    # what the ledger says the moment the request ends — and the dashboard would show a
+    # reward that only appears on the second page load.
+    #
+    # `_plan_row` two lines up has the same shape and the same justification: this file
+    # already creates rows on an unlocked read rather than depending on a signup hook.
+    from app.services.billing import referrals  # noqa: PLC0415 — circular at module level
+
+    await referrals.settle_referrer_grants(db, user_id)
+
     net = await _totals(db, user_id)
 
     used_any = await db.scalar(
@@ -324,6 +343,19 @@ async def consume(
     # previously-suspended accounts locked out of credits they had already paid for.
     await _plan_row(db, user_id, lock=True)
 
+    # ── REFERRALS THIS ACCOUNT HAS EARNED COUNT TOWARD WHAT IT MAY SPEND ────────────────
+    #
+    # Under the lock and BEFORE the balance is read, so a reward earned since the last page
+    # load is spendable on this very request. Settling after the check would refuse somebody
+    # who does have credit — the worst possible ordering, because the refusal is a paywall in
+    # front of something they have already earned.
+    #
+    # Locks nothing but this user's own rows: `grant` re-takes the plan row already held two
+    # lines up, and the referral rows belong to this user as referrer.
+    from app.services.billing import referrals  # noqa: PLC0415 — circular at module level
+
+    await referrals.settle_referrer_grants(db, user_id)
+
     net = await _totals(db, user_id)
     remaining = trial_allowance(feature) + net.get(feature, 0)
 
@@ -377,6 +409,31 @@ async def consume(
     )
     db.add(event)
     await db.flush()
+
+    # ── THE REFERRAL USAGE GATE, AND THIS IS THE ONLY PLACE IT CAN LIVE ─────────────────
+    #
+    # A referral pays out when the referred account consumes something it PAID FOR — not on
+    # signup, and not on the trial. `paid_with` is computed six lines up and is the exact
+    # distinction: "trial" is the free allowance, "credit" means they bought it.
+    #
+    # HERE RATHER THAN IN THE ENDPOINTS because this is the one function every metered
+    # feature goes through, and the argument at the top of this file applies unchanged: a
+    # second implementation of when something is spent is how a rule ends up true on one
+    # route and false on another. An endpoint that forgets to call a referral hook is an
+    # endpoint whose users silently never earn one.
+    #
+    # HERE RATHER THAN ON AN EVENT because the grant must live or die with this transaction.
+    # An event handler runs after the response, outside the transaction, so a consumption
+    # that rolls back would still have paid out a referral.
+    #
+    # COSTS ONE INDEX PROBE for a user who was never referred, which is nearly all of them —
+    # `referrals.referred_user_id` is UNIQUE, so the miss is a single index lookup. For a
+    # user who was, it fires once in the lifetime of the account.
+    if paid_with == "credit":
+        from app.services.billing import referrals  # noqa: PLC0415 — circular at module level
+
+        await referrals.on_paid_consumption(db, user_id)
+
     return event
 
 

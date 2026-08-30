@@ -1,7 +1,8 @@
 """
 Entitlement and the ban flag — models/billing.py
 
-Tables: user_plans, credit_events
+Tables: user_plans, credit_events, offers, offer_banners, offer_redemptions,
+        referral_codes, referrals
 
 `credit_events` is an append-only, SIGNED ledger. A purchase is +n, a consumption is -1, and
 a user's balance for a feature is one `SUM(delta)` plus the one-time trial constant. There
@@ -44,7 +45,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -214,6 +226,29 @@ class CreditEvent(Base, UUIDPrimaryKeyMixin):
         # index-only scan of just their rows rather than a walk of the whole table — it
         # sits between a candidate pressing Start and the interview beginning.
         Index("ix_credit_events_user_feature", "user_id", "feature"),
+        # ── THE ONE PLACE `payment_ref` IS ACTUALLY UNIQUE, AND WHY IT IS PARTIAL ────────
+        #
+        # `credits.grant` deduplicates on `payment_ref` with a SELECT under the payer's plan
+        # row lock, and its docstring says plainly why a unique index was not the answer at
+        # the time: "it needs a migration, and a migration that fails on pre-existing
+        # duplicates fails the deploy... The index is worth adding later, without launch
+        # pressure, as belt and braces."
+        #
+        # Referral grants are that later, for the one prefix where the argument does not
+        # apply: no row with a `referral:` payment_ref has ever existed, so the index cannot
+        # fail on history. It makes double-crediting a referral impossible at the DATABASE
+        # rather than at the end of a chain of application checks — which matters because the
+        # two referral grants are written by two different transactions, locking two
+        # different users' rows, so no single lock covers both.
+        #
+        # `sqlite_where` is absent deliberately: this schema is Postgres-only (JSONB, RLS,
+        # gen_random_uuid) and a dialect-portable spelling here would suggest otherwise.
+        Index(
+            "uq_credit_events_referral_ref",
+            "payment_ref",
+            unique=True,
+            postgresql_where=text("payment_ref LIKE 'referral:%'"),
+        ),
     )
 
 
@@ -417,4 +452,145 @@ class OfferRedemption(Base, UUIDPrimaryKeyMixin):
         # so a double-clicked Apply, two tabs, or a retry storm cannot redeem the same code
         # twice for one account — the second INSERT simply fails.
         Index("uq_offer_redemption_user", "offer_id", "user_id", unique=True),
+    )
+
+
+class ReferralCode(Base, UUIDPrimaryKeyMixin):
+    """
+    One account's referral code. Created lazily on first sight, exactly like `UserPlan`.
+
+    A SEPARATE TABLE RATHER THAN A COLUMN ON `users`, for the deployment reason 021 through
+    024 all set out and that models/user.py records the cost of: migrations here are run BY
+    HAND against Supabase, so there is always a window in which the code is live and the
+    schema is not. SQLAlchemy names every mapped column in its SELECT, so a `users.referral_
+    code` column shipped before its migration would 500 every read of the users table — which
+    is every authenticated request in the product. A missing TABLE breaks only the feature
+    that reads it.
+
+    NOT TimestampMixin: a code is never edited. Regenerating one would invalidate every link
+    already shared, which is the opposite of what a referral link is for.
+    """
+
+    __tablename__ = "referral_codes"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    #: CASCADE, unlike every other user reference in this file, and the difference is
+    #: deliberate. The rows that must outlive an erased account are the FINANCIAL ones — the
+    #: grants this code produced are in `credit_events` and are retained there under
+    #: §128(5). A code is not a financial record, it is a live credential: leaving it behind
+    #: would let a stranger keep claiming credit for an account that no longer exists.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    #: The code itself, uppercase, from a confusable-free alphabet (see
+    #: services/billing/referrals.py). Unique across the table — the index is what makes
+    #: "generate, insert, retry on collision" correct rather than approximately correct.
+    code: Mapped[str] = mapped_column(String(16), nullable=False, unique=True, index=True)
+
+
+class Referral(Base, UUIDPrimaryKeyMixin):
+    """
+    One account was referred by another. Append-only apart from the two settlement stamps.
+
+    THE THREE RULES ARE ALL IN THE DATABASE, not in the service. Each of them is the kind of
+    check that reads fine in application code and loses under two tabs:
+
+      1. ONE REDEMPTION PER NEW ACCOUNT — `referred_user_id` is UNIQUE. A second claim by the
+         same account is a constraint violation, not a race the second request can win.
+
+      2. NO SELF-REFERRAL — a CHECK constraint on `referrer_user_id <> referred_user_id`.
+         The service refuses it first with a readable message; this is what holds when
+         somebody finds a path the service does not cover.
+
+      3. NO MUTUAL REFERRAL — a unique index on the UNORDERED PAIR,
+         `(LEAST(referrer, referred), GREATEST(referrer, referred))`, so (A refers B) and
+         (B refers A) collide. Two accounts crediting each other is the cheapest farm there
+         is, and it is also what would let the settlement paths deadlock: A's transaction
+         wanting B's plan row while B's wants A's. Ruling the pair out rules out both.
+
+    SETTLEMENT IS TWO STAMPS, NOT ONE, AND THEY ARE SET AT DIFFERENT TIMES BY DIFFERENT
+    TRANSACTIONS. `referred_granted_at` is set inside the referred account's own paying
+    transaction, where its plan row is already locked. `referrer_granted_at` is set later,
+    the next time the REFERRER touches their own balance, in a transaction that locks only
+    the referrer's row. Granting both inside one transaction would mean a transaction routinely
+    locking two different users' plan rows, which is a lock-ordering hazard in a codebase whose
+    hot path is `consume` — and there is no correctness reason to pay it, because the ledger
+    is append-only and neither grant reads the other's balance.
+    """
+
+    __tablename__ = "referrals"
+
+    #: When the code was CLAIMED, which is not when it paid out. See `qualified_at`.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    #: SET NULL for the reason on CreditEvent.user_id — an erased account must not take the
+    #: record of what it earned with it. `retained_subject` identifies the cohort afterwards.
+    referrer_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    #: UNIQUE. This is the one-redemption-per-new-account rule; everything else about it is
+    #: a message. SET NULL on erasure has the same consequence it has for
+    #: `OfferRedemption.user_id` and the same answer: erasing an account and registering
+    #: again produces a DIFFERENT account id, so the pair is new either way.
+    referred_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    #: The code as it was matched, stored on the row rather than joined to
+    #: `referral_codes`. A code row is CASCADE-deleted with its owner; this record of which
+    #: string was used has to survive that, or a support question about a paid-out referral
+    #: becomes unanswerable.
+    code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+
+    #: When the referred account first CONSUMED SOMETHING IT HAD PAID FOR. NULL until then,
+    #: and that is the whole anti-farm design — see services/billing/referrals.py for why
+    #: signup, and even a trial consumption, deliberately do not qualify.
+    qualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+    #: When each side's `credit_events` grant was written. Neither is the grant itself: the
+    #: grant is a row in the ledger, and these exist so a settlement pass can find work to do
+    #: without scanning it. Idempotency does NOT rest on them — `credit_events.payment_ref`
+    #: carries a partial UNIQUE index for referral rows, so a double grant is refused by the
+    #: database even if a bug got past both this stamp and the row lock.
+    referred_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    referrer_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: Set only when one of the two accounts is erased. Same mechanism, same reason, as the
+    #: column of this name on CreditEvent and OfferRedemption — including `deferred=True`
+    #: being load-bearing rather than a performance tweak.
+    retained_subject: Mapped[str | None] = mapped_column(
+        String(64), index=True, deferred=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "referrer_user_id IS NULL OR referred_user_id IS NULL "
+            "OR referrer_user_id <> referred_user_id",
+            name="ck_referral_not_self",
+        ),
+        # THE UNORDERED PAIR. `LEAST`/`GREATEST` on two uuids is stable, so (A,B) and (B,A)
+        # produce the same index entry and the second INSERT fails. Both NULLs (two erased
+        # accounts) are exempt the way any unique index exempts NULL, which is correct —
+        # there is nobody left to farm anything.
+        Index(
+            "uq_referral_unordered_pair",
+            func.least(referrer_user_id, referred_user_id),
+            func.greatest(referrer_user_id, referred_user_id),
+            unique=True,
+        ),
+        # The settlement scan: "which of my referrals have qualified and not yet paid me".
+        Index("ix_referrals_settlement", "referrer_user_id", "qualified_at"),
     )

@@ -42,7 +42,7 @@ import uuid
 from typing import Any, cast
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import or_, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,6 +78,11 @@ RETAINED_TABLES: list[tuple[str, str]] = [
     ("credit_events", "Financial ledger — Companies Act §128(5), 8 financial years"),
     ("offer_redemptions", "Financial ledger, and the one-redemption-per-account record"),
     ("consent_events", "Evidence that the processing which already happened was consented to"),
+    (
+        "referrals",
+        "Entitlement given away — the only row that explains a credit_events grant "
+        "no payment paid for",
+    ),
 ]
 
 
@@ -93,16 +98,31 @@ async def deidentify_retained_records(db: AsyncSession, user_id: uuid.UUID) -> d
     Returns a count per table, which the caller logs. A zero is normal (a user who
     never paid); a count that changes when nothing else did is worth noticing.
     """
-    from app.models.billing import CreditEvent, OfferRedemption  # noqa: PLC0415
+    from app.models.billing import CreditEvent, OfferRedemption, Referral  # noqa: PLC0415
     from app.models.consent import ConsentEvent  # noqa: PLC0415
 
     digest = subject_digest(user_id)
     counts: dict[str, int] = {}
 
-    for model in (CreditEvent, OfferRedemption, ConsentEvent):
+    # (model, the column that identifies the departing account on that model).
+    #
+    # `Referral` HAS NO `user_id` AND THAT IS NOT AN OVERSIGHT — a referral row names TWO
+    # accounts, and either of them may be the one being erased. Matching on both means the
+    # row is stamped whichever side leaves, which is what keeps the surviving row joinable to
+    # the `credit_events` grant it explains. A single `user_id` column here would have had to
+    # pick one of the two, and the other side's erasure would then leave their id in the
+    # table after the account was deleted.
+    targets: list[tuple[Any, list[Any]]] = [
+        (CreditEvent, [CreditEvent.user_id]),
+        (OfferRedemption, [OfferRedemption.user_id]),
+        (ConsentEvent, [ConsentEvent.user_id]),
+        (Referral, [Referral.referrer_user_id, Referral.referred_user_id]),
+    ]
+
+    for model, columns in targets:
         result = await db.execute(
             update(model)
-            .where(model.user_id == user_id)
+            .where(or_(*(column == user_id for column in columns)))
             .values(retained_subject=digest)
             # `rowcount` is on CursorResult, and `execute` is typed as returning the
             # base Result. It is a CursorResult for a DML statement; the cast says so

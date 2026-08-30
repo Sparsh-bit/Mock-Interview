@@ -9,7 +9,7 @@ from .activity import ActivityLog
 from .ai_cache import AICache
 from .ai_usage import AIUsage  # TEMPORARY — token counter
 from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from .billing import CreditEvent, OfferBanner, UserPlan
+from .billing import CreditEvent, OfferBanner, Referral, ReferralCode, UserPlan
 from .company import Company, InterviewTrack, QuestionCategory
 from .consent import ConsentEvent
 from .prep import PrepProgress
@@ -61,6 +61,8 @@ __all__ = [
     "UserPlan",
     "CreditEvent",
     "OfferBanner",
+    "ReferralCode",
+    "Referral",
     # Security
     "UserSession",
     # Activity

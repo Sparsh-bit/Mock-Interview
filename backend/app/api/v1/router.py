@@ -25,6 +25,7 @@ from app.api.v1 import (
     progress,
     questions,
     quiz,
+    referrals,
     reports,
     resume,
     tts,
@@ -66,6 +67,10 @@ v1_router.include_router(progress.router, tags=["Progress"])
 v1_router.include_router(tts.router, tags=["Speech"])
 v1_router.include_router(analysis.router, prefix="/analysis", tags=["Detailed Analysis"])
 v1_router.include_router(resume.router, prefix="/resume", tags=["Resume"])
+# Referrals: the code, and applying somebody else's. Neither route grants anything —
+# the credit is written by `credits.consume` once the referred account has paid for and
+# used something. See services/billing/referrals.py.
+v1_router.include_router(referrals.router, tags=["Referrals"])
 
 # Admin only — user management, per-user usage, activation. Every route is
 # gated by the AdminUser dependency (users.is_admin).

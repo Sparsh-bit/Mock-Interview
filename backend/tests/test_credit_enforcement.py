@@ -59,6 +59,19 @@ class _Plan:
         self.ban_reason = None
 
 
+class _Rows:
+    """The `.scalars().all()` shape SQLAlchemy returns for an ORM-entity SELECT."""
+
+    def __init__(self, rows: list):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
 class _StubDB:
     """
     Answers by WHICH TABLE the statement touches, not by call order.
@@ -88,10 +101,27 @@ class _StubDB:
             return self._is_admin
         if "user_plans" in sql:
             return self._plan
+        # "was this account referred by anybody, and is that referral still unqualified".
+        # None for every account here — see the note in `execute`. It must be None rather
+        # than the 0 the fallback returns, because `consume` reads attributes off whatever
+        # comes back.
+        if "referrals" in sql:
+            return None
         # count(*) of consume rows, used only by get_balance.
         return 0
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        sql = str(stmt)
+        # The referral settlement pass `consume` runs under the lock, before the balance is
+        # read. It asks "which of my referrals have qualified and not yet paid me", and for
+        # every account in this file the answer is none — these tests are about the trial
+        # mechanism, not about referrals.
+        #
+        # DISPATCHED ON THE SQL, like `scalar` above and for the same stated reason: a stub
+        # that answered by call order would have silently handed this query the totals and
+        # made every test below assert something other than what it says it asserts.
+        if "referrals" in sql:
+            return _Rows([])
         # _totals() iterates (feature, sum) pairs.
         return list(self._net.items())
 
