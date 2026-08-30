@@ -21,6 +21,7 @@ import { DataError } from '@/components/ui/data-error';
 import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader } from '@/components/ui/page-header';
 import { CreditMeter } from '@/components/billing/CreditMeter';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
 export const runtime = 'edge';
 
@@ -262,6 +263,9 @@ export default function DashboardPage() {
                 ))}
               </FocusGroup>
             )}
+            {/* ONCE PER CARD, not once per row. A caveat repeated beside every score chip is
+                one people stop seeing, which is the failure this exists to avoid. */}
+            <AiAssessmentNotice className="pt-1" />
           </Card>
         </motion.div>
 

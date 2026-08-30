@@ -23,6 +23,7 @@ import pkgutil
 from importlib import import_module
 
 import pytest
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.exceptions import AppError
 
@@ -93,3 +94,97 @@ def test_an_instance_does_not_claim_to_be_a_server_error_by_accident(cls: type[A
     assert instance.status_code != 500, (
         f"{cls.__qualname__} declares an intent of its own but instances carry 500."
     )
+
+
+#: MODULE LEVEL, NOT INSIDE THE TEST. FastAPI resolves a handler's annotations with
+#: `get_type_hints`, which cannot see a class defined in a function body — so a locally
+#: scoped Pydantic model is not recognised as a request body and is treated as a QUERY
+#: model instead. The symptom is a confusing `query.payload: Field required` on a request
+#: that plainly has a body, and it cost twenty minutes here.
+class _BlankReason(BaseModel):
+    reason: str = Field(min_length=1, max_length=100)
+
+    @field_validator("reason")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("say something")
+        return value.strip()
+
+
+class _ShortReason(BaseModel):
+    reason: str = Field(min_length=1, max_length=8)
+
+
+def _probe_app(model: type[BaseModel]):
+    """A one-route app wired to this project's real exception handlers."""
+    from fastapi import FastAPI
+
+    from app.core.exceptions import register_exception_handlers
+
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    if model is _BlankReason:
+
+        @app.post("/probe")
+        async def probe_blank(payload: _BlankReason) -> dict:  # pragma: no cover
+            return {"ok": payload.reason}
+    else:
+
+        @app.post("/probe")
+        async def probe_short(payload: _ShortReason) -> dict:  # pragma: no cover
+            return {"ok": payload.reason}
+
+    return app
+
+
+class TestAValidatorThatRaisesValueErrorIs422AndNot500:
+    """
+    A REAL BUG, FOUND BY ADDING THE FIRST BODY VALIDATOR TO THE REPORTS API.
+
+    `handle_validation_error` passed `exc.errors()` straight into a JSONResponse. For a
+    Pydantic v2 `value_error` — which is what any `field_validator` raising `ValueError`
+    produces — that dict carries `ctx: {"error": ValueError(...)}`, and a raw exception
+    object is not JSON-serialisable. So building the 422 response THREW, the throw fell
+    through to the unhandled-exception handler, and the caller got a 500.
+
+    IT WAS ALREADY LIVE. `api/v1/admin_offers.py` has five such validators — the offer kind,
+    the value range, the percent bound, the item ids — and every one of them was answering
+    500 to a request that was simply malformed. Nothing noticed, because a 500 on a bad
+    admin request reads as a bug in the request.
+
+    The second test is the other half of the fix: the response must not echo the input back.
+    The structured log already redacts it, and an error body is a poor place to start
+    reflecting a caller's own bytes.
+    """
+
+    def test_a_whitespace_only_string_is_rejected_with_422(self):
+        from fastapi.testclient import TestClient
+
+        response = TestClient(_probe_app(_BlankReason), raise_server_exceptions=False).post(
+            "/probe", json={"reason": "   "}
+        )
+
+        assert response.status_code == 422, (
+            f"a ValueError from a field validator returned {response.status_code}"
+        )
+        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+        # The validator's own message is authored by us, never by the caller, and is the
+        # actionable half — it has to survive.
+        assert "say something" in response.text
+
+    def test_the_error_body_names_the_field_without_echoing_the_value(self):
+        from fastapi.testclient import TestClient
+
+        secret = "SENTINEL-a1b2c3-do-not-echo-this-back"
+        response = TestClient(_probe_app(_ShortReason), raise_server_exceptions=False).post(
+            "/probe", json={"reason": secret}
+        )
+
+        assert response.status_code == 422
+        assert secret not in response.text, "the error response echoed the caller's input"
+        # It still has to say WHICH field, or the message is useless to whoever must fix it.
+        assert '"reason"' in response.text
+        # And it must not name the dependency or its version.
+        assert "pydantic.dev" not in response.text

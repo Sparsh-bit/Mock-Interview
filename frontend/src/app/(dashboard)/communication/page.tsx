@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { CreditMeter } from '@/components/billing/CreditMeter';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
 export const runtime = 'edge';
 
@@ -485,6 +486,8 @@ export default function CommunicationPage() {
               <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent-teal-ink">
                 {mode === 'reading' ? 'Reading fluency' : 'Communication score'}
               </p>
+
+              <AiAssessmentNotice className="mt-2" />
 
               <div className="mt-4 flex flex-wrap items-end gap-x-8 gap-y-5">
                 <div className="flex items-end gap-3">

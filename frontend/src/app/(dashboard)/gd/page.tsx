@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 import { scoreBand } from '@/lib/score-bands';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
 export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
@@ -833,6 +834,9 @@ export default function GDPage() {
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Group Discussion Score</p>
             <p className={cn('text-5xl font-bold tracking-tight', tone)}>{result.overall_score.toFixed(1)}<span className="text-2xl text-muted-foreground">/10</span></p>
             <p className="text-xs text-muted-foreground">You made {myContributions} contribution{myContributions === 1 ? '' : 's'}</p>
+            {/* Directly under the number, not at the foot of the page: the caveat has to be
+                read by somebody who only looks at the score. */}
+            <AiAssessmentNotice className="mt-1 justify-center" />
             <Button className="mt-4" onClick={() => setPhase('setup')}><Users className="h-4 w-4" /> New discussion</Button>
           </Card>
         </motion.div>

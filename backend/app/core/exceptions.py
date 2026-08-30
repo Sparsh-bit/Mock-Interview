@@ -182,6 +182,46 @@ def _cors_headers(request: Request) -> dict[str, str]:
 # ─── Exception handlers ───────────────────────────────────────────────────────
 
 
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict]:
+    """
+    Pydantic's error list, reduced to what is safe to send back.
+
+    THIS FIXES A 500 THAT WAS LIVE. `exc.errors()` was passed into `JSONResponse` verbatim,
+    and for a Pydantic v2 `value_error` — which is what ANY `field_validator` raising
+    `ValueError` produces — that dict carries `ctx: {"error": ValueError(...)}`. A raw
+    exception object is not JSON-serialisable, so building the 422 threw, the throw fell
+    through to the unhandled-exception handler, and the caller got a 500 for a request that
+    was merely malformed.
+
+    It was not theoretical: `api/v1/admin_offers.py` has five such validators — the offer
+    kind, the value range, the percent bound, the item ids — and every one of them was
+    answering 500. Nothing noticed, because a 500 on a bad admin request reads as a bug in
+    the request.
+
+    `input` AND `url` ARE DROPPED TOO, and that is deliberate rather than incidental.
+    `input` is the caller's own bytes reflected back into an error body — the structured log
+    line already redacts it, and an error response is a poor place to start echoing user
+    data. `url` is a link to pydantic.dev, which is not useful to a candidate and names an
+    internal dependency and its version.
+
+    `loc` is kept, joined into a dotted path, because "which field" is the entire value of a
+    validation error to whoever has to fix the request.
+    """
+    safe: list[dict] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
+        safe.append(
+            {
+                "field": location or "body",
+                "type": str(error.get("type", "invalid")),
+                # `msg` is authored by pydantic or by our own validator — never by the
+                # caller — so it is safe to return and is the actionable half.
+                "message": str(error.get("msg", "Invalid value.")),
+            }
+        )
+    return safe
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers on the FastAPI app. Call in main.py."""
 
@@ -205,7 +245,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "VALIDATION_ERROR",
             "Request validation failed.",
-            {"fields": exc.errors()},
+            {"fields": _safe_validation_errors(exc)},
         )
 
     @app.exception_handler(Exception)

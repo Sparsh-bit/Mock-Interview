@@ -199,6 +199,23 @@ looks finished in the backend and is not, and the missing piece is the one carry
 Additional Factor Authentication. See [[DATA-RESIDENCY]] §3a for the full trace and for the
 specific wrong way to complete it.
 
+### SR-2026Q3-11 — every `ValueError` from a body validator returned 500, not 422 · **medium** · closed
+
+Found by adding the first `field_validator` to the reports API. `handle_validation_error`
+passed `exc.errors()` straight into a `JSONResponse`, and a Pydantic v2 `value_error` — what
+any validator raising `ValueError` produces — carries `ctx: {"error": ValueError(...)}`. A
+raw exception object is not JSON-serialisable, so building the 422 **threw**, the throw fell
+through to the unhandled-exception handler, and the caller got a 500.
+
+**It was already live.** `api/v1/admin_offers.py` has five such validators — the offer kind,
+the value range, the percent bound, the item ids — and every one answered 500 to a request
+that was merely malformed. Nothing noticed, because a 500 on a bad admin request reads as a
+bug in the request.
+
+Fixed by reducing each error to `{field, type, message}`. `input` is dropped with it, which
+closes a smaller thing worth closing on its own: the response was reflecting the caller's own
+bytes back at them, and `url` named the dependency and its version.
+
 ### SR-2026Q3-03 — profile URLs are unvalidated strings · **low** · open
 
 `avatar_url`, `linkedin_url` and `github_url` are `str | None` on both the Pydantic request
@@ -296,10 +313,27 @@ what remains is that a shared cache is keyed on unvalidated user input at all. *
 next quarter:** either narrow the key to a catalogue topic, or state the acceptance
 explicitly in the file.
 
-### SR-2026Q3-07 — nothing says the assessment is machine-generated · **medium** · open → Task 9
+### SR-2026Q3-07 — nothing says the assessment is machine-generated · **medium** · closed
 
-Scores, readiness levels and report prose are model output presented without qualification.
-A candidate can reasonably read a report as an evaluation. Assigned to Task 9.
+Scores, readiness levels and report prose were model output presented without qualification.
+A candidate can reasonably read a report as an evaluation — and this product's own design
+language makes it worse, because `docs/DESIGN-LANGUAGE.md` makes the score the *lit element*
+on the page, rendering it in the most authoritative typography available.
+
+**Closed 2026-08-31.** Every surface that renders a score now carries
+`AiAssessmentNotice`, and the coverage is a SWEEP rather than four edits: the surfaces are
+discovered by scanning the source for the score fields, so a new one joins the check when it
+is written. Three are exempt with reasons — the scripted demo (invented numbers, not an
+assessment of the viewer), the coding workspace (Judge0 actually ran the code, so it is a
+measurement and calling it AI-generated would be false), and the quiz (arithmetic against a
+fixed key). The public share page gets the *full* notice rather than the short one, because
+its reader is usually not the candidate and has none of the product's framing.
+
+The appeal path is `POST /reports/{id}/dispute` with a partial unique index giving one open
+dispute per report, an admin queue at `GET /admin/disputes`, and a three-state resolution so
+"we looked and the score stands" is sayable — a dispute that silently vanishes is worse than
+one refused with a reason. It deliberately does not re-run the model: asking the thing that
+got it wrong to mark its own work is not review.
 
 ### SR-2026Q3-08 — `CLAUDE.md` understates the CI gate · **low** · open
 

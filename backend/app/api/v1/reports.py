@@ -16,8 +16,8 @@ from datetime import UTC, datetime, timedelta
 from time import perf_counter
 
 import structlog
-from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, ValidationError
+from fastapi import APIRouter, Depends, Response, status
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
@@ -2250,6 +2250,164 @@ class PublicReport(BaseModel):
     topic_scores: dict[str, float]
     dimension_scores: dict[str, float]
     created_at: datetime
+
+
+class DisputeRequest(BaseModel):
+    """
+    A candidate's own words about why their assessment is wrong.
+
+    BOUNDED AT THE SCHEMA, not in the handler. `min_length` after stripping is enforced by
+    the validator below because `"   "` clears a naive min_length and is not a reason.
+    """
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def _not_only_whitespace(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Tell us briefly what is wrong with the assessment.")
+        return stripped
+
+
+class DisputeResponse(BaseModel):
+    id: uuid.UUID
+    report_id: uuid.UUID
+    status: str
+    reason: str
+    resolution: str | None = None
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+def _dispute_response(row) -> DisputeResponse:  # noqa: ANN001 - ReportDispute, imported lazily
+    return DisputeResponse(
+        id=row.id,
+        report_id=row.report_id,
+        status=row.status,
+        reason=row.reason,
+        resolution=row.resolution,
+        created_at=row.created_at,
+        resolved_at=row.resolved_at,
+    )
+
+
+async def _owned_report(db: AsyncSession, report_id: uuid.UUID, user_id: uuid.UUID):
+    """
+    The report, if it belongs to this caller. Raises 404 otherwise.
+
+    404 AND NOT 403, the same rule the public share route follows: a 403 confirms the report
+    exists, which is a disclosure in itself and lets somebody enumerate report ids.
+    """
+    from app.core.exceptions import NotFoundError  # noqa: PLC0415
+    from app.models.report import Report  # noqa: PLC0415
+
+    report = await db.scalar(
+        select(Report).where(Report.id == report_id, Report.user_id == user_id)
+    )
+    if report is None:
+        raise NotFoundError("Report", str(report_id))
+    return report
+
+
+@router.post(
+    "/{report_id}/dispute",
+    response_model=DisputeResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Ask a person to review this assessment",
+)
+async def dispute_report(
+    report_id: uuid.UUID,
+    request: DisputeRequest,
+    current_user: CurrentUser,
+    response: Response,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    Flag a report for human review.
+
+    THE POINT OF THE WHOLE THING. A report says whether somebody is ready for a job
+    interview, and a language model wrote it without a human reading it first. It can be
+    wrong in ways that have nothing to do with the candidate — a misread transcript, a
+    correct answer marked down. An automated judgement about a person with no route of
+    appeal is what this exists to prevent.
+
+    IDEMPOTENT ON AN OPEN DISPUTE. A second submission returns the existing one rather than
+    creating a duplicate for somebody to reconcile — two taps on a slow connection are one
+    complaint. The database's partial unique index is what actually guarantees that; this
+    check just makes the common case a 200 instead of an error.
+
+    NOTHING IS SCORED, RE-RUN OR REGENERATED HERE. Raising a dispute records that a person
+    should look; it deliberately does not ask a model to reconsider, because asking the
+    thing that got it wrong to mark its own work is not review.
+    """
+    from app.models.report import ReportDispute  # noqa: PLC0415
+
+    await _owned_report(db, report_id, current_user.user_id)
+
+    existing = await db.scalar(
+        select(ReportDispute).where(
+            ReportDispute.report_id == report_id, ReportDispute.status == "open"
+        )
+    )
+    if existing is not None:
+        # 200, NOT the route's declared 201. Nothing was created, and a client that
+        # distinguishes them can tell "your complaint is already open" from "we took it" —
+        # which is the difference between reassurance and a second submission.
+        response.status_code = status.HTTP_200_OK
+        return _dispute_response(existing)
+
+    row = ReportDispute(
+        report_id=report_id,
+        user_id=current_user.user_id,
+        reason=request.reason,
+        status="open",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+
+    logger.info(
+        "report_disputed",
+        report_id=str(report_id),
+        user_id=str(current_user.user_id),
+        # NOT the reason. It is untrusted free text written by somebody arguing about their
+        # score, and this line goes to the log aggregator; the row carries the detail and a
+        # reviewer reads it there with the report in front of them.
+        reason_chars=len(request.reason),
+    )
+    return _dispute_response(row)
+
+
+@router.get(
+    "/{report_id}/dispute",
+    response_model=DisputeResponse | None,
+    summary="The dispute on this report, if there is one",
+)
+async def get_report_dispute(
+    report_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+):
+    """
+    Whether this report has been disputed, and what came of it.
+
+    Returns the most recent dispute rather than only an open one, so a candidate whose
+    complaint was answered can still read the answer — a resolution nobody can see back is
+    the silent close this feature exists to avoid.
+    """
+    from app.models.report import ReportDispute  # noqa: PLC0415
+
+    await _owned_report(db, report_id, current_user.user_id)
+
+    row = await db.scalar(
+        select(ReportDispute)
+        .where(ReportDispute.report_id == report_id)
+        .order_by(ReportDispute.created_at.desc())
+        .limit(1)
+    )
+    return _dispute_response(row) if row is not None else None
 
 
 #: The one route here a stranger can reach. The share id is an unguessable UUID and that is

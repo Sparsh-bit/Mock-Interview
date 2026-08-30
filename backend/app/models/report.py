@@ -7,8 +7,9 @@ Tables: reports, resume_files
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -122,6 +123,75 @@ class ReportJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # Deliberately none. Nothing needs to walk from a session or a user TO its batch job —
     # every read starts from the session id — and adding a back-reference would put this
     # table into the load path of models that are queried on every authenticated request.
+
+
+class ReportDispute(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    A candidate saying their machine-written assessment is wrong.
+
+    WHY THE PRODUCT NEEDS THIS AT ALL. A report states whether somebody is ready for a job
+    interview, as a score and a readiness level, and a language model wrote it with no human
+    reading it first. The candidate can reasonably act on that — practise differently, apply
+    or not apply, believe something about themselves — and the model can be wrong in ways
+    that have nothing to do with them: it can mark a correct answer down, misread a
+    transcript, or produce feedback that does not fit the session. An automated judgement
+    about a person with no route of appeal is the thing worth avoiding here, and it is worth
+    avoiding on its own terms rather than because a regulation demands this exact shape.
+
+    NOT `InterviewFeedback`, WHICH IS THE OTHER DIRECTION. That table is what the candidate
+    thought of the PRODUCT, in stars. This is the candidate saying the product's judgement of
+    THEM is wrong. Two things called "feedback" in one system is the naming collision that
+    produces a query joining the wrong one.
+
+    A SEPARATE TABLE RATHER THAN COLUMNS ON `reports`, for the deployment reason migrations
+    021 and 022 both set out: migrations here are applied BY HAND, so there is always a
+    window where the code is live and the schema is not. A new table cannot break anything
+    during it — nothing existing reads it — while a new column on `reports` would put itself
+    into every SELECT on the table the report page loads.
+
+    ONE OPEN DISPUTE PER REPORT, enforced by a partial unique index rather than by the
+    endpoint reading first. A read-then-write check has a window between the read and the
+    write and two taps on a slow connection land in it. PARTIAL, on `status = 'open'`, so a
+    resolved dispute does not stop somebody raising a new one later — a person whose second
+    report has the same problem should not be told they already complained.
+
+    IT CANNOT BE CLOSED SILENTLY. `resolution` is what somebody writes when they decide, and
+    "we looked and the score stands" is a legitimate thing to write there. A dispute that
+    simply vanishes is worse than one that is refused with a reason.
+    """
+
+    __tablename__ = "report_disputes"
+
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("reports.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    #: Denormalised from the report so the ownership check and the admin list do not need a
+    #: join, and so an orphaned dispute is impossible to construct.
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    #: What the candidate says is wrong, in their own words.
+    #:
+    #: UNTRUSTED TEXT, AND THE MOST MOTIVATED IN THE PRODUCT — it is written by somebody
+    #: arguing about their own score. It is bounded here, rendered as text by React, and
+    #: `test_report_dispute.py` fails if any code path passes it to a model. If one ever
+    #: must, it goes through services/ai/untrusted.fence like every other candidate string.
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    #: "open" | "upheld" | "declined"
+    #:
+    #: THREE STATES, NOT TWO. "Declined" has to be sayable: a review that finds the score
+    #: was right is a real outcome and the candidate is entitled to be told it.
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="open", server_default="open", index=True,
+    )
+    #: What the reviewer decided, in words the candidate reads.
+    resolution: Mapped[str | None] = mapped_column(String(2000))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Who resolved it. SET NULL rather than CASCADE — an admin leaving must not erase the
+    #: fact that a dispute was answered.
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
 
 
 class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):

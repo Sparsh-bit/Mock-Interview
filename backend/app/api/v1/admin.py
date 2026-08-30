@@ -787,6 +787,65 @@ async def list_admin_audit(
     }
 
 
+@router.get("/disputes", summary="Assessments a candidate says are wrong")
+async def list_report_disputes(
+    current_user: AdminUser,
+    status_filter: str = Query("open", pattern="^(open|upheld|declined|all)$"),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    The human-review queue for AI-generated assessments.
+
+    WHY IT EXISTS. A report says whether somebody is ready for a job interview and a language
+    model wrote it, unread by a person, in a way the candidate may act on. A dispute route
+    that nobody can see is not an appeal — it is a complaints box with no back.
+
+    OPEN FIRST BY DEFAULT, because the whole value is that somebody works through them.
+    `status_filter=all` is there for looking back at what was decided.
+
+    THE REASON TEXT IS RETURNED AND IT IS UNTRUSTED — written by somebody arguing about their
+    own score, which makes it the most motivated free text in the product. It is bounded at
+    2000 characters by the column, delivered as a JSON string value, and rendered as text by
+    React, which escapes it; `test_pentest_surface.py` pins that no raw-HTML escape hatch
+    exists anywhere in the frontend. It must never be handed to a model, and
+    `test_report_dispute.py` fails if it is.
+    """
+    from app.models.report import Report, ReportDispute  # noqa: PLC0415
+
+    query = (
+        select(ReportDispute, User.email, Report.overall_score, Report.readiness_level)
+        .join(User, User.id == ReportDispute.user_id)
+        .join(Report, Report.id == ReportDispute.report_id)
+    )
+    if status_filter != "all":
+        query = query.where(ReportDispute.status == status_filter)
+
+    rows = (
+        await db.execute(
+            query.order_by(ReportDispute.created_at.desc()).limit(limit)
+        )
+    ).all()
+
+    return {
+        "disputes": [
+            {
+                "id": str(dispute.id),
+                "report_id": str(dispute.report_id),
+                "user_email": email,
+                "raised_at": dispute.created_at,
+                "status": dispute.status,
+                "reason": dispute.reason,
+                "resolution": dispute.resolution,
+                "resolved_at": dispute.resolved_at,
+                "disputed_score": score,
+                "disputed_readiness": readiness,
+            }
+            for dispute, email, score, readiness in rows
+        ]
+    }
+
+
 @router.get("/resumes/flagged", summary="Resumes the integrity check flagged for review")
 async def list_flagged_resumes(
     current_user: AdminUser,

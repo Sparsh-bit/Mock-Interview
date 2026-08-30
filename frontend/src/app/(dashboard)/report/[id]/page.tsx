@@ -23,6 +23,8 @@ import { formatDate } from '@/lib/format-date';
 import { fadeUp, scalePop, staggerContainer, easeOutExpo } from '@/lib/motion';
 import { scoreBand, scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
+import { DisputeAssessment } from '@/components/report/DisputeAssessment';
 
 export const runtime = 'edge';
 
@@ -402,6 +404,21 @@ export default function ReportDetailPage() {
               )}
             </div>
             <OverallScoreRing score={report.overall_score} label={report.overall_score_label} />
+          </div>
+
+          {/* ── THE FULL NOTICE, AND THE ROUTE OUT OF IT ────────────────────────
+              This is the surface the whole labelling exists for: a number in the largest,
+              most confident typography the design language has, next to the words "readiness
+              level", about a real person's employability. docs/DESIGN-LANGUAGE.md makes the
+              score the LIT ELEMENT here — which is exactly what makes it read as a
+              measurement rather than as a model's opinion.
+
+              The dispute control sits WITH the notice rather than at the foot of the page.
+              Telling somebody a machine judged them and putting the appeal three screens
+              below is naming the problem and closing the door. */}
+          <div className="mt-6 space-y-4 border-t border-border pt-6">
+            <AiAssessmentNotice variant="full" />
+            <DisputeAssessment reportId={report.id} />
           </div>
         </Card>
       </motion.div>

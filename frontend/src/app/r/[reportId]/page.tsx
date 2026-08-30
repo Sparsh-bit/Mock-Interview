@@ -8,6 +8,7 @@ import { formatDate } from '@/lib/format-date';
 import { getBrowserApiClient } from '@/lib/api';
 import { scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
 export const runtime = 'edge';
 
@@ -168,6 +169,13 @@ export default function PublicReportPage() {
               </p>
             </div>
           </div>
+
+          {/* FULL VARIANT ON A SHARED REPORT, deliberately. The person reading this is very
+              often NOT the candidate — it is a link they sent to a mentor, a senior, or
+              somebody deciding something about them. That reader has seen none of the
+              product's framing and has the least context for how the number was produced,
+              so this is the surface where the short label is not enough. */}
+          <AiAssessmentNotice variant="full" className="mt-6" />
 
           {data.executive_summary && (
             <p className="mt-6 border-t border-border pt-6 text-sm leading-relaxed text-foreground/85">

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useUserSessions } from '@/hooks/useData';
 import { useActivity, type ActivityType, type ActivityItem } from '@/hooks/useActivity';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
 import { buttonVariants } from '@/components/ui/button';
@@ -21,6 +22,7 @@ import {
   GraduationCap,
   ChevronDown,
 } from 'lucide-react';
+import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
 export const runtime = 'edge';
 
@@ -206,6 +208,10 @@ export default function ReportsListPage() {
           description="Every round you have sat, what it scored, and what the panel would have said."
         />
 
+      {/* ONE NOTICE FOR THE WHOLE LIST, not one per row. Repeating it beside forty score
+          chips is how a caveat becomes wallpaper; here it qualifies every number below it. */}
+      <AiAssessmentNotice />
+
       {error ? (
         <DataError
           title="Could not load your history"
@@ -215,7 +221,7 @@ export default function ReportsListPage() {
         />
       ) : isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <BrandLoader label="Loading your reports" size={56} />
         </div>
       ) : !sessions || sessions.length === 0 ? (
         /* The empty state is the only thing on the page, so it is the lit element — see
