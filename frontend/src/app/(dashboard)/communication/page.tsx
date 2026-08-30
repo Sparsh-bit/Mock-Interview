@@ -271,6 +271,16 @@ export default function CommunicationPage() {
 
   // Reading-mode countdown.
   const [secondsLeft, setSecondsLeft] = useState(0);
+  /*
+   * The countdown, mirrored in a ref.
+   *
+   * The interval needs to know the CURRENT value to decide when time is up, and it cannot read
+   * `secondsLeft` — the closure it captured when `setInterval` was called holds the value from
+   * that render, forever. Reaching for the updater form to get around that is what caused the
+   * bug documented at the interval below, so the value is mirrored here instead: a ref is
+   * readable from a stale closure and writing to it is not a render concern.
+   */
+  const secondsRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const promptText = prompts?.[promptIdx]?.text ?? 'Tell me about yourself.';
@@ -300,17 +310,33 @@ export default function CommunicationPage() {
     // In reading mode, run a countdown for the passage's time budget.
     if (mode === 'reading' && passage) {
       setSecondsLeft(passage.seconds);
+      secondsRef.current = passage.seconds;
       clearTimer();
+      /*
+       * THE SIDE EFFECTS MOVED OUT OF THE STATE UPDATER, and this was a real bug.
+       *
+       * `clearTimer()`, `stopRecording()` and the toast used to live inside
+       * `setSecondsLeft(s => { ... })`. A React state updater must be a PURE function of the
+       * previous state: React is allowed to call it more than once for a single update, and
+       * with `reactStrictMode: true` in next.config.ts it deliberately does so in development.
+       *
+       * So when the passage ran out, the candidate's microphone was stopped twice and they
+       * were told "Time's up" twice — on the one screen in the product where the mic state is
+       * the whole interaction.
+       *
+       * The interval callback is the right home for all three: it already IS an effect, it
+       * fires exactly once per tick, and it can read the live value from `secondsRef` rather
+       * than from a closure that was captured a minute ago.
+       */
       timerRef.current = setInterval(() => {
-        setSecondsLeft((s) => {
-          if (s <= 1) {
-            clearTimer();
-            stopRecording();
-            toast.info("Time's up — submit to see how you did.");
-            return 0;
-          }
-          return s - 1;
-        });
+        const next = secondsRef.current - 1;
+        secondsRef.current = next;
+        setSecondsLeft(next > 0 ? next : 0);
+        if (next <= 0) {
+          clearTimer();
+          stopRecording();
+          toast.info("Time's up — submit to see how you did.");
+        }
       }, 1000);
     }
   };
@@ -330,6 +356,9 @@ export default function CommunicationPage() {
     elapsedRef.current = 0;
     startRef.current = null;
     setSecondsLeft(0);
+    // Kept in step with the state it mirrors: a ref that drifts from its own state is worse
+    // than no ref, because the next countdown would start from the previous passage's total.
+    secondsRef.current = 0;
   };
 
   // Ask the AI for ONE follow-up that probes the candidate's answer. Their

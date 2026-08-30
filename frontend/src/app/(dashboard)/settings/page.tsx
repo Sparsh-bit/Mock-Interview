@@ -19,20 +19,51 @@ export default function SettingsPage() {
   const [resetSent, setResetSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Persist the notification preference locally so the choice actually sticks
-  // across reloads (rather than resetting every visit).
+  /*
+   * Persist the notification preference locally so the choice actually sticks across reloads
+   * rather than resetting every visit.
+   *
+   * WRAPPED, BECAUSE `localStorage` THROWS RATHER THAN RETURNING NULL when a browser is
+   * blocking site data — a private window, or the "block cookies" setting people turn on and
+   * forget. Unguarded, this threw inside an effect, which React surfaces as a render error:
+   * the entire settings page would fail to appear, for a preference that is a convenience.
+   * NudgeDeck already wraps its own two calls for exactly this reason and says so; this file
+   * was the one that missed the lesson.
+   */
   useEffect(() => {
-    const saved = localStorage.getItem(NOTIFY_KEY);
-    if (saved !== null) setEmailNotifications(saved === 'true');
+    try {
+      const saved = localStorage.getItem(NOTIFY_KEY);
+      if (saved !== null) setEmailNotifications(saved === 'true');
+    } catch {
+      // Blocked site data. The default is "on", which is the safe direction for a preference
+      // nobody has expressed — and the page still renders, which is the point.
+    }
   }, []);
 
   const toggleEmailNotifications = () => {
-    setEmailNotifications((v) => {
-      const next = !v;
+    /*
+     * THE WRITE AND THE TOAST MOVED OUT OF THE STATE UPDATER, and this was a real bug rather
+     * than a tidy-up.
+     *
+     * They used to live inside `setEmailNotifications(v => { ... })`. A React state updater
+     * must be a PURE function of the previous state: React is allowed to call it more than
+     * once for a single update, and with `reactStrictMode: true` in next.config.ts it
+     * deliberately does so in development. So every toggle wrote to localStorage twice and
+     * fired the toast twice — one tap, two notifications.
+     *
+     * Computing `next` from the current state here is correct because this is the only writer
+     * and it runs from a click, not from a queue of batched updates.
+     */
+    const next = !emailNotifications;
+    setEmailNotifications(next);
+    try {
       localStorage.setItem(NOTIFY_KEY, String(next));
-      toast.success(next ? 'Email summaries turned on' : 'Email summaries turned off');
-      return next;
-    });
+    } catch {
+      // Blocked site data. The toggle still applies for this visit, which is worth doing —
+      // and telling somebody their preference did not save would be more alarming than
+      // useful for a setting they can simply set again.
+    }
+    toast.success(next ? 'Email summaries turned on' : 'Email summaries turned off');
   };
 
 

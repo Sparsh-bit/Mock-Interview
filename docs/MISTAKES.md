@@ -380,6 +380,42 @@ model true ran afterwards.
 **Cost:** roughly an hour of rework, and it was entirely self-inflicted.
 **Pattern:** [P10](#p10--i-put-a-destructive-command-in-a-cleanup-line-and-ran-it-without-reading-it).
 
+### M18 — Side effects inside a React state updater, in two places
+
+Found by a guard written for the first one, which then found the second.
+
+`settings/page.tsx` had `localStorage.setItem` and a `toast.success` inside
+`setEmailNotifications(v => { ... })`. `communication/page.tsx` had `clearTimer()`,
+`stopRecording()` and a toast inside `setSecondsLeft(s => { ... })` — on the screen where the
+microphone state IS the interaction.
+
+**A state updater must be a pure function of the previous state.** React may call it more than
+once for a single update, and `reactStrictMode: true` in `next.config.ts` guarantees it does so
+in development. One tap produced two toasts; one expiring countdown stopped the mic twice.
+
+The same file also read `localStorage` unguarded inside a `useEffect`. It **throws** rather than
+returning null when a browser blocks site data, and a throw in an effect is a render error — so
+the entire settings page failed to appear because of a stored preference. `NudgeDeck` already
+wrapped its own calls and explained why; this file had simply never learned it.
+
+**Pattern:** [P3](#p3--i-re-introduce-traps-this-codebase-has-already-documented) — the
+countermeasure was already written down, in a neighbouring component, in a comment.
+
+### M19 — Two guards that fired on correct code, in the test written to catch M18
+
+Both in `browser-storage.test.ts`, both [P5](#p5--my-assertions-are-often-stricter-than-the-property):
+
+- **Counting `try` and `catch` inside a fixed twelve-line window.** A guarded call was flagged
+  because the look-back happened to include the *closing* `} catch` of an earlier, unrelated
+  block, so opens and closes balanced. The fix is to ask which marker is NEARER, not how many
+  of each there are.
+- **`/\bset[A-Z]\w*\(/` to mean "a state setter"** — which matches `setInterval` and
+  `setTimeout`, so it reported every timer in the app. The property is a `useState` setter
+  called with a function of the previous state; timers take a callback of no arguments.
+
+Both would have trained me to "fix" working code, which is the specific damage a
+false-positive assertion does.
+
 ---
 
 ## Additions
