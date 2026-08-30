@@ -366,6 +366,10 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 api_key=settings.ANTHROPIC_API_KEY,
                 model=settings.ANTHROPIC_MODEL,
                 provider_name="anthropic",
+                # What a CHEAP call on an allowlisted feature runs on instead — see
+                # services/ai/model_routing.py for which features, and why it is not all of
+                # them. Empty switches the routing off entirely.
+                cheap_model=settings.ANTHROPIC_CHEAP_MODEL,
                 # Cost guards — see anthropic_provider.py.
                 prompt_caching=settings.ANTHROPIC_PROMPT_CACHING,
                 max_output_tokens=settings.ANTHROPIC_MAX_OUTPUT_TOKENS,

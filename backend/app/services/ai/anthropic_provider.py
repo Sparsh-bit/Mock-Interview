@@ -57,6 +57,7 @@ from .base_provider import (
     ProviderRequest,
     ProviderResponse,
 )
+from .model_routing import wants_cheap_model
 
 logger = structlog.get_logger(__name__)
 
@@ -232,6 +233,34 @@ _TIER_PARAMS: dict[CostTier, tuple[bool, str]] = {
     CostTier.DEEP: (True, "medium"),
 }
 
+# ─── What each model will actually accept ─────────────────────────────────────
+#
+# NOT EVERY CLAUDE MODEL TAKES THE SAME PARAMETERS, and finding that out costs a 400 per
+# call rather than a degraded answer. Measured against the live API while wiring CostTier.
+# CHEAP to Haiku:
+#
+#   claude-haiku-4-5   output_config.effort      -> 400 "This model does not support the
+#                                                   effort parameter"
+#                      thinking {type: adaptive} -> 400 "adaptive thinking is not supported"
+#                      thinking {type: disabled} -> fine
+#                      temperature               -> fine (unlike Sonnet 5, which rejects it)
+#
+# THE FIRST TWO WOULD HAVE BEEN INVISIBLE IN THE WORST WAY. A panel turn that 400s produces
+# no turns, the caller falls back to putting the bare question, and the candidate sees the
+# interview continue — slightly flatter, with the bank's own wording. That exact symptom
+# ("sometimes the old UI comes in with the different question") already cost this repo a
+# four-round investigation that went looking in the TTS layer. So the constraint is absorbed
+# here, beside the two this provider already absorbs, rather than left to fail per call.
+#
+# (supports_effort, supports_adaptive_thinking). Anything not listed defaults to True/True,
+# which is the Sonnet/Opus family behaviour and the safe assumption for a model added later:
+# being wrong that way is one loud 400 on a new model, while defaulting to False would
+# silently stop buying reasoning on a DEEP call and nothing would say so.
+_MODEL_CAPABILITIES: dict[str, tuple[bool, bool]] = {
+    "claude-haiku-4-5": (False, False),
+}
+_DEFAULT_CAPABILITIES = (True, True)
+
 # When thinking is on, `max_tokens` is a combined ceiling for reasoning AND the
 # visible answer — a tight budget yields a truncated response. Guarantee this
 # much room before enabling it; below that we drop to non-thinking rather than
@@ -256,6 +285,7 @@ class AnthropicProvider(BaseAIProvider):
         model: str,
         provider_name: str = "anthropic",
         *,
+        cheap_model: str = "",
         prompt_caching: bool = False,
         max_output_tokens: int = 4096,
         daily_budget_usd: float = 2.0,
@@ -266,6 +296,10 @@ class AnthropicProvider(BaseAIProvider):
         if not api_key:
             raise ValueError("anthropic provider requires a non-empty api_key.")
         self._model = model
+        #: What a CHEAP call on an allowlisted feature runs on instead. EMPTY MEANS OFF,
+        #: and that is the one-line way to undo the routing without a deploy: every call
+        #: falls back to `model` and nothing else changes.
+        self._cheap_model = (cheap_model or "").strip()
         self._provider_name = provider_name
         self._prompt_caching = prompt_caching
         self._user_daily_budget_usd = user_daily_budget_usd
@@ -288,6 +322,25 @@ class AnthropicProvider(BaseAIProvider):
     def model_name(self) -> str:
         return self._model
 
+    def _select_model(self, request: ProviderRequest) -> str:
+        """
+        The configured model, or the cheap one when policy says this call may have it.
+
+        THE POLICY IS NOT HERE, DELIBERATELY. `model_routing.wants_cheap_model` decides
+        which features tolerate a smaller model, because that is a fact about the feature
+        rather than about Anthropic — base_provider.py's rule that an implementation carries
+        no business logic, and the same split burst_rung.py already makes. What lives here
+        is the only genuinely vendor-shaped part: the model's NAME.
+
+        Falls through to the configured model whenever `cheap_model` is empty, which is what
+        makes clearing ANTHROPIC_CHEAP_MODEL a complete off switch.
+        """
+        if not self._cheap_model:
+            return self._model
+        if wants_cheap_model(feature=request.feature, cost_tier=request.cost_tier):
+            return self._cheap_model
+        return self._model
+
     def _build_payload(
         self, request: ProviderRequest
     ) -> tuple[dict, str, int, bool, str]:
@@ -302,7 +355,7 @@ class AnthropicProvider(BaseAIProvider):
 
         Returns the payload plus the four derived values the caller logs.
         """
-        model = request.model_override or self._model
+        model = request.model_override or self._select_model(request)
         system_blocks, messages = self._split_messages(request)
 
         # Clamp output. The call site asked for max_tokens; the budget guard
@@ -319,6 +372,24 @@ class AnthropicProvider(BaseAIProvider):
             )
             thinking_enabled = False
 
+        supports_effort, supports_adaptive = _MODEL_CAPABILITIES.get(
+            model, _DEFAULT_CAPABILITIES
+        )
+        if thinking_enabled and not supports_adaptive:
+            # DEGRADED, NOT REFUSED, and loudly. Reaching here means a tier that wanted
+            # reasoning has been pointed at a model that cannot do it — a configuration
+            # mistake rather than a runtime condition. Failing the call would take the
+            # feature down; sending it anyway is a guaranteed 400. Answering without
+            # reasoning is the only option that produces an answer, and the log line is
+            # what stops it being mistaken for the reasoning having happened.
+            logger.warning(
+                "anthropic_adaptive_thinking_unsupported_on_model",
+                model=model,
+                cost_tier=request.cost_tier.value,
+                hint="this model has no adaptive thinking; the call ran without it",
+            )
+            thinking_enabled = False
+
         payload: dict = {
             "model": model,
             "max_tokens": max_tokens,
@@ -326,8 +397,13 @@ class AnthropicProvider(BaseAIProvider):
             # Explicit either way: omitting `thinking` on Sonnet 5 silently
             # enables adaptive reasoning and bills for it.
             "thinking": {"type": "adaptive"} if thinking_enabled else {"type": "disabled"},
-            "output_config": {"effort": effort},
         }
+        if supports_effort:
+            # OMITTED ENTIRELY rather than sent with some neutral value, because Haiku 4.5
+            # rejects the FIELD, not a particular value of it. There is nothing to lose:
+            # effort caps overall token spend, and a model without the knob is already the
+            # cheap one.
+            payload["output_config"] = {"effort": effort}
         if system_blocks:
             payload["system"] = system_blocks
 

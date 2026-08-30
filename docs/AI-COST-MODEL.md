@@ -251,6 +251,77 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
    Only `report_generation` and `report_analysis` are eligible, enforced by a closed
    allowlist — nothing a candidate is waiting on may be answered on somebody else's
    schedule.
+6b. **Route `CostTier.CHEAP` to Claude Haiku** — **built, off by default, and the numbers
+   are the reason.** `claude-haiku-4-5` was already in the price sheet at $1/$5 per MTok
+   against Sonnet 5's $3/$15 and was never selected by anything: every cost tier resolved to
+   the same model, so the cheapest tier in the product still ran on Sonnet.
+
+   It is selectable now, via `ANTHROPIC_CHEAP_MODEL` plus a feature allowlist in
+   `services/ai/model_routing.py`. **The allowlist is panel dialogue only** —
+   `gd_panel_turn` and `interview_panel_turn`. The other four CHEAP call sites either GRADE
+   a candidate (`gd_evaluation`, `communication_evaluation`) or write into a cache served to
+   every other candidate on the track (`question_bank`, `study_resources`), and a model that
+   marks half a point more generously is a worse product in a way nobody sees from a diff.
+
+   ### The side-by-side
+
+   Nine realistic panel moments — wrong answer, good answer, half-right answer, "I don't
+   know", intro, skill check, candidate question, code review, pivot — both models, the real
+   `interview_panel.md` system block, identical briefs. Run **twice**, independently.
+
+   | | Sonnet 5 | Haiku 4.5 |
+   |---|---|---|
+   | usable responses | 9 / 9 | 9 / 9 |
+   | schema or `is_valid` failures | 0 | 0 |
+   | invented speakers | 0 | 0 |
+   | mean words per line | 14.3 / 14.4 | 18.5 / 18.2 |
+   | longest line (words) | 23 / 23 | **46 / 41** |
+   | **lines over the prompt's 25-word limit** | **0 / 0** | **6 / 6** |
+   | name-rule violations | 0 / 0 | 1 / 1 |
+   | wrong `asked_question` flag | 2 / 2 | 0 / 1 |
+   | mean latency | 2.39s / 2.37s | 2.35s / 2.47s |
+   | cost for the nine calls | $0.0516 / $0.0502 | $0.0207 / $0.0152 |
+
+   **Haiku is 60–70% cheaper at the same latency, and it breaks the panel's own rules.**
+   `interview_panel.md` says "One or two sentences" and "Twenty-five words". Haiku produced
+   six over-length lines out of roughly twenty-one in *both* runs where Sonnet produced
+   zero in both; the reproducibility is what makes this a finding rather than a bad sample.
+   It used the candidate's name in a turn whose brief said in capitals not to. And on the
+   wrong-answer scenario it explained ConcurrentModificationException instead of asking the
+   follow-up — the exact lecturing that prompt was rewritten to stop and that
+   `tests/test_panel_brevity.py` exists to guard.
+
+   It is fair to Haiku to record what it won: it never invented a speaker, never failed the
+   schema, and set `asked_question` correctly more often than Sonnet did.
+
+   ### What it would be worth, and why it is off
+
+   Panel dialogue is ~16 calls in an interview and up to ~26 in a GD round, at roughly
+   $0.0057 each on Sonnet. At 65% off that is about **−$0.06 an interview and −$0.10 a GD
+   round** — the same order as the Batches API saving, and available on the live path where
+   batching can never go.
+
+   It is off because buying it means shipping a panel that breaks its own brevity rule about
+   a third of the time, and that is a product decision rather than a default. **What would
+   change the answer:** the brevity rule is currently prose in the prompt. A validator on
+   the returned turns — reject any line over twenty-five words the way `is_valid` already
+   rejects an empty one, and let `generate_structured` retry — would make the rule
+   enforceable rather than advisory, at which point Haiku's cost profile makes it the
+   obviously correct model for dialogue. That is the next piece of work here, not more
+   comparison.
+
+   ### One bug this found, which was the point of measuring
+
+   The first run failed **9 out of 9** on Haiku with `400 invalid_request_error: This model
+   does not support the effort parameter`. Haiku 4.5 rejects `output_config.effort` and
+   rejects adaptive thinking; Sonnet 5 requires the first and accepts the second. The
+   provider now carries a per-model capability table and omits what a model will not take.
+
+   Shipped unmeasured, that would have been close to invisible: a panel turn that 400s
+   returns no turns, the caller falls back to putting the bare question, and the interview
+   carries on looking slightly flat. That exact symptom has already cost this repo a
+   four-round investigation into the wrong layer.
+
 7. **Shorten the report.** It sits on its 5,580-token output cap, which means the model is
    being truncated rather than choosing to stop — so nobody knows how long it *would* be.
    Output is $0.0837 of $0.1233. Any honest reduction here is money, and a report a

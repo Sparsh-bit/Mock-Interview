@@ -258,6 +258,30 @@ class Settings(BaseSettings):
             "rejects temperature/top_p/top_k, so the provider drops them."
         ),
     )
+    ANTHROPIC_CHEAP_MODEL: str = Field(
+        default="",
+        description=(
+            "The model CostTier.CHEAP calls run on, for the features listed in "
+            "services/ai/model_routing.CHEAP_MODEL_FEATURES. EMPTY means no routing: every "
+            "call uses ANTHROPIC_MODEL, which is the behaviour this app has always had.\n\n"
+            "EMPTY BY DEFAULT BECAUSE THE MEASUREMENT SAID SO, and the measurement is the "
+            "whole point of this setting existing. 'claude-haiku-4-5' is $1/$5 per MTok "
+            "against Sonnet 5's $3/$15, and on a nine-scenario panel-dialogue comparison it "
+            "came out 60-70% cheaper at the same latency, with no schema failures and no "
+            "invented speakers — genuinely good numbers.\n\n"
+            "It also broke the panel's own rules. interview_panel.md says 'One or two "
+            "sentences' and 'Twenty-five words'; across two independent runs Haiku produced "
+            "SIX over-length lines out of roughly twenty-one each time (longest 46 and 41 "
+            "words) where Sonnet produced ZERO, and once used the candidate's name in a turn "
+            "explicitly told not to. On a wrong answer it explained the concept instead of "
+            "asking the follow-up — which is precisely the lecturing that prompt was "
+            "rewritten to stop, and that tests/test_panel_brevity.py exists to guard.\n\n"
+            "So the routing is built, tested, and one value away from live; turning it on is "
+            "a decision to accept a measured quality regression for a real saving, and that "
+            "is not a default. See docs/AI-COST-MODEL.md for the full table and for what "
+            "would have to change first."
+        ),
+    )
     ANTHROPIC_PROMPT_CACHING: bool = Field(
         default=True,
         description=(

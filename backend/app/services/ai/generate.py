@@ -106,6 +106,12 @@ async def generate_structured(
                         temperature=temperature,
                         cost_tier=cost_tier,
                         cache_system=cache_system,
+                        # THE SAME `context` THE LEDGER AND THE BURST RUNG ALREADY USE, and
+                        # passed down rather than re-derived so the three cannot disagree
+                        # about what this call is. It lets a provider apply a feature-keyed
+                        # policy — currently model routing — without any of the thirteen
+                        # call sites learning that such a policy exists.
+                        feature=context,
                     )
                 )
             except ProviderError as exc:

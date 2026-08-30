@@ -88,6 +88,19 @@ class ProviderRequest(BaseModel):
     cache_system: bool = False
     #: Optionally override the configured model for a single request.
     model_override: str | None = None
+    #: WHICH FEATURE THIS CALL IS, verbatim from the `context=` at the generate_structured
+    #: call site — "interview_panel_turn", "report_analysis", "gd_evaluation".
+    #:
+    #: Carried so a provider can act on a POLICY that is keyed by feature without any
+    #: caller having to know it exists. Today that is model routing: see
+    #: services/ai/model_routing.py, which decides that panel dialogue may run on a smaller
+    #: model while the two CHEAP calls that SCORE a candidate may not. A cost tier alone
+    #: cannot express that — both are CHEAP.
+    #:
+    #: None when the caller declared nothing, and every policy reading it must treat that as
+    #: "not on any allowlist". A provider must still not contain the policy itself; this is
+    #: the fact the policy needs, not the decision.
+    feature: str | None = None
 
 
 class ProviderResponse(BaseModel):
