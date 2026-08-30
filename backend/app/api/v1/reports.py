@@ -118,6 +118,19 @@ def report_ai_budget_seconds() -> float:
 #: is never a final result: generation retries and replaces it.
 _UNSCORED = "unscored_fallback"
 
+#: Marker for the placeholder written while a BATCH is in flight.
+#:
+#: DELIBERATELY NOT `_UNSCORED`, even though both are placeholders showing 0/100. They mean
+#: opposite things and the candidate must be told the opposite thing: unscored means scoring
+#: was ATTEMPTED AND FAILED and there is a retry button, while this means the report is being
+#: written right now and the only correct action is to wait. Sharing one marker would put
+#: "Report Unavailable — try again" on a report that is on its way, and each of those retries
+#: would spend one of three attempts against a failure that had not happened.
+#:
+#: It is also why `should_regenerate` treats it separately: a pending placeholder must never
+#: burn an unscored attempt.
+_BATCH_PENDING = "batch_pending"
+
 #: How many times a placeholder may retry AI scoring before it stops trying.
 #:
 #: Bounds spend. The client requests the report on every page view, and each
@@ -366,6 +379,223 @@ def _stored_analyses(raw_report: dict | None) -> list[dict]:
     return out
 
 
+async def _submit_report_batch(
+    db,
+    *,
+    session_id,
+    user_id,
+    summary_messages,
+    transcript_lines: list[str],
+    question_ids: list[str],
+    prompt_builder,
+    candidate_name: str,
+    transcript_rows,
+    delivery_block,
+    previous_block,
+):
+    """
+    Submit this report as one batch and write the job plus its pending placeholder.
+
+    Returns the placeholder Report on success and None on ANY failure — at which point the
+    caller generates synchronously in the same request. Nothing here may raise: a report must
+    never fail because a cheaper way of producing it was unavailable.
+
+    Nothing is committed. The job row and the placeholder are written in the caller's
+    transaction so they land together or not at all — a job with no placeholder would leave
+    the candidate on a 404, and a placeholder with no job would leave a report saying
+    "preparing" that nothing is ever going to finish.
+    """
+    from app.models.report import Report, ReportJob  # noqa: PLC0415
+    from app.services.ai import batch as ai_batch  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.report.batch_job import SUMMARY_PART, part_id  # noqa: PLC0415
+    from app.services.report.composer import (  # noqa: PLC0415
+        SUMMARY_TOKENS,
+        batch_token_budget,
+        plan_batches,
+    )
+
+    # THE SAME PARTS THE SYNCHRONOUS PATH WOULD RUN, built from the same planner and the
+    # same message helpers. A batch that asked a different question would produce a
+    # different report, and only one of the two paths is exercised on any given request.
+    parts: list[ai_batch.BatchPart] = [
+        ai_batch.BatchPart(
+            custom_id=SUMMARY_PART,
+            feature="report_generation",
+            messages=summary_messages,
+            max_tokens=SUMMARY_TOKENS,
+            cost_tier=CostTier.BALANCED,
+            cache_system=True,
+        )
+    ]
+    #: custom_id -> what that part covers, so a result can be matched back to its questions.
+    part_map: dict[str, dict] = {
+        SUMMARY_PART: {"kind": "summary", "question_ids": []},
+    }
+    for planned in plan_batches(len(question_ids)):
+        covered = question_ids[planned.start : planned.end]
+        slice_lines = transcript_lines[planned.start : planned.end]
+        custom_id = part_id(covered)
+        parts.append(
+            ai_batch.BatchPart(
+                custom_id=custom_id,
+                feature="report_analysis",
+                messages=prompt_builder.chat_static(
+                    system_template="report_analysis",
+                    user_content=analysis_user_content(slice_lines),
+                ),
+                max_tokens=batch_token_budget(len(slice_lines)),
+                cost_tier=CostTier.BALANCED,
+                cache_system=True,
+            )
+        )
+        part_map[custom_id] = {"kind": "analysis", "question_ids": covered}
+
+    try:
+        provider_name, batch_id = await ai_batch.submit(parts)
+    except Exception as exc:  # noqa: BLE001
+        # DELIBERATELY BROAD, and it is the load-bearing line in this function. Whatever
+        # goes wrong — a provider with no batch API, a refused submission, a spent daily
+        # budget, an SDK raising something unmapped — the answer is the same and it is
+        # never "the candidate has no report": fall through and generate synchronously.
+        logger.warning(
+            "report_batch_submit_failed_using_synchronous_path",
+            session_id=str(session_id),
+            error_type=type(exc).__name__,
+            error=str(exc)[:200],
+            parts=len(parts),
+        )
+        return None
+
+    topics_attempted = sorted({topic_name for _, _, topic_name in transcript_rows})
+    placeholder = Report(
+        session_id=session_id,
+        user_id=user_id,
+        overall_score=0.0,
+        overall_score_label="Preparing",
+        executive_summary=(
+            f"{candidate_name} completed {len(transcript_rows)} questions covering "
+            f"{', '.join(topics_attempted) or 'several topics'}. The full report is being "
+            "written now and will appear on this page as soon as it is ready — there is "
+            "nothing to do and nothing has gone wrong."
+        ),
+        readiness_level="needs_more_practice",
+        strengths=[],
+        weaknesses=[],
+        topic_scores={},
+        improvement_roadmap=[],
+        raw_report={
+            # NOT _UNSCORED. This report has not failed; it is on its way. The two
+            # placeholders look identical on screen and mean opposite things — see
+            # _BATCH_PENDING.
+            "generated_by": _BATCH_PENDING,
+            "strategy": _GENERATION_STRATEGY,
+            "batch_id": batch_id,
+            "topics_attempted": topics_attempted,
+            "delivery": delivery_block,
+            "previous": previous_block,
+        },
+    )
+    db.add(placeholder)
+    db.add(
+        ReportJob(
+            session_id=session_id,
+            user_id=user_id,
+            provider=provider_name,
+            batch_id=batch_id,
+            status="processing",
+            parts=part_map,
+            lookup_failures=0,
+            strategy=_GENERATION_STRATEGY,
+        )
+    )
+    logger.info(
+        "report_batch_submitted",
+        session_id=str(session_id),
+        batch_id=batch_id,
+        provider=provider_name,
+        parts=len(parts),
+        questions=len(question_ids),
+    )
+    return placeholder
+
+
+def analysis_user_content(slice_lines: list[str]) -> str:
+    """
+    The user turn for one analysis batch.
+
+    MODULE SCOPE FOR THE SAME REASON `_TRANSCRIPT_SEPARATOR` IS. The rubric in the system
+    block is provider-cached on its exact bytes, and a batched request and a synchronous one
+    must be the same request — otherwise a report generated through the Batches API is a
+    different report from one generated live, and no test that exercises only one of them
+    would ever show it.
+    """
+    return (
+        f"Grade these {len(slice_lines)} answers. Return exactly "
+        f"{len(slice_lines)} entries in `question_analysis`, in this "
+        "order, copying each `question_id` exactly.\n\n"
+        + _TRANSCRIPT_SEPARATOR.join(slice_lines)
+    )
+
+
+async def load_batch_job(db, session_id):
+    """
+    This session's batch job row, or None — and None on ANY failure, deliberately.
+
+    THE PRE-MIGRATION WINDOW IS THE REASON THIS SWALLOWS. Migrations here are applied by
+    hand against Supabase, so there is always a period where the code is live and
+    `report_jobs` does not exist yet. A raised UndefinedTable would 500 the report endpoint
+    for every candidate during that window — and a 500 from this handler reaches the browser
+    as an opaque CORS failure. Answering "no job" instead degrades exactly one thing: reports
+    are generated synchronously at full price until the migration lands, which is what they
+    did before this feature existed.
+
+    The rollback matters as much as the except. A failed statement poisons the transaction in
+    Postgres, so every later query on this session would fail too — including the ones that
+    write the report.
+    """
+    from sqlalchemy.exc import SQLAlchemyError  # noqa: PLC0415
+
+    from app.models.report import ReportJob  # noqa: PLC0415
+
+    try:
+        found = await db.execute(select(ReportJob).where(ReportJob.session_id == session_id))
+        return found.scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        logger.warning(
+            "report_batch_job_lookup_failed",
+            session_id=str(session_id),
+            error_type=type(exc).__name__,
+            error=str(exc)[:200],
+            hint="report_jobs may not be migrated yet; reports will generate synchronously",
+        )
+        return None
+
+
+def parse_batch_part(schema, raw: str):
+    """
+    Turn one collected batch result into a validated response, or None.
+
+    None rather than an exception because a bad part is an ordinary outcome here: the caller
+    simply generates that part synchronously instead, which is the same thing it does when a
+    part errored at the provider. The report never depends on the batch having worked.
+    """
+    from app.services.ai.json_validator import AIValidationError, JSONValidator  # noqa: PLC0415
+    from app.services.ai.response_parser import ResponseParser  # noqa: PLC0415
+
+    try:
+        return ResponseParser(JSONValidator()).parse(raw, schema)
+    except (AIValidationError, ValidationError, ValueError) as exc:
+        logger.warning(
+            "report_batch_part_unparseable",
+            schema=schema.__name__,
+            error_type=type(exc).__name__,
+            error=str(exc)[:200],
+        )
+        return None
+
+
 def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
     """
     Decide whether a stored report warrants another (billed) AI scoring call.
@@ -383,6 +613,14 @@ def should_regenerate(raw_report: dict | None) -> tuple[bool, int]:
       become an open-ended bill funded by page reloads.
     """
     raw = raw_report or {}
+    if raw.get("generated_by") == _BATCH_PENDING:
+        # A BATCH IS IN FLIGHT. Regenerate — but with zero attempts spent, because nothing
+        # has failed. The handler decides what "regenerate" means here: if the batch has
+        # ended it builds the report from the results, if it is still running it re-serves
+        # this placeholder, and only if it has been abandoned does it call the model. None of
+        # those three is a failure, so none of them may count against the retry cap that
+        # exists to stop paying for a model that keeps failing.
+        return True, 0
     if raw.get("generated_by") != _UNSCORED:
         # ── A SCORED REPORT MISSING PART OF ITS BREAKDOWN IS FINISHED, NOT FINAL ──────────
         #
@@ -569,6 +807,11 @@ class ReportResponse(BaseModel):
     #: covering all four tells a candidate who has used their day's practice the same
     #: thing as one hitting an outage, and only one of those has an action.
     unscored_reason: str | None = None
+    #: Null on an ordinary report. "processing" while this report is being produced by a
+    #: batch that has not come back yet — which is a completely different state from
+    #: `unscored_reason`, and the client renders it as "we are preparing your report" with
+    #: no retry button rather than as a failure. See _BATCH_PENDING.
+    job_status: str | None = None
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -613,6 +856,96 @@ async def list_activity(
         )
         for a in rows
     ]
+
+
+class ReportJobStatus(BaseModel):
+    """
+    Where a report that is being written in the background has got to.
+
+    `status` is one of:
+
+      none        — this session never used the batch path. Nothing to wait for; the report
+                    is produced synchronously by POST /generate as it always was.
+      processing  — a batch is out. Poll again; do NOT call generate in a loop.
+      completed   — the results are in and stored. Call generate once: it builds the report
+                    from them without another model call.
+      failed |
+      abandoned   — the cheap route did not work out. Call generate once: it produces the
+                    report synchronously at full price. Nothing is lost but money.
+
+    THE CLIENT NEVER HAS TO GET THIS RIGHT. Every one of these states is also handled inside
+    POST /generate, which polls, collects and falls back on its own. This endpoint exists so
+    the page can show a truthful "preparing your report" instead of a spinner, not because
+    anything depends on it being called.
+    """
+
+    status: str
+    #: Parts finished over parts submitted, for a progress line. Both 0 when unknown.
+    done: int = 0
+    total: int = 0
+    #: Seconds since the batch was submitted, so the page can say something honest about
+    #: how long this has been going.
+    age_seconds: int = 0
+    #: Why it ended badly, when it did. Null otherwise.
+    error: str | None = None
+
+
+@router.get(
+    "/{session_id}/job",
+    response_model=ReportJobStatus,
+    summary="Is this report still being written in the background?",
+)
+async def get_report_job(
+    session_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ReportJobStatus:
+    """
+    Poll a batch-generated report's progress, advancing it if the batch has finished.
+
+    NOT RATE LIMITED, and that is deliberate rather than an omission. This makes no model
+    call: at worst it is one status request to the provider, and the alternative — counting
+    polls against the hourly report limit — would lock a candidate out of the report they are
+    politely waiting for. The report rate limit sits where an expensive call is about to be
+    made, which is inside POST /generate.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.models.session import InterviewSession  # noqa: PLC0415
+    from app.services.report import batch_runner  # noqa: PLC0415
+
+    # OWNERSHIP IS CHECKED AGAINST THE SESSION, not against the job row. A job that does not
+    # exist and a job belonging to somebody else must be indistinguishable from here, or this
+    # endpoint answers "is session X real?" for any id a caller cares to try.
+    owned = await db.execute(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == current_user.user_id,
+        )
+    )
+    if owned.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    job = await load_batch_job(db, session_id)
+    if job is None:
+        # Never batched, or the table is not migrated yet. Either way there is nothing in
+        # flight and POST /generate is the whole story.
+        return ReportJobStatus(status="none")
+
+    advanced = await batch_runner.advance(db, job)
+    await db.commit()
+
+    counts = advanced.counts
+    total = sum(counts.values()) if counts else len(job.parts or {})
+    done = (total - counts.get("processing", 0)) if counts else 0
+    submitted = batch_runner.view_of(job)
+    return ReportJobStatus(
+        status=advanced.status.value,
+        done=max(0, done),
+        total=max(0, total),
+        age_seconds=int(submitted.age_seconds(datetime.now(UTC))),
+        error=job.error,
+    )
 
 
 @router.get("/{session_id}", response_model=ReportResponse)
@@ -694,6 +1027,8 @@ async def generate_report(
         ReportGeneratorResponse,
         ReportSummaryResponse,
     )
+    from app.services.report.batch_job import SUMMARY_PART as _SUMMARY_PART  # noqa: PLC0415
+    from app.services.report.batch_job import part_id as _part_id  # noqa: PLC0415
     from app.services.report.composer import (  # noqa: PLC0415
         SUMMARY_TOKENS,
         Batch,
@@ -778,6 +1113,10 @@ async def generate_report(
         completion_attempts = (
             _prior if isinstance(_prior, int) and not isinstance(_prior, bool) and _prior >= 0 else 0
         )
+
+    #: This session's batch job, if it has ever had one. None also means "the report_jobs
+    #: table is not there yet" — see load_batch_job, which never raises.
+    batch_job = await load_batch_job(db, session_id)
 
     # Load full transcript: question + answer per turn. Scoring is deferred to
     # this report step, so there are no per-answer Score rows -- the AI scores
@@ -1001,6 +1340,56 @@ async def generate_report(
         else None
     )
 
+    # ── A BATCH ALREADY OUT: COLLECT IT, OR SAY IT IS STILL COMING ───────────────────────
+    #
+    # DONE HERE, IN `generate`, AND NOT ONLY IN THE POLLING ENDPOINT. That is the whole
+    # reason this feature works without the frontend's cooperation: a candidate who closes
+    # the tab and opens their report tomorrow gets the finished batch collected on the spot.
+    # If nobody ever polls, nothing is lost — results wait at the provider for 29 days.
+    #
+    # Above the rate limit, deliberately. Collecting a finished batch and re-serving a
+    # pending placeholder are both free; the limit exists to bound repeated EXPENSIVE calls,
+    # and charging a candidate an hourly unit for refreshing a page that says "preparing your
+    # report" would lock them out of the report they are waiting for.
+    #
+    #: custom_id -> raw model text, for parts a batch has already answered. Empty on the
+    #: ordinary synchronous path, which is every path when REPORT_BATCH_ENABLED is off.
+    batch_results: dict[str, str] = {}
+    if batch_job is not None:
+        from app.services.report import batch_runner  # noqa: PLC0415
+        from app.services.report.batch_job import JobStatus  # noqa: PLC0415
+
+        advanced = await batch_runner.advance(db, batch_job)
+        batch_results = advanced.results
+        if advanced.status is JobStatus.PROCESSING:
+            # Still out and still inside its deadline. Re-serve the pending placeholder
+            # untouched — no model call, no attempt spent, nothing said that is not true.
+            await db.commit()
+            if existing_report is not None:
+                return _build_report_response(existing_report)
+            # A job with no placeholder should be impossible: they are written in one
+            # transaction. If it happens anyway, generating synchronously is the safe answer
+            # — a duplicated report costs money, a missing one costs the candidate.
+            logger.warning(
+                "report_batch_job_without_placeholder",
+                session_id=str(session_id),
+                batch_id=batch_job.batch_id,
+            )
+        else:
+            # Terminal, one way or another. `batch_results` carries whatever landed — which
+            # may be everything, some of it, or nothing. Every one of those three continues
+            # into the ordinary generation path below, which already knows how to build a
+            # report out of the parts it has and to call the model for the parts it lacks.
+            logger.info(
+                "report_batch_job_terminal",
+                session_id=str(session_id),
+                batch_id=batch_job.batch_id,
+                status=advanced.status.value,
+                collected=len(batch_results),
+                failed=len(advanced.failures),
+            )
+            await db.commit()
+
     # RATE LIMIT HERE, not as a route dependency — and this is the fix for the 429s.
     #
     # As a dependency it ran before the handler, so it counted EVERY call, including the
@@ -1059,6 +1448,47 @@ async def generate_report(
     # so far stays usable; the write below re-acquires a connection lazily. Net effect:
     # a report occupies a connection for milliseconds at each end instead of for the
     # whole generation.
+
+    # ── THE CHEAP ROUTE: SUBMIT THE WHOLE REPORT AS ONE BATCH ────────────────────────────
+    #
+    # Half price on input and output, answered on the provider's schedule instead of now.
+    # The report is the only thing in this product nobody is waiting on — the interview is
+    # over — which is why it is the only thing allowed near this API. See
+    # services/ai/batch.BATCHABLE_FEATURES.
+    #
+    # FIRST GENERATION ONLY, and that is a real restriction rather than a simplification.
+    # A retry or a completion pass happens because a candidate is sitting on the report page
+    # pressing a button, so it wants to be fast, not cheap. It would also mean overwriting a
+    # partial report — which holds analyses somebody already paid for — with a pending
+    # placeholder, and losing them.
+    #
+    # EVERY WAY THIS CAN FAIL ENDS IN THE SYNCHRONOUS PATH BELOW, in this same request. No
+    # provider that batches, a refused submission, a spent daily budget, a table that has
+    # not been migrated yet: all of them fall through, and the candidate gets an ordinary
+    # report at the ordinary price without ever learning a cheaper route was tried.
+    if (
+        settings.REPORT_BATCH_ENABLED
+        and existing_report is None
+        and batch_job is None
+        and transcript_rows
+    ):
+        submitted = await _submit_report_batch(
+            db,
+            session_id=session_id,
+            user_id=current_user.user_id,
+            summary_messages=summary_messages,
+            transcript_lines=transcript_lines,
+            question_ids=question_ids,
+            prompt_builder=prompt_builder,
+            candidate_name=candidate_name,
+            transcript_rows=transcript_rows,
+            delivery_block=delivery_block,
+            previous_block=previous_block,
+        )
+        if submitted is not None:
+            await db.commit()
+            return _build_report_response(submitted)
+
     await db.commit()
 
     try:
@@ -1125,17 +1555,40 @@ async def generate_report(
         async def _one_batch(batch: Batch) -> ReportAnalysisResponse:
             """Grade one slice of the interview. Only this slice is lost if it fails."""
             slice_lines = [transcript_lines[pending_idx[i]] for i in range(batch.start, batch.end)]
+
+            # ── ALREADY PAID FOR, IF A BATCH ANSWERED IT ─────────────────────────────────
+            #
+            # Matched on the question ids this slice covers, not on the batch's position —
+            # see batch_job.part_id. If anything has graded a question since the batch was
+            # submitted, the slice is different, the id does not match, and this falls
+            # through to a live call. That is the safe direction: the cost of a miss is one
+            # full-price call, the cost of a wrong match is a candidate reading somebody
+            # else's feedback under their own question.
+            covered = [question_ids[pending_idx[i]] for i in range(batch.start, batch.end)]
+            collected = batch_results.get(_part_id(covered))
+            if collected:
+                parsed = parse_batch_part(ReportAnalysisResponse, collected)
+                if parsed is not None and len(parsed.question_analysis) >= max(
+                    1, len(slice_lines) - 1
+                ):
+                    # THE SAME `is_valid` RULE THE LIVE CALL APPLIES, restated rather than
+                    # skipped. A batched response is not more trustworthy for having been
+                    # cheap: a batch that returned two entries for six questions is the
+                    # truncation the split exists to avoid, and accepting it would put a
+                    # report on screen missing most of its breakdown.
+                    return parsed
+                logger.warning(
+                    "report_batch_analysis_unusable_regenerating",
+                    session_id=str(session_id),
+                    questions=len(slice_lines),
+                )
+
             async with part_gate:
                 result, _raw = await generate_structured(
                     ReportAnalysisResponse,
                     prompt_builder.chat_static(
                         system_template="report_analysis",
-                        user_content=(
-                            f"Grade these {len(slice_lines)} answers. Return exactly "
-                            f"{len(slice_lines)} entries in `question_analysis`, in this "
-                            "order, copying each `question_id` exactly.\n\n"
-                            + _TRANSCRIPT_SEPARATOR.join(slice_lines)
-                        ),
+                        user_content=analysis_user_content(slice_lines),
                     ),
                     max_tokens=batch_token_budget(len(slice_lines)),
                     # ── TWO ATTEMPTS PER PROVIDER, AND I HAD CUT THIS TO ONE, WRONGLY ──────
@@ -1168,6 +1621,19 @@ async def generate_report(
 
         async def _summary() -> tuple[ReportSummaryResponse, str]:
             """The whole-interview view. Derived from the batches if this fails."""
+            collected = batch_results.get(_SUMMARY_PART)
+            if collected:
+                parsed = parse_batch_part(ReportSummaryResponse, collected)
+                if parsed is not None and all(
+                    k in (parsed.dimension_scores or {}) for k in _REQUIRED_DIMENSIONS
+                ):
+                    # Same `is_valid` as the live call below: a summary with no competency
+                    # bars renders a blank panel, and being cheap does not excuse that.
+                    return parsed, collected
+                logger.warning(
+                    "report_batch_summary_unusable_regenerating", session_id=str(session_id)
+                )
+
             async with part_gate:
                 return await generate_structured(
                     ReportSummaryResponse,
@@ -1978,4 +2444,9 @@ def _build_report_response(report) -> ReportResponse:
         unscored_reason=(
             raw.get("unscored_reason") if raw.get("generated_by") == _UNSCORED else None
         ),
+        # "processing" ONLY while a batch is genuinely still out. Derived from the stored
+        # marker rather than from the job table so this function stays a pure read of one
+        # row — it is called from the share page and the public report too, neither of which
+        # has any business querying a job.
+        job_status=("processing" if raw.get("generated_by") == _BATCH_PENDING else None),
     )

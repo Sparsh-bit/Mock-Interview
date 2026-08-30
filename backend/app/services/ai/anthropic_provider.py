@@ -212,6 +212,14 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 _DEFAULT_PRICE = (3.00, 15.00)
 
+#: What the Message Batches API bills, as a multiplier on the standard price.
+#:
+#: Anthropic discounts batched input AND output by 50%. This is not a cache and does not
+#: interact with one — a batched request whose system block is also cached pays 0.5x the
+#: already-reduced cache-read rate. It is the largest single saving available on the report,
+#: which is the one call in this product nobody is waiting on: see docs/AI-COST-MODEL.md.
+_BATCH_PRICE_MULTIPLIER = 0.5
+
 # ─── CostTier → Claude reasoning parameters ───────────────────────────────────
 # `effort` caps overall token spend; `thinking` decides whether we buy
 # reasoning at all. Sonnet 5 accepts thinking:{"type":"disabled"} (unlike
@@ -280,6 +288,53 @@ class AnthropicProvider(BaseAIProvider):
     def model_name(self) -> str:
         return self._model
 
+    def _build_payload(
+        self, request: ProviderRequest
+    ) -> tuple[dict, str, int, bool, str]:
+        """
+        Translate a ProviderRequest into a Claude Messages payload.
+
+        EXTRACTED SO THE BATCH PATH CANNOT DRIFT FROM THE LIVE ONE. A batched request is
+        the same request, submitted differently — the model, the output clamp, the
+        thinking/effort mapping and the system/messages split must all be identical, or a
+        report generated in a batch is a different report from one generated live and
+        nobody would find out from a test that only exercises one of them.
+
+        Returns the payload plus the four derived values the caller logs.
+        """
+        model = request.model_override or self._model
+        system_blocks, messages = self._split_messages(request)
+
+        # Clamp output. The call site asked for max_tokens; the budget guard
+        # gets the final say.
+        max_tokens = min(request.max_tokens, self._max_output_tokens)
+
+        thinking_enabled, effort = _TIER_PARAMS[request.cost_tier]
+        if thinking_enabled and max_tokens < _MIN_TOKENS_FOR_THINKING:
+            # Not enough headroom for reasoning + a complete answer.
+            logger.debug(
+                "anthropic_thinking_skipped_low_budget",
+                max_tokens=max_tokens,
+                required=_MIN_TOKENS_FOR_THINKING,
+            )
+            thinking_enabled = False
+
+        payload: dict = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+            # Explicit either way: omitting `thinking` on Sonnet 5 silently
+            # enables adaptive reasoning and bills for it.
+            "thinking": {"type": "adaptive"} if thinking_enabled else {"type": "disabled"},
+            "output_config": {"effort": effort},
+        }
+        if system_blocks:
+            payload["system"] = system_blocks
+
+        # NOTE: request.temperature is intentionally not forwarded — Sonnet 5
+        # returns a 400 for non-default sampling parameters.
+        return payload, model, max_tokens, thinking_enabled, effort
+
     async def complete(self, request: ProviderRequest) -> ProviderResponse:
         # Refuse before spending, not after. Raising ProviderError lets the
         # generation layer fall through to the free provider, so features keep
@@ -331,37 +386,7 @@ class AnthropicProvider(BaseAIProvider):
                     provider=self.provider_name,
                 )
 
-        model = request.model_override or self._model
-        system_blocks, messages = self._split_messages(request)
-
-        # Clamp output. The call site asked for max_tokens; the budget guard
-        # gets the final say.
-        max_tokens = min(request.max_tokens, self._max_output_tokens)
-
-        thinking_enabled, effort = _TIER_PARAMS[request.cost_tier]
-        if thinking_enabled and max_tokens < _MIN_TOKENS_FOR_THINKING:
-            # Not enough headroom for reasoning + a complete answer.
-            logger.debug(
-                "anthropic_thinking_skipped_low_budget",
-                max_tokens=max_tokens,
-                required=_MIN_TOKENS_FOR_THINKING,
-            )
-            thinking_enabled = False
-
-        payload: dict = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": messages,
-            # Explicit either way: omitting `thinking` on Sonnet 5 silently
-            # enables adaptive reasoning and bills for it.
-            "thinking": {"type": "adaptive"} if thinking_enabled else {"type": "disabled"},
-            "output_config": {"effort": effort},
-        }
-        if system_blocks:
-            payload["system"] = system_blocks
-
-        # NOTE: request.temperature is intentionally not forwarded — Sonnet 5
-        # returns a 400 for non-default sampling parameters.
+        payload, model, max_tokens, thinking_enabled, effort = self._build_payload(request)
 
         log = logger.bind(
             provider=self.provider_name,
@@ -409,6 +434,207 @@ class AnthropicProvider(BaseAIProvider):
         if (uid := _current_user_scope()) is not None:
             await _record_spend(cost, uid)
         return response
+
+    # ─── Message Batches API ──────────────────────────────────────────────
+    #
+    # Half price, and answered whenever Anthropic gets to it rather than now. That trade is
+    # only acceptable where nobody is waiting, which in this product is the report and
+    # nothing else — the allowlist that enforces it lives in services/ai/batch.py, not here,
+    # because a provider must not be the thing deciding which features exist.
+    #
+    # None of these four methods raise anything but ProviderError, same as `complete`.
+
+    @property
+    def supports_batching(self) -> bool:
+        return True
+
+    def build_batch_request(self, custom_id: str, request: ProviderRequest) -> dict:
+        """
+        One entry in a batch, from the same ProviderRequest `complete` would take.
+
+        `custom_id` is how a result is matched back to the part that asked for it. The
+        Batches API does NOT preserve order — results come back in whatever order they
+        finished — so this id is the only link between a response and the questions it was
+        supposed to grade. Getting it wrong would silently attach one candidate's
+        per-question feedback to a different set of questions.
+        """
+        payload, _model, _max_tokens, _thinking, _effort = self._build_payload(request)
+        return {"custom_id": custom_id, "params": payload}
+
+    async def submit_batch(self, requests: list[dict]) -> str:
+        """
+        Hand a set of requests to the Batches API. Returns the provider's batch id.
+
+        THE DAILY BREAKER IS CHECKED HERE TOO. A batch is billed like any other call — half
+        price, but not free — and submitting one is the moment the money is committed, even
+        though it is spent later. Skipping the check because the response has not arrived
+        yet would leave a hole in the circuit breaker exactly the size of the most
+        expensive feature in the product.
+        """
+        if not requests:
+            raise ProviderError("cannot submit an empty batch", provider=self.provider_name)
+
+        if self._daily_budget_usd > 0:
+            spent = await _spend_today()
+            if spent >= self._daily_budget_usd:
+                logger.error(
+                    "ai_daily_budget_exceeded_on_batch_submit",
+                    spent_usd=round(spent, 4),
+                    budget_usd=self._daily_budget_usd,
+                )
+                raise BudgetExceededError(
+                    f"Daily AI budget of ${self._daily_budget_usd:.2f} reached "
+                    f"(${spent:.4f} spent). The batch was not submitted.",
+                    provider=self.provider_name,
+                )
+
+        try:
+            # `type: ignore` because the SDK types `requests` as a TypedDict whose
+            # `params` is the full MessageCreateParams. We build that payload in
+            # _build_payload, which is dynamically shaped (`thinking` and `output_config`
+            # vary by cost tier) and is already the exact dict `messages.create` accepts —
+            # the same one, by construction. Narrowing it to the TypedDict here would mean
+            # duplicating the builder for the batch path, which is precisely the drift
+            # _build_payload exists to prevent.
+            batch = await self._client.messages.batches.create(
+                requests=requests  # type: ignore[arg-type]
+            )
+        except anthropic.APIStatusError as exc:
+            body = str(exc.message)[:500]
+            logger.error(
+                "anthropic_batch_submit_failed",
+                status_code=exc.status_code,
+                body=body,
+                parts=len(requests),
+            )
+            raise ProviderError(
+                f"anthropic batch submit returned {exc.status_code}: {body}",
+                provider=self.provider_name,
+                status_code=exc.status_code,
+                raw_error=body,
+            ) from exc
+        except anthropic.APIConnectionError as exc:
+            logger.error("anthropic_batch_submit_network_error", error=str(exc))
+            raise ProviderError(
+                f"anthropic batch submit connection error: {exc}",
+                provider=self.provider_name,
+            ) from exc
+
+        logger.info(
+            "anthropic_batch_submitted",
+            batch_id=batch.id,
+            parts=len(requests),
+            model=self._model,
+        )
+        return batch.id
+
+    async def retrieve_batch(self, batch_id: str) -> tuple[str, dict[str, int]]:
+        """
+        (processing_status, request_counts) for a submitted batch.
+
+        `processing_status` is Anthropic's own vocabulary — "in_progress", "canceling",
+        "ended" — and is deliberately NOT translated here. The state machine that reads it
+        lives in services/report/batch_job.py and is the one place that decides what a
+        status means; mapping it twice is how the two would come to disagree.
+        """
+        try:
+            batch = await self._client.messages.batches.retrieve(batch_id)
+        except anthropic.APIStatusError as exc:
+            body = str(exc.message)[:500]
+            raise ProviderError(
+                f"anthropic batch retrieve returned {exc.status_code}: {body}",
+                provider=self.provider_name,
+                status_code=exc.status_code,
+                raw_error=body,
+            ) from exc
+        except anthropic.APIConnectionError as exc:
+            raise ProviderError(
+                f"anthropic batch retrieve connection error: {exc}",
+                provider=self.provider_name,
+            ) from exc
+
+        counts = getattr(batch, "request_counts", None)
+        return str(batch.processing_status), {
+            "processing": getattr(counts, "processing", 0) or 0,
+            "succeeded": getattr(counts, "succeeded", 0) or 0,
+            "errored": getattr(counts, "errored", 0) or 0,
+            "canceled": getattr(counts, "canceled", 0) or 0,
+            "expired": getattr(counts, "expired", 0) or 0,
+        }
+
+    async def batch_results(self, batch_id: str) -> dict[str, ProviderResponse | str]:
+        """
+        Every finished part of an ended batch, keyed by the custom_id that asked for it.
+
+        A part that succeeded maps to a ProviderResponse costed at the batch rate. A part
+        that errored, expired or was cancelled maps to a STRING saying which — not to an
+        exception and not to None. Per-part failure is an ordinary outcome here rather
+        than an error: the report is already built to survive losing some of its analysis
+        batches, so one dead part must not take the ones that worked down with it.
+        """
+        out: dict[str, ProviderResponse | str] = {}
+        log = logger.bind(provider=self.provider_name, batch_id=batch_id)
+        try:
+            async for entry in await self._client.messages.batches.results(batch_id):
+                custom_id = str(getattr(entry, "custom_id", "") or "")
+                if not custom_id:
+                    continue
+                result = getattr(entry, "result", None)
+                kind = str(getattr(result, "type", "") or "unknown")
+                message = getattr(result, "message", None)
+                if kind != "succeeded" or message is None:
+                    # "errored" | "expired" | "canceled". Recorded rather than raised:
+                    # see the docstring.
+                    log.warning("anthropic_batch_part_failed", custom_id=custom_id, type=kind)
+                    out[custom_id] = kind
+                    continue
+                try:
+                    out[custom_id] = self._to_response(
+                        message,
+                        message.model,
+                        log.bind(custom_id=custom_id),
+                        price_multiplier=_BATCH_PRICE_MULTIPLIER,
+                    )
+                except ProviderError as exc:
+                    # A refusal comes back as a successful batch entry whose message has
+                    # stop_reason="refusal". _to_response raises on that, and it is one
+                    # part's problem, not the batch's.
+                    log.warning(
+                        "anthropic_batch_part_refused", custom_id=custom_id, error=str(exc)
+                    )
+                    out[custom_id] = "refused"
+        except anthropic.APIStatusError as exc:
+            body = str(exc.message)[:500]
+            raise ProviderError(
+                f"anthropic batch results returned {exc.status_code}: {body}",
+                provider=self.provider_name,
+                status_code=exc.status_code,
+                raw_error=body,
+            ) from exc
+        except anthropic.APIConnectionError as exc:
+            raise ProviderError(
+                f"anthropic batch results connection error: {exc}",
+                provider=self.provider_name,
+            ) from exc
+
+        # THE SPEND IS RECORDED HERE, WHEN IT IS KNOWN, not at submit time when it is not.
+        # Against the global breaker only: results are collected by a poll that may belong
+        # to a different request, or to no user's request at all, and attributing a
+        # batch's cost to whoever happened to poll for it would be worse than not
+        # attributing it. The per-user allowance is charged by services/billing/credits.py
+        # when the report is started, which is the honest place for it.
+        billed = sum(
+            r.estimated_cost_usd or 0.0 for r in out.values() if isinstance(r, ProviderResponse)
+        )
+        if billed:
+            await _record_spend(billed)
+            log.info(
+                "anthropic_batch_spend",
+                parts=len(out),
+                estimated_cost_usd=round(billed, 6),
+                discount_multiplier=_BATCH_PRICE_MULTIPLIER,
+            )
+        return out
 
     async def health_check(self) -> bool:
         """
@@ -486,9 +712,23 @@ class AnthropicProvider(BaseAIProvider):
         return [block], turns
 
     def _to_response(
-        self, message: anthropic.types.Message, model: str, log: structlog.BoundLogger
+        self,
+        message: anthropic.types.Message,
+        model: str,
+        log: structlog.BoundLogger,
+        *,
+        price_multiplier: float = 1.0,
     ) -> ProviderResponse:
-        """Normalize a Claude Message into ProviderResponse."""
+        """
+        Normalize a Claude Message into ProviderResponse.
+
+        `price_multiplier` is 0.5 for a message answered through the Batches API and 1.0
+        otherwise. It is a parameter rather than a separate cost function because the
+        ledger and the daily spend cap must see ONE cost model: a batched report that
+        reported its full price would make the batch look worthless in `ai_usage`, and one
+        that reported nothing would make the breaker stop counting the most expensive
+        feature in the product.
+        """
         # Check stop_reason before reading content: on a refusal `content` is
         # empty or partial, so indexing it blindly would raise.
         if message.stop_reason == "refusal":
@@ -518,15 +758,20 @@ class AnthropicProvider(BaseAIProvider):
 
         in_price, out_price = _PRICE_PER_MTOK.get(model, _DEFAULT_PRICE)
         cost = (
-            uncached_in * in_price
-            + cache_write * in_price * 1.25
-            + cached * in_price * 0.10
-            + out * out_price
-        ) / 1_000_000
+            (
+                uncached_in * in_price
+                + cache_write * in_price * 1.25
+                + cached * in_price * 0.10
+                + out * out_price
+            )
+            * price_multiplier
+            / 1_000_000
+        )
 
         log.info(
             "provider_request_complete",
             stop_reason=message.stop_reason,
+            batched=price_multiplier != 1.0,
             input_tokens=uncached_in,
             cached_input_tokens=cached,
             cache_write_tokens=cache_write,

@@ -15,7 +15,7 @@ from .consent import ConsentEvent
 from .prep import PrepProgress
 from .progress import RatingEvent
 from .question import FollowUpQuestion, Question, Subtopic, Topic
-from .report import Report, ResumeFile
+from .report import Report, ReportJob, ResumeFile
 from .research import CompanyResearch
 from .security import UserSession
 from .session import Answer, InterviewSession, Score, VoiceTranscript
@@ -49,6 +49,7 @@ __all__ = [
     # Report
     "PrepProgress",
     "Report",
+    "ReportJob",
     "CompanyResearch",
     "ResumeFile",
     # Consent (DPDP §6 evidence ledger)

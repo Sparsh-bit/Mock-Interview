@@ -69,6 +69,61 @@ class Report(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     user: Mapped[User] = relationship("User", back_populates="reports")  # type: ignore[name-defined]
 
 
+class ReportJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """
+    One attempt to produce a report through the Anthropic Message Batches API.
+
+    A batch is answered on the provider's schedule rather than inside the request, so the
+    work outlives the HTTP call that started it and something has to remember it. This row
+    is that memory: the batch id, which parts were submitted and what each part was for.
+
+    UNIQUE ON session_id, AND THAT UNIQUENESS IS A SAFETY PROPERTY, not tidiness. It is what
+    makes "one batch attempt per session, ever" true in the database rather than in a code
+    path somebody can later add a branch to — see services/report/batch_job.may_batch. Two
+    rows would mean two batches billed for one report, racing each other to write it.
+
+    A ROW IS NEVER DELETED WHEN A JOB FAILS. The terminal row is precisely what routes this
+    session to the synchronous path for good; deleting it would make the session look
+    untried and start the loop the design exists to rule out.
+    """
+
+    __tablename__ = "report_jobs"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        unique=True, nullable=False, index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    #: Which vendor holds the batch. Stored rather than assumed: a deployment can change
+    #: AI_PROVIDER between submitting a batch and collecting it, and polling the wrong
+    #: vendor for someone else's batch id is a confusing way to fail.
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: The provider's own batch id, used to poll and to fetch results.
+    batch_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    #: processing | completed | failed | abandoned — see batch_job.JobStatus.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")
+    #: custom_id -> what that part was asked to do, so a result can be matched back to the
+    #: questions it graded. The Batches API returns results in COMPLETION order, so without
+    #: this a six-question analysis could be attached to the wrong six questions.
+    parts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    #: Consecutive failures to retrieve the batch's status. Reset on any successful poll;
+    #: past a small ceiling the job is abandoned, because a batch nobody can see is a report
+    #: that would otherwise wait forever.
+    lookup_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Why it ended, when it ended badly. Null on a healthy job.
+    error: Mapped[str | None] = mapped_column(Text)
+    #: Which generation strategy submitted this, mirroring reports.raw_report.strategy.
+    strategy: Mapped[str | None] = mapped_column(String(32))
+
+    # ── Relationships ──────────────────────────────────────────────────────
+    #
+    # Deliberately none. Nothing needs to walk from a session or a user TO its batch job —
+    # every read starts from the session id — and adding a back-reference would put this
+    # table into the load path of models that are queried on every authenticated request.
+
+
 class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """
     An uploaded candidate resume file.

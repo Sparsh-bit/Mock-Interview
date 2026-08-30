@@ -7,11 +7,13 @@ import {
   type ReportData,
   useGenerateReport,
   useReport,
+  useReportJob,
   useToggleShareReport,
 } from '@/hooks/useData';
 import { motion } from 'framer-motion';
 import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ExternalLink, ListChecks, Loader2, RefreshCw, ShieldCheck, Sparkles, TrendingUp, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { Card } from '@/components/ui/card';
 import { ShareMenu } from '@/components/report/ShareMenu';
 import { Badge } from '@/components/ui/badge';
@@ -194,6 +196,14 @@ export default function ReportDetailPage() {
    */
   const requested = useRef(false);
   const unscored = !!report?.unscored_reason;
+  /**
+   * BEING WRITTEN RIGHT NOW, WHICH IS NOT THE SAME AS HAVING FAILED. When the server
+   * generates a report through the batch API it stores a placeholder and answers
+   * `job_status: 'processing'`. That report shows 0/100 and empty panels exactly like an
+   * unscored one and means the opposite thing — so it must never reach the unscored branch,
+   * which would offer a retry against a failure that has not happened.
+   */
+  const preparing = report?.job_status === 'processing';
   useEffect(() => {
     if (isLoading || error || requested.current) return;
     if (report && !unscored) return;
@@ -203,6 +213,34 @@ export default function ReportDetailPage() {
     // every render of a page that is deliberately allowed to do this exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, error, report, unscored]);
+
+  /**
+   * Poll the batch only while one is actually out. A cheap READ — no model call — which is
+   * why it can be a query on an interval when generation cannot.
+   */
+  const job = useReportJob(sessionId, preparing);
+
+  /**
+   * The batch came back. Ask for the report ONCE.
+   *
+   * A SECOND REF, not the one above, and deliberately. `requested` guards the first
+   * automatic generation of a visit; this guards the single call that turns a finished batch
+   * into a report. Sharing one would mean a batch that completes on a page which had already
+   * auto-generated never gets collected, and the candidate would sit on "preparing" until
+   * they reloaded.
+   *
+   * Safe to call for `failed` and `abandoned` too: the server treats those as "the cheap
+   * route did not work out" and generates synchronously in that same request. There is no
+   * state here where the right answer is to do nothing.
+   */
+  const collected = useRef(false);
+  useEffect(() => {
+    if (!preparing || collected.current) return;
+    if (!job.data || job.data.status === 'processing' || job.data.status === 'none') return;
+    collected.current = true;
+    generate.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preparing, job.data]);
 
   const handleShare = () => {
     if (!report) return;
@@ -216,8 +254,38 @@ export default function ReportDetailPage() {
   if (isLoading || generate.isPending) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
+        <BrandLoader label="Loading your report" size={56} />
         <AIWorkingIndicator messages={REPORT_GENERATION_MESSAGES} intervalMs={5000} />
+      </div>
+    );
+  }
+
+  /**
+   * WAITING ON A BATCH. Checked BEFORE the error branch and before the report renders,
+   * because the placeholder underneath is a real 200 with a 0/100 in it — falling through
+   * would draw an empty report as though that were the answer.
+   *
+   * No retry button. The one action that would make this worse is generating again, and a
+   * button is an invitation to do exactly that. The page polls and replaces itself.
+   */
+  if (preparing) {
+    const done = job.data?.done ?? 0;
+    const total = job.data?.total ?? 0;
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
+        <BrandLoader label="Writing your report" size={56} />
+        <div className="max-w-md space-y-2">
+          <h2 className="text-lg font-semibold">Your report is being written</h2>
+          <p className="text-sm text-muted-foreground">
+            Every answer is being marked individually. This takes a few minutes — you can
+            close this tab and come back; it will be here.
+          </p>
+          {total > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {done} of {total} sections finished
+            </p>
+          )}
+        </div>
       </div>
     );
   }

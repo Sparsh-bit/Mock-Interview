@@ -182,16 +182,34 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
 4. ~~Restructure `gd_panel.md` for prompt caching~~ — **done**, 59% off the GD round.
 5. ~~Restructure `report_generator.md` for prompt caching~~ — **done**, with the study
    resources moved to the verified library. 7.0% off a warm interview.
-6. **The Message Batches API, for reports.** This is now the single largest saving left and
-   it is not a cache: Anthropic bills batch requests at **50%**, and a report is the one
-   call in this product that does not have to be synchronous — the interview is already
-   over. At $0.1233 that is **−$0.062 a report, ~40% of a warm interview**, which is many
-   times everything above put together.
+6. **The Message Batches API, for reports** — **built, off by default.** Anthropic bills
+   batch requests at **50%**, and a report is the one call in this product that does not
+   have to be synchronous — the interview is already over. At $0.1233 that is **−$0.062 a
+   report, ~40% of a warm interview**, which is many times everything above put together.
+   It composes with the caching win above rather than replacing it: a cached read inside a
+   batched request bills at 0.5x the already-reduced cache rate.
 
-   Not done here because it is a product decision, not a refactor: it trades a few minutes
-   of latency for half the cost of the most expensive thing we do. The report page would
-   need a "we are preparing your report" state and a poll or a notification. Worth costing
-   properly before the price is set, because it changes what the free tier can afford.
+   The path exists — `services/ai/batch.py`, `services/report/batch_job.py`,
+   `services/report/batch_runner.py`, the `report_jobs` table and a "your report is being
+   written" state on the report page that polls `GET /reports/{id}/job`. It is gated on
+   `REPORT_BATCH_ENABLED`, which **defaults to false**.
+
+   THE FLAG IS OFF BECAUSE THE REMAINING DECISION IS THE ONE THIS NOTE ALWAYS SAID IT WAS:
+   a product decision, not a refactor. Turning it on changes what somebody sees after
+   finishing an interview from "here is your report" in ~15s to "we are preparing your
+   report" for minutes. That is worth costing before the price is set, because it changes
+   what the free tier can afford — and it is not a call to make by choosing a default.
+
+   What is no longer a risk is the thing that made this feel dangerous. A report cannot get
+   stuck: submission failure runs the synchronous path in the same request, a session gets
+   at most one batch attempt ever (unique on `session_id`), a batch that has not ended by
+   `REPORT_BATCH_MAX_WAIT_SECONDS` is abandoned, and a batch that cannot even be reached is
+   abandoned after three consecutive failed lookups. Every route out ends somewhere a
+   report gets written. `tests/test_report_batch.py` is that argument in full.
+
+   Only `report_generation` and `report_analysis` are eligible, enforced by a closed
+   allowlist — nothing a candidate is waiting on may be answered on somebody else's
+   schedule.
 7. **Shorten the report.** It sits on its 5,580-token output cap, which means the model is
    being truncated rather than choosing to stop — so nobody knows how long it *would* be.
    Output is $0.0837 of $0.1233. Any honest reduction here is money, and a report a

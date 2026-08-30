@@ -82,6 +82,17 @@ export interface ReportData {
    * action they can take.
    */
   unscored_reason?: 'user_quota' | 'service_limit' | 'timeout' | 'provider_unavailable' | null;
+  /**
+   * 'processing' while this report is being written by a background batch that has not come
+   * back yet. Null on every ordinary report.
+   *
+   * NOT THE SAME THING AS `unscored_reason`, and the difference is the whole point. Unscored
+   * means scoring was attempted and FAILED, and the right response is a retry button.
+   * Processing means the report is on its way and the right response is to wait — showing
+   * "Report Unavailable — try again" there would invite retries against a failure that has
+   * not happened, and each one would spend an attempt the candidate may need later.
+   */
+  job_status?: 'processing' | null;
   executive_summary: string;
   readiness_level: string;
   readiness_reasoning: string;
@@ -287,6 +298,52 @@ export function useGenerateReport(sessionId: string) {
       queryClient.setQueryData(['report', sessionId], data);
     },
   });
+}
+
+/**
+ * Where a report being written in the background has got to.
+ *
+ * A QUERY, NOT A MUTATION, AND THAT IS THE RULE THIS FILE ALREADY HOLDS: reads are queries,
+ * billed writes are mutations. Polling this makes no model call — at worst it is one status
+ * request from the server to the provider — so it is safe on an interval in a way
+ * `useGenerateReport` will never be.
+ *
+ * Polls only while `enabled`, which the page ties to a report actually being in flight. A
+ * terminal status stops the interval, so a finished report is not polled and a page left
+ * open on a failed one does not tick forever.
+ */
+export function useReportJob(sessionId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['report-job', sessionId],
+    queryFn: async () => {
+      const api = getBrowserApiClient();
+      const res = await api.get(`/api/v1/reports/${sessionId}/job`);
+      return res.data as ReportJobStatus;
+    },
+    enabled: !!sessionId && enabled,
+    // Five seconds while it is out, nothing once it is not. A batch takes minutes, so this
+    // is far more often than it needs to be — which is the right way round for a page
+    // somebody is sitting in front of, and it costs one cheap read.
+    refetchInterval: (query) =>
+      query.state.data && query.state.data.status !== 'processing' ? false : 5_000,
+    retry: false,
+  });
+}
+
+export interface ReportJobStatus {
+  /**
+   * none       — this report was never batched. Nothing to wait for.
+   * processing — still out. Keep waiting.
+   * completed  — results are in and stored; one generate call builds the report from them.
+   * failed |
+   * abandoned  — the cheap route did not work out; one generate call produces it
+   *              synchronously at full price. Nothing is lost but money.
+   */
+  status: 'none' | 'processing' | 'completed' | 'failed' | 'abandoned';
+  done: number;
+  total: number;
+  age_seconds: number;
+  error?: string | null;
 }
 
 export function useToggleShareReport() {

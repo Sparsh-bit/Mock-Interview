@@ -45,7 +45,31 @@ API = BACKEND / "app" / "api" / "v1"
 #: that they still contain it. Splitting the prompt IMPROVES the cache rather than diluting
 #: it: a batch prompt is re-sent once per batch, so a 13-answer report reads the analysis
 #: rubric from the cache twice within one report instead of never.
-CACHED_TEMPLATES = ("gd_panel", "interview_panel", "report_summary", "report_analysis")
+#: HOW MANY CALL SITES EACH CACHED TEMPLATE IS EXPECTED TO HAVE.
+#:
+#: This was a flat tuple, and the test below asserted that the number of `cache_system=True`
+#: opt-ins EQUALLED the number of templates — one call site each. That held until the report
+#: gained a second way of being generated: the same two prompts, with the same static system
+#: blocks, submitted to the Message Batches API instead of the Messages API (see
+#: _submit_report_batch in api/v1/reports.py). Two call sites, one template, and both of them
+#: correctly cacheable.
+#:
+#: Counting per template rather than in total keeps the check exactly as strict as it was —
+#: an opt-in nobody has declared still fails the suite — while letting it say something the
+#: count could not: WHICH template each opt-in belongs to. The thing being guarded against
+#: is an opt-in on a prompt that is not placeholder-free, and that is a question about a
+#: template, never about a total.
+CACHED_CALL_SITES: dict[str, int] = {
+    "gd_panel": 1,
+    "interview_panel": 1,
+    # Two each: the synchronous path, and the batch path that submits the identical
+    # messages at half price. Both go through PromptBuilder.chat_static, so both are
+    # byte-identical and both read the same provider cache entry.
+    "report_summary": 2,
+    "report_analysis": 2,
+}
+
+CACHED_TEMPLATES = tuple(CACHED_CALL_SITES)
 
 
 def _static_templates() -> set[str]:
@@ -98,13 +122,19 @@ class TestTheCachedPromptIsActuallyStatic:
             "caching costs 25% MORE and never reads."
         )
 
-    def test_exactly_one_call_site_opts_into_caching(self):
+    def test_every_cache_opt_in_is_accounted_for(self):
         # Not a style rule. Every additional opt-in is another chance for a prompt to
         # regain a placeholder and start costing more, and the only symptom is the bill.
-        assert _cache_opt_in_count() == len(CACHED_TEMPLATES), (
+        #
+        # Was "exactly one call site per template". The report now has two ways of being
+        # generated — synchronously, and through the Batches API at half price — sending
+        # the identical static system block either way, so the count is declared per
+        # template in CACHED_CALL_SITES instead of assumed to be one.
+        expected = sum(CACHED_CALL_SITES.values())
+        assert _cache_opt_in_count() == expected, (
             f"{_cache_opt_in_count()} call sites pass cache_system=True but "
-            f"{len(CACHED_TEMPLATES)} templates are listed. Every opt-in needs its template "
-            "listed here and asserted placeholder-free below — an unlisted one costs 25% "
+            f"{expected} are declared in CACHED_CALL_SITES. Every opt-in needs its template "
+            "listed there and asserted placeholder-free below — an unlisted one costs 25% "
             "MORE per call, silently, forever."
         )
 

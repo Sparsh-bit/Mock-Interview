@@ -202,6 +202,24 @@ class BaseAIProvider(ABC):
         Must not raise — return False on failure.
         """
 
+    # ─── Optional: asynchronous batch submission ──────────────────────────
+
+    @property
+    def supports_batching(self) -> bool:
+        """
+        Can this provider take a set of requests now and answer them later, cheaply?
+
+        FALSE HERE ON PURPOSE, and it is not a stub. Most providers in this chain have no
+        such API, and a caller must be able to ask rather than guess — the alternative is
+        `isinstance(provider, AnthropicProvider)` at the call site, which is exactly the
+        coupling this base class exists to forbid.
+
+        A provider that answers True must implement submit_batch / retrieve_batch /
+        batch_results. Nothing in this codebase may batch a call that a person is waiting
+        on: see services/ai/batch.py for the feature allowlist that enforces it.
+        """
+        return False
+
     # ─── Lifecycle ────────────────────────────────────────────────────────
 
     async def close(self) -> None:  # noqa: B027

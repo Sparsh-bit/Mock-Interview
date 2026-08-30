@@ -587,6 +587,53 @@ class Settings(BaseSettings):
     #: still queues, and watch `report_queue_wait_seconds` in the logs to know whether it is
     #: queueing or generation that is slow — they are different problems with different fixes.
     REPORT_CONCURRENCY: int = 12
+
+    # ── Reports through the Message Batches API ──────────────────────────────
+    #
+    # Anthropic bills a batched request at HALF PRICE on both input and output. On a report
+    # measured at $0.1233 that is −$0.062 — about 40% of a warm interview, and more than
+    # every prompt-caching win in this codebase put together. docs/AI-COST-MODEL.md names it
+    # the single largest saving left, and it is not a cache: there is no warm-up, no hit
+    # rate and nothing to restructure. It is a discount for not being in a hurry.
+    #
+    # WHAT IT COSTS IS THE CANDIDATE'S EXPERIENCE, WHICH IS WHY THE DEFAULT IS OFF. A batch
+    # is answered on the provider's schedule — usually minutes, with a 24-hour ceiling —
+    # rather than in the ~15s the split synchronous path takes today. Switching this on
+    # changes what somebody sees after finishing an interview from "here is your report" to
+    # "we are preparing your report", and AI-COST-MODEL.md is explicit that this is a
+    # product decision rather than a refactor, worth costing properly before the price is
+    # set, because it changes what the free tier can afford.
+    #
+    # So the path is complete, tested and one environment variable from live — and flipping
+    # it is somebody's decision, not a default. Everything about the fallback holds either
+    # way: a submission that fails runs synchronously in the same request, and a session
+    # gets at most one batch attempt ever. See services/report/batch_job.py.
+    REPORT_BATCH_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Generate reports through the provider's batch API at half price, accepting "
+            "minutes of latency instead of seconds. Only report_generation and "
+            "report_analysis are ever eligible — nothing a candidate is waiting on can be "
+            "batched, enforced by BATCHABLE_FEATURES in services/ai/batch.py. Ignored when "
+            "the primary provider has no batch API."
+        ),
+    )
+    REPORT_BATCH_MAX_WAIT_SECONDS: int = Field(
+        default=15 * 60,
+        ge=60,
+        description=(
+            "How long a submitted batch may run before the report gives up on it and is "
+            "generated synchronously at full price instead.\n\n"
+            "THIS IS A PATIENCE SETTING, NOT A TIMEOUT. Anthropic's own ceiling is 24 hours "
+            "and most batches finish far inside an hour, so raising this collects more "
+            "batches and saves more money. What bounds it is what somebody who has just "
+            "finished an interview will tolerate before 'your report is being prepared' "
+            "stops sounding like a system that works. Past it they are better served by a "
+            "full-price report than by a cheaper one they have stopped waiting for.\n\n"
+            "The batch is not cancelled when this expires — it may still complete and be "
+            "collected later. The session simply stops being its audience."
+        ),
+    )
     #: Minutes before a report that used up its scoring retries may try again.
     #:
     #: THE RETRY CAP WAS A LIFETIME CAP, AND THAT IS WHY REPORTS STAYED "PENDING" FOREVER.
