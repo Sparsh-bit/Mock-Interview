@@ -28,6 +28,9 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   actually matter, and what breaks when each one is wrong.
 - [[KNOWN-GOOD]] — the state everything was in before the security pass, and why each thing
   is that way
+- [[SECURITY-REVIEW]] — the standing quarterly review against the OWASP web, API and LLM
+  top tens. A clock rather than an audit: the schedule is enforced by a test that fails when
+  the review is overdue, and the log records what each one actually found.
 - [[COMPLIANCE]] — DPDP Act and adjacent regimes: what the code does, the gaps, what has
   since been built (consent ledger, age gate, self-service export and erasure, retention),
   and the blocker list that needs a lawyer and a named officer rather than more code
