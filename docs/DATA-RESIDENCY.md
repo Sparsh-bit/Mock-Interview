@@ -169,6 +169,77 @@ Supporting facts, checked in the code rather than assumed:
 
 ---
 
+## 3a. RBI e-mandate and AFA — the autopay path, traced
+
+**Source:** RBI, *Digital Payments — E-Mandate Framework, 2026*,
+**RBI/CO.DPSS.POLC.No.S56/02.14.003/2026-27, dated 21 April 2026** — <https://www.rbi.org.in>.
+Checked 2026-08-31. It **consolidates and replaces eight earlier circulars** on recurring
+digital transactions, so any note citing the 2019/2021 e-mandate circulars is now out of date.
+
+### Which model is in use
+
+**Razorpay's own recurring rails — the saved-token / subsequent-payment API. Not the
+Subscriptions API, and not a custom token vault.**
+
+The proof is one call, in `services/billing/autopay.py`:
+
+```
+POST https://api.razorpay.com/v1/payments/create/recurring
+  { "amount", "currency", "customer_id", "token", "recurring": "1", "description", "notes" }
+```
+
+That is Razorpay's *Create Subsequent Payment* endpoint. `POST /v1/subscriptions` and
+`plan_id` appear nowhere — this product removed subscriptions on purpose. `autopay_token` is
+an opaque Razorpay reference and **no card data reaches this system at any point**, which a
+test asserts across the whole billing layer.
+
+**So AFA is not ours to perform.** Under the 2026 framework AFA is mandatory *at e-mandate
+registration*, for every channel and every amount, and registration happens inside Razorpay's
+authorisation transaction. Two further obligations also sit elsewhere: the **24-hour
+pre-debit notification is the issuer's**, and **acquirers must ensure their merchants
+comply** — so the compliance chain runs through Razorpay, which is the correct place for it
+given they hold the licence.
+
+Amounts are comfortably inside the exemption: the dearest pack is **₹199** against a
+**₹15,000** ceiling for subsequent transactions without AFA. Pinned by a test, because a
+price change is the one thing that could quietly alter the regulatory shape of the feature.
+
+### The finding that changes the answer
+
+**The mandate registration flow does not exist.** `autopay_token` and `autopay_customer_id`
+are read in three places and **written in none** — verified by parsing every module with
+`ast`, not by grep. Nothing creates a Razorpay customer, nothing runs an authorisation
+transaction, and no webhook captures a `token_id`. There is also **no frontend for autopay
+anywhere**.
+
+The consequence: `is_eligible()` returns *"no saved mandate"* for every account that will
+ever exist, and `charge_saved_token` is unreachable. A second defect confirms it has never
+run — Razorpay lists `order_id`, `email` and `contact` among the mandatory parameters for
+that endpoint and the call sends none of them, so it would be rejected with a 400 even if a
+token appeared.
+
+### The call
+
+> 🟢 **COMPLIANT TODAY — because no money can move.** Auto top-up cannot charge anybody: no
+> mandate can be registered, no token exists, and no user interface reaches it.
+>
+> 🟠 **NEEDS WORK BEFORE IT IS EVER ENABLED**, and the missing piece is exactly the piece
+> where AFA lives. The correct implementation is Razorpay's authorisation transaction —
+> create a customer, run an authorisation payment through Razorpay's own sheet where the
+> issuer performs AFA, and capture `token_id` from the resulting webhook.
+>
+> **The dangerous way to "finish" this** is to populate `autopay_token` from anywhere else —
+> a value copied from the dashboard, a token reused from a one-off payment. That yields a
+> working charge that skipped AFA entirely. `tests/test_autopay_mandate_compliance.py` fails
+> if any code path gains a write to that column, with a message saying why.
+
+Not a lawyer's question, this one: it is a factual statement about which API is called and
+what the code does and does not do. What *would* need confirming is whether the Razorpay
+merchant account is onboarded for recurring payments at all — an acquirer-side setting this
+repository cannot see, and one the 2026 framework makes the acquirer responsible for.
+
+---
+
 ## 4. DPDP cross-border — the position has changed since [[COMPLIANCE]] was written
 
 **Source:** Digital Personal Data Protection Act 2023 §16; **Digital Personal Data Protection

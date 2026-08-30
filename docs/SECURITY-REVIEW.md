@@ -186,6 +186,19 @@ Verified against a real production build served over HTTP: 165 resources across 
 evaluated against the live header with zero violations, the six previously-blocked runtime
 fetches now permitted, and negative controls still refused.
 
+### SR-2026Q3-10 — auto top-up is wired but has no mandate registration flow · **medium** · open
+
+Traced for the RBI e-mandate question and recorded here because it is also a plain product
+defect. `autopay_token` and `autopay_customer_id` are read in three places and written in
+none, so `is_eligible()` refuses every account and `charge_saved_token` is unreachable. The
+charge call would also be rejected by Razorpay for omitting `order_id`, `email` and
+`contact`, which are mandatory on that endpoint — confirming it has never run.
+
+Not a security hole: the failure is closed, and there is no autopay UI. It is a feature that
+looks finished in the backend and is not, and the missing piece is the one carrying the
+Additional Factor Authentication. See [[DATA-RESIDENCY]] §3a for the full trace and for the
+specific wrong way to complete it.
+
 ### SR-2026Q3-03 — profile URLs are unvalidated strings · **low** · open
 
 `avatar_url`, `linkedin_url` and `github_url` are `str | None` on both the Pydantic request
