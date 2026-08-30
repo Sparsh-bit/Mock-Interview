@@ -2,6 +2,23 @@
 
 # Deploying — environment variables and migrations
 
+> ## The service definition lives in `render.yaml`
+>
+> **That file is the source of truth for the shape of the deployment** — runtime, Dockerfile
+> path, build context, region, plan, replica count, health-check path, and every environment
+> variable **by name**. It validates against Render's published schema, and
+> `backend/tests/test_security_workflows.py` fails the build if a variable it names is not a
+> real setting, if a required setting is missing from it, or if anybody puts a **value** in it.
+>
+> This page remains the source of truth for **what the values should be and why** — which is
+> the part a Blueprint cannot carry, because none of the values may enter git.
+>
+> `render.yaml` has NOT been reconciled against a live service, because there is not one: at
+> the time of writing `https://interviewos-api.onrender.com/api/v1/health` answers 404 from
+> Render's own router and neither `interviewos.dev` nor `interviewos.pages.dev` resolves. Its
+> `region` and `plan` lines are the documented intent, not confirmed fact — check those two
+> against the dashboard and correct them there.
+
 Written to be platform-neutral. Currently deployed on **Render**; the Render-specific notes
 are called out where they differ, and nothing here assumes a particular host beyond that.
 
@@ -239,7 +256,10 @@ Worth knowing before traffic arrives, rather than after:
   cannot be shared (its prompt reads the candidate's own answer) and `quiz_generation` should
   not be (it would serve returning candidates a quiz they have already answered). Both are
   explained in `services/ai/vector_cache.py`.
-- **CI runs lint and typecheck only.** A green pipeline does not mean the tests passed.
+- ~~**CI runs lint and typecheck only.**~~ **Fixed.** CI now runs both suites — 1,928 backend
+  tests against a real Postgres with pgvector, and 841 frontend tests plus a production build.
+  The gate has been verified in both directions on a throwaway branch: a deliberate failure
+  turns it red, and the control run turns it green.
 - **No uptime monitoring.** At a thousand users the first sign of trouble should not be a
   user telling you. Error tracking is now wired — see [[ERROR-TRACKING]] — but it reports
   what broke, not that the service is down.

@@ -1,0 +1,291 @@
+# Render Blueprint — the deployed backend, in version control.
+#
+# WHAT THIS FILE IS AND IS NOT.
+#
+# It is the service definition: runtime, Dockerfile, health check, region, plan, replica count,
+# and EVERY environment variable BY NAME. It is not, and must never become, a place where a
+# value lives. `sync: false` is the mechanism: it declares that the variable exists and that
+# Render must not manage its value, so the Blueprint stays complete without any secret entering
+# git. A variable missing from this file is a variable somebody has to remember, and
+# docs/DEPLOY.md is mostly a list of settings whose DEFAULTS are wrong in production — the
+# whole class of failure this closes.
+#
+# WHY RENDER. docs/DEPLOYMENT.md: the backend runs FastAPI with asyncpg and ~110-second AI
+# calls. Cloudflare Workers run V8 and cannot host it, which is why the frontend and the API
+# are on different platforms. The frontend is Cloudflare Pages and is NOT described here — it
+# has no Render service; its configuration is the Pages project plus next.config.ts.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# STATE OF VERIFICATION, WRITTEN DOWN RATHER THAN IMPLIED.
+#
+# This file is derived from docs/DEPLOY.md and docs/DEPLOYMENT.md, which is the best source
+# available in the repository. It has NOT been reconciled against a live service, because at
+# the time of writing there is not one: `https://interviewos-api.onrender.com/api/v1/health`
+# answers 404 from Render's own router (the `rndr-id` header is present, the service is not),
+# and neither `interviewos.dev` nor `interviewos.pages.dev` resolves.
+#
+# So `region` and `plan` below are the documented intent and NOT confirmed fact. Whoever next
+# has the dashboard open should check those two lines against it and correct them here. The
+# rest — the Dockerfile path, the build context, the health-check path, the variable names —
+# is checked against the repository itself and is correct.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: interviewos-api
+    # THE NAME IS DELIBERATELY STILL `interviewos`. CLAUDE.md lists the Render service among
+    # the four things that keep the old brand: it is live infrastructure with DNS and TLS
+    # attached, so renaming it is a migration rather than a find-and-replace.
+    runtime: docker
+
+    # BUILD CONTEXT IS THE REPO ROOT, NOT backend/. The Dockerfile's own header says why:
+    # `alembic.ini` points `script_location` at repo-root `database/migrations/`, so the image
+    # copies both `backend/` and `database/`. A build context of `backend/` cannot see the
+    # migrations and the container fails on its first `alembic upgrade head`.
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # Singapore is the closest Render region to the Indian campus users this product is for;
+    # docs/DEPLOYMENT.md says to keep Render, Supabase and Upstash in one region because the
+    # remaining latency after the cold start is the round trip between them.
+    # UNCONFIRMED — see the verification note above.
+    region: singapore
+
+    # Free, per docs/DEPLOYMENT.md. This has consequences the code already accommodates rather
+    # than ignores: a free instance spins down after ~15 minutes idle and the next request pays
+    # a ~37s boot inside the gateway's ~100s window, which is why report generation gives the
+    # first request a process serves a tighter AI budget (see `mark_request_served` in main.py
+    # and `_REPORT_AI_BUDGET_COLD_SECONDS` in api/v1/reports.py).
+    # UNCONFIRMED — see the verification note above.
+    plan: free
+
+    # ONE INSTANCE, AND THE NUMBER IS LOAD-BEARING BEYOND CAPACITY.
+    #
+    # The real Postgres connection ceiling is (DB_POOL_SIZE + DB_MAX_OVERFLOW) x replicas
+    # measured against Supabase's own limit, so raising this to serve more users exhausts the
+    # DATABASE rather than the pool — and the symptom is "too many connections" on random
+    # requests rather than a clean slowdown. Raise DB_POOL_SIZE down to 5/10 before raising
+    # this. See docs/DEPLOY.md §2.
+    #
+    # It is also what makes the in-process AI spend cap global rather than per-process: with
+    # Redis reachable the cap is shared, but if Redis is down `_spend_today` falls back to a
+    # local counter and the effective ceiling becomes AI_DAILY_BUDGET_USD x replicas.
+    numInstances: 1
+
+    # `/api/v1/health` — the router mounts it under the versioned prefix, so a bare `/health`
+    # 404s and Render marks the service unhealthy forever while the app is running fine.
+    healthCheckPath: /api/v1/health
+
+    # No `startCommand`: the Dockerfile's CMD runs migrations, seeds reference data and binds
+    # $PORT. Overriding it here would silently skip `alembic upgrade head` on deploy.
+
+    envVars:
+      # ══════════════════════════════════════════════════════════════════════
+      # NO DEFAULTS — the app refuses to start without these, deliberately, so a
+      # missing one fails at boot rather than running wrong.
+      # ══════════════════════════════════════════════════════════════════════
+      # Must start `postgresql+asyncpg://`. Use the Supabase TRANSACTION POOLER
+      # (port 6543): the app detects `:6543` and disables asyncpg's prepared-statement
+      # cache, without which a pooled connection eventually raises
+      # InvalidSQLStatementNameError — and only once there is enough concurrency for
+      # connections to be multiplexed, which is the worst time to find out.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      # Ships in the browser bundle and is public by design. Still `sync: false`,
+      # because it identifies the project and belongs with the others.
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      # Verified locally on every request, so there is no round trip to Supabase per
+      # call. NOTE: core/security.py refuses the literal `your-jwt-secret` and fails
+      # closed — a placeholder here is 401 on every authenticated request.
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+
+      # ══════════════════════════════════════════════════════════════════════
+      # HAVE DEFAULTS, AND THE DEFAULTS ARE WRONG IN PRODUCTION.
+      # This is the section docs/DEPLOY.md says matters most: none of these stops the
+      # app booting, and each one quietly changes behaviour.
+      # ══════════════════════════════════════════════════════════════════════
+      # Defaults to `development`, which allows localhost and a permissive 192.168.*
+      # CORS regex WITH allow_credentials, and lets ALLOW_UNVERIFIED_JWT take effect.
+      # This one is a security setting, not a label.
+      - key: ENVIRONMENT
+        value: production
+      # Defaults to `console`. Production logs must be JSON or nothing downstream can
+      # parse them — see docs/OBSERVABILITY.md.
+      - key: LOG_FORMAT
+        value: json
+      - key: LOG_LEVEL
+        value: INFO
+      # Defaults to redis://localhost:6379/0, and there is no localhost Redis on a
+      # managed host. NOT a hard startup failure by design — every Redis-backed feature
+      # degrades rather than breaking — but without it rate limiting FAILS OPEN, the AI
+      # spend cap becomes per-process, and the interview-plan cache always misses at
+      # ~$0.065 a miss. Grep deploy logs for
+      # `redis_unreachable_at_startup_running_degraded`.
+      - key: REDIS_URL
+        sync: false
+      # Must be a JSON ARRAY STRING, e.g. ["https://interviewos.pages.dev"]. A bare URL
+      # fails to parse and the frontend cannot call the API at all.
+      - key: CORS_ORIGINS
+        sync: false
+
+      # ── Model providers ───────────────────────────────────────────────────
+      # These two decide which company receives every candidate's resume, and in which
+      # country. /api/v1/legal/disclosure is DERIVED from them, so changing either
+      # changes what candidates are told — see services/legal/disclosure.py.
+      - key: AI_PROVIDER
+        sync: false
+      - key: AI_FALLBACK_PROVIDER
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
+      # A SAFETY NET FOR A RUNAWAY RESPONSE, NOT A BUDGET KNOB. Set below what the
+      # largest legitimate response needs and it becomes a correctness bug: a full
+      # report for a 16-question session measures ~5.1k output tokens, so 4096 cut the
+      # JSON mid-object, validation rejected the fragment, and every long interview
+      # produced an unscored placeholder. It read as a provider outage.
+      - key: ANTHROPIC_MAX_OUTPUT_TOKENS
+        sync: false
+      # docs/DEPLOY.md and docs/DEPLOYMENT.md DISAGREE about this one, and the
+      # disagreement is unresolved rather than hidden: DEPLOY says true and worth ~59%
+      # of every GD round; DEPLOYMENT says it must stay false because prompt templates
+      # interpolate per-request variables into the system block, making every prefix
+      # unique and billing a 1.25x cache write that never scores a read.
+      # backend/tests/test_prompt_caching.py guards the template-placeholder case.
+      # Left to the dashboard until somebody checks the `ai_usage` ledger — the SQL is
+      # in docs/DEPLOY.md §5.
+      - key: ANTHROPIC_PROMPT_CACHING
+        sync: false
+      - key: GLM_API_KEY
+        sync: false
+      - key: GLM_MODEL
+        sync: false
+      - key: GLM_BASE_URL
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_MODEL
+        sync: false
+      - key: NVIDIA_BASE_URL
+        sync: false
+
+      # ── Spend ceilings ────────────────────────────────────────────────────
+      # A circuit breaker across all users, not a per-user allowance. On breach the
+      # paid provider refuses and the chain degrades to AI_FALLBACK_PROVIDER, so the
+      # app keeps working instead of spending. Set it to what you can afford to lose in
+      # a day, not to your balance.
+      - key: AI_DAILY_BUDGET_USD
+        sync: false
+      - key: AI_USER_DAILY_BUDGET_USD
+        sync: false
+      - key: TTS_DAILY_BUDGET_USD
+        sync: false
+
+      # ── Database pool ─────────────────────────────────────────────────────
+      # Lower to 5 / 10 behind the Supabase transaction pooler; see numInstances above
+      # for why this and the replica count are one decision.
+      - key: DB_POOL_SIZE
+        sync: false
+      - key: DB_MAX_OVERFLOW
+        sync: false
+
+      # ── Speech ────────────────────────────────────────────────────────────
+      - key: TTS_ENABLED
+        sync: false
+      - key: TTS_PROVIDER
+        sync: false
+      - key: FISH_API_KEY
+        sync: false
+      - key: FISH_MODEL
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_MODEL
+        sync: false
+      - key: ELEVENLABS_TIER
+        sync: false
+      # Which voice belongs to which panellist. See docs/VOICES.md.
+      - key: TTS_VOICE_IDS
+        sync: false
+
+      # ── Code execution ────────────────────────────────────────────────────
+      # Judge0 CE by default: free, no key, and works on hosts that cannot run
+      # privileged containers — which Render's free tier cannot, so `piston` is a local
+      # dev option only.
+      - key: CODE_EXEC_PROVIDER
+        value: judge0
+      - key: JUDGE0_BASE_URL
+        sync: false
+      # Optional RapidAPI key for higher compiler limits. Empty uses the free instance.
+      - key: JUDGE0_API_KEY
+        sync: false
+
+      # ── Payments ──────────────────────────────────────────────────────────
+      # No card data ever reaches this service — Razorpay's hosted checkout keeps
+      # PCI-DSS out of scope by design.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      # Verified with HMAC-SHA256 over the raw body and a constant-time comparison.
+      # Without it the webhook cannot be authenticated and every delivery is refused.
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      # Cloudflare Turnstile on high-value coupon paths. Optional: a deployment with no
+      # Turnstile account works normally as long as no offer sets `requires_captcha`.
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+
+      # ── Interview shape ───────────────────────────────────────────────────
+      # Safe to tune. The UI advertises INTERVIEW_QUESTION_COUNT, so changing it changes
+      # a promise made on screen.
+      - key: INTERVIEW_QUESTION_COUNT
+        sync: false
+      - key: INTERVIEW_MAX_CROSS_QUESTIONS
+        sync: false
+
+      # ── Observability ─────────────────────────────────────────────────────
+      # Blank is a supported state: nothing initialises and nothing warns. See
+      # docs/ERROR-TRACKING.md.
+      - key: SENTRY_DSN
+        sync: false
+
+      # ── Data protection (DPDP §8(9)–(10)) ─────────────────────────────────
+      # A NAMED HUMAN, not a role mailbox. While these are unset, /privacy states in as
+      # many words that no grievance officer has been appointed — deliberately, because
+      # a made-up name looks like the obligation was discharged. See docs/COMPLIANCE.md.
+      - key: DPO_NAME
+        sync: false
+      - key: DPO_EMAIL
+        sync: false
+      - key: GRIEVANCE_RESPONSE_DAYS
+        value: "30"
+
+      # ══════════════════════════════════════════════════════════════════════
+      # DELIBERATELY ABSENT, and this is a decision rather than an omission.
+      #
+      #   ALLOW_UNVERIFIED_JWT — a full authentication bypass. It additionally requires
+      #     ENVIRONMENT=development to take effect, so it is inert here; naming it at
+      #     all would put it one dashboard edit away from being set.
+      #
+      #   DEBUG, DB_ECHO — DB_ECHO logs every statement including parameters, which on
+      #     this schema means answers and resume text in the log stream.
+      #
+      #   PISTON_BASE_URL — local dev only; Render's free tier cannot run the
+      #     privileged containers Piston needs.
+      #
+      #   OPENAI_API_KEY / OPENAI_MODEL — the provider factory can build it, but no
+      #     deployment uses it and an unused key is a credential with no owner.
+      #
+      # The remaining ~50 settings in core/config.py are timeouts, rate limits, budget
+      # seconds and feature flags whose defaults are correct in production. They are
+      # left to the code on purpose: listing every one here would make this file a
+      # second copy of Settings that drifts from the first.
+      # ══════════════════════════════════════════════════════════════════════

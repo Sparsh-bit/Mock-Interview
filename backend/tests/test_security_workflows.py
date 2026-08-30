@@ -200,3 +200,118 @@ class TestImageScan:
                         f"{stripped!r} is allowlisted in .trivyignore with no comment "
                         f"above it giving the reason"
                     )
+
+
+class TestRenderBlueprint:
+    """
+    The deploy configuration, in version control.
+
+    THE POINT OF THESE IS THE ONE THAT CANNOT BE UNDONE BY A COMMIT. A secret pasted into
+    render.yaml is in git history from that moment, and rotating the credential is the only
+    remedy — `git rm` does not help. So the test is not "did somebody remember"; it is a gate
+    that fails before the commit lands.
+    """
+
+    BLUEPRINT = GITHUB.parent / "render.yaml"
+
+    def _service(self) -> dict:
+        return yaml.safe_load(self.BLUEPRINT.read_text())["services"][0]
+
+    def test_no_secret_value_is_committed(self):
+        """
+        Every variable is declared BY NAME with `sync: false`, except a handful whose values
+        are public settings rather than credentials. Anything that looks like a credential —
+        a key, a token, a URL with a password in it — fails here.
+        """
+        allowed_literals = {
+            "ENVIRONMENT",
+            "LOG_FORMAT",
+            "LOG_LEVEL",
+            "CODE_EXEC_PROVIDER",
+            "GRIEVANCE_RESPONSE_DAYS",
+        }
+        for entry in self._service()["envVars"]:
+            if "value" not in entry:
+                assert entry.get("sync") is False, (
+                    f"{entry['key']} declares neither a value nor `sync: false` — Render "
+                    f"would treat it as unmanaged and the Blueprint would be incomplete"
+                )
+                continue
+            assert entry["key"] in allowed_literals, (
+                f"{entry['key']} has a literal value in render.yaml. If it is a credential "
+                f"it is now in git history and rotating it is the only remedy; if it is a "
+                f"public setting, add it to allowed_literals with a reason."
+            )
+            value = str(entry["value"])
+            assert len(value) < 40, f"{entry['key']} carries a suspiciously long literal"
+            for marker in ("://", "@", "sk-", "rzp_", "eyJ"):
+                assert marker not in value, f"{entry['key']} looks like a credential"
+
+    def test_every_setting_with_no_default_is_declared(self):
+        """
+        The five that make `Settings` refuse to start. Missing one is a deploy that fails at
+        boot — which is the intended behaviour, but finding out from a crash loop rather than
+        from this file is the avoidable half.
+        """
+        from app.core.config import Settings
+
+        required = {n for n, f in Settings.model_fields.items() if f.is_required()}
+        declared = {e["key"] for e in self._service()["envVars"]}
+        assert required <= declared, f"undeclared required settings: {sorted(required - declared)}"
+
+    def test_every_declared_variable_is_a_real_setting(self):
+        """
+        The other direction, and the one that rots quietly: a variable left here after the
+        setting was renamed or removed is an instruction to set something that does nothing.
+        """
+        from app.core.config import Settings
+
+        known = set(Settings.model_fields)
+        declared = {e["key"] for e in self._service()["envVars"]}
+        assert declared <= known, (
+            f"render.yaml names settings that core/config.py does not have: "
+            f"{sorted(declared - known)}"
+        )
+
+    def test_the_health_check_path_is_the_one_that_exists(self):
+        """
+        A bare `/health` 404s — the router mounts it under the versioned prefix — and Render
+        would mark the service permanently unhealthy while the application runs fine.
+        Asserted against the real route table rather than against the string.
+        """
+        from app.main import app
+
+        # `app.openapi()` rather than `app.routes`. Included routers are held lazily as
+        # `_IncludedRouter` objects that carry no `.path`, so walking app.routes finds only
+        # the docs endpoints and this assertion would fail for a reason unrelated to the
+        # health check. The OpenAPI document is the flattened, authoritative path list.
+        paths = set(app.openapi()["paths"])
+        assert self._service()["healthCheckPath"] in paths, (
+            f"healthCheckPath is not a route this app serves. Health routes found: "
+            f"{sorted(p for p in paths if 'health' in p)}"
+        )
+
+    def test_the_build_context_is_the_repository_root(self):
+        # alembic.ini points script_location at repo-root database/migrations, so the image
+        # copies both backend/ and database/. A context of backend/ cannot see the migrations
+        # and the container dies on its first `alembic upgrade head`.
+        service = self._service()
+        assert service["dockerContext"] == "."
+        assert service["dockerfilePath"] == "./Dockerfile"
+
+    def test_the_authentication_bypass_is_not_named(self):
+        """
+        ALLOW_UNVERIFIED_JWT is a full auth bypass. It is inert while ENVIRONMENT=production,
+        but naming it in the Blueprint puts it one dashboard edit away from being set.
+        """
+        declared = {e["key"] for e in self._service()["envVars"]}
+        assert "ALLOW_UNVERIFIED_JWT" not in declared
+        assert "DB_ECHO" not in declared, (
+            "DB_ECHO logs every statement including parameters — on this schema that is "
+            "answers and resume text in the log stream"
+        )
+
+    def test_it_does_not_override_the_start_command(self):
+        # The Dockerfile's CMD runs `alembic upgrade head` before Uvicorn. A startCommand here
+        # would silently skip migrations on every deploy.
+        assert "startCommand" not in self._service()
