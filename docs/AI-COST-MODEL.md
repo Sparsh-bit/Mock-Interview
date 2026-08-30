@@ -182,6 +182,47 @@ An earlier note in this repo said "~44 reports/day". That was derived from the
 4. ~~Restructure `gd_panel.md` for prompt caching~~ — **done**, 59% off the GD round.
 5. ~~Restructure `report_generator.md` for prompt caching~~ — **done**, with the study
    resources moved to the verified library. 7.0% off a warm interview.
+5b. ~~Restructure `interview_plan.md` and `question_generator.md` for prompt caching~~ —
+   **done**, and measured rather than projected. Both carried per-request `$placeholders`
+   in the system block, which is why caching was off: a unique prefix bills a 1.25x cache
+   WRITE on every call and never reads. The varying parts moved into a brief in the user
+   turn (`_plan_user_brief`, `_question_user_brief` in
+   `services/interview/orchestrator.py`) and the rules are now loaded verbatim.
+
+   **Confirmed from the `ai_usage` ledger**, two live calls per prompt through the real
+   provider, not assumed:
+
+   | call | total input | cache **read** | cache write | output | USD |
+   |---|---|---|---|---|---|
+   | `interview_plan` #1 | 7,222 | 0 | 6,873 | 1,340 | 0.046921 |
+   | `interview_plan` #2 | 7,221 | **6,873** | 0 | 1,405 | **0.024181** |
+   | `question_generation` | 3,130 | **2,957** | 0 | 280 | **0.005606** |
+   | `question_generation` | 3,134 | **2,957** | 0 | 301 | 0.005933 |
+   | `question_generation` | 3,143 | **2,957** | 0 | 549 | 0.009680 |
+
+   Against the same calls billed with no cache at all:
+
+   - **`interview_plan`: −43.4% on a hit** ($0.042738 → $0.024181). It is 6,546 tokens, the
+     largest prompt in the product, and every interview created used to re-send and re-pay
+     for all of it.
+   - **`question_generation`: −58.7% on a hit** ($0.013590 → $0.005606) — the same order as
+     the GD panel's 59%, and for the same reason: a small output means input dominates.
+
+   THE MISS COSTS 9.8% MORE, and that number matters more than it looks. A cache write bills
+   at 1.25x, so the first call in a window is *dearer* than it was — the change is only a
+   saving once something reads. That is why the two prompts are worth different amounts:
+
+   - `question_generator` is called once per generated question and repeatedly WITHIN one
+     session, so the first question pays the write and every question after it reads, inside
+     the entry's own five-minute life. It banks reliably.
+   - `interview_plan` is generated once per interview, so its hit rate depends on another
+     candidate arriving within five minutes. It is near zero for one user a day and near
+     100% during a campus drive — a saving that arrives as the product gets busier, which is
+     also when it is most needed.
+
+   The two `question_generator` call sites — the shared-pool batch of five and the
+   per-session single question — share one cache entry, because both load the same file
+   verbatim. Whichever runs first writes the prefix the other reads.
 6. **The Message Batches API, for reports** — **built, off by default.** Anthropic bills
    batch requests at **50%**, and a report is the one call in this product that does not
    have to be synchronous — the interview is already over. At $0.1233 that is **−$0.062 a

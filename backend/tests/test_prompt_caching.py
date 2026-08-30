@@ -67,6 +67,26 @@ CACHED_CALL_SITES: dict[str, int] = {
     # byte-identical and both read the same provider cache entry.
     "report_summary": 2,
     "report_analysis": 2,
+    # THE LARGEST PROMPT IN THE PRODUCT, at 6,546 tokens, and until now the least
+    # cacheable: eleven $placeholders made its system block unique per request, so the
+    # whole document was re-sent and re-billed on every interview created. The per-session
+    # values moved into _plan_user_brief in services/interview/orchestrator.py.
+    #
+    # Its hit rate is a function of how busy the product is rather than of anything within
+    # one session — a plan is generated once per interview, and a provider cache entry
+    # lives about five minutes — so this is the one below whose saving arrives as the user
+    # base grows.
+    "interview_plan": 1,
+    # 2,850 tokens, and worth more per token than the plan despite being smaller, because
+    # it is called repeatedly WITHIN one interview: once per generated question, and on the
+    # adaptive route that is most of them. The first question of a session pays the 1.25x
+    # write and every question after it reads at 0.1x, inside the same five-minute window.
+    #
+    # TWO CALL SITES SHARING ONE ENTRY, and that is the point of them being byte-identical:
+    # _bank_question's shared-pool batch of five and the per-session single question load
+    # the same template verbatim, so whichever runs first writes the prefix the other
+    # reads. Their briefs differ completely; their rules do not.
+    "question_generator": 2,
 }
 
 CACHED_TEMPLATES = tuple(CACHED_CALL_SITES)

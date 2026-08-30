@@ -375,13 +375,44 @@ class TestRetakesGetDifferentQuestions:
         assert "already_asked=" in src
 
     def test_the_prompt_accepts_the_avoid_list(self):
+        """
+        The avoid list still reaches the planner, and BOTH halves are checked now.
+
+        This asserted `"$already_asked" in prompt`. That was the right question asked of the
+        wrong place once the template stopped carrying variables: interview_plan.md is now
+        loaded verbatim so it can be cached at the provider, and the per-session values —
+        this one included — moved into the user brief.
+
+        The substring check could only ever prove the TEMPLATE mentioned a token. Checking
+        the brief builder as well proves the data actually reaches the model, which is what
+        the test was always trying to say. Both must hold: a rule about a section nobody
+        fills is as broken as a section no rule refers to.
+        """
         import pathlib
 
         prompt = (
             pathlib.Path(__import__("app").__file__).parent / "prompts/interview_plan.md"
         ).read_text()
-        assert "$already_asked" in prompt
+        # The rule, and the section heading it points the model at.
         assert "Do not repeat any of these" in prompt
+        assert "## Questions this candidate has already been asked" in prompt
+
+        # And the brief actually emits that section, under that exact heading.
+        brief = orch._plan_user_brief(
+            company="Cognizant",
+            program="Programmer Analyst",
+            focus="",
+            resume="(none)",
+            business_context="(none)",
+            research="(none)",
+            already_asked="- What is a HashMap?",
+            must_cover="(none)",
+            question_mix="(none)",
+            focus_directive="(none)",
+            question_count=11,
+        )
+        assert "## Questions this candidate has already been asked" in brief
+        assert "What is a HashMap?" in brief
 
     def test_the_bank_topup_REFUSES_seen_questions_rather_than_deprioritising_them(self):
         """

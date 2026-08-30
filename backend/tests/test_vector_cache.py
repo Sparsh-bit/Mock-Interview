@@ -109,18 +109,51 @@ class TestTheTenancyAllowlist:
         better one. An unwired entry on a tenancy allowlist is a pre-approval waiting for
         somebody to act on it, and the resume is now a compulsory field.
 
-        Asserted from the PROMPT rather than left as a comment, so the entry cannot come back
-        while the reason it was removed is still true. If the plan prompt ever stops reading
-        the resume, this test fails and the allowlist question can be reopened deliberately.
+        Asserted from the PROMPT AND THE BRIEF rather than left as a comment, so the entry
+        cannot come back while the reason it was removed is still true. If the plan ever
+        stops reading the resume, this test fails and the allowlist question can be reopened
+        deliberately.
+
+        THIS CHECKED `"$resume" in prompt` UNTIL THE PROMPT STOPPED HAVING VARIABLES.
+        interview_plan.md is now loaded verbatim so it can be cached at the provider, and
+        the resume moved into the user brief — so the old substring vanished while the
+        tenancy hazard it guarded was completely unchanged. That is the dangerous direction
+        for a test like this to break in: it would have gone green on a technicality and
+        re-opened a global cache over candidate resumes.
+
+        Both halves are checked now, which is stronger than the original: the prompt must
+        still instruct the model to examine the resume, AND the brief must still carry it.
         """
         from pathlib import Path
 
         prompt = (
             Path(__file__).resolve().parents[1] / "app" / "prompts" / "interview_plan.md"
         ).read_text()
-        assert "$resume" in prompt, (
+        assert "## The candidate's resume" in prompt, (
             "interview_plan.md no longer reads the resume — re-evaluate whether the plan is "
             "globally cacheable, deliberately, rather than assuming either answer"
+        )
+        assert "EVERY TECHNOLOGY NAMED ON A RESUME IS A CLAIM" in prompt
+
+        from app.services.interview import orchestrator as orch
+
+        brief = orch._plan_user_brief(
+            company="Cognizant",
+            program="Programmer Analyst",
+            focus="",
+            resume="Built a Spring Boot claims service at Acme.",
+            business_context="(none)",
+            research="(none)",
+            already_asked="(none)",
+            must_cover="(none)",
+            question_mix="(none)",
+            focus_directive="(none)",
+            question_count=11,
+        )
+        assert "Spring Boot claims service" in brief, (
+            "the resume no longer reaches the plan — the tenancy reason this entry was "
+            "removed from the allowlist may no longer hold, and that is a decision to make "
+            "deliberately rather than by a test quietly passing"
         )
         assert "interview_plan" not in CACHEABLE_FEATURES
 

@@ -556,6 +556,140 @@ def plan_token_budget(question_count: int) -> int:
     return min(_PLAN_TOKENS_FIXED + count * _PLAN_TOKENS_PER_QUESTION, _PLAN_TOKENS_MAX)
 
 
+def _plan_user_brief(
+    *,
+    company: str,
+    program: str,
+    focus: str,
+    resume: str,
+    business_context: str,
+    research: str,
+    already_asked: str,
+    must_cover: str,
+    question_mix: str,
+    focus_directive: str,
+    question_count: int,
+) -> str:
+    """
+    Everything about THIS interview, for the user turn — which is what makes the rules cacheable.
+
+    All eleven of these were $placeholders substituted into interview_plan.md. That made the
+    system block different on every single request, so a 6,546-token document — the largest
+    prompt in the product — was re-sent and re-billed in full on every interview created.
+    Moving them here leaves the rules byte-identical, so the provider writes them to its cache
+    once at 1.25x input and reads them at 0.10x thereafter.
+
+    THE SECTION HEADINGS ARE NOT DECORATION. interview_plan.md refers to each of them by name
+    — "the brief carries it under **What this company actually does**" — so renaming one here
+    without renaming it there points the model at a section that does not exist. Same
+    coupling `_round_brief` has with gd_panel.md and `session_brief` has with
+    report_summary.md; it is the price of a cacheable prompt and it is worth it.
+
+    EVERY SECTION IS EMITTED EVEN WHEN EMPTY, with text saying so. An omitted heading is a
+    heading the prompt still refers to and the model cannot find, which is strictly worse
+    than one that says there is nothing here — the caller already substitutes an explanatory
+    sentence for each, exactly as the old placeholders did.
+    """
+    return "\n".join(
+        [
+            "## Who the candidate is preparing for",
+            "",
+            f"- **Company**: {company}",
+            f"- **Program / role**: {program}",
+            f"- **Candidate's own request / focus, in their words**: {focus}",
+            f"- **Questions to produce**: {question_count}",
+            "",
+            "## The candidate's resume",
+            "",
+            resume,
+            "",
+            "## What this company actually does",
+            "",
+            business_context,
+            "",
+            "## Researched intelligence on this company's real interview",
+            "",
+            research,
+            "",
+            "## Questions this candidate has already been asked",
+            "",
+            already_asked,
+            "",
+            "## The topics that actually get asked",
+            "",
+            must_cover,
+            "",
+            "## How many questions of each kind",
+            "",
+            question_mix,
+            "",
+            "## What the candidate asked for",
+            "",
+            focus_directive,
+            "",
+            "---",
+            "",
+            "Design the interview plan now, following the rules and output format.",
+        ]
+    )
+
+
+def _question_user_brief(
+    *,
+    track_name: str,
+    topics: str,
+    difficulty: str,
+    question_number: str,
+    candidate_experience_years: str,
+    candidate_focus: str,
+    already_asked: str,
+    focus_concepts: str,
+    task: str,
+) -> str:
+    """
+    This question's context, for the user turn. Same reason as `_plan_user_brief`.
+
+    WORTH MORE PER TOKEN THAN THE PLAN'S. question_generator.md is smaller — 2,850 tokens —
+    but it is called repeatedly WITHIN one interview: once per generated question, and on the
+    adaptive route that is most of them. A provider cache entry lives about five minutes and
+    every read refreshes it, so the first question of a session pays the write and every
+    question after it reads. The plan, by contrast, is generated once per interview and
+    depends on other candidates arriving within the window to hit at all.
+
+    `task` is the instruction that used to be `user_content` on its own: "generate the next
+    question", or "generate five for a shared pool". It stays in the user turn where it
+    always was, at the END of the brief, because it is the imperative the model acts on and
+    burying it above six sections of context makes it easy to lose.
+    """
+    return "\n".join(
+        [
+            "## Interview Context",
+            "",
+            f"- **Track**: {track_name}",
+            f"- **Relevant topics for this track**: {topics}",
+            f"- **Target difficulty for this question**: {difficulty}",
+            f"- **This is question number**: {question_number}",
+            f"- **Candidate experience**: {candidate_experience_years} years",
+            "",
+            "## What this candidate asked to practise",
+            "",
+            candidate_focus,
+            "",
+            "## Already asked",
+            "",
+            already_asked,
+            "",
+            "## Focus concepts",
+            "",
+            focus_concepts,
+            "",
+            "---",
+            "",
+            task,
+        ]
+    )
+
+
 class InterviewOrchestrator:
     """State machine and business logic for conducting an interview."""
 
@@ -740,37 +874,48 @@ class InterviewOrchestrator:
                 from_syllabus=brief.from_syllabus,
             )
 
-            messages = self.prompt_builder.chat(
+            # ── chat_static, NOT chat, AND THAT IS THE WHOLE SAVING ──────────────────
+            #
+            # interview_plan.md is 6,546 tokens — the largest prompt in this product — and
+            # every one of them used to be re-sent and re-billed on every interview created,
+            # because eleven $placeholders made the system block unique per request. The
+            # rules are now loaded VERBATIM and everything that varies is in the brief
+            # below, so the provider writes the prefix to its cache once at 1.25x input and
+            # reads it at 0.10x after. Same change that took the GD round down 59%.
+            #
+            # BOTH HALVES ARE LOAD-BEARING AND NEITHER FAILS LOUDLY. If a value stops being
+            # put in the brief, the model simply reads a section that says nothing; if a
+            # $token ever reappears in the template, chat_static loads it verbatim and ships
+            # the literal "$question_mix" to the model. tests/test_prompt_caching.py fails
+            # the build on the second, and tests/test_plan_brief.py on the first.
+            messages = self.prompt_builder.chat_static(
                 system_template="interview_plan",
-                user_content="Design the interview plan now, following the rules and output format.",
-                must_cover=brief.must_cover,
-                # BOTH OF THESE ARE LOAD-BEARING AND NEITHER FAILS LOUDLY. Substitution is
-                # string.Template.safe_substitute, so omitting one sends the literal text
-                # "$question_mix" to the model inside the brief. See tests/test_plan_brief.py,
-                # which renders this template with these exact kwargs and fails on any
-                # surviving token.
-                question_mix=brief.question_mix,
-                focus_directive=brief.focus_directive,
-                already_asked=(
-                    "\n".join(f"- {t}" for t in seen_texts[-40:])
-                    if seen_texts
-                    else "(this is their first interview — nothing to avoid)"
+                user_content=_plan_user_brief(
+                    company=company.strip() or "a general tech company",
+                    program=program.strip() or "Software Engineer (fresher)",
+                    focus=focus.strip()
+                    or "(no specific focus — cover the standard areas for this role)",
+                    resume=resume_summary,
+                    # What the firm actually builds and sells. This is what stops a
+                    # "Cognizant" interview being a generic one with the name swapped
+                    # in: knowing healthcare claims are its biggest business lets the
+                    # planner frame a DBMS question the way Cognizant really would.
+                    business_context=_business_context(company),
+                    # Cached research on how this company really interviews. Costs a
+                    # single indexed row read — the alternative, a live web search
+                    # per interview, would be billed every session for information
+                    # that changes a few times a year.
+                    research=render_research(await find_research(self.db, company, program)),
+                    already_asked=(
+                        "\n".join(f"- {t}" for t in seen_texts[-40:])
+                        if seen_texts
+                        else "(this is their first interview — nothing to avoid)"
+                    ),
+                    must_cover=brief.must_cover,
+                    question_mix=brief.question_mix,
+                    focus_directive=brief.focus_directive,
+                    question_count=_PLANNED_QUESTION_COUNT,
                 ),
-                company=company.strip() or "a general tech company",
-                program=program.strip() or "Software Engineer (fresher)",
-                focus=focus.strip() or "(no specific focus — cover the standard areas for this role)",
-                resume=resume_summary,
-                question_count=str(_PLANNED_QUESTION_COUNT),
-                # Cached research on how this company really interviews. Costs a
-                # single indexed row read — the alternative, a live web search
-                # per interview, would be billed every session for information
-                # that changes a few times a year.
-                research=render_research(await find_research(self.db, company, program)),
-                # What the firm actually builds and sells. This is what stops a
-                # "Cognizant" interview being a generic one with the name swapped
-                # in: knowing healthcare claims are its biggest business lets the
-                # planner frame a DBMS question the way Cognizant really would.
-                business_context=_business_context(company),
             )
             try:
                 plan, _ = await asyncio.wait_for(
@@ -781,6 +926,10 @@ class InterviewOrchestrator:
                         attempts_per_provider=1,
                         is_valid=lambda p: len(p.questions) >= _MIN_AI_PLAN_QUESTIONS,
                         cost_tier=CostTier.BALANCED,
+                        # The rules are byte-identical on every interview now that the
+                        # per-session values live in the brief, so the prefix is written
+                        # once at 1.25x input and read at 0.1x thereafter.
+                        cache_system=True,
                         context="interview_plan",
                     ),
                     timeout=_PLAN_AI_BUDGET_SECONDS,
@@ -1758,28 +1907,32 @@ class InterviewOrchestrator:
 
         # Miss, or every cached question already asked this session. Generate a fresh batch
         # from the syllabus alone.
-        messages = self.prompt_builder.chat(
+        messages = self.prompt_builder.chat_static(
             system_template="question_generator",
-            user_content=(
-                "Generate FIVE distinct interview questions for this role and difficulty, as "
-                "a JSON array under the key `questions`. They must not depend on any "
-                "particular candidate — no reference to a resume, a previous answer, or "
-                "anything said earlier. Spread them across different topics from the list."
+            user_content=_question_user_brief(
+                track_name=track_name,
+                topics=topics_str,
+                difficulty=difficulty,
+                question_number="1",
+                candidate_experience_years="not specified",
+                # NOT THE CANDIDATE'S TYPED FOCUS, AND IT MUST NEVER BE. This batch is
+                # cached in `question_bank` and served to OTHER candidates on this track.
+                # CLAUDE.md's tenancy rule is that nothing derived from one candidate
+                # reaches another, and the setup box is candidate input — so feeding it
+                # here would shape a shared pool around one person's preference and bill
+                # everyone for it. The per-session call site below is where the real focus
+                # goes. Moving this value from a $placeholder into the brief did not move
+                # that rule; tests/test_question_tenancy.py still checks it here.
+                candidate_focus="(shared pool — no candidate, no preferences)",
+                already_asked="(none — these are for a shared pool)",
+                focus_concepts="(none — general questions for this role)",
+                task=(
+                    "Generate FIVE distinct interview questions for this role and difficulty, "
+                    "as a JSON array under the key `questions`. They must not depend on any "
+                    "particular candidate — no reference to a resume, a previous answer, or "
+                    "anything said earlier. Spread them across different topics from the list."
+                ),
             ),
-            track_name=track_name,
-            topics=topics_str,
-            difficulty=difficulty,
-            question_number="1",
-            already_asked="(none — these are for a shared pool)",
-            focus_concepts="(none — general questions for this role)",
-            # NOT THE CANDIDATE'S TYPED FOCUS, AND IT MUST NEVER BE. This batch is cached in
-            # `question_bank` and served to OTHER candidates on this track. CLAUDE.md's
-            # tenancy rule is that nothing derived from one candidate reaches another, and
-            # the setup box is candidate input — so feeding it here would shape a shared
-            # pool around one person's preference and bill everyone for it. The per-session
-            # call site below is where the real focus goes.
-            candidate_focus="(shared pool — no candidate, no preferences)",
-            candidate_experience_years="not specified",
         )
 
         from app.services.ai.schemas import QuestionBatch  # noqa: PLC0415
@@ -1792,6 +1945,10 @@ class InterviewOrchestrator:
                 attempts_per_provider=1,
                 is_valid=lambda b: len(b.questions) >= 2,
                 cost_tier=CostTier.CHEAP,
+                # Byte-identical rules, so this reads the same cached prefix the
+                # per-session call site writes — and vice versa. The two call sites share
+                # one cache entry precisely because they load the same template verbatim.
+                cache_system=True,
                 context="question_bank",
             )
         except Exception:
@@ -1894,28 +2051,34 @@ class InterviewOrchestrator:
                 if persisted is not None:
                     return persisted
 
-        messages = self.prompt_builder.chat(
+        messages = self.prompt_builder.chat_static(
             system_template="question_generator",
-            user_content="Generate the next interview question now, following the rules and output format.",
-            track_name=track_name,
-            topics=topics_str,
-            difficulty=target_difficulty,
-            question_number=str(question_number),
-            already_asked=already_asked,
-            focus_concepts=focus_str,
-            # WHAT THEY TYPED INTO THE SETUP BOX, on the live path at last.
-            #
-            # It used to reach the PLAN prompt and nothing else, so a candidate who asked for
-            # React questions got them for as long as the plan lasted and then silently
-            # stopped: this function is what runs once the plan is exhausted, and on the
-            # adaptive route it is what runs from the start.
-            #
-            # Read from session_metadata rather than threaded down through four call sites,
-            # because that row is where `create_plan` pinned it and it is the same value the
-            # plan was built from — re-deriving or re-passing it is how two parts of this
-            # system end up disagreeing about what the candidate asked for.
-            candidate_focus=_candidate_focus_block(session),
-            candidate_experience_years="not specified",
+            user_content=_question_user_brief(
+                track_name=track_name,
+                topics=topics_str,
+                difficulty=target_difficulty,
+                question_number=str(question_number),
+                candidate_experience_years="not specified",
+                # WHAT THEY TYPED INTO THE SETUP BOX, on the live path at last.
+                #
+                # It used to reach the PLAN prompt and nothing else, so a candidate who
+                # asked for React questions got them for as long as the plan lasted and
+                # then silently stopped: this function is what runs once the plan is
+                # exhausted, and on the adaptive route it is what runs from the start.
+                #
+                # Read from session_metadata rather than threaded down through four call
+                # sites, because that row is where `create_plan` pinned it and it is the
+                # same value the plan was built from — re-deriving or re-passing it is how
+                # two parts of this system end up disagreeing about what the candidate
+                # asked for.
+                candidate_focus=_candidate_focus_block(session),
+                already_asked=already_asked,
+                focus_concepts=focus_str,
+                task=(
+                    "Generate the next interview question now, following the rules and "
+                    "output format."
+                ),
+            ),
         )
 
         # Best-effort: generation failing (both providers) is not fatal — the
@@ -1947,6 +2110,13 @@ class InterviewOrchestrator:
                 attempts_per_provider=1,
                 is_valid=lambda q: len(q.content.strip()) >= 15,
                 cost_tier=CostTier.BALANCED,
+                # WORTH MORE HERE THAN ANYWHERE ELSE IN THIS FILE, and it is not the token
+                # count that makes it so. This runs once per generated question — most of
+                # them on the adaptive route — so the first question of a session pays the
+                # 1.25x write and every question after it reads at 0.1x, within the same
+                # session and within the cache's own five-minute window. The plan, by
+                # contrast, only hits when another candidate arrives in that window.
+                cache_system=True,
                 context="question_generation",
             )
             parsed, _ = await (asyncio.wait_for(call, timeout=budget) if budget > 0 else call)
