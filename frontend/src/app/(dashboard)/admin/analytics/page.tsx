@@ -21,7 +21,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Coins, Database, Gift, IndianRupee, TrendingDown, Users } from 'lucide-react';
+import { AudioLines, Coins, Database, Gift, IndianRupee, Scale, TrendingDown, Users } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -46,6 +46,29 @@ interface RevenueReport {
   all_time_gross_inr: number;
   by_day: { day: string; inr: number; payments: number }[];
   by_item: { item_id: string; name: string; inr: number; payments: number }[];
+  /**
+   * What it cost to serve the window. AI comes from `ai_usage`; SPEECH comes from
+   * `tts_usage`, which did not exist until the margin below needed it — speech was a Redis
+   * float for the current UTC day with a 48-hour TTL and no attribution, so it could not be
+   * joined to a month of revenue even in principle.
+   */
+  costs: {
+    ai_usd: number;
+    ai_available: boolean;
+    tts_usd: number;
+    tts_characters: number;
+    tts_characters_cached: number;
+    tts_cache_hit_pct: number;
+    tts_available: boolean;
+    tts_by_provider: { provider: string; cost_usd: number; characters: number; utterances: number }[];
+    variable_usd: number;
+    variable_inr: number;
+    inr_per_usd: number;
+  };
+  contribution_inr: number;
+  contribution_margin_pct: number;
+  /** False when either ledger could not be read — the margin is then an upper bound. */
+  contribution_complete: boolean;
 }
 
 /**
@@ -205,6 +228,88 @@ export default function AdminAnalyticsPage() {
             color="amber"
           />
         </div>
+
+        {/* ── What it cost to serve ─────────────────────────────────────────────────
+            THE FIGURE THIS PAGE DID NOT HAVE. Revenue sat here alone, and the only margin
+            anybody could quote was plans.py's — computed against AI cost alone. Speech is a
+            second variable cost, metered per character, and up to twelve times the AI cost
+            of the same round on the wrong vendor. Leaving it out did not make the margin
+            incomplete; it made it wrong, in the flattering direction. */}
+        {rev && (
+          <Card className="space-y-4 p-5">
+            <div className="flex items-baseline justify-between gap-4">
+              <h3 className="text-sm font-medium">Cost to serve, and what is left</h3>
+              <span className="text-xs text-muted-foreground">
+                ${'{'}rev.costs.inr_per_usd{'}'}/USD · before gateway fees, refunds and hosting
+              </span>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard
+                label="AI cost"
+                value={rev.costs.ai_available ? usd(rev.costs.ai_usd) : 'n/a'}
+                icon={<Database className="h-4 w-4" />}
+                sub={rev.costs.ai_available ? 'from ai_usage' : 'ledger unavailable'}
+                color="blue"
+              />
+              <StatCard
+                label="Speech cost"
+                value={rev.costs.tts_available ? usd(rev.costs.tts_usd) : 'n/a'}
+                icon={<AudioLines className="h-4 w-4" />}
+                sub={
+                  rev.costs.tts_available
+                    ? `${rev.costs.tts_cache_hit_pct}% of characters cached`
+                    : 'ledger unavailable'
+                }
+                color="violet"
+              />
+              <StatCard
+                label="Total variable"
+                value={formatRupees(rev.costs.variable_inr)}
+                icon={<Coins className="h-4 w-4" />}
+                sub={usd(rev.costs.variable_usd)}
+                color="amber"
+              />
+              <StatCard
+                label="Contribution"
+                value={formatRupees(rev.contribution_inr)}
+                icon={<Scale className="h-4 w-4" />}
+                /* NOT "profit". Gross minus the two variable costs this system can measure —
+                   no gateway fee, no refunds, no hosting, and none of the AI given away to
+                   accounts that never buy. An upper bound, and the label says so. */
+                sub={`${rev.contribution_margin_pct}% of gross`}
+                color={rev.contribution_margin_pct < 0 ? 'red' : 'emerald'}
+              />
+            </div>
+
+            {!rev.contribution_complete && (
+              /* MISSING COST DATA IS SAID OUT LOUD, NEVER TREATED AS ZERO. A margin that
+                 silently reads absent cost as no cost is the exact failure this block
+                 exists to remove. */
+              <p className="text-xs text-accent-amber-ink">
+                One of the cost ledgers could not be read, so the contribution above is an
+                upper bound rather than a figure.
+              </p>
+            )}
+
+            {rev.costs.tts_by_provider.length > 0 && (
+              <div className="space-y-1.5 border-t border-border/40 pt-4">
+                {rev.costs.tts_by_provider.map((v) => (
+                  <div key={v.provider} className="flex items-center gap-3 text-xs">
+                    <span className="w-24 shrink-0 text-muted-foreground">{v.provider}</span>
+                    <span className="flex-1 tabular-nums text-muted-foreground">
+                      {v.utterances.toLocaleString()} utterances ·{' '}
+                      {v.characters.toLocaleString()} chars
+                    </span>
+                    <span className="w-24 shrink-0 text-right tabular-nums">
+                      {usd(v.cost_usd)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
 
         {rev && rev.by_day.length > 0 && (
           <Card className="p-5">

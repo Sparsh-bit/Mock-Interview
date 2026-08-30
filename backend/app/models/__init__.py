@@ -20,6 +20,7 @@ from .research import CompanyResearch
 from .security import UserSession
 from .session import Answer, InterviewSession, Score, VoiceTranscript
 from .system import AuditLog, SystemPrompt
+from .tts_usage import TTSUsage
 from .user import Profile, User
 
 __all__ = [
@@ -71,4 +72,6 @@ __all__ = [
     "RatingEvent",
     # AI cache
     "AICache",
+    # Speech cost ledger
+    "TTSUsage",
 ]

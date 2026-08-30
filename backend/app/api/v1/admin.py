@@ -49,7 +49,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, func, or_, select, text
+from sqlalchemy import Integer, String, cast, func, or_, select, text
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,6 +117,22 @@ class UpdateUserRequest(BaseModel):
 
 def _ledger_enabled() -> bool:
     return bool(getattr(settings, "AI_USAGE_LEDGER_ENABLED", False))
+
+
+def _tts_ledger_enabled() -> bool:
+    return bool(getattr(settings, "TTS_USAGE_LEDGER_ENABLED", False))
+
+
+#: [ASSUMED, derived from CODE] The FX rate used to put dollar costs and rupee revenue in one
+#: figure. plans.py states an interview's AI cost as "~$0.154 (₹13)", which is 84.4 INR per
+#: USD; taken from the repo's own pairing so this page and that table cannot disagree about
+#: what ₹49 is worth. Reported in the response alongside the figures it produced, because a
+#: margin computed at an unstated rate is a margin nobody can check.
+#:
+#: The SAME constant as `_INR_PER_USD` in scripts/item_margin.py, and a test pins that they
+#: match — two rates would mean the margin report and the admin page disagreeing about the
+#: same month.
+_INR_PER_USD = 84.4
 
 
 async def _cost_by_user(db: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[float, int]]:
@@ -864,6 +880,113 @@ _REVENUE_ROWS = """
 """
 
 
+async def _variable_costs(db: AsyncSession, since: datetime) -> dict:
+    """
+    What the product SPENT to serve the window: AI, and speech.
+
+    THE HALF THAT WAS MISSING, AND WHY THE FIGURE WAS WRONG RATHER THAN MERELY INCOMPLETE.
+    `plans.py` prices every item against AI cost alone, and this endpoint reported gross with
+    no cost at all — so the only margin anybody could quote left out a variable cost that
+    `services/tts/base.py` measures at up to twelve times the AI cost of the same round on
+    the wrong vendor. `scripts/item_margin.py` puts numbers on it: a group discussion at
+    ElevenLabs Creator rates has a NEGATIVE margin while the AI-only figure reads 69%.
+
+    Speech could not be joined here until now, because the only record of it was
+    `services/tts/spend.py` — a Redis float for the current UTC day with a 48-hour TTL and no
+    attribution. `tts_usage` is the durable ledger that makes this query possible; the Redis
+    counter stays as the budget brake and is deliberately not read here.
+
+    NEITHER HALF MAY BREAK THE PAGE. Both ledgers are optional by configuration and both can
+    be absent from a database that has not been migrated yet, so each is wrapped and each
+    reports its availability separately. `available: false` is not the same as zero, and the
+    response says which it is — a margin that silently treats missing cost data as no cost is
+    the exact failure this whole change exists to remove.
+    """
+    from decimal import Decimal as _Decimal  # noqa: PLC0415
+
+    costs: dict[str, Any] = {
+        "ai_usd": 0.0,
+        "ai_available": False,
+        "tts_usd": 0.0,
+        "tts_characters": 0,
+        "tts_characters_cached": 0,
+        "tts_available": False,
+        "tts_by_provider": [],
+    }
+
+    if _ledger_enabled():
+        try:
+            from app.models.ai_usage import AIUsage  # noqa: PLC0415
+
+            costs["ai_usd"] = round(
+                float(
+                    await db.scalar(
+                        select(func.coalesce(func.sum(AIUsage.cost_usd), _Decimal("0"))).where(
+                            AIUsage.created_at >= since
+                        )
+                    )
+                    or 0
+                ),
+                6,
+            )
+            costs["ai_available"] = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("admin_revenue_ai_cost_failed", error=type(exc).__name__)
+
+    if _tts_ledger_enabled():
+        try:
+            from app.models.tts_usage import TTSUsage  # noqa: PLC0415
+
+            rows = (
+                await db.execute(
+                    select(
+                        TTSUsage.provider,
+                        func.coalesce(func.sum(TTSUsage.cost_usd), _Decimal("0")),
+                        func.coalesce(func.sum(TTSUsage.characters), 0),
+                        func.coalesce(
+                            func.sum(
+                                func.cast(TTSUsage.cached, Integer) * TTSUsage.characters
+                            ),
+                            0,
+                        ),
+                        func.count(),
+                    )
+                    .where(TTSUsage.created_at >= since)
+                    .group_by(TTSUsage.provider)
+                )
+            ).all()
+
+            costs["tts_available"] = True
+            for provider, usd, characters, cached_characters, utterances in rows:
+                costs["tts_usd"] += float(usd or 0)
+                costs["tts_characters"] += int(characters or 0)
+                costs["tts_characters_cached"] += int(cached_characters or 0)
+                costs["tts_by_provider"].append(
+                    {
+                        "provider": provider,
+                        "cost_usd": round(float(usd or 0), 6),
+                        "characters": int(characters or 0),
+                        "utterances": int(utterances or 0),
+                    }
+                )
+            costs["tts_usd"] = round(costs["tts_usd"], 6)
+            costs["tts_by_provider"].sort(key=lambda r: r["cost_usd"], reverse=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("admin_revenue_tts_cost_failed", error=type(exc).__name__)
+
+    # THE CACHE HIT RATE, BY CHARACTERS RATHER THAN BY UTTERANCE. A hit on a 20-character
+    # greeting and a hit on a 400-character panel turn are not the same saving, and this
+    # number exists to be acted on: it is the single biggest lever on the speech bill, and
+    # scripts/item_margin.py shows it is the whole reason an interview's margin survives a
+    # vendor a group discussion's does not.
+    costs["tts_cache_hit_pct"] = (
+        round(costs["tts_characters_cached"] / costs["tts_characters"] * 100, 1)
+        if costs["tts_characters"]
+        else 0.0
+    )
+    return costs
+
+
 @router.get("/revenue", summary="What the product actually took, per payment")
 async def admin_revenue(
     current_user: AdminUser,
@@ -871,12 +994,31 @@ async def admin_revenue(
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> dict:
     """
-    Gross revenue over a window, by day and by item.
+    Gross revenue over a window, by day and by item — and what it cost to serve.
 
-    GROSS, AND SAID SO. This is what was captured, before Razorpay's fee and before any
-    refund — neither of which this system records, so calling it "net" would be a guess
-    dressed as a figure. The number is comparable to the Razorpay dashboard's captured
-    total; it is not a P&L.
+    GROSS IS STILL GROSS AND STILL SAID SO. `gross_paise` is what was captured, before
+    Razorpay's fee and before any refund; neither is recorded anywhere in this system, so
+    calling that number "net" would be a guess dressed as a figure. It stays comparable to
+    the Razorpay dashboard's captured total.
+
+    WHAT IS NEW IS `costs`, AND IT IS THE HALF THAT WAS MISSING. This endpoint reported
+    revenue with no cost beside it, so the only margin anybody could quote was the one in
+    plans.py — computed against AI cost alone. Speech is a second variable cost, metered per
+    character, billed by a different vendor, and up to twelve times the AI cost of the same
+    round on the wrong one (services/tts/base.py). Leaving it out does not make the margin
+    incomplete; it makes it wrong, and wrong in the flattering direction.
+
+    `contribution` is DELIBERATELY NOT CALLED PROFIT. It is gross minus the two variable
+    costs this system can actually measure. It excludes the payment-gateway fee, refunds,
+    hosting, and the AI given away to accounts that never buy — so it is an upper bound on
+    what a sale contributes, and the field names say so rather than implying a P&L that does
+    not exist. `scripts/item_margin.py` is where the fuller per-item arithmetic lives.
+
+    MISSING COST DATA IS REPORTED AS MISSING, NEVER AS ZERO. Either ledger can be switched
+    off by configuration or absent from an unmigrated database, and a margin that treats
+    absent cost as no cost is the precise failure this change exists to remove — so
+    `costs.ai_available` and `costs.tts_available` are part of the response and
+    `contribution_complete` is false whenever either is not.
     """
     since = datetime.now(UTC) - timedelta(days=days)
     rows = (await db.execute(text(_REVENUE_ROWS), {"since": since})).all()
@@ -931,11 +1073,38 @@ async def admin_revenue(
         )
     )
 
+    costs = await _variable_costs(db, since)
+    variable_usd = costs["ai_usd"] + costs["tts_usd"]
+    # One conversion, at the edge, from the rate named in the response. Revenue is summed as
+    # integer paise throughout and only becomes a float here; costs are dollars from two
+    # ledgers that store NUMERIC. Mixing the two anywhere earlier is how a money figure
+    # starts disagreeing with the gateway by a paisa.
+    variable_paise = int(round(variable_usd * _INR_PER_USD * _PAISE_PER_RUPEE))
+    contribution_paise = gross_paise - variable_paise
+
     return {
         "window_days": days,
         "since": since.isoformat(),
         "gross_paise": gross_paise,
         "gross_inr": _inr(gross_paise),
+        # ── What it cost to serve the window ─────────────────────────────────────────
+        "costs": {
+            **costs,
+            "variable_usd": round(variable_usd, 6),
+            "variable_paise": variable_paise,
+            "variable_inr": _inr(variable_paise),
+            "inr_per_usd": _INR_PER_USD,
+        },
+        "contribution_paise": contribution_paise,
+        "contribution_inr": _inr(contribution_paise),
+        # Signed, and never clamped. A negative contribution is the only finding on this page
+        # worth acting on immediately, and a max(0, ...) anywhere here would hide it.
+        "contribution_margin_pct": (
+            round(contribution_paise / gross_paise * 100, 1) if gross_paise else 0.0
+        ),
+        # False when either ledger could not be read, so the figure above is an upper bound
+        # for a reason the reader can see rather than a number that looks authoritative.
+        "contribution_complete": bool(costs["ai_available"] and costs["tts_available"]),
         "payments": payments,
         "paying_users": paying_users,
         # Integer division so the average is itself a real paise value rather than a float

@@ -43,6 +43,7 @@ from app.services.tts.base import (
 )
 from app.services.tts.factory import get_tts_provider, panel_voice_id
 from app.services.tts.spend import record_tts_spend, tts_spend_today
+from app.services.tts.usage import record_synthesis
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/tts", tags=["Speech"])
@@ -177,6 +178,25 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
     # not stop it being served. This is what makes the fixed question bank nearly free.
     cached = await cache_get_bytes(key)
     if cached is not None:
+        # A HIT IS RECORDED, AT ZERO, AND IT IS THE MOST VALUABLE ROW IN THE TABLE.
+        #
+        # scripts/item_margin.py shows the entire margin gap between an interview and a group
+        # discussion is that an interview reads the same twelve bank questions to every
+        # candidate — one shared cache entry — while every GD turn is unique text that can
+        # never hit. So the hit rate IS the speech economics, and a ledger of misses alone
+        # could measure the bill and never measure the thing that reduces it.
+        #
+        # `characters` is the length of what WOULD have been synthesised, so "characters
+        # avoided" is a real figure rather than a zero row with no size.
+        await record_synthesis(
+            provider=provider.provider_name,
+            model=getattr(provider, "_model", ""),
+            speaker=request.speaker,
+            characters=len(text),
+            cost_usd=0.0,
+            cached=True,
+            user_id=current_user.user_id,
+        )
         return Response(
             content=cached,
             media_type="audio/mpeg",
@@ -206,7 +226,25 @@ async def speak(request: SpeakRequest, current_user: CurrentUser) -> Response:
         logger.warning("tts_synthesis_failed", speaker=request.speaker, error=str(exc))
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
+    # TWO WRITES, TWO PURPOSES, AND THEY ARE NOT REDUNDANT.
+    #
+    # `record_tts_spend` is the BRAKE: a Redis float for today, read by `_budget_room` before
+    # every synthesis, deliberately with no database dependency because a money guard that
+    # fails open when Postgres is slow is a money guard that does not exist.
+    #
+    # `record_synthesis` is the RECORD: one durable row, attributed, that a margin figure can
+    # be built from. The Redis counter cannot do that job — it has a 48-hour TTL and one
+    # number for everybody — which is why /admin/revenue could only ever report gross.
     await record_tts_spend(result.estimated_cost_usd)
+    await record_synthesis(
+        provider=result.provider,
+        model=getattr(provider, "_model", ""),
+        speaker=request.speaker,
+        characters=result.characters,
+        cost_usd=result.estimated_cost_usd,
+        cached=False,
+        user_id=current_user.user_id,
+    )
     await cache_set_bytes(key, result.audio, ttl_seconds=settings.TTS_CACHE_TTL_SECONDS)
 
     logger.info(

@@ -857,6 +857,24 @@ class Settings(BaseSettings):
             "everyone falls back to browser speech and nothing breaks. 0 disables the cap."
         ),
     )
+    TTS_USAGE_LEDGER_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Record one row per synthesised utterance — vendor, model, speaker, "
+            "characters, cost, and whether it came from the audio cache — so speech can "
+            "appear in a margin figure at all.\n\n"
+            "THIS IS NOT THE BUDGET GUARD. TTS_DAILY_BUDGET_USD is enforced from the Redis "
+            "counter in services/tts/spend.py, which stays exactly as it is: a brake on the "
+            "hot path that must not acquire a database dependency. This is the RECORD, and "
+            "the two are separate because a per-UTC-day float with a 48h TTL and no "
+            "attribution cannot answer 'what did speech cost us last month, per feature, "
+            "per vendor' — which is the question /admin/revenue needs answered before it "
+            "can report anything but gross.\n\n"
+            "Writes are best-effort and can never fail a request. Set false to switch the "
+            "ledger off without a deploy; the margin block then reports speech as "
+            "unavailable rather than as zero."
+        ),
+    )
     TTS_CACHE_TTL_SECONDS: int = Field(
         default=60 * 60 * 24 * 14,
         description=(
