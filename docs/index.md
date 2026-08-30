@@ -1,4 +1,4 @@
-# Hotseat — documentation
+# InterviewOS — documentation
 
 The hub note. Open the vault at the repo root and this is the page the graph hangs off.
 
@@ -28,6 +28,8 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   actually matter, and what breaks when each one is wrong.
 - [[KNOWN-GOOD]] — the state everything was in before the security pass, and why each thing
   is that way
+- [[DATA-RESIDENCY]] — where the data actually sits, checked against CERT-In and RBI. The
+  answer is "not determined", and the note says why that is the honest finding.
 - [[SECURITY-REVIEW]] — the standing quarterly review against the OWASP web, API and LLM
   top tens. A clock rather than an audit: the schedule is enforced by a test that fails when
   the review is overdue, and the log records what each one actually found.
@@ -97,5 +99,5 @@ knowing about:
 - `backend/knowledge/` — hand-maintained YAML reference data (the recruiter catalogue, study
   subtopics, per-company research) read at runtime.
 
-- [[DESIGN-LANGUAGE]] — what Hotseat looks like, and why
+- [[DESIGN-LANGUAGE]] — what InterviewOS looks like, and why
 - [[REDESIGN]] — page-by-page progress

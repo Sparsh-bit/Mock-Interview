@@ -762,6 +762,24 @@ class Settings(BaseSettings):
     #: Unauthenticated reads of a shared report, per calling address, per minute.
     RATE_LIMIT_PUBLIC_PER_MINUTE: int = 30
 
+    #: Where this deployment's data actually sits, as a human-readable region.
+    #:
+    #: EMPTY BY DEFAULT AND THAT IS DELIBERATE. `docs/DATA-RESIDENCY.md` records that the
+    #: region could not be established from this repository — `render.yaml` declares
+    #: `singapore` and marks itself unconfirmed, and DNS proves nothing. Defaulting this to
+    #: a country would make every deployment CLAIM a residency nobody checked, which is the
+    #: failure mode CLAUDE.md records for the stale trial-allowance note: a plausible
+    #: fabrication is worse than an obvious gap, because it looks like the question was
+    #: answered.
+    #:
+    #: Unset, `/privacy` says the region has not been confirmed. Set, it names it. This is
+    #: the same derived-from-configuration mechanism `services/legal/disclosure.py` uses for
+    #: processors, and for the same reason: a notice naming the wrong country is worse than
+    #: no notice, because it is a statement the candidate relied on.
+    #:
+    #: Set it to what the Supabase dashboard actually says, e.g. "Singapore (ap-southeast-1)".
+    DATA_REGION: str = ""
+
     #: The header a TRUSTED proxy writes the caller's address into, or "" to read none.
     #:
     #: EMPTY BY DEFAULT AND THAT IS THE SAFE SETTING. A header is only worth reading when

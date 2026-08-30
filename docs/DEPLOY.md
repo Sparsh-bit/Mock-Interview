@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # Deploying — environment variables and migrations
 
@@ -56,6 +56,7 @@ quietly changes behaviour, and two of them are security or cost problems.
 | variable | default | why the default is wrong deployed |
 |---|---|---|
 | `ENVIRONMENT` | `development` | **Security.** In development the app allows `localhost` CORS origins *and* a permissive `192.168.*` regex with `allow_credentials=True`, and permits `ALLOW_UNVERIFIED_JWT` to take effect. Set it to `production`. |
+| `DATA_REGION` | *(empty)* | **Unset means `/privacy` tells candidates the hosting region has not been confirmed.** Set it to what the Supabase dashboard says, e.g. `Singapore (ap-southeast-1)`. See [[DATA-RESIDENCY]] — the region decides the CERT-In log-localisation position. |
 | `REDIS_URL` | `redis://localhost:6379/0` | **Three silent degradations** — see below. There is no localhost Redis on a managed host. |
 | `AI_PROVIDER` | `glm` | The cost model, prompt caching and budgets in [[AI-COST-MODEL]] all describe Anthropic. Left at the default you are running a different model entirely. Set `anthropic`. |
 | `AI_FALLBACK_PROVIDER` | `nvidia` | Set to whatever you actually want as the standby — this is what serves a user who has spent their daily allowance. |

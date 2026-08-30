@@ -242,14 +242,30 @@ limits never key on an IP; it adds a key for routes that have no user to key on.
 > Record the values here once set, so a later review can tell "configured" from "never
 > looked".
 
-### SR-2026Q3-05 — the log retention clock is a constant, not a job · **medium** · open → Task 6
+### SR-2026Q3-05 — the log retention clock is a constant, not a job · **medium** · open, **blocked on a hosting decision**
 
 `services/legal/retention.py` defines `SECURITY_LOG_RETENTION_DAYS = 180` with a comment
 citing the CERT-In Directions of April 2022, and `FINANCIAL_RETENTION_YEARS = 8`. **Nothing
 purges on either clock** — there is no scheduled job — so both constants describe an
 intention rather than a behaviour, and the privacy disclosure promises the intention. There
 is separately no evidence in the repository about *where* the logs are held, which is the
-other half of what CERT-In asks for. Assigned to Task 6.
+other half of what CERT-In asks for.
+
+**Investigated 2026-08-31 — see [[DATA-RESIDENCY]].** The region could not be established
+from the repository at all: `render.yaml` declares `singapore` and marks itself unconfirmed,
+`.env` (which holds the Supabase and Redis hosts) is not readable, and DNS proves nothing —
+a control against a non-existent Render service name resolves to the same edge as a real one.
+Every piece of documented intent points **outside India**, so the CERT-In log-localisation
+position is **NON-COMPLIANT** on the best available evidence.
+
+The sharper half is that retention is unmet *whatever* the region: no job runs on either
+clock, and a platform's default drain keeps days to weeks rather than 180 days — meaning the
+likely real position is that the logs a regulator would ask for **no longer exist**, which is
+worse than holding them in the wrong country.
+
+`DATA_REGION` is now a setting so the region stops being unanswerable: unset, `/privacy` tells
+the candidate it has not been confirmed; set, it names it. Closing this needs somebody to read
+the Supabase dashboard and to choose a region deliberately during the Railway migration.
 
 ### SR-2026Q3-06 — a global cache entry keyed on candidate text · **medium** · mitigated, open
 

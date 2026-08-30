@@ -25,7 +25,7 @@ description, and the §16 position on transfers to China. See docs/COMPLIANCE.md
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 #: Bumped whenever the disclosure or the notice changes in a way a person would want
 #: to be asked about again. Stored on every consent row, so a later rewrite cannot
@@ -106,7 +106,10 @@ _CATALOGUE: dict[str, Processor] = {
     "supabase": Processor(
         key="supabase",
         name="Supabase",
-        country="Region of the project — confirm in the Supabase dashboard",
+        # Replaced from `settings.DATA_REGION` in `active_processors` when it is set. The
+        # literal here is the honest fallback, not a placeholder to be filled in by editing
+        # this file — see the note on DATA_REGION in core/config.py.
+        country="Region not confirmed — see DATA_REGION in the deployment settings",
         receives="Everything: your account, resume file, answers, transcripts and reports",
         purpose="It is the database and the file store",
     ),
@@ -154,6 +157,15 @@ def active_processors() -> list[Processor]:
         # would put a made-up country in front of a candidate; the test is what
         # catches the omission, not a runtime placeholder.
         if processor and processor not in out:
+            # SUPABASE IS THE ONE ENTRY WHOSE COUNTRY IS A DEPLOYMENT FACT rather than a
+            # vendor fact. Anthropic is in the United States for everybody; Supabase is
+            # wherever this project's region is, and the repository cannot know it. So it
+            # comes from configuration, and says so plainly when unset — see
+            # docs/DATA-RESIDENCY.md for why "not confirmed" is the right thing to publish
+            # rather than a guess.
+            region = (settings.DATA_REGION or "").strip()
+            if processor.key == "supabase" and region:
+                processor = replace(processor, country=region)
             out.append(processor)
     return out
 
