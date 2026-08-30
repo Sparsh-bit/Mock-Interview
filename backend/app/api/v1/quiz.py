@@ -255,7 +255,8 @@ async def start_quiz(
             topics=topics_for_batch,
             count=str(want),
             company=company,
-            focus=focus,
+            # Free text the candidate typed into the focus box.
+            untrusted={"focus": focus},
         )
         # THE VALIDITY CHECK IS ON THE COUNT, NOT ON EMPTINESS, and that is the fix for "I
         # selected 5 questions and only 3 came".

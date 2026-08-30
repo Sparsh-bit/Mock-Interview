@@ -262,6 +262,7 @@ async def analyse_code(request: CodeAnalyseRequest, current_user: CurrentUser):
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import CodingEvaluation  # noqa: PLC0415
+    from app.services.ai.untrusted import fence  # noqa: PLC0415
 
     lang = request.language.lower().strip()
     if lang not in _LANGUAGES:
@@ -273,13 +274,24 @@ async def analyse_code(request: CodeAnalyseRequest, current_user: CurrentUser):
     builder = PromptBuilder(get_prompt_loader())
     messages = builder.chat(
         system_template="coding_evaluator",
-        user_content=f"Review this {lang} submission:\n\n```{lang}\n{request.source}\n```",
+        user_content=(
+            f"Review this {lang} submission:\n\n"
+            + fence("source_code", request.source)
+        ),
         language=lang,
-        problem_title=request.problem_title,
-        problem_description=request.problem_description or "(not provided — infer it from the code)",
         difficulty=request.difficulty,
-        stdout=request.stdout.strip() or "(not run)",
-        stderr=request.stderr.strip() or "(none)",
+        # EVERY ONE OF THESE COMES OUT OF THE REQUEST BODY. The title and description look
+        # like they describe a server-owned problem; this endpoint accepts them from the
+        # caller. stdout/stderr are the candidate's own program's output, which is text
+        # they choose by choosing what to print.
+        untrusted={
+            "problem_title": request.problem_title,
+            "problem_description": (
+                request.problem_description or "(not provided — infer it from the code)"
+            ),
+            "stdout": request.stdout.strip() or "(not run)",
+            "stderr": request.stderr.strip() or "(none)",
+        },
     )
 
     try:

@@ -318,8 +318,15 @@ async def generate_model_answer(
         question=question.content,
         question_type=str(question.question_type or "conceptual"),
         topic=topic_name or "General",
-        candidate_answer=answer.content or "(the candidate gave no answer)",
-        candidate_name=(profile.full_name if profile and profile.full_name else "the candidate"),
+        # The answer is the candidate's own words and the display name is a free-text
+        # profile field they control, so both are fenced rather than spliced into the
+        # rubric. See services/ai/untrusted.py.
+        untrusted={
+            "candidate_answer": answer.content or "(the candidate gave no answer)",
+            "candidate_name": (
+                profile.full_name if profile and profile.full_name else "the candidate"
+            ),
+        },
     )
 
     try:

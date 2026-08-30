@@ -567,7 +567,10 @@ async def gd_prepare(
     messages = builder.chat(
         system_template="gd_topic_prep",
         user_content="Prepare this topic now, as JSON.",
-        raw_topic=raw_topic,
+        # Typed into the topic box by the candidate. NOTE THE CACHE BELOW: this result is
+        # shared across accounts, so an unfenced topic would be one candidate's text
+        # steering another candidate's round.
+        untrusted={"raw_topic": raw_topic},
     )
 
     try:
@@ -772,10 +775,16 @@ async def gd_evaluate(
     messages = builder.chat(
         system_template="gd_evaluator",
         user_content="Score the candidate's GD participation now, as JSON.",
-        topic=request.topic,
+        # BOTH ARE THE CANDIDATE'S OWN TEXT and both were being substituted into the
+        # scoring rubric. The transcript is the sharper of the two: it is what the
+        # candidate said, going into the prompt that decides what it was worth.
+        #
         # Full transcript here (not windowed): scoring participation needs the
         # whole discussion, and this runs once per round rather than on a clock.
-        transcript=_render_transcript(request.history),
+        untrusted={
+            "topic": request.topic,
+            "transcript": _render_transcript(request.history),
+        },
         ignored_questions=str(request.ignored_questions),
     )
 

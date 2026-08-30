@@ -192,13 +192,26 @@ async def analyse_resume(
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
+    from app.services.ai.untrusted import fence  # noqa: PLC0415
 
     builder = PromptBuilder(get_prompt_loader())
+
+    # ── THE RESUME IS THE ATTACKER-CONTROLLED INPUT ON THIS PATH ─────────────
+    #
+    # Its whole text layer becomes prompt input, unread by any human, and a PDF can carry
+    # text nobody reviewing the file would ever see — white on white, sub-point type, or
+    # render mode 3. It already goes in the USER turn, which is the right role; fencing it
+    # is the other half, so the model is told where the candidate's words start and stop
+    # rather than being handed a document that can imitate its own instructions.
+    #
+    # Fenced ONCE here rather than inside each half, so both halves are handed the same
+    # bytes and neither can drift.
+    fenced_resume = fence("resume_text", resume_text)
 
     async def _skills_half() -> ResumeSkillsHalf:
         messages = builder.chat(
             system_template="resume_analyzer_skills",
-            user_content=resume_text,
+            user_content=fenced_resume,
             track_name=track_name,
             company_name=company_name,
             max_skills=str(MAX_SKILLS),
@@ -220,7 +233,7 @@ async def analyse_resume(
     async def _projects_half() -> ResumeProjectsHalf:
         messages = builder.chat(
             system_template="resume_analyzer_projects",
-            user_content=resume_text,
+            user_content=fenced_resume,
             track_name=track_name,
             company_name=company_name,
             max_projects=str(MAX_PROJECTS),

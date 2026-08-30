@@ -49,7 +49,7 @@ from typing import Any, Literal
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, String, cast, func, or_, select, text
+from sqlalchemy import Integer, String, case, cast, func, or_, select, text
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -783,6 +783,74 @@ async def list_admin_audit(
                 "ip": r.ip_address,
             }
             for r in rows
+        ]
+    }
+
+
+@router.get("/resumes/flagged", summary="Resumes the integrity check flagged for review")
+async def list_flagged_resumes(
+    current_user: AdminUser,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> dict:
+    """
+    The manual-review queue for `services/resume/integrity.assess`.
+
+    WHAT THIS IS FOR. A resume's whole text layer becomes prompt input, unread by any
+    human, and a PDF can carry text nobody reviewing the file would ever see. The upload
+    path records what it found rather than refusing — every signal it uses has a
+    legitimate producer, and refusing on any of them costs a real candidate their upload —
+    so "flagged" only means anything if somebody can come and look. This is where they look.
+
+    ORDERED BY SEVERITY, NOT BY TIME. `high` is hidden text that also reads as an
+    instruction to the grader, which is the only combination that is unambiguous. `medium`
+    is text hidden with innocent content — an OCR layer, an exporter's leftovers — and
+    `low` is grader-directed phrasing in plain sight, which on this audience is very often
+    a student describing their own LLM safety project. A reviewer working down a list by
+    upload time would spend all of it on the bottom two.
+
+    THE HIDDEN TEXT ITSELF IS RETURNED, and it is attacker-chosen. It is already bounded at
+    the point of capture (`hidden_text.MAX_HIDDEN_SAMPLE`), it is delivered as a JSON
+    string value rather than interpolated anywhere, and the frontend renders it as text —
+    React escapes it and CLAUDE.md's no-`dangerouslySetInnerHTML` rule is pinned by a test.
+    """
+    from app.models.report import ResumeFile  # noqa: PLC0415
+
+    #: Sorted in the database rather than in Python, so `limit` returns the most serious
+    #: rows rather than the most recent ones that happen to be serious.
+    severity_rank = case(
+        (ResumeFile.integrity_flags["severity"].astext == "high", 0),
+        (ResumeFile.integrity_flags["severity"].astext == "medium", 1),
+        else_=2,
+    )
+
+    rows = (
+        await db.execute(
+            select(ResumeFile, User.email)
+            .join(User, User.id == ResumeFile.user_id)
+            .where(ResumeFile.integrity_flags.isnot(None))
+            .order_by(severity_rank, ResumeFile.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return {
+        "resumes": [
+            {
+                "id": str(resume.id),
+                "user_email": email,
+                "filename": resume.filename,
+                "uploaded_at": resume.created_at,
+                "severity": (resume.integrity_flags or {}).get("severity"),
+                "reasons": (resume.integrity_flags or {}).get("reasons") or [],
+                "injection_signals": (
+                    (resume.integrity_flags or {}).get("injection_signals") or []
+                ),
+                "hidden_chars": (resume.integrity_flags or {}).get("hidden_chars") or 0,
+                "hidden_text": (resume.integrity_flags or {}).get("hidden_text") or "",
+                "samples": (resume.integrity_flags or {}).get("samples") or [],
+            }
+            for resume, email in rows
         ]
     }
 

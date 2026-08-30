@@ -470,6 +470,7 @@ async def _code_verdict(
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import CodingEvaluation  # noqa: PLC0415
+    from app.services.ai.untrusted import fence  # noqa: PLC0415
 
     owns = await db.scalar(
         select(InterviewSession.id).where(
@@ -503,10 +504,13 @@ async def _code_verdict(
     builder = PromptBuilder(get_prompt_loader())
     messages = builder.chat(
         system_template="coding_evaluator",
-        user_content=f"Review this {lang} submission:\n\n```{lang}\n{source}\n```",
+        user_content=f"Review this {lang} submission:\n\n" + fence("source_code", source),
         language=lang,
         problem_title="Interview coding question",
-        problem_description=(problem or "(not provided — infer it from the code)"),
+        # The question text the candidate is answering. Server-selected today, but it is
+        # AI-generated content stored in a row rather than a constant, so it is fenced on
+        # the same footing as anything else that is not written in this file.
+        untrusted={"problem_description": problem or "(not provided — infer it from the code)"},
         difficulty=str(difficulty or "medium"),
         # The interview does not run the code before reviewing it. Saying "(not run)" rather
         # than leaving these blank matters: the evaluator prompt reasons about stdout when it

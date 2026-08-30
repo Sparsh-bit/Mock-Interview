@@ -1892,8 +1892,13 @@ class InterviewOrchestrator:
             system_template="cross_question",
             user_content="Generate the cross-question now, following the output format.",
             topic=topic_name,
-            last_question=last_question.content,
-            last_answer=last_answer,
+            # The candidate wrote `last_answer` and the model wrote `last_question`.
+            # Neither is ours, and both land inside the system template — see
+            # services/ai/untrusted.py.
+            untrusted={
+                "last_question": last_question.content,
+                "last_answer": last_answer,
+            },
             # Never omitted. safe_substitute would put the literal "$already_asked" into
             # the brief, and the prompt's own header says so.
             already_asked=(

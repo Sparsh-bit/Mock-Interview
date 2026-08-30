@@ -164,6 +164,15 @@ class ResumeFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     parsing_status: Mapped[str] = mapped_column(
         String(20), default="pending", nullable=False,
     )
+    # What `services/resume/integrity.assess` found in the uploaded bytes: text hidden from
+    # a human reader, phrasing aimed at the grader, or both. NULL on a clean resume — which
+    # is nearly all of them — so "show me the flagged ones" is `IS NOT NULL` over a small
+    # partial index rather than a filter across every upload ever made.
+    #
+    # NEVER READ BY THE INTERVIEW PATH. This is a note for a person, not a control: the
+    # thing that actually protects a score from a resume is the trust boundary in
+    # services/ai/untrusted.py, and it holds whether or not this column has anything in it.
+    integrity_flags: Mapped[dict | None] = mapped_column(JSONB)
 
     # ── Relationships ──────────────────────────────────────────────────────
     user: Mapped[User] = relationship("User", back_populates="resume_files")  # type: ignore[name-defined]

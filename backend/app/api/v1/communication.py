@@ -190,8 +190,13 @@ async def communication_cross_question(request: CrossQuestionRequest, current_us
         system_template="cross_question",
         user_content="Generate the cross-question now, following the output format.",
         topic="Communication",
-        last_question=request.prompt_text,
-        last_answer=request.transcript,
+        # BOTH ARRIVE IN THE REQUEST BODY. `prompt_text` looks like server-owned copy —
+        # it is the passage the candidate was asked to speak about — but this endpoint
+        # takes it from the caller, so it is exactly as untrusted as the transcript.
+        untrusted={
+            "last_question": request.prompt_text,
+            "last_answer": request.transcript,
+        },
         # PASSED EXPLICITLY, EVEN THOUGH IT IS EMPTY HERE. A communication round asks one
         # prompt and follows up on it once — there is no earlier question to avoid. But
         # substitution is string.Template.safe_substitute, so omitting the variable would
@@ -243,6 +248,7 @@ async def evaluate_communication(
     from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
     from app.services.ai.schemas import CommunicationEvaluation  # noqa: PLC0415
+    from app.services.ai.untrusted import fence  # noqa: PLC0415
 
     builder = PromptBuilder(get_prompt_loader())
     eye = f"{request.eye_contact_pct}%" if request.eye_contact_pct is not None else "not measured"
@@ -259,8 +265,11 @@ async def evaluate_communication(
 
     messages = builder.chat(
         system_template="communication_evaluator",
-        user_content=f"Candidate's spoken answer (transcribed):\n{request.transcript}",
-        prompt_text=request.prompt_text,
+        user_content=(
+            "Candidate's spoken answer (transcribed):\n"
+            + fence("transcript", request.transcript)
+        ),
+        untrusted={"prompt_text": request.prompt_text},
         words_per_minute=str(request.words_per_minute),
         filler_count=str(request.filler_count),
         duration_seconds=str(request.duration_seconds),

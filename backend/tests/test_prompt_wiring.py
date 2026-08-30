@@ -57,6 +57,47 @@ _PROMPTS = _APP / "prompts"
 #: failure here would be the correct alarm rather than a false one.
 _BUILDER_METHODS = {"chat", "chat_static", "render", "build"}
 
+#: Not a substitution — it is the channel the fenced ones arrive on, read separately by
+#: `_fenced_keywords` below. Counting it as a template variable would report a surplus
+#: `$untrusted` that no prompt declares.
+#:
+#: DELIBERATELY JUST THIS ONE. `system_template`, `user_content` and the rest are already
+#: subtracted as `control` inside the surplus assertion, and removing them here as well
+#: would move that knowledge to two places for no gain.
+_CHANNEL_KEYWORDS = {"untrusted"}
+
+
+def _fenced_keywords(call: ast.Call) -> set[str]:
+    """
+    The template variables a call site supplies through `untrusted={...}`.
+
+    Only literal string keys are readable. A computed key would be a hole in this
+    guarantee, so it is surfaced by `test_no_untrusted_mapping_is_built_dynamically`
+    rather than quietly ignored.
+    """
+    for kw in call.keywords:
+        if kw.arg == "untrusted" and isinstance(kw.value, ast.Dict):
+            return {
+                str(key.value)
+                for key in kw.value.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+    return set()
+
+
+def _untrusted_is_dynamic(call: ast.Call) -> bool:
+    """True when `untrusted=` is passed as something other than a literal dict."""
+    for kw in call.keywords:
+        if kw.arg == "untrusted":
+            if not isinstance(kw.value, ast.Dict):
+                return True
+            return any(
+                not (isinstance(key, ast.Constant) and isinstance(key.value, str))
+                for key in kw.value.keys
+            )
+    return False
+
+
 #: Variables a template may leave to the caller's discretion, with the reason.
 #:
 #: Empty, and it should stay that way. It exists so that a future genuine exception is
@@ -91,11 +132,13 @@ def _call_sites() -> tuple[list[_CallSite], list[str]]:
     Every `prompt_builder.<method>(system_template=..., **kwargs)` in the app.
 
     Returns the checkable sites and, separately, the ones whose template name is not a
-    literal. The second list is asserted empty rather than dropped: a dynamically named
-    template is a hole in this guarantee, and it should have to be argued for.
+    literal and the ones whose `untrusted=` mapping is not a literal dict. Both extra lists
+    are asserted empty rather than dropped: either is a hole in this guarantee, and a hole
+    should have to be argued for.
     """
     sites: list[_CallSite] = []
     unresolvable: list[str] = []
+    dynamic_untrusted: list[str] = []
     for path in sorted(_APP.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
@@ -104,7 +147,20 @@ def _call_sites() -> tuple[list[_CallSite], list[str]]:
             func = node.func
             if not isinstance(func, ast.Attribute) or func.attr not in _BUILDER_METHODS:
                 continue
-            keywords = {kw.arg for kw in node.keywords if kw.arg is not None}
+            keywords = {
+                kw.arg
+                for kw in node.keywords
+                if kw.arg is not None and kw.arg not in _CHANNEL_KEYWORDS
+            }
+            # THE SECOND CHANNEL. Since the prompt-injection hardening, a candidate-
+            # controlled variable is passed as `untrusted={"last_answer": ...}` rather than
+            # as a plain keyword, so `PromptBuilder.chat` can fence it before substitution.
+            # It is still a variable the call site supplies, and the whole point of this
+            # file is that "supplied" is read from the real source rather than remembered —
+            # so the dict's keys are read as keywords. Without this the nine call sites
+            # that fence something would each report every fenced variable as missing AND
+            # as an unknown extra, which is a false alarm in both directions.
+            keywords |= _fenced_keywords(node)
             named = next(
                 (kw for kw in node.keywords if kw.arg in {"system_template", "name", "template"}),
                 None,
@@ -115,11 +171,26 @@ def _call_sites() -> tuple[list[_CallSite], list[str]]:
             if not isinstance(named.value, ast.Constant) or not isinstance(named.value.value, str):
                 unresolvable.append(f"{rel}:{node.lineno}")
                 continue
+            if _untrusted_is_dynamic(node):
+                dynamic_untrusted.append(f"{rel}:{node.lineno}")
             sites.append(_CallSite(rel, node.lineno, named.value.value, keywords))
-    return sites, unresolvable
+    return sites, unresolvable, dynamic_untrusted
 
 
-_SITES, _UNRESOLVABLE = _call_sites()
+_SITES, _UNRESOLVABLE, _DYNAMIC_UNTRUSTED = _call_sites()
+
+
+def test_no_untrusted_mapping_is_built_dynamically():
+    """
+    `untrusted=` has to be a literal dict for the same reason a template name has to be a
+    literal string: a computed mapping cannot be read from the source, so neither this file
+    nor `test_prompt_injection.py` can tell which variables it fences. A hole in both
+    guarantees at once should have to be argued for rather than appearing by accident.
+    """
+    assert not _DYNAMIC_UNTRUSTED, (
+        "these call sites build `untrusted=` dynamically, so no test can check what they "
+        f"fence: {_DYNAMIC_UNTRUSTED}"
+    )
 
 
 def test_the_parser_actually_found_the_call_sites():

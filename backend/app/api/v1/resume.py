@@ -38,6 +38,7 @@ from app.services.resume import (
     looks_like_a_resume,
 )
 from app.services.resume.analyser import ResumeAnalysisOutcome, analyse_resume
+from app.services.resume.integrity import assess as assess_integrity
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -307,6 +308,36 @@ async def upload_resume(
             chars=len(resume_text),
         )
 
+    # ── IS THIS FILE TRYING SOMETHING? ──────────────────────────────────────
+    #
+    # The one input on this product where the person supplying the text is the person
+    # being scored by the model that reads it. `assess` looks for text hidden from a
+    # human reader — white on white, sub-point type, PDF render mode 3 — and for phrasing
+    # aimed at the grader rather than describing the candidate.
+    #
+    # IT DOES NOT REFUSE, AND MUST NOT. What protects the score is the trust boundary in
+    # services/ai/untrusted.py, which holds whether or not this finds anything. Every
+    # signal here has a legitimate producer: OCR layers are invisible by construction, and
+    # a student describing their own LLM safety project writes "prompt injection" in a CV.
+    # Rejecting on either would cost a real candidate their upload to catch a maybe.
+    #
+    # IN A THREAD, for the same reason extraction is: it walks the content stream of every
+    # page, which is CPU and blocking, and one upload is not allowed to be everyone else's
+    # latency.
+    integrity = await asyncio.to_thread(assess_integrity, file_bytes, resume_text)
+    if integrity.flagged:
+        logger.warning(
+            "resume_integrity_flagged",
+            user_id=str(current_user.user_id),
+            # NOT the filename and NOT the hidden text. Both are attacker-chosen strings
+            # and this line goes to the log aggregator; the row carries the detail, and a
+            # reviewer reads it there with the resume in front of them.
+            severity=integrity.severity,
+            reasons=list(integrity.reasons),
+            injection_signals=list(integrity.injection_signals),
+            hidden_chars=integrity.hidden_chars,
+        )
+
     # ── Store the file and analyse it, AT THE SAME TIME ─────────────────────
     #
     # These two have nothing to say to each other: the storage write needs the
@@ -380,6 +411,8 @@ async def upload_resume(
         ),
         parsed_experience=analysis.experience.model_dump(mode="json") if analysis else None,
         interview_focus=analysis.interview_focus.model_dump(mode="json") if analysis else None,
+        # None on a clean resume, so the flagged set stays small enough to read.
+        integrity_flags=integrity.as_record(),
     )
     db.add(resume)
     await db.commit()
