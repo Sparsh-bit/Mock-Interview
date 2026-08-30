@@ -147,6 +147,21 @@ Checked page by page in [[REDESIGN]]:
    invented statistic. Those pages get their hierarchy from typography, grouping
    and spacing instead — and `lit-hierarchy.test.ts` enforces the ceiling of one,
    never a floor of one, precisely so this stays a legitimate answer.
+
+   **The live session is the deliberate exception, and it is worth naming.** It is
+   a multi-pane workspace rather than a document: the panes are peers by design,
+   and the current question — which *is* the subject — is a strip pinned outside
+   the scroll container, whose layout is constrained by invariants that
+   `mic-interlock.test.ts` pins. It already reads as the subject through indigo.
+   Putting a warm top-down gradient and the system's largest shadow on a flush
+   strip would fight the colour that is already doing that job and would risk a
+   layout the tests exist to protect. Its hierarchy was solved before this rule
+   existed, and it was solved correctly.
+
+   The full list of pages with no lit element, all deliberate: `settings`,
+   `admin`, `admin/analytics`, `admin/marketing`, `admin/offers`, `ai-usage`,
+   `prepare` (its timeline carries the structure), `report/[id]/analysis`,
+   `r/[reportId]`, `session/[id]`, the receipt, and the four auth screens.
 3. **A real empty state** — what to do, in this product's voice, with a route out.
 4. **A real error state** that does not read as zero. `0/100` and "we could not
    load this" are opposite messages, and confusing them has already cost an
