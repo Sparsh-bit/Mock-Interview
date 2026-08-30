@@ -35,6 +35,9 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   disagree, [[DEPLOY]] is newer.
 - [[OBSERVABILITY]] — what a log line is allowed to contain (the PII audit and its result),
   and how the logs get somewhere durable: Render's native drain, not an in-process shipper.
+- [[RATE-LIMIT-HEADROOM]] — peak RPM/ITPM/OTPM at 200 concurrent users, as a script you
+  run rather than a number you quote. The finding: output tokens bind first, not
+  requests — and the report semaphore, not the provider, is what sets the peak.
 - [[MULTI-REPLICA]] — the audit of every piece of in-process state against running more
   than one of us: what is safe, what is a tradeoff already written down, and the two
   things that were genuinely broken — one of which was the container's boot chain
