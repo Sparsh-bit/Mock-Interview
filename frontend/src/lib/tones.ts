@@ -105,3 +105,54 @@ export const ROUTE_TONE: Record<string, Tone> = {
   '/pricing': 'amber',
   '/ai-usage': 'teal',
 };
+
+/**
+ * HOW HARD SOMETHING IS, in colour — the heat scale from docs/DESIGN-LANGUAGE §2.
+ *
+ * Heat means difficulty and only difficulty: teal is a warm-up, amber is the real thing, coral
+ * is the round that decides it. It is deliberately NOT the emerald/coral pair the score bands
+ * use for passed and failed, because **hard is not bad** — a candidate choosing the hard set is
+ * doing the right thing, and colouring that choice like a failure is telling them otherwise.
+ *
+ * IT LIVES HERE BECAUSE IT WAS ABOUT TO EXIST THREE TIMES. The tracks page had one, the quiz
+ * page had another for its selected chip, and the practice page was using
+ * `Badge variant={hard ? 'danger' : easy ? 'success' : 'warning'}` — the pass/fail vocabulary
+ * applied to difficulty, which is exactly the confusion this scale exists to prevent. Three
+ * private copies of a colour rule is how the score bands ended up with five.
+ *
+ * Every class is written out in full. Tailwind compiles the classes it can literally see, so
+ * an interpolated one survives dev and vanishes from the production build with no error.
+ */
+export const HEAT = {
+  easy: {
+    label: 'Warm-up',
+    chip: 'bg-accent-teal-soft text-accent-teal-ink',
+    dot: 'bg-accent-teal',
+    border: 'border-accent-teal',
+  },
+  medium: {
+    label: 'Standard',
+    chip: 'bg-accent-amber-soft text-accent-amber-ink',
+    dot: 'bg-accent-amber',
+    border: 'border-accent-amber',
+  },
+  hard: {
+    label: 'Runs hot',
+    chip: 'bg-accent-coral-soft text-accent-coral-ink',
+    dot: 'bg-accent-coral',
+    border: 'border-accent-coral',
+  },
+} as const;
+
+export type HeatLevel = keyof typeof HEAT;
+
+/**
+ * The heat for a difficulty string, or null when it is absent or unrecognised.
+ *
+ * Null rather than a guess: a difficulty the backend adds later should render as an honest
+ * unlabelled item rather than being silently miscoloured as something it is not.
+ */
+export function heatFor(difficulty: string | null | undefined) {
+  if (!difficulty) return null;
+  return HEAT[difficulty.toLowerCase() as HeatLevel] ?? null;
+}

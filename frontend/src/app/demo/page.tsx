@@ -5,6 +5,9 @@ export const runtime = 'edge';
 import Link from 'next/link';
 import { ArrowLeft, Calendar, FileText, TrendingUp } from 'lucide-react';
 
+import { scoreBand } from '@/lib/score-bands';
+import { cn } from '@/lib/utils';
+
 export default function DemoReportPage() {
   const sampleReport = {
     session_name: 'Cognizant GenC — Java FSE',
@@ -74,7 +77,11 @@ export default function DemoReportPage() {
             Back to home
           </Link>
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-primary">Sample Report</p>
+            {/* The same coloured rule PageHeader draws before every eyebrow in the app. */}
+            <p className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-accent-teal-ink">
+              <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-teal" />
+              Sample report
+            </p>
             <h1 className="text-3xl font-semibold">{sampleReport.session_name}</h1>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -101,11 +108,26 @@ export default function DemoReportPage() {
       {/* Content */}
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-12">
         {/* Overall Score Card */}
-        <div className="glass rounded-xl border border-border/50 p-8">
+        {/* THE LIT ELEMENT — docs/DESIGN-LANGUAGE §1. This page is linked from the landing
+            page, so for a lot of people it is the first real thing they see the product
+            produce. The score is what they came to look at; the transcript below is evidence
+            for it. It was one of four identical glass panels. */}
+        <div className="lit rounded-2xl p-8">
           <div className="grid gap-8 sm:grid-cols-3">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Overall Readiness</p>
-              <p className="mt-2 text-4xl font-bold text-primary">{sampleReport.overall_score}/100</p>
+              {/* Banded and monospaced, like every other score in the product. `text-primary`
+                  meant this sample would have looked identical at 34 and at 88 — on the page
+                  we use to show somebody what a report looks like. */}
+              <p
+                className={cn(
+                  'mt-2 font-mono text-4xl font-bold tabular-nums tracking-[-0.03em]',
+                  scoreBand(sampleReport.overall_score).ink,
+                )}
+              >
+                {sampleReport.overall_score}
+                <span className="text-lg font-medium text-muted-foreground">/100</span>
+              </p>
               <p className="mt-1 text-sm text-muted-foreground">{sampleReport.readiness_level}</p>
             </div>
             <div>
@@ -182,7 +204,10 @@ export default function DemoReportPage() {
                   <p className="mb-2 text-xs font-medium text-muted-foreground uppercase">Key Keywords Used</p>
                   <div className="flex flex-wrap gap-1.5">
                     {item.keywords.map((k) => (
-                      <span key={k} className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                      <span
+                        key={k}
+                        className="rounded-full bg-accent-indigo-soft px-2 py-1 text-xs text-accent-indigo-ink"
+                      >
                         {k}
                       </span>
                     ))}

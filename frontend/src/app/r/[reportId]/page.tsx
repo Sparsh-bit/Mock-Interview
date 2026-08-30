@@ -145,7 +145,11 @@ export default function PublicReportPage() {
                 {data.company_name ? `${data.company_name} · ` : ''}
                 {data.track_name}
               </p>
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight">{data.candidate_name}</h1>
+              <p className="mt-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-teal-ink">
+                <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-teal" />
+                Shared report
+              </p>
+              <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">{data.candidate_name}</h1>
               <p className="mt-1 text-sm text-muted-foreground">
                 Mock interview assessment · {new Date(data.created_at).toLocaleDateString()}
               </p>

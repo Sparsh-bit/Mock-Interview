@@ -13,33 +13,32 @@ import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 import { useQuiz, useBankTopics, type QuizDifficulty, type QuizQuestion, type SubmitQuizResponse } from '@/hooks/useQuiz';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { scoreBand } from '@/lib/score-bands';
+import { HEAT } from '@/lib/tones';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 
 export const runtime = 'edge';
 
 /**
- * How hard a quiz runs, in colour. See docs/DESIGN-LANGUAGE §2 — heat means difficulty and
- * only difficulty, so this is the same scale the tracks page uses for its panels.
+ * The selected difficulty chip.
  *
- * Every class is written out in full rather than assembled from the level name: Tailwind
- * compiles the classes it can literally see, and `bg-accent-${level}-soft` would produce a
- * string it never encountered — the colour survives dev, where the JIT has usually seen the
- * class elsewhere, and vanishes from the production build with no error anywhere.
+ * The colours are the shared heat scale (lib/tones) — teal warm-up, amber standard, coral runs
+ * hot — so a "hard" quiz and a "hard" track are the same colour. "Any" is neutral indigo
+ * because it is the ABSENCE of a choice rather than a level, and giving it a heat would put it
+ * on the scale it exists to opt out of.
  *
- * `-soft` FILL WITH `-ink` TEXT, NOT WHITE ON THE SOLID TONE. I wrote these as
+ * `-soft` fill with `-ink` text rather than white on the solid tone. I wrote these as
  * `bg-accent-amber text-white` first, which measures 3.02:1 — amber is the lightest tone in
- * the palette and `tailwind.config.ts` says in its own comment that the bare tones are for
- * graphics rather than text. Coral came out at 4.35:1 and emerald at 4.34:1; only indigo,
- * teal and plum are dark enough for white. Picking per-tone would have made four chips in one
- * row inconsistent for a reason no reader could see, so all four use the pairing the rest of
- * the product uses, and the solid border carries the selected state instead of the fill.
+ * the palette and tailwind.config.ts says in its own comment that the bare tones are for
+ * graphics rather than text. Coral came out at 4.35:1. Only indigo, teal and plum are dark
+ * enough for white, and picking per-tone would make four chips in one row inconsistent for a
+ * reason no reader could see, so the solid border carries the selected state instead.
  */
 const HEAT_SELECTED: Record<string, string> = {
   any: 'border-accent-indigo bg-accent-indigo-soft text-accent-indigo-ink',
-  easy: 'border-accent-teal bg-accent-teal-soft text-accent-teal-ink',
-  medium: 'border-accent-amber bg-accent-amber-soft text-accent-amber-ink',
-  hard: 'border-accent-coral bg-accent-coral-soft text-accent-coral-ink',
+  easy: `${HEAT.easy.border} ${HEAT.easy.chip}`,
+  medium: `${HEAT.medium.border} ${HEAT.medium.chip}`,
+  hard: `${HEAT.hard.border} ${HEAT.hard.chip}`,
 };
 
 type Phase = 'setup' | 'exam' | 'results';

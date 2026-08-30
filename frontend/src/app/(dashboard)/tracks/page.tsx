@@ -11,44 +11,10 @@ import { buttonVariants } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
+import { heatFor } from '@/lib/tones';
 
 export const runtime = 'edge';
 
-/**
- * HOW HARD IS THIS SEAT — the heat scale from docs/DESIGN-LANGUAGE §2.
- *
- * Heat means difficulty and nothing else in this product: teal is a warm-up, amber is the real
- * thing, coral is the round that decides it. It is deliberately NOT the emerald/coral pair used
- * for pass and fail — a colour that means two things means nothing, and "hard" is not "bad".
- *
- * This replaced a `<Badge variant="warning">Active</Badge>` that appeared on every card without
- * exception. A badge that is always the same is not a badge; it is a decoration with a border,
- * and it was occupying the one slot on the card where a real distinction could live.
- *
- * Every class is written out in full rather than assembled from the level name: Tailwind
- * compiles the classes it can literally see, so an interpolated one survives dev and vanishes
- * from the production build with no error anywhere.
- *
- * Falls back to no chip rather than guessing, so a difficulty the backend adds later renders
- * as an honest unlabelled track instead of being silently miscoloured.
- */
-const HEAT: Record<string, { label: string; chip: string; dot: string }> = {
-  easy: {
-    label: 'Warm-up',
-    chip: 'bg-accent-teal-soft text-accent-teal-ink',
-    dot: 'bg-accent-teal',
-  },
-  medium: {
-    label: 'Standard',
-    chip: 'bg-accent-amber-soft text-accent-amber-ink',
-    dot: 'bg-accent-amber',
-  },
-  hard: {
-    label: 'Runs hot',
-    chip: 'bg-accent-coral-soft text-accent-coral-ink',
-    dot: 'bg-accent-coral',
-  },
-};
 
 export default function TracksPage() {
   const { data: tracks, isLoading, error, refetch, isFetching } = useTracks();
@@ -85,7 +51,7 @@ export default function TracksPage() {
            wrapper supplies only the focus. */
         <FocusGroup className="grid gap-5 md:grid-cols-2">
           {(tracks || []).map((track, i) => {
-            const heat = HEAT[track.difficulty_level?.toLowerCase()] ?? null;
+            const heat = heatFor(track.difficulty_level);
 
             /*
              * THE FIRST TRACK IS THE LIT ONE, AND IT SPANS BOTH COLUMNS.

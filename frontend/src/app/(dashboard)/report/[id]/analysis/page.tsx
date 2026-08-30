@@ -12,9 +12,10 @@ import {
   MessageSquare,
   Sparkles,
   Target,
-  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { DataError } from '@/components/ui/data-error';
+import { buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,7 +25,7 @@ import {
   useGenerateModelAnswer,
   type AnalysedAnswer,
 } from '@/hooks/useData';
-import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
+import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
@@ -219,30 +220,29 @@ export default function DetailedAnalysisPage() {
   const params = useParams();
   const sessionId = params.id as string;
   const router = useRouter();
-  const { data, isLoading, error } = useDetailedAnalysis(sessionId);
+  const { data, isLoading, error, refetch, isFetching } = useDetailedAnalysis(sessionId);
 
   if (isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-accent-teal" />
       </div>
     );
   }
 
   if (error || !data) {
+    /*
+     * DataError, not a hand-rolled centred card. This had no RETRY — the only way out of a
+     * transient network failure was back to the report, and this page is where the candidate's
+     * own words live, which is the part of the product they are most likely to reload.
+     */
     return (
-      <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
-        <Card className="border-destructive/20 p-8 text-center">
-          <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-semibold">Analysis Unavailable</h2>
-          <p className="text-sm text-muted-foreground">
-            {(error as { message?: string } | null)?.message || 'Could not load this session.'}
-          </p>
-          <Button className="mt-6" variant="secondary" onClick={() => router.push(`/report/${sessionId}`)}>
-            Back to report
-          </Button>
-        </Card>
-      </motion.div>
+      <DataError
+        title="Could not load your analysis"
+        error={error}
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     );
   }
 
@@ -263,6 +263,15 @@ export default function DetailedAnalysisPage() {
       </motion.div>
 
       <motion.div variants={fadeUp}>
+        {/* The same coloured rule PageHeader draws before every eyebrow in the app — teal,
+            because this page is measurement (ROUTE_TONE gives /report teal). This screen sets
+            its own title rather than using PageHeader because it is a sub-view of a report
+            rather than a destination, but there is no reason for it to opt out of the
+            wayfinding. */}
+        <p className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-teal-ink">
+          <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-teal" />
+          Detailed analysis
+        </p>
         <h1 className="text-2xl font-semibold tracking-[-0.02em]">Answer-by-Answer Analysis</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           {data.company_name ? `${data.company_name} · ` : ''}
@@ -274,10 +283,23 @@ export default function DetailedAnalysisPage() {
 
       {data.answers.length === 0 ? (
         <motion.div variants={fadeUp}>
-          <Card className="p-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              No answers were recorded for this session.
-            </p>
+          {/* An empty state that says what happened AND what to do. "No answers were
+              recorded" with nothing to press is a dead end on a page somebody navigated to
+              from their own report. */}
+          <Card variant="flat" className="flex flex-wrap items-center justify-between gap-4 p-6">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">No answers were recorded for this round</p>
+              <p className="mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+                This happens when a session was closed before the first answer was submitted.
+                The round itself is still on your report.
+              </p>
+            </div>
+            <button
+              onClick={() => router.push(`/report/${sessionId}`)}
+              className={cn(buttonVariants({ variant: 'secondary', size: 'md' }), 'shrink-0')}
+            >
+              Back to the report
+            </button>
           </Card>
         </motion.div>
       ) : (

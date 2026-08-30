@@ -4,13 +4,15 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { ChevronLeft, Code2, Info, Loader2, XCircle } from 'lucide-react';
+import { ChevronLeft, Code2, Info, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
 import { getBrowserApiClient } from '@/lib/api';
-import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
+import { DataError } from '@/components/ui/data-error';
+import { fadeUp, staggerContainer } from '@/lib/motion';
+import { heatFor } from '@/lib/tones';
+import { cn } from '@/lib/utils';
 
 export const runtime = 'edge';
 
@@ -61,30 +63,32 @@ function Practice() {
   // the report the candidate came from rather than the dashboard.
   const from = search.get('from');
 
-  const { data: question, isLoading, error } = usePracticeQuestion(questionId);
+  const { data: question, isLoading, error, refetch, isFetching } = usePracticeQuestion(questionId);
+  const heat = heatFor(question?.difficulty);
 
   if (isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
       </div>
     );
   }
 
   if (error || !question) {
+    /*
+     * DataError, not a hand-rolled centred card. This page had its own wording, its own icon,
+     * and no RETRY — the only way out was back to the dashboard, so a transient network blip
+     * meant losing the question you had navigated to from a report. Every other page in the
+     * product already uses this component, and it distinguishes "we could not load this" from
+     * "there is nothing here", a confusion that has cost an incident on the report path.
+     */
     return (
-      <motion.div initial="hidden" animate="visible" variants={scalePop} className="mx-auto mt-12 max-w-2xl">
-        <Card className="border-destructive/20 p-8 text-center">
-          <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-          <h2 className="mb-2 text-xl font-semibold">Question Unavailable</h2>
-          <p className="text-sm text-muted-foreground">
-            {(error as { message?: string } | null)?.message || 'This question could not be loaded.'}
-          </p>
-          <Button className="mt-6" variant="secondary" onClick={() => router.push('/dashboard')}>
-            Back to dashboard
-          </Button>
-        </Card>
-      </motion.div>
+      <DataError
+        title="Could not load this question"
+        error={error}
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     );
   }
 
@@ -108,16 +112,38 @@ function Practice() {
           report needs to know immediately that this is NOT the interview resuming
           — nothing they do here is scored or recorded against that session. */}
       <motion.div variants={fadeUp}>
-        <Card className="p-5">
+        {/* THE LIT ELEMENT — docs/DESIGN-LANGUAGE §1. The workspace below is the tool; this
+            is the thing you came to solve, and it is also where the "not scored" notice
+            lives, which somebody arriving from a report needs to actually read. */}
+        <Card variant="outline" className="lit p-5">
+          <p className="mb-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-plum-ink">
+            <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-plum" />
+            Practice
+          </p>
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Badge variant="violet">Practice mode</Badge>
+            {/* Plum, and it is the one badge on this card that must not be mistaken for a
+                score or a difficulty: it says nothing here counts. */}
+            <Badge variant="violet">Not scored</Badge>
             <Badge variant="neutral">{question.topic}</Badge>
-            <Badge variant={question.difficulty === 'hard' ? 'danger' : question.difficulty === 'easy' ? 'success' : 'warning'}>
-              {question.difficulty}
-            </Badge>
+            {/* HEAT, NOT PASS/FAIL. This was `danger` for hard and `success` for easy —
+                the vocabulary the score bands use for failed and passed, applied to a choice
+                the candidate makes deliberately. Choosing the hard set is the right thing to
+                do, and colouring it like a failure says the opposite. See
+                docs/DESIGN-LANGUAGE §2: heat means difficulty and only difficulty. */}
+            {heat && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium capitalize',
+                  heat.chip,
+                )}
+              >
+                <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', heat.dot)} />
+                {question.difficulty}
+              </span>
+            )}
           </div>
           <h1 className="flex items-start gap-2 text-lg font-semibold leading-relaxed">
-            <Code2 className="mt-1 h-5 w-5 shrink-0 text-primary" />
+            <Code2 className="mt-1 h-5 w-5 shrink-0 text-accent-indigo-ink" />
             {question.content}
           </h1>
 

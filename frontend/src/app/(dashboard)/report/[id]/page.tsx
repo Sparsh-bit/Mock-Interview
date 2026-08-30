@@ -319,6 +319,13 @@ export default function ReportDetailPage() {
                   Evaluated on {new Date(report.created_at).toLocaleDateString()}
                 </span>
               </div>
+              {/* The same coloured rule PageHeader draws before every eyebrow in the app — this
+              screen sets its own title because it is a document rather than a destination,
+              but there is no reason for it to opt out of the wayfinding. */}
+              <p className="mb-2 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-accent-teal-ink">
+                <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-teal" />
+                Your report
+              </p>
               <h1 className="text-3xl font-semibold tracking-[-0.02em]">Technical Evaluation Report</h1>
               <p className="mt-2 max-w-xl text-sm text-muted-foreground">{report.executive_summary}</p>
               {report.readiness_reasoning && (

@@ -281,6 +281,8 @@ export default function AdminOffersPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <PageHeader
+        eyebrow="Admin"
+        tone="amber"
         title="Offers & promo codes"
         description="Festival offers, launch pricing, and private codes you can switch off."
       />
