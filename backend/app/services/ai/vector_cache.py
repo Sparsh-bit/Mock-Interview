@@ -525,8 +525,15 @@ async def store(
             # noticing evict_lru had no callers.)
             #
             # Every _EVICT_EVERY writes rather than every write, because a DELETE with an
-            # OFFSET subquery is far more expensive than the INSERT it follows and the table
-            # cannot overshoot its cap by more than that many rows.
+            # OFFSET subquery is far more expensive than the INSERT it follows.
+            #
+            # THE COUNTER IS PER PROCESS AND THE TABLE IS NOT. This used to say the table
+            # "cannot overshoot its cap by more than that many rows", which stops being true
+            # the moment there is more than one replica: each needs _EVICT_EVERY writes of
+            # its OWN before it trims, so the real bound is _EVICT_EVERY x replicas. At the
+            # cap of 5,000 rows per feature that is noise, and a shared counter would cost a
+            # round trip on every cache write to tighten a bound nothing depends on — so
+            # this is a tradeoff, written down rather than fixed. See docs/MULTI-REPLICA.md.
             global _writes_since_evict
             _writes_since_evict += 1
             if _writes_since_evict >= _EVICT_EVERY:

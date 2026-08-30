@@ -70,11 +70,20 @@ USER appuser
 
 EXPOSE 8000
 
-# Apply migrations, seed the company interview research, then start Uvicorn.
-# Render/Cloud Run inject $PORT.
+# Boot work, then Uvicorn. Render/Cloud Run inject $PORT.
 #
-# The research seed is idempotent (upserts by company+program) and only writes a
-# handful of rows, so running it on every boot keeps production in sync with
-# knowledge/research/*.yaml with no manual step. It is deliberately non-fatal:
-# failing to refresh reference data must never stop the API from starting.
-CMD ["sh", "-c", "uv run alembic upgrade head && (uv run python scripts/seed_db.py || echo 'catalogue seed skipped') && (uv run python scripts/seed_research.py || echo 'research seed skipped') && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# THE MIGRATION AND THE SEEDS ARE NOT RUN DIRECTLY HERE ANY MORE, and the indirection is
+# the point. This chain runs in EVERY replica. Two replicas booting a deploy that carries a
+# migration used to apply the same DDL at the same time — the second one got "relation
+# already exists", `alembic` exited non-zero, the `&&` short-circuited, and that replica
+# never started Uvicorn at all. scripts/boot.py takes a Postgres advisory lock so the work
+# happens once between them; it keeps the same fatal/non-fatal split the old chain had
+# (a failed migration stops the boot, a failed reference-data seed does not) and the same
+# reason for it: the research seed is an idempotent upsert that keeps production in step
+# with knowledge/research/*.yaml, and failing to refresh reference data must never stop the
+# API from starting.
+#
+# render.yaml's `preDeployCommand` is the better place for this and runs it once per deploy
+# before any instance starts. scripts/boot.py is what keeps the container correct without
+# it — under docker-compose, and on any plan with no pre-deploy hook.
+CMD ["sh", "-c", "uv run python scripts/boot.py && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

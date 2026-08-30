@@ -35,6 +35,10 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
   disagree, [[DEPLOY]] is newer.
 - [[OBSERVABILITY]] — what a log line is allowed to contain (the PII audit and its result),
   and how the logs get somewhere durable: Render's native drain, not an in-process shipper.
+- [[MULTI-REPLICA]] — the audit of every piece of in-process state against running more
+  than one of us: what is safe, what is a tradeoff already written down, and the two
+  things that were genuinely broken — one of which was the container's boot chain
+  rather than anything in the application.
 - [[REDIS-CUTOVER]] — moving Redis from localhost to a managed, replicated instance:
   the two numbers to read off the plan page first, how to prove `rediss://` works before
   production depends on it, and what stops protecting you while it is broken.

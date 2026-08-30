@@ -80,20 +80,62 @@ def _unverified_jwt_allowed() -> bool:
 # Supabase's signing keys rotate rarely; a short in-process cache avoids a
 # network round-trip on every request without risking long-lived staleness.
 _JWKS_CACHE_TTL_SECONDS = 600
-_jwks_cache: dict[str, Any] = {"keys": [], "fetched_at": 0.0}
+
+#: Shortest gap between two refetches triggered by an unrecognised key id.
+#:
+#: THE TRIGGER IS ATTACKER-CONTROLLED, which is the whole reason this number exists. A token
+#: can carry any `kid` at all, so "refetch when the kid is unknown" without a floor turns
+#: every forged token into a request to Supabase's JWKS endpoint — a rate limit somebody else
+#: enforces, reached through our auth path. 30s is far below a rotation's cost (ten minutes
+#: of failed logins) and far above what a flood could exploit.
+_JWKS_REFETCH_COOLDOWN_SECONDS = 30
+
+_jwks_cache: dict[str, Any] = {"keys": [], "fetched_at": 0.0, "refetched_at": 0.0}
 
 
-async def _get_jwks() -> list[dict[str, Any]]:
-    now = time.monotonic()
-    if now - _jwks_cache["fetched_at"] < _JWKS_CACHE_TTL_SECONDS and _jwks_cache["keys"]:
-        return _jwks_cache["keys"]
+def reset_jwks_cache() -> None:
+    """Drop the cached keys. Used by tests, and by nothing on the request path."""
+    _jwks_cache.update({"keys": [], "fetched_at": 0.0, "refetched_at": 0.0})
 
+
+async def _fetch_jwks() -> list[dict[str, Any]]:
+    """The network call, by itself, so the caching policy above it can be tested without one."""
     url = f"{settings.SUPABASE_URL}/auth/v1/.well-known/jwks.json"
     async with httpx.AsyncClient(timeout=5.0) as client:
         response = await client.get(url, headers={"apikey": settings.SUPABASE_ANON_KEY})
         response.raise_for_status()
-        keys = response.json().get("keys", [])
+        return response.json().get("keys", [])
 
+
+async def get_signing_keys(kid: str | None = None) -> list[dict[str, Any]]:
+    """
+    Supabase's public signing keys, cached for _JWKS_CACHE_TTL_SECONDS.
+
+    REFETCHES WHEN ASKED FOR A KEY ID IT DOES NOT HOLD. Without that the cache had exactly
+    one way to notice a rotation — waiting out the ten-minute timer — and every request in
+    that window is a 401 on a perfectly valid token.
+
+    That was already true of a single instance. What N replicas add is that each holds its
+    own independent timer, so the symptom stops being "everybody is logged out for ten
+    minutes" (bad, but obvious, and it ends) and becomes "logins fail at random depending on
+    which replica answers", which looks like an intermittent auth bug rather than a rotation.
+
+    The refetch is rate-limited: see _JWKS_REFETCH_COOLDOWN_SECONDS for why that is a
+    security property and not a politeness.
+    """
+    now = time.monotonic()
+    fresh = now - _jwks_cache["fetched_at"] < _JWKS_CACHE_TTL_SECONDS and _jwks_cache["keys"]
+
+    if fresh:
+        known = any(k.get("kid") == kid for k in _jwks_cache["keys"])
+        if kid is None or known:
+            return _jwks_cache["keys"]
+        if now - _jwks_cache["refetched_at"] < _JWKS_REFETCH_COOLDOWN_SECONDS:
+            return _jwks_cache["keys"]
+        _jwks_cache["refetched_at"] = now
+        logger.info("jwks_refetch_for_unknown_kid", kid=kid)
+
+    keys = await _fetch_jwks()
     _jwks_cache["keys"] = keys
     _jwks_cache["fetched_at"] = now
     return keys
@@ -164,7 +206,7 @@ async def verify_supabase_jwt(token: str) -> dict:
     # Asymmetric algorithm -- verify against the project's JWKS.
     kid = header.get("kid")
     try:
-        keys = await _get_jwks()
+        keys = await get_signing_keys(kid)
     except Exception as exc:  # network error, bad JWKS response, etc.
         logger.error("jwks_fetch_failed", error=str(exc))
         if _unverified_jwt_allowed():

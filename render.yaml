@@ -59,18 +59,52 @@ services:
     # UNCONFIRMED — see the verification note above.
     plan: free
 
-    # ONE INSTANCE, AND THE NUMBER IS LOAD-BEARING BEYOND CAPACITY.
+    # ONE INSTANCE, AND THE NUMBER IS FORCED RATHER THAN CHOSEN.
     #
-    # The real Postgres connection ceiling is (DB_POOL_SIZE + DB_MAX_OVERFLOW) x replicas
-    # measured against Supabase's own limit, so raising this to serve more users exhausts the
-    # DATABASE rather than the pool — and the symptom is "too many connections" on random
-    # requests rather than a clean slowdown. Raise DB_POOL_SIZE down to 5/10 before raising
-    # this. See docs/DEPLOY.md §2.
+    # RENDER'S FREE COMPUTE PLAN CANNOT SCALE PAST ONE INSTANCE — its own docs list
+    # "Scaling beyond a single instance" as unsupported, and autoscaling needs Pro. So with
+    # `plan: free` above, `numInstances: 2` is not a decision, it is a blueprint that does
+    # not deploy. backend/tests/test_multi_replica.py fails if these two ever disagree.
     #
-    # It is also what makes the in-process AI spend cap global rather than per-process: with
-    # Redis reachable the cap is shared, but if Redis is down `_spend_today` falls back to a
-    # local counter and the effective ceiling becomes AI_DAILY_BUDGET_USD x replicas.
+    # THE JUSTIFIED TARGET IS 2, and the reasoning is written down here rather than
+    # rediscovered later. Two is the smallest number that buys anything real: it survives one
+    # instance dying and it makes a deploy a rollover instead of a gap. Three or more buys
+    # very little at this traffic and costs on every axis below.
+    #
+    # FOUR THINGS MUST MOVE IN THE SAME COMMIT as this number. Each is a per-PROCESS budget
+    # that the fleet multiplies, and a process cannot see past its own:
+    #
+    #   1. WEB_REPLICA_COUNT — set it to this number. Nothing changes behaviour off it; it is
+    #      what the Redis and database startup audits multiply by. Stale, it makes both
+    #      audits wrong in the optimistic direction, which is the failure where nothing warns.
+    #   2. DB_POOL_SIZE / DB_MAX_OVERFLOW — the real ceiling is (pool + overflow) x replicas
+    #      against Supabase's pooler limit, so raising THIS exhausts the DATABASE rather than
+    #      the pool, and the symptom is "too many connections" on random requests rather than
+    #      a clean slowdown. Drop to 5 / 10 first: 15 x 2 = 30 server connections. §2 of
+    #      docs/DEPLOY.md, and the startup check in db/session.py.
+    #   3. REDIS_MAX_CONNECTIONS x this number must stay under REDIS_CONNECTION_CEILING.
+    #      See docs/REDIS-CUTOVER.md §2.
+    #   4. REPORT_CONCURRENCY is per process, so the provider-facing concurrency is this
+    #      number x that one. At 12 x 2 that is 24 simultaneous ~17k-token calls to
+    #      Anthropic — measure it against the account's rate limits before, not after.
+    #
+    # ONE THING GETS WORSE AND IS ACCEPTED. If Redis is unreachable the AI daily spend cap
+    # falls back to a per-process counter (`_spend_today` in anthropic_provider), so the
+    # effective ceiling becomes AI_DAILY_BUDGET_USD x replicas. That is a degradation of an
+    # already-degraded state, not a new failure — and the alternative, a cap that reads 0.0
+    # forever whenever Redis blinks, fails OPEN on money. See docs/MULTI-REPLICA.md.
     numInstances: 1
+
+    # Migrations and reference-data seeding, ONCE PER DEPLOY, before any new instance starts.
+    #
+    # This is the platform's answer to the thing that actually breaks under replicas: the
+    # container CMD runs in every one of them, so two replicas booting a migration-carrying
+    # deploy used to apply the same DDL simultaneously — the loser got "relation already
+    # exists" and never started Uvicorn. scripts/boot.py holds a Postgres advisory lock so
+    # the container is correct on its own too; this hook is what makes the lock uncontended.
+    #
+    # REQUIRES A PAID INSTANCE TYPE, like numInstances above. Uncomment with the plan change.
+    # preDeployCommand: "cd backend && uv run python scripts/boot.py"
 
     # `/api/v1/health` — the router mounts it under the versioned prefix, so a bare `/health`
     # 404s and Render marks the service unhealthy forever while the app is running fine.
@@ -188,12 +222,29 @@ services:
       - key: TTS_DAILY_BUDGET_USD
         sync: false
 
+      # ── Deployment topology ───────────────────────────────────────────────
+      # The replica count, told to the application. It changes no behaviour — it is what
+      # the startup audits multiply per-process connection budgets by, because a process
+      # cannot see its siblings. Keep it equal to numInstances above; they are one
+      # decision, and test_multi_replica.py holds them together.
+      - key: WEB_REPLICA_COUNT
+        sync: false
+
       # ── Database pool ─────────────────────────────────────────────────────
       # Lower to 5 / 10 behind the Supabase transaction pooler; see numInstances above
       # for why this and the replica count are one decision.
       - key: DB_POOL_SIZE
         sync: false
       - key: DB_MAX_OVERFLOW
+        sync: false
+
+      # ── Redis connection budget ───────────────────────────────────────────
+      # REDIS_MAX_CONNECTIONS x WEB_REPLICA_COUNT is checked against this at startup. Read
+      # it off the Redis plan page; see docs/REDIS-CUTOVER.md §1.
+      - key: REDIS_CONNECTION_CEILING
+        sync: false
+      # Only for a provider whose certificate does not chain to the system trust store.
+      - key: REDIS_TLS_CA_CERTS
         sync: false
 
       # ── Speech ────────────────────────────────────────────────────────────
