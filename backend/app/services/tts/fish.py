@@ -59,7 +59,7 @@ class FishAudioProvider:
         self,
         *,
         api_key: str,
-        model: str = "s2.1-pro-free",
+        model: str = "s1",
         timeout: float = 12.0,
     ) -> None:
         if not api_key:
@@ -68,11 +68,17 @@ class FishAudioProvider:
         #: Which synthesis backend. Sent as a HEADER, not in the body — Fish reads it from
         #: `model:`, which is easy to miss and fails as a 402 rather than a 400.
         #:
-        #: Defaults to the FREE tier, and that is not a placeholder: verified against the
-        #: live API that a zero-credit key returns 402 on the paid backends and real audio
-        #: on s2.1-pro-free, in about 3.5 seconds. Since Fish bills API credit separately
-        #: from platform credit, an account can look funded and still be refused — so the
-        #: default that works is the right default.
+        #: THIS DEFAULT WAS 's2.1-pro-free' AND THAT VALUE HANGS. The note here used to say
+        #: it was the free tier and returned real audio on a zero-credit key in ~3.5s. True
+        #: when written; retested and false — the backend has been retired, and a retired
+        #: Fish backend does not refuse, it never answers. See _RETIRED_FISH_MODELS in
+        #: services/tts/factory.py for why a hang is worse than a 402.
+        #:
+        #: The factory always passes FISH_MODEL explicitly and refuses the retired list, so
+        #: this signature default was only reachable by constructing the provider directly.
+        #: It is corrected anyway because Fish is now the DEFAULT vendor (TTS_PROVIDER), and
+        #: a wrong default one layer down is exactly the kind of thing that stops being
+        #: unreachable later.
         self._model = model
         # Short on purpose: this sits between an interviewer's question and the candidate
         # hearing it, and a caller still waiting after twelve seconds should long since have

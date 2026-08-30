@@ -676,18 +676,41 @@ class Settings(BaseSettings):
     # OFF by default, and that is a cost decision rather than caution. TTS is priced per
     # CHARACTER, and on ElevenLabs' Creator tier a single GD round of neural speech costs
     # about twelve times every AI call in that round combined — see the table in
-    # services/tts/base.py and docs/AI-COST-MODEL.md. The browser's speechSynthesis is free and
-    # already works; this is a paid upgrade to how it sounds, so it has to be switched on
-    # deliberately by somebody who has looked at the numbers.
+    # services/tts/base.py and docs/AI-COST-MODEL.md. On Fish, now the default vendor below,
+    # the same round costs roughly a tenth of that and lands under the round's own AI spend.
+    # Either way the browser's speechSynthesis is free and already works; this is a paid
+    # upgrade to how it sounds, so it stays something switched on deliberately by somebody
+    # who has looked at the numbers. The vendor default only decides which bill you get once
+    # you do — it does not turn anything on.
     TTS_ENABLED: bool = False
     TTS_PROVIDER: str = Field(
-        default="elevenlabs",
+        default="fish",
         description=(
-            "Which vendor. 'elevenlabs' is the best-sounding and the most expensive. Azure "
-            "and Google Neural are roughly 14x cheaper per character AND have native en-IN "
-            "voices (Neerja, Prabhat) — for Indian campus practice an authentic accent is "
-            "usually worth more than emotional range. Add one as a new module in "
-            "services/tts/ and a branch in factory.py; nothing else changes."
+            "Which vendor: 'fish' or 'elevenlabs'. Both are fully supported and either "
+            "value is a first-class choice — this default decides only which one a "
+            "deployment gets when it says nothing.\n\n"
+            "IT WAS 'elevenlabs' AND THE DEFAULT MOVED FOR TWO REASONS, ONE OF WHICH IS NOT "
+            "MONEY. The money is real: ElevenLabs' Creator tier is ~$210 per million "
+            "characters against Fish's ~$15 — see _USD_PER_CHAR in services/tts/fish.py and "
+            "the tier table in services/tts/elevenlabs.py — which is roughly a fourteenth "
+            "per character, and about a tenth per round once flash_v2_5's half-credit rate "
+            "is taken into account. That is the difference between speech costing an order "
+            "of magnitude more than every AI call in a GD round combined, and costing less "
+            "than one of them.\n\n"
+            "The other reason is fit. This product is Indian campus placement practice, and "
+            "Fish's catalogue carries genuine Indian-English voices; a candidate rehearsing "
+            "a Cognizant panel is better served by an interviewer who sounds like one they "
+            "will actually meet than by a technically richer American one. ElevenLabs still "
+            "wins on raw expressiveness, which is why it is kept intact and one env var "
+            "away rather than removed.\n\n"
+            "CHANGING THIS CHANGES THE VENDOR, NOT THE FEATURE. Voice ids in TTS_VOICE_IDS "
+            "are account- and vendor-specific, so a deployment that switches provider must "
+            "also swap that map — an ElevenLabs voice id sent to Fish is a 400, not a "
+            "different-sounding voice. TTS_ENABLED still gates the whole thing, and is "
+            "still False by default.\n\n"
+            "Azure and Google Neural are the other cheap options with native en-IN voices. "
+            "Add one as a new module in services/tts/ and a branch in factory.py; nothing "
+            "else changes."
         ),
     )
     FISH_API_KEY: str = Field(
