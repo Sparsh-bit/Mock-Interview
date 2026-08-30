@@ -1,0 +1,85 @@
+# What must never reach the production image.
+#
+# THERE WAS NO .dockerignore, AND THE DOCKERFILE DOES `COPY backend/ /app/backend/`. That
+# copies the directory as it exists on whoever's machine ran the build, which meant the built
+# image contained:
+#
+#   backend/.env      — REAL CONFIGURATION. The copy that shipped happened to hold localhost
+#                       and `.env.example` placeholders, so nothing was actually leaked. That
+#                       is luck, not design: core/config.py explicitly supports backend/.env
+#                       as a location, so the first person to put production values there
+#                       ships the Supabase service key, the JWT secret, the model provider
+#                       keys and the Razorpay secret inside a distributable artefact. An image
+#                       cannot be un-shipped and the only remedy is rotating every credential.
+#
+#   backend/.uv_cache — 97 MB of downloaded wheel archives, INCLUDING OLD VULNERABLE COPIES of
+#                       packages the image has since upgraded. This is how it was found: the
+#                       Trivy gate kept reporting PyJWT 2.8.0 and cryptography 49.0.0 after
+#                       both had been upgraded, because it was reading .dist-info out of the
+#                       cache rather than out of site-packages. The scanner was right and the
+#                       image really did contain them.
+#
+#   backend/.venv     — a virtualenv built for the HOST platform, with absolute paths from the
+#                       host baked into its scripts. Useless in the image at best, and on an
+#                       Apple-silicon machine it is the wrong architecture entirely.
+#
+#   .pytest_cache, .mypy_cache, .ruff_cache, .coverage, tests/ — development artefacts with no
+#                       runtime purpose.
+#
+# DENY-LIST RATHER THAN ALLOW-LIST, deliberately: the Dockerfile copies two named directories,
+# so the surface is already narrow, and an allow-list would silently drop a new package
+# directory somebody adds under app/.
+
+# ── Secrets. First, because this is the one that cannot be undone. ───────────
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+secrets/
+
+# ── Build and dependency caches ─────────────────────────────────────────────
+**/.venv
+**/venv
+**/.uv_cache
+**/__pycache__
+**/*.py[cod]
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/.coverage
+**/htmlcov
+**/*.egg-info
+
+# ── Node / frontend. The backend image needs none of it. ────────────────────
+node_modules
+frontend
+.next
+out
+
+# ── Tests and tooling ───────────────────────────────────────────────────────
+backend/tests
+**/.github
+.git
+.gitignore
+
+# ── Docs, design assets and scratch ─────────────────────────────────────────
+docs
+design
+promo
+public
+graphify-out
+*.md
+!backend/README.md
+*.canvas
+*.png
+*.jpg
+*.jpeg
+Dockerfile
+docker-compose.yml
+vercel.json
+render.yaml

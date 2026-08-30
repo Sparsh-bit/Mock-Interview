@@ -94,3 +94,22 @@ ignore_missing_imports = true
 # missing its required fields, because it cannot see that pydantic-settings
 # populates them from the environment.
 plugins = ["pydantic.mypy"]
+
+[tool.uv]
+# FORCING PyJWT FORWARD PAST THE GLM SDK'S PIN.
+#
+# `zhipuai` requires `pyjwt >=2.8.0,<2.9.0`, and 2.8.0 carries two HIGH advisories
+# (CVE-2026-32597, CVE-2026-48526) whose fixes land in 2.12.0 and 2.13.0. The upper bound
+# means no ordinary resolution can take them, so the image ships a vulnerable JWT library
+# and .github/workflows/image-scan.yml fails the build — correctly.
+#
+# THE ALTERNATIVE WAS TO ALLOWLIST THE CVEs, WHICH WOULD HAVE BEEN THE WRONG CALL. A
+# suppressed advisory stays suppressed after the fix ships, and "the SDK pinned it" is a
+# reason to override the pin, not a reason to stop looking.
+#
+# WHY THIS IS SAFE HERE, verified rather than assumed: zhipuai uses PyJWT for exactly one
+# thing — signing its own outbound API token with `jwt.encode(payload, key, algorithm,
+# headers)`. That signature is unchanged across 2.8 → 2.13. Nothing attacker-controlled
+# reaches it, and this application's OWN token verification does not use PyJWT at all: it
+# uses python-jose (core/security.py). tests/test_glm_token_signing.py pins the behaviour.
+override-dependencies = ["pyjwt>=2.13.0"]

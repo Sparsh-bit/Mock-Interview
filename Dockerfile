@@ -13,8 +13,41 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# ── Patch the base image before installing anything ───────────────────────
+#
+# NOT HOUSEKEEPING. `python:3.13-slim` is rebuilt on its own schedule, so between rebuilds it
+# carries whatever Debian security updates have been published since — and the image scan
+# (.github/workflows/image-scan.yml) fails the build on any HIGH or CRITICAL with a fix
+# available. The one that caught this was CVE-2026-14456 in openssl/libssl3t64, fixed in
+# 3.5.7-1~deb13u2 while the base still shipped 3.5.6-1~deb13u2. Every TLS connection this
+# service makes — Supabase, the model providers, Razorpay — goes through that library.
+#
+# `upgrade`, not `dist-upgrade`: this must not pull in a new libc or change the base
+# distribution underneath a Python built against it. The lists are removed in the same layer,
+# or they stay in the image for nothing.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv handles the Python deps (matches local dev).
-RUN pip install --no-cache-dir uv
+#
+# COPIED FROM ASTRAL'S OWN IMAGE RATHER THAN `pip install uv`, AND PIP IS THEN REMOVED.
+#
+# This started as a smaller change — `pip install --upgrade setuptools uv` — to clear
+# CVE-2025-47273 in the base image's setuptools. It did not clear it, and the scan showed why:
+# the remaining HIGH findings were not the INSTALLED setuptools (84.0.0, fine) but copies
+# VENDORED INSIDE PIP — pip/_vendor/msgpack (GHSA-6v7p-g79w-8964) and pip's bundled setuptools
+# metadata at 70.3.0. Upgrading the outer package cannot reach them; only removing pip does.
+#
+# Which is the right answer anyway: a production image does not need a package manager. Nothing
+# in CMD calls pip — alembic, the seed scripts and uvicorn all run through uv, and uv resolves
+# and builds with its own frontend. Removing it deletes a whole class of finding that this
+# repository can never fix, because the vulnerable code belongs to pip's vendor tree.
+#
+# The uv version is PINNED. `:latest` would make the image non-reproducible and would let a uv
+# release change dependency resolution between two builds of the same commit.
+COPY --from=ghcr.io/astral-sh/uv:0.12.7 /uv /uvx /usr/local/bin/
+RUN python -m pip uninstall -y pip 2>/dev/null || true
 
 # App code + migrations (copy before sync so uv can build the local package
 # reliably — a solo deploy favours a robust build over layer-cache micro-opts).
