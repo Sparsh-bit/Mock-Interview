@@ -1,3 +1,17 @@
+# CI — what has to be true before anything merges.
+#
+# THIS USED TO RUN LINT AND TYPECHECK ONLY. There are 807 frontend tests and 1,890 backend
+# tests in this repository and CI ran none of them, so a green tick meant "it compiles" while
+# saying nothing about whether it works. Worse, it was misleading in the one direction that
+# matters: several of those tests exist specifically because a bug reached production once
+# already (see docs/MISTAKES.md), and a check that cannot fail on a regression is the same
+# vacuous-guard shape that file spends most of its length warning about.
+#
+# The build step matters separately from typecheck. `tsc --noEmit` does not run Tailwind, and
+# a class assembled at runtime — `bg-accent-${tone}-soft` — type-checks, survives dev because
+# the JIT has usually seen the class elsewhere, and then silently vanishes from the production
+# stylesheet. Only a real build catches that.
+
 name: CI
 
 on:
@@ -18,9 +32,50 @@ jobs:
       - run: npm install
       - run: npm run lint -w frontend
       - run: npm run typecheck -w frontend
+      - name: Tests
+        run: npm run test -w frontend -- --run
+      - name: Production build
+        # Catches what typecheck cannot: a Tailwind class that only exists at runtime, a route
+        # that fails to prerender, an import that resolves in dev and not in a build.
+        run: npm run build -w frontend
+        env:
+          # Public-by-design placeholders. The build needs these to exist; it does not need
+          # them to be real, and putting real values here would compile them into a bundle
+          # that is published as a build artifact.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          NEXT_PUBLIC_API_URL: http://localhost:8000
 
   backend:
     runs-on: ubuntu-latest
+
+    # THE TESTS NEED A REAL DATABASE. Most of the backend suite exercises actual SQL —
+    # SELECT ... FOR UPDATE on the credit ledger, ON DELETE CASCADE on account deletion,
+    # SAVEPOINT behaviour — none of which a mock reproduces, and all of which have been the
+    # subject of a production incident. Running them against a throwaway Postgres is the only
+    # way the suite means anything.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: interviewos
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: interviewos_dev
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U interviewos -d interviewos_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -37,3 +92,17 @@ jobs:
         run: cd backend && uv run ruff check .
       - name: Typecheck (MyPy)
         run: cd backend && uv run mypy app
+      - name: Tests
+        run: cd backend && uv run pytest -q
+        env:
+          # The user/db/port match docker-compose.yml and the fallback in tests/conftest.py,
+          # so a developer's local run and CI exercise the same schema.
+          DATABASE_URL: postgresql+asyncpg://interviewos:password@localhost:5433/interviewos_dev
+          REDIS_URL: redis://localhost:6379/0
+          # Required settings with no defaults — `Settings` fails startup without them, which
+          # is deliberate. These are throwaway values for a throwaway database.
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_ANON_KEY: placeholder-anon-key
+          SUPABASE_SERVICE_KEY: placeholder-service-key
+          SUPABASE_JWT_SECRET: placeholder-jwt-secret-for-ci-only-not-a-real-secret
+          ENVIRONMENT: test

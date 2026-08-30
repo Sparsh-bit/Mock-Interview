@@ -53,6 +53,14 @@ the test fail.** Every guard in this repo that matters has been mutation-tested,
 above were only found that way. If a mutation does not fail the test, either the test is
 vacuous or the mutation is equivalent — and knowing which is the whole value.
 
+**The largest instance of this pattern was CI itself.** It ran lint and typecheck and nothing
+else — so 807 frontend and 1,890 backend tests, many of which exist *because* a bug reached
+production once already, could not fail a build. A green tick meant "it compiles". Fixed:
+`.github/workflows/ci.yml` now runs both suites (with Postgres and Redis service containers,
+because most of the backend suite exercises real SQL that a mock cannot reproduce) and a
+production build, which catches the one failure typecheck structurally cannot — a Tailwind
+class assembled at runtime that vanishes from the emitted stylesheet.
+
 ### P2 — Fixing the mechanism does not fix the people already broken by it
 
 Twice, a correct fix shipped and rescued nobody.
