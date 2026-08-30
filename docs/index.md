@@ -58,6 +58,11 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
 - [[AI-COST-MODEL]] — what each feature costs per call, measured from the real usage ledger
   rather than from vendor rate cards. Every number in the plan catalogue is priced against
   this, so it is the note to re-read before changing an allowance.
+- [[SUBSCRIPTION-BUNDLE-PROPOSAL]] — **a proposal, not a decision.** Whether to bring back a
+  monthly price, in the one shape that could coexist with the pay-per-item pivot: unlimited
+  practice, interviews still bought one at a time. Its point is §6 — five go/no-go thresholds
+  to be measured before anybody writes a line of it, and the note says plainly what it means
+  if they fail.
 - [[TEMPORARY-token-counter]] — the interim `ai_usage` ledger and the admin screen over it.
   Explicitly temporary: it was the stand-in for a credit system, which now exists in
   `backend/app/services/billing/`. This note describes what can be removed.
