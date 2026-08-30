@@ -1,9 +1,10 @@
 'use client';
 
 import { useAuth } from '@/hooks/useAuth';
+import { useAnalyticsConsent, useSetAnalyticsConsent } from '@/hooks/useAnalyticsConsent';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Lock, Check } from 'lucide-react';
+import { Bell, Lock, Check, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -18,6 +19,18 @@ export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [resetSent, setResetSent] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  /*
+   * THE ANALYTICS CONSENT, READ FROM THE SERVER AND NOT FROM localStorage.
+   *
+   * Unlike the notification preference two fields up, which is a convenience that may
+   * legitimately live in this browser, this is a legal record: §6(4)–(6) makes withdrawal as
+   * easy as giving, and a withdrawal that only takes effect on the device it was made on is
+   * not a withdrawal. `null` from the query means "never asked", which is not consent, so
+   * the switch reads as off.
+   */
+  const analyticsConsent = useAnalyticsConsent();
+  const setAnalyticsConsent = useSetAnalyticsConsent();
 
   /*
    * Persist the notification preference locally so the choice actually sticks across reloads
@@ -162,6 +175,58 @@ export default function SettingsPage() {
               </div>
               <div className="shrink-0">
                 <Switch checked={emailNotifications} onChange={toggleEmailNotifications} />
+              </div>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* Privacy — the analytics consent */}
+        <motion.div variants={fadeUp}>
+          <Card className="space-y-4 p-6">
+            <div className="flex items-center gap-3">
+              {/* Indigo: this is information ABOUT the product's use rather than about the
+                  candidate's performance, and indigo is the neutral informational register.
+                  Deliberately not emerald — nothing here is "verified" or "secure", and
+                  deliberately not amber — nothing here is in progress. */}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-indigo-soft text-accent-indigo-ink">
+                <BarChart3 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold">Privacy</h3>
+                <p className="text-xs text-muted-foreground">What we may measure about how you use Hotseat</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-border/40 pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Product analytics</p>
+                {/* NAMES WHAT IS AND IS NOT SENT. "Help us improve" is the wording this is
+                    deliberately not: §6 asks for consent that is specific, and a person
+                    cannot give specific consent to a euphemism. */}
+                <p className="text-xs text-muted-foreground">
+                  Which parts of the product you use — signing up, uploading a resume,
+                  starting and finishing interviews, buying. Never your resume, your answers
+                  or your scores. Turning this off stops it immediately and clears what is
+                  stored in this browser.
+                </p>
+              </div>
+              <div className="shrink-0">
+                <Switch
+                  checked={analyticsConsent.data === true}
+                  onChange={() => {
+                    const next = analyticsConsent.data !== true;
+                    setAnalyticsConsent.mutate(next, {
+                      onSuccess: () =>
+                        toast.success(
+                          next
+                            ? 'Product analytics is on. You can turn it off here at any time.'
+                            : 'Product analytics is off. Nothing further will be measured.'
+                        ),
+                      onError: () =>
+                        toast.error('Could not save that. Your choice has not been changed.'),
+                    });
+                  }}
+                />
               </div>
             </div>
           </Card>

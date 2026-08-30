@@ -50,6 +50,15 @@ PURPOSE_PRIVACY_NOTICE = "privacy_notice"
 PURPOSE_AGE_18_PLUS = "age_18_plus"
 PURPOSE_RESUME_PROCESSING = "resume_processing"
 PURPOSE_CROSS_BORDER = "cross_border_transfer"
+#: Product analytics. A SEPARATE PURPOSE, and it has to be: §6 asks for consent that is
+#: SPECIFIC, and "I have read what happens to my data" is not agreement to be measured by
+#: a third-party product-analytics vendor. Bundling it into the privacy notice would make
+#: every existing account look like it had agreed to something nobody asked them about.
+#:
+#: It is also the only purpose here that is genuinely OPTIONAL — the product works
+#: identically without it — so it is the only checkbox at signup that is not required, and
+#: withdrawing it costs the candidate nothing.
+PURPOSE_ANALYTICS = "analytics"
 
 CONSENT_PURPOSES: frozenset[str] = frozenset(
     {
@@ -58,6 +67,7 @@ CONSENT_PURPOSES: frozenset[str] = frozenset(
         PURPOSE_AGE_18_PLUS,
         PURPOSE_RESUME_PROCESSING,
         PURPOSE_CROSS_BORDER,
+        PURPOSE_ANALYTICS,
     }
 )
 

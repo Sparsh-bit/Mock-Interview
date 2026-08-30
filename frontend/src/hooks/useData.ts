@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
+import { EVENTS, track } from '@/lib/analytics';
 
 export interface Track {
   id: string;
@@ -422,6 +423,14 @@ export function useUploadResume() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (file: File) => {
+      /*
+       * Read BEFORE the upload, because the upload is what makes it false. `onSuccess`
+       * invalidates `['resume']`, so by the time it runs the cached primary is either the
+       * new one or gone — either way it can no longer answer "was there one before".
+       */
+      const hadResumeBefore = Boolean(
+        queryClient.getQueryData<StoredResume | null>(['resume', 'primary'])
+      );
       const api = getBrowserApiClient();
       const form = new FormData();
       form.append('file', file);
@@ -431,6 +440,13 @@ export function useUploadResume() {
       // rather than by network latency. Kept well above that: a client that gives up
       // first turns a successful upload into an error the candidate cannot act on.
       const res = await api.post('/api/v1/resume/upload', form, { timeout: 120_000 });
+      /*
+       * NOT THE FILE NAME, NOT THE SIZE, NOT THE TYPE. A resume's file name is very often
+       * the candidate's own name — "Priya_Sharma_Resume.pdf" — and a size plus a type is a
+       * fingerprint that re-identifies a document across accounts. The only thing worth
+       * measuring here is that an upload happened and whether it was their first.
+       */
+      track(EVENTS.RESUME_UPLOADED, { is_first: !hadResumeBefore });
       return res.data as StoredResume;
     },
     onSuccess: () => {

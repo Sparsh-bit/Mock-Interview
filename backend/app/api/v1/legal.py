@@ -27,6 +27,7 @@ from app.db.session import get_db
 from app.models.consent import (
     CONSENT_PURPOSES,
     PURPOSE_AGE_18_PLUS,
+    PURPOSE_ANALYTICS,
     PURPOSE_PRIVACY_NOTICE,
     PURPOSE_TERMS,
     SOURCE_SETTINGS,
@@ -71,6 +72,16 @@ class SignupConsentRequest(BaseModel):
     #: and this product measures speech pace, fillers, pauses and presence. The
     #: product cannot ask the question later — by then it has already monitored them.
     age_18_plus: bool
+    #: "You may measure how I use the product." THE ONLY OPTIONAL ONE, and the only one
+    #: with a default — `False`, which is the safe direction and is not a pre-ticked box:
+    #: a client that omits the field records a REFUSAL, not a grant.
+    #:
+    #: It defaults rather than being required so that this endpoint stays backward
+    #: compatible with a browser running the previous bundle. The frontend and backend
+    #: deploy separately, and an older client that does not send the field must record
+    #: "not agreed" rather than 422 the whole consent call — a signup that ends with no
+    #: consent row at all is the exact state DPDP §6 is about.
+    analytics: bool = False
     #: Which version of the notice was on screen. Sent by the client rather than
     #: assumed server-side, so a stale tab records what it actually showed.
     notice_version: str = Field(default=NOTICE_VERSION, max_length=32)
@@ -108,6 +119,10 @@ async def record_signup_consent(
         (PURPOSE_PRIVACY_NOTICE, request.privacy_notice),
         (PURPOSE_TERMS, request.terms),
         (PURPOSE_AGE_18_PLUS, request.age_18_plus),
+        # Recorded whatever the answer, and a `False` here is as much a record as a
+        # `True`: "they were asked and said no" is the fact that stops the question
+        # being asked again, and it is the evidence that nothing was tracked.
+        (PURPOSE_ANALYTICS, request.analytics),
     ):
         await consent_service.record(
             db,

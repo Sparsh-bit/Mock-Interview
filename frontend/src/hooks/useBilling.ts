@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getBrowserApiClient } from '@/lib/api';
+import { EVENTS, track } from '@/lib/analytics';
 import type { PaymentsResponse } from '@/lib/billing/receipt';
 
 
@@ -273,7 +274,31 @@ export function useVerifyPayment() {
       const res = await getBrowserApiClient().post('/api/v1/billing/verify', proof);
       return res.data as { status: string; item_id?: string; quantity?: number };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      /*
+       * PURCHASE AND REPEAT PURCHASE ARE ONE EVENT WITH A FLAG. `is_repeat` is read from the
+       * payments cache BEFORE it is invalidated two lines down — after that, this purchase
+       * is in the list and every purchase looks like a repeat.
+       *
+       * NO RAZORPAY IDS. `razorpay_payment_id` and `razorpay_order_id` identify a real
+       * financial transaction and are the join key into the payment provider; the vendor has
+       * no use for them, and a leak of the analytics export would otherwise be a leak of
+       * somebody's payment references. `item_id` is a catalogue key from plans.py and
+       * `price_paise` is what the server charged — neither says anything about the person.
+       */
+      const priorPayments =
+        qc.getQueryData<{ payments?: unknown[] }>(['billing', 'payments'])?.payments?.length ??
+        0;
+      const item = qc
+        .getQueryData<{ items?: StoreItem[] }>(['billing', 'items'])
+        ?.items?.find((i) => i.id === data.item_id);
+      track(EVENTS.PURCHASE, {
+        ...(data.item_id ? { item_id: data.item_id } : {}),
+        ...(data.quantity ? { quantity: data.quantity } : {}),
+        ...(item ? { feature: item.feature, price_paise: item.price_paise } : {}),
+        is_repeat: priorPayments > 0,
+      });
+
       void qc.invalidateQueries({ queryKey: ['billing', 'balance'] });
       void qc.invalidateQueries({ queryKey: ['billing', 'payments'] });
     },

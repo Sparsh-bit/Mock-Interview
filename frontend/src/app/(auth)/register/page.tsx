@@ -18,6 +18,8 @@ import { Button } from '@/components/ui/button';
 import { fadeUp, scalePop, staggerContainer } from '@/lib/motion';
 import { Lockup } from '@/components/brand/Brandmark';
 import ConsentCheckbox from '@/components/legal/ConsentCheckbox';
+import { EVENTS, analytics, track } from '@/lib/analytics';
+import { createClient } from '@/lib/supabase/client';
 
 export const runtime = 'edge';
 /*
@@ -58,6 +60,18 @@ const schema = z.object({
       message: 'This service measures how you speak and present, which we may not do for under-18s',
     }),
   }),
+  /*
+   * THE ONLY OPTIONAL BOX ON THIS FORM, and `z.boolean()` rather than `z.literal(true)` is
+   * what makes it optional. The others are `literal(true)` because the product cannot
+   * lawfully run without them; analytics is a genuine choice, so refusing it must not block
+   * an account — a "required" optional consent is not consent at all.
+   *
+   * `.default(false)` covers the unchecked case, which react-hook-form reports as
+   * `undefined` rather than `false` for a checkbox that was never touched. Without it the
+   * value sent would be `undefined`, which the server's `bool = False` would read as a
+   * refusal anyway — correct, but by accident rather than on purpose.
+   */
+  analytics: z.boolean().default(false),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ['confirmPassword'],
@@ -131,8 +145,32 @@ export default function RegisterPage() {
         privacy_notice: data.privacy_notice,
         terms: data.terms,
         age_18_plus: data.age_18_plus,
+        analytics: data.analytics,
         notice_version: noticeVersion,
       });
+
+      /*
+       * THE SIGNUP EVENT, AND IT FIRES HERE OR NOWHERE.
+       *
+       * Inside the `try`, AFTER the consent call has succeeded, and only when the box was
+       * ticked. Every one of those three is deliberate:
+       *
+       *   after   — the ledger is what makes the tracking lawful, so the event may not
+       *             precede the row that authorises it. If the consent POST failed, we do
+       *             not know that this person agreed, so nothing is sent.
+       *   ticked  — `analytics.setConsent` has not run yet on this page (the gate reads the
+       *             server, and the server has only just been told), so `track` would drop
+       *             this event anyway. Applying the answer here is what lets the one event
+       *             that happens before the gate can see it still be recorded.
+       *   no PII  — the event carries no properties at all. Not the email, not the name.
+       */
+      if (data.analytics) {
+        const { data: session } = await createClient().auth.getUser();
+        if (session.user?.id) {
+          analytics.setConsent('granted', session.user.id);
+          track(EVENTS.SIGNUP);
+        }
+      }
     } catch {
       toast.warning(
         'Your account was created, but we could not record your privacy choices. Please confirm them in Settings.'
@@ -337,6 +375,20 @@ export default function RegisterPage() {
 
                 <ConsentCheckbox id="terms" error={errors.terms?.message} {...register('terms')}>
                   I accept the terms of use.
+                </ConsentCheckbox>
+
+                {/*
+                  * OPTIONAL, UNTICKED, AND SAYING SO. The three above are conditions of using
+                  * the product; this one is not, and a box that looks identical to a required
+                  * one is a box people tick because they think they have to. The label names
+                  * what is measured and what is not, because §6 asks for consent that is
+                  * SPECIFIC — "we use cookies to improve your experience" is not that.
+                  */}
+                <ConsentCheckbox id="analytics" {...register('analytics')}>
+                  <span className="font-medium text-foreground">Optional.</span> You may
+                  measure which parts of the product I use — signing up, uploading a resume,
+                  starting and finishing interviews, buying. Never my resume, my answers or my
+                  scores. I can turn this off at any time in Settings.
                 </ConsentCheckbox>
               </div>
 

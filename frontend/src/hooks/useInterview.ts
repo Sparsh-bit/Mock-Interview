@@ -1,6 +1,29 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getBrowserApiClient } from '@/lib/api';
 import { useRouter } from 'next/navigation';
+
+import { EVENTS, track } from '@/lib/analytics';
+
+/**
+ * Is this the account's first interview, as far as the client can tell?
+ *
+ * READ OUT OF THE QUERY CACHE rather than fetched. An analytics property must never add a
+ * request to the path that starts an interview — this is a measurement, and a measurement
+ * that slows down the thing it measures is a bug.
+ *
+ * RETURNS `undefined` WHEN THE STATS ARE NOT CACHED, and the caller then omits the property
+ * rather than guessing. `is_first: true` on somebody's fortieth interview is worse than no
+ * property at all: the funnel silently counts the wrong thing, and nothing looks broken.
+ * PostHog can derive first-versus-repeat from the event stream itself, so the property is a
+ * convenience rather than the only way to answer the question.
+ */
+function firstBy(
+  cached: { total_sessions?: number; completed_sessions?: number } | undefined,
+  field: 'total_sessions' | 'completed_sessions'
+): { is_first: boolean } | Record<string, never> {
+  const count = cached?.[field];
+  return typeof count === 'number' ? { is_first: count === 0 } : {};
+}
 
 export interface InterviewPlan {
   session_id: string;
@@ -58,6 +81,11 @@ export interface PlanInput {
 export function useInterview() {
   const api = getBrowserApiClient();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const stats = () =>
+    queryClient.getQueryData<{ total_sessions: number; completed_sessions: number }>([
+      'user-stats',
+    ]);
 
   // Legacy single-track quick start (kept for any direct entry points).
   const startSession = useMutation({
@@ -66,6 +94,9 @@ export function useInterview() {
       return response.data as { session_id: string; status: string };
     },
     onSuccess: (data) => {
+      // No session id in the property bag. It identifies one candidate's interview, and the
+      // vendor has no use for it that is worth handing over the join key.
+      track(EVENTS.INTERVIEW_STARTED, firstBy(stats(), 'total_sessions'));
       router.push(`/session/${data.session_id}`);
     },
   });
@@ -104,6 +135,11 @@ export function useInterview() {
       return sessionId;
     },
     onSuccess: (sessionId) => {
+      // APPROVAL, NOT PLAN CREATION, is where an interview starts. `createPlan` is where the
+      // credit is charged and where the questions are generated, but a candidate who never
+      // approves has not started anything — instrumenting there would count abandoned setups
+      // as interviews and make the completion rate look far worse than it is.
+      track(EVENTS.INTERVIEW_STARTED, firstBy(stats(), 'total_sessions'));
       router.push(`/session/${sessionId}`);
     },
   });
@@ -179,6 +215,7 @@ export function useInterview() {
       await api.post(`/api/v1/interview/${sessionId}/complete`, {});
     },
     onSuccess: (_, sessionId) => {
+      track(EVENTS.INTERVIEW_COMPLETED, firstBy(stats(), 'completed_sessions'));
       router.push(`/report/${sessionId}`);
     },
   });

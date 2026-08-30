@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useEffect, useRef, useState } from 'react';
 
+import { AnalyticsGate } from '@/components/analytics/AnalyticsGate';
 import { ApiError } from '@/lib/api';
 import { initSentry } from '@/lib/observability/sentry';
 import { createClient } from '@/lib/supabase/client';
@@ -148,6 +149,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      {/* INSIDE THE PROVIDER, because it reads the consent through a query — and
+          rendering nothing, because it is a subscription rather than a surface. It is
+          the ONLY caller of analytics.setConsent; every other module may only `track`,
+          which is a no-op until this component has said otherwise. */}
+      <AnalyticsGate />
       {children}
       {process.env.NODE_ENV === 'development' && (
         <ReactQueryDevtools initialIsOpen={false} />
