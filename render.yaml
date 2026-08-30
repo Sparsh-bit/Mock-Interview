@@ -209,6 +209,20 @@ services:
         sync: false
       - key: NVIDIA_BASE_URL
         sync: false
+      # An OPTIONAL free-tier rung tried only after both paid providers have failed, and
+      # then only for panel dialogue at the CHEAP tier — services/ai/burst_rung.py is the
+      # policy, and reports, scoring and cross-questions can never reach it. Empty disables
+      # it, which is the default; with no key the chain behaves as if it did not exist.
+      # Not capacity: the free plan is single-digit thousands of tokens a minute, less than
+      # one live GD round.
+      - key: AI_BURST_PROVIDER
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: GROQ_BASE_URL
+        sync: false
 
       # ── Spend ceilings ────────────────────────────────────────────────────
       # A circuit breaker across all users, not a per-user allowance. On breach the

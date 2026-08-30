@@ -54,6 +54,10 @@ def _lazy_register() -> None:
     _PROVIDER_REGISTRY = {
         "glm": OpenAICompatibleProvider,
         "nvidia": OpenAICompatibleProvider,
+        # Groq's endpoint is OpenAI-shaped, so it reuses the same class. What makes it
+        # different is the ACCOUNT, not the transport: it is a free tier, and
+        # services/ai/burst_rung.py restricts which calls may reach it.
+        "groq": OpenAICompatibleProvider,
         "anthropic": AnthropicProvider,
         # Future providers — implement the class, uncomment the line, done:
         # "openai": OpenAIProvider,
@@ -241,12 +245,56 @@ def _build_provider_chain() -> list[BaseAIProvider]:
                 ),
             )
 
+    # ── THE BURST RUNG, STRICTLY LAST ────────────────────────────────────────────────────
+    #
+    # A free tier appended behind both paid providers, reachable only from calls that pass
+    # the two gates in services/ai/burst_rung.py. It is a rung, not headroom: the free plan
+    # is measured in single-digit thousands of tokens a minute, which is less than one live
+    # GD round. See that module for the numbers.
+    #
+    # Failing to construct it is a WARNING and not an error, unlike the fallback above. The
+    # difference is what its absence costs: a missing fallback means the next spend cap takes
+    # every AI feature down, while a missing burst rung means two presentation-only features
+    # degrade to their existing no-AI path during an outage that is already happening.
+    burst_name = (settings.AI_BURST_PROVIDER or "").lower().strip()
+    if burst_name and burst_name not in {primary_name, fallback_name}:
+        try:
+            chain.append(_create_provider(burst_name))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ai_burst_provider_unavailable",
+                provider=burst_name,
+                error=str(exc),
+                detail=(
+                    "the optional free-tier rung was not added — almost always an unset key. "
+                    "Nothing breaks: it only ever serves panel dialogue, and only when both "
+                    "paid providers have already refused"
+                ),
+            )
+
     if not chain:
         # NOTHING TO RUN ON. Distinct from the degraded case above: there is no provider at
         # all, so booting would only turn one startup error into a failure on every request,
         # with a different and less informative message each time.
         raise RuntimeError(
             f"No AI provider could be created. AI_PROVIDER={primary_name!r} and "
+            f"AI_FALLBACK_PROVIDER={fallback_name!r} both failed to construct — check that "
+            "the API key for at least one of them is set in the environment."
+        )
+
+    # A CHAIN OF NOTHING BUT THE BURST RUNG IS NOT A CHAIN, and this is the case that would
+    # otherwise boot looking healthy. If both paid providers fail to construct and the free
+    # one succeeds, `chain` is non-empty, the guard above passes, and the service starts —
+    # then every report, every score and every cross-question fails, because burst_rung
+    # correctly refuses to serve them from a free tier. The failure would arrive per-request,
+    # in the middle of candidates' sessions, instead of once at startup where it belongs.
+    from .burst_rung import is_burst_rung  # noqa: PLC0415
+
+    if all(is_burst_rung(p) for p in chain):
+        raise RuntimeError(
+            f"The only AI provider that could be created is the free-tier burst rung "
+            f"({burst_name!r}), which is restricted to panel dialogue and cannot serve "
+            f"reports, scoring or question generation. AI_PROVIDER={primary_name!r} and "
             f"AI_FALLBACK_PROVIDER={fallback_name!r} both failed to construct — check that "
             "the API key for at least one of them is set in the environment."
         )
@@ -300,6 +348,18 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 # Large reasoning models (e.g. nemotron-3-ultra) can take
                 # noticeably longer than GLM's flash-tier models.
                 read_timeout=180.0,
+            )
+        case "groq":
+            return cls(
+                api_key=settings.GROQ_API_KEY,
+                model=settings.GROQ_MODEL,
+                base_url=settings.GROQ_BASE_URL,
+                provider_name="groq",
+                # Short. The rung exists because the paid providers are already failing, so
+                # a call has usually spent its retries by the time it arrives — waiting a
+                # further two minutes on a free tier would hold a worker past the point the
+                # caller's own budget gives up. Groq is fast; if it is not, skip it.
+                read_timeout=30.0,
             )
         case "anthropic":
             return cls(

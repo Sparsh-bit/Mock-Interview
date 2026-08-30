@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from app.core.exceptions import AIProviderUnavailableError
 
 from .base_provider import CostTier, ProviderError, ProviderMessage, ProviderRequest
+from .burst_rung import eligible_providers
 from .json_validator import AIValidationError, JSONValidator
 from .provider_factory import get_ai_providers
 from .response_parser import ResponseParser
@@ -81,7 +82,16 @@ async def generate_structured(
 
     Raises AIProviderUnavailableError if no provider produced a valid result.
     """
-    providers = get_ai_providers()
+    # THE CHAIN THIS CALL IS ALLOWED TO WALK, which is not always the whole chain.
+    #
+    # The free-tier burst rung sits behind the paid providers and may only serve panel
+    # dialogue at the CHEAP tier — see services/ai/burst_rung.py for why a cost tier alone
+    # is not a sufficient gate. Filtered HERE, once, rather than checked inside the loop:
+    # `context` and `cost_tier` are exactly the two facts the policy needs, and they are
+    # both already in this function's signature.
+    providers = eligible_providers(
+        get_ai_providers(), feature=context, cost_tier=cost_tier
+    )
     last_raw = ""
     spend_usd = 0.0
 

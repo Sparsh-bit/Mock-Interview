@@ -210,6 +210,44 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="", description="OpenAI API key (future)")
     OPENAI_MODEL: str = Field(default="gpt-4o-mini", description="OpenAI model name")
 
+    # ── Burst rung: a free tier behind the paid chain ─────────────────────
+    #
+    # A THIRD provider, strictly after AI_PROVIDER and AI_FALLBACK_PROVIDER, reachable only
+    # from calls that pass BOTH gates in services/ai/burst_rung.py: the CHEAP cost tier and
+    # an explicit feature allowlist. It exists for the minutes when both paid providers are
+    # refusing — a daily spend cap, a rate limit — and being answered by a weaker model beats
+    # not being answered.
+    #
+    # IT IS NOT CAPACITY, and the free-tier numbers say so plainly. Groq's free plan for
+    # openai/gpt-oss-20b is 30 RPM / 1,000 requests a day / 8,000 tokens a minute (verified
+    # against console.groq.com/docs/rate-limits on 2026-08-30 — these change, so re-check
+    # rather than trusting this line). A panel turn is ~3.5k tokens, so 8,000 TPM is about
+    # TWO turns a minute, against the 3.25 a single live GD round generates. One round does
+    # not fit. Treat it as a rung that catches a blip, never as headroom.
+    #
+    # Empty disables it entirely, which is the default: no key, no rung, no behaviour change.
+    AI_BURST_PROVIDER: str = Field(
+        default="",
+        description=(
+            "Optional free-tier provider appended AFTER the primary and fallback. Gated to "
+            "the CHEAP cost tier and the allowlist in services/ai/burst_rung.py. Empty = off."
+        ),
+    )
+    GROQ_API_KEY: str = Field(default="", description="Groq API key. Empty = rung disabled.")
+    GROQ_MODEL: str = Field(
+        default="openai/gpt-oss-20b",
+        description=(
+            "Groq model id. gpt-oss-20b is a plain instruction-following chat model with "
+            "JSON mode and the largest free daily token allowance of the chat models "
+            "(200k TPD); groq/compound* are agentic systems and a poorer fit for the "
+            "structured single-shot calls this rung serves."
+        ),
+    )
+    GROQ_BASE_URL: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Groq's OpenAI-compatible endpoint — the same shape GLM and NVIDIA use.",
+    )
+
     # Anthropic — Claude (paid; cost-controlled, see services/ai/anthropic_provider.py)
     ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key")
     ANTHROPIC_MODEL: str = Field(
