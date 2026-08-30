@@ -5,6 +5,7 @@ import { BRAND } from '@/lib/brand';
 import { createServerApiClient } from '@/lib/api/server';
 import type { Disclosure } from '@/lib/legal/disclosure';
 import { DisclosureBody } from '@/components/legal/DisclosureBody';
+import { SiteFooter } from '@/components/layout/SiteFooter';
 
 export const runtime = 'edge';
 
@@ -44,7 +45,8 @@ export default async function PrivacyPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-5 py-14 sm:px-8">
+    <div className="flex min-h-dvh flex-col">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-5 py-14 sm:px-8">
       <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
         ← {BRAND.name}
       </Link>
@@ -56,6 +58,16 @@ export default async function PrivacyPage() {
       </p>
 
       <DisclosureBody disclosure={disclosure} />
-    </main>
+        {/* NOT A DEAD END. Somebody who has read this far is the person most likely to
+            want the complaints route, and this page had no way out of it. */}
+        <nav className="mt-12 flex flex-wrap gap-x-6 gap-y-2 border-t border-border pt-6 text-sm">
+          <Link href="/terms" className="text-muted-foreground hover:text-foreground">Terms</Link>
+          <Link href="/refund" className="text-muted-foreground hover:text-foreground">Refunds</Link>
+          <Link href="/privacy" className="text-muted-foreground hover:text-foreground">Your data</Link>
+          <Link href="/grievance" className="text-muted-foreground hover:text-foreground">Grievance</Link>
+        </nav>
+      </main>
+      <SiteFooter />
+    </div>
   );
 }

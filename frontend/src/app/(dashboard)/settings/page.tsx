@@ -4,7 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAnalyticsConsent, useSetAnalyticsConsent } from '@/hooks/useAnalyticsConsent';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Lock, Check, BarChart3 } from 'lucide-react';
+import { Bell, Lock, Check, BarChart3, FileText } from 'lucide-react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -193,7 +194,7 @@ export default function SettingsPage() {
               </div>
               <div className="min-w-0">
                 <h3 className="text-base font-semibold">Privacy</h3>
-                <p className="text-xs text-muted-foreground">What we may measure about how you use Hotseat</p>
+                <p className="text-xs text-muted-foreground">What we may measure about how you use InterviewOS</p>
               </div>
             </div>
 
@@ -253,6 +254,45 @@ export default function SettingsPage() {
             component, which disclosed a hosting tier and a spin-up window, and from two
             pricing-page toasts that named the payment provider and admitted the integration was
             unfinished. This was the last one rendering on a user-facing screen. */}
+        {/* ── LEGAL, AND WHY IT IS HERE RATHER THAN ONLY IN THE FOOTER ─────────
+            The footer is a landing-page thing. Somebody who has already paid lives inside
+            the dashboard and does not scroll past a marketing page again — so "how do I get
+            my money back" and "who do I complain to" have to be findable from the account
+            area, or the pages are orphans for exactly the people most likely to need them.
+
+            UNCOLOURED TILE, deliberately. docs/DESIGN-LANGUAGE.md allows six colours and
+            each binds to one meaning; there is no meaning here worth spending one on, and a
+            seventh colour would dilute the six that carry information. */}
+        <motion.div variants={fadeUp}>
+          <Card className="space-y-4 p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold">Policies & complaints</h3>
+                <p className="text-xs text-muted-foreground">
+                  Terms, refunds, your data, and who to contact when something is wrong
+                </p>
+              </div>
+            </div>
+
+            <nav className="flex flex-wrap gap-x-6 gap-y-2 border-t border-border/40 pt-4 text-sm">
+              <Link href="/terms" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                Terms of Service
+              </Link>
+              <Link href="/refund" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                Refunds & cancellation
+              </Link>
+              <Link href="/privacy" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                Your data
+              </Link>
+              <Link href="/grievance" className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                Complaints & grievances
+              </Link>
+            </nav>
+          </Card>
+        </motion.div>
       </div>
     </motion.div>
   );

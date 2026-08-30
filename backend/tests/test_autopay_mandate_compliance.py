@@ -165,7 +165,11 @@ class TestNothingCanActuallyBeCharged:
         hits = [
             p.name
             for p in frontend.rglob("*.ts*")
-            if "autopay" in p.read_text(encoding="utf-8", errors="ignore").lower()
+            # TEST FILES EXCLUDED. A frontend test that names autopay — to assert it is
+            # absent, or in a comment pointing here — is not an autopay interface, and
+            # counting it makes this guard fire on somebody documenting the guard.
+            if not p.name.endswith((".test.ts", ".test.tsx"))
+            and "autopay" in p.read_text(encoding="utf-8", errors="ignore").lower()
         ]
         assert not hits, (
             f"an autopay UI now exists ({hits}) — confirm the mandate registration flow, "

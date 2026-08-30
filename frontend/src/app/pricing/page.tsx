@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
-import { Wordmark } from '@/components/brand/Brandmark';
+import { Lockup } from '@/components/brand/Brandmark';
 import { BRAND } from '@/lib/brand';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -30,6 +30,7 @@ import { PaymentHistory } from '@/components/billing/PaymentHistory';
 import { OrderSummarySheet } from '@/components/billing/OrderSummarySheet';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
+import { SiteFooter } from '@/components/layout/SiteFooter';
 
 export const runtime = 'edge';
 
@@ -316,7 +317,7 @@ export default function StorePage() {
           orderId: order.order_id,
           amountPaise: order.amount_paise,
           keyId: order.key_id,
-          itemName: items?.find((i) => i.id === itemId)?.name ?? 'Hotseat',
+          itemName: items?.find((i) => i.id === itemId)?.name ?? 'InterviewOS',
           prefill: { email: session?.user?.email ?? undefined },
           onSuccess: (proof) => {
             /*
@@ -384,7 +385,7 @@ export default function StorePage() {
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5 sm:px-10">
           <Link href="/" aria-label={`${BRAND.name} home`}>
-            <Wordmark />
+            <Lockup width={168} />
           </Link>
           {!authLoading && (
             <Link
@@ -639,6 +640,7 @@ export default function StorePage() {
           in INR and include GST where applicable.
         </p>
       </div>
+      <SiteFooter />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { CROP, ParallaxPhoto, Photo } from '@/components/landing/Photo';
 import FlipWords from '@/components/lightswind-pro/flip-words';
 import FocusCards from '@/components/lightswind-pro/focus-cards';
 import TextGenerateEffect from '@/components/lightswind-pro/text-generate-effect';
+import { SiteFooter } from '@/components/layout/SiteFooter';
 
 /**
  * Hotseat — landing page.
@@ -597,26 +598,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t border-border">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground sm:px-10">
-          <span className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-accent-indigo" />
-            Hotseat
-          </span>
-          {/* A real address, and a mailto rather than plain text — on a phone, which is where
-              most of this traffic lands, plain text means copying an email by hand. Kept in
-              the footer's own type scale so it reads as contact detail rather than a CTA
-              competing with the buttons above. `normal-case` because an email address in
-              uppercase is not the same address. */}
-          <a
-            href="mailto:sparsh42005@gmail.com"
-            className="normal-case tracking-normal transition-colors hover:text-foreground"
-          >
-            sparsh42005@gmail.com
-          </a>
-          <span>© 2026</span>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
