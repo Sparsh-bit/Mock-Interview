@@ -34,6 +34,24 @@ function connectOrigins(): string[] {
   origins.add('https://api.razorpay.com');
   origins.add('https://lumberjack.razorpay.com');
   origins.add('https://challenges.cloudflare.com');
+  // THE PRESENCE MONITOR, AND IT WAS ENTIRELY ABSENT. usePresenceMonitor.ts fetches
+  // MediaPipe's WASM from jsdelivr and the face-landmarker model from Google's storage
+  // bucket. Without both, the camera check initialises and then fails to load its model —
+  // and eye contact is a scored part of a communication round, so the score silently
+  // becomes a measurement of nothing.
+  origins.add('https://cdn.jsdelivr.net');
+  origins.add('https://storage.googleapis.com');
+  // PostHog's ingest host. `posthog-js` is bundled from npm so it needs no script-src, but
+  // it posts events here and a blocked POST means analytics that report zero rather than
+  // report an error. Derived from the env var so a self-hosted or US-region deployment
+  // works, with the EU default matching lib/analytics/posthog.ts.
+  try {
+    origins.add(
+      new URL(process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com').origin,
+    );
+  } catch {
+    // A malformed value must not take the build down.
+  }
   // Sentry's ingest host, derived from the DSN rather than hardcoded — it is
   // per-organisation (`https://<key>@o<org>.ingest.<region>.sentry.io/<project>`),
   // so a literal would be wrong for anybody else's project.
@@ -191,13 +209,50 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              // checkout.razorpay.com is the payment widget's SDK. It has to be script-src
-              // and frame-src both: the SDK is a script that opens the card form in an
-              // iframe, and omitting either makes the button appear to do nothing with a
-              // console error the candidate never sees.
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com",
+              // EVERY EXTERNAL HOST HERE IS LOAD-BEARING, and three of them were missing —
+              // which is a silent failure by construction, because a refused script is a
+              // console line nobody has open. src/lib/csp-covers-what-we-load.test.ts now
+              // derives this list from the source and fails when they disagree.
+              //
+              //   checkout.razorpay.com — the payment SDK. script-src AND frame-src both:
+              //   it is a script that opens the card form in an iframe, and omitting either
+              //   makes the pay button appear to do nothing.
+              //
+              //   challenges.cloudflare.com — WAS MISSING. Turnstile.tsx injects a <script>
+              //   from here; the policy refused it, the component's own onerror swallowed
+              //   the failure, and the widget silently never rendered. Since the server
+              //   refuses captcha-gated offers when Turnstile is unconfigured, every offer
+              //   requiring human verification was unbuyable AND the anti-abuse control it
+              //   represents was not running.
+              //
+              //   cdn.jsdelivr.net — WAS MISSING. usePresenceMonitor.ts does a runtime
+              //   `import()` of MediaPipe's ESM bundle from here. Presence and eye contact
+              //   are scored parts of a communication round.
+              //
+              // 'wasm-unsafe-eval' RATHER THAN 'unsafe-eval'. The policy carried the broad
+              // one with no stated reason and the security review flagged it as possibly
+              // removable. It is not removable — MediaPipe compiles WebAssembly and a
+              // strict CSP blocks that — but it is narrowable: wasm-unsafe-eval permits
+              // WebAssembly compilation without permitting eval() on arbitrary strings,
+              // which is the thing actually worth refusing.
+              "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' " +
+                "https://checkout.razorpay.com https://challenges.cloudflare.com " +
+                "https://cdn.jsdelivr.net",
               "style-src 'self' 'unsafe-inline'",
-              "img-src 'self' data: blob: https://*.supabase.co https://lh3.googleusercontent.com https://avatars.githubusercontent.com",
+              // `https:` RATHER THAN A HOST LIST, and this is a deliberate widening.
+              //
+              // The profile page renders <img src={avatar_url}> with a comment stating that
+              // avatars are user-supplied URLs from arbitrary hosts — while this directive
+              // allowed exactly three, so every other avatar was refused and hidden by the
+              // component's onError handler. The code and the deployment disagreed, which is
+              // how the next person makes a wrong decision (SR-2026Q3-02).
+              //
+              // Resolved toward the feature. An image cannot execute; the avatar renders
+              // only on its owner's own profile page, so it is not a way to track anybody
+              // else; and the alternative is silently refusing a URL a candidate pasted on
+              // purpose. `https:` and not `*` — the image still cannot be fetched over
+              // plaintext, and no other content type gains anything.
+              "img-src 'self' data: blob: https:",
               "font-src 'self' data:",
               // blob: and mediastream: — the presence check reads a camera track and the
               // panel plays TTS audio from an object URL.

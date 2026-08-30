@@ -124,7 +124,7 @@ Scope: `backend/app`, `frontend/src`, `.github/workflows`, `database/migrations`
 
 Each carries an id so a later review can say "still open" without restating it.
 
-### SR-2026Q3-01 — the CSP blocks the captcha it is supposed to allow · **high** · open → Task 5
+### SR-2026Q3-01 — the CSP blocks the captcha it is supposed to allow · **high** · closed
 
 `frontend/next.config.ts` lists `https://challenges.cloudflare.com` in `frame-src` and in
 `connect-src`, and **not** in `script-src`. `components/billing/Turnstile.tsx` loads the
@@ -140,7 +140,7 @@ that every offer requiring human verification is unpurchasable, and the anti-abu
 that was supposed to be running is not running. **This is why A02 and API6 are linked: a
 misconfiguration silently disabled a business-flow control.**
 
-### SR-2026Q3-02 — the CSP and the avatar feature disagree · **low** · open
+### SR-2026Q3-02 — the CSP and the avatar feature disagree · **low** · closed
 
 `img-src` allows `'self' data: blob:` plus exactly three hosts (`*.supabase.co`,
 `lh3.googleusercontent.com`, `avatars.githubusercontent.com`). The profile page renders
@@ -151,6 +151,40 @@ three hosts — so an avatar on any other host is blocked and the `onError` hand
 element. Nobody is at risk; the code says one thing and the deployment does another, which
 is how the next person makes a wrong decision. Either widen the policy deliberately or
 correct the comment and validate the field against the three hosts.
+
+### SR-2026Q3-09 — the CSP blocked two more features nobody had noticed · **high** · closed
+
+Found while fixing SR-2026Q3-01, by reading the source against the header rather than by
+anybody opening a browser — which is the whole difficulty with a CSP violation: it is a line
+in a console nobody has open.
+
+**The presence monitor was entirely dead under the policy.** `usePresenceMonitor.ts` does a
+runtime `import()` of MediaPipe's ESM bundle from `cdn.jsdelivr.net`, fetches its WASM from
+the same host, and fetches a face-landmarker model from `storage.googleapis.com`. Not one of
+those three appeared in any directive. Eye contact and presence are a **scored** part of a
+communication round, so the failure mode was not a broken feature but a score measuring
+nothing.
+
+**Analytics posted into a closed door.** `posthog-js` is bundled from npm so it needs no
+`script-src`, but its ingest host was absent from `connect-src`. Events were being dropped,
+which reads downstream as "nobody used the feature" rather than as an error.
+
+Also resolved here: `'unsafe-eval'` was in the policy with **no stated reason** and this
+review's standing-decisions table flagged it as possibly removable. It is not removable —
+MediaPipe compiles WebAssembly and a strict CSP blocks that — but it is **narrowable**, and
+is now `'wasm-unsafe-eval'`, which permits WebAssembly compilation without permitting
+`eval()` on arbitrary strings.
+
+**The fix is a registry, not four more hosts.** `frontend/src/lib/csp-covers-what-we-load.test.ts`
+derives every external origin from the source and fails when the policy and the code
+disagree, in both directions: a declared host that is not permitted, and a host in the source
+that nobody declared. The existing `security-headers.test.ts` asserted the policy was
+*restrictive* and passed throughout — "is this policy strict" and "does this policy permit
+what we load" are different questions, and only the first was being asked.
+
+Verified against a real production build served over HTTP: 165 resources across six pages
+evaluated against the live header with zero violations, the six previously-blocked runtime
+fetches now permitted, and negative controls still refused.
 
 ### SR-2026Q3-03 — profile URLs are unvalidated strings · **low** · open
 
@@ -258,6 +292,8 @@ Things repeatedly re-litigated, settled here so a future review can move past th
 |---|---|
 | Rate limiting fails **open** | A limiter outage must not end a candidate's interview. Revisit on the first Redis incident of any length. See A10. |
 | No CSP on the backend | It serves JSON and no HTML. The frontend origin has one, and that is where scripts load. |
-| `'unsafe-inline'` and `'unsafe-eval'` on `script-src` | The App Router emits inline bootstrap scripts. Per-request nonces through middleware is a larger change than a hardening pass. The part that matters is kept: an injected `<script src="https://attacker/…">` is still refused. **Revisit when the CSP is next touched** — `unsafe-eval` in particular has no stated justification and may be removable. |
+| `'unsafe-inline'` on `script-src` | The App Router emits inline bootstrap scripts. Per-request nonces through middleware is a larger change than a hardening pass. The part that matters is kept: an injected `<script src="https://attacker/…">` is still refused. |
+| `'wasm-unsafe-eval'` on `script-src` | **Resolved 2026-08-31.** Was `'unsafe-eval'` with no stated reason. MediaPipe compiles WebAssembly, which a strict CSP blocks, so it cannot simply be dropped — but the narrow form grants WASM compilation without granting `eval()` on strings. |
+| `img-src https:` | Avatars are user-pasted URLs from arbitrary hosts by design, and the avatar renders only on its owner's own profile page. An image cannot execute. `https:` rather than `*`, so plaintext is still refused. See SR-2026Q3-02. |
 | The MIME allowlist on upload is usability, not security | The content type is whatever the caller typed. What defends the upload is that extraction must succeed on the bytes. |
 | Detection heuristics flag; they never refuse | Every signal in `resume/integrity.py` has a legitimate producer. A false rejection costs a real candidate their interview; a false flag costs a reviewer a minute. |
