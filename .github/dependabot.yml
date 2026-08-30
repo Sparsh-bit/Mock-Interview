@@ -1,0 +1,101 @@
+# Dependency updates.
+#
+# THREE ECOSYSTEMS, AND THE THIRD IS THE ONE PEOPLE FORGET. A pinned action —
+# `actions/checkout@v4` — is code that runs with a token on every push, and it goes stale
+# exactly like a library does. Leaving `github-actions` out is how a repository ends up
+# scanning its own dependencies with a runner it has not updated in two years.
+#
+# NO AUTO-MERGE ANYWHERE. Nothing here enables it, and it must stay that way: a dependency
+# update is a code change that reaches production, and this project's CI — which now runs
+# 1,928 backend and 841 frontend tests — is the check, not a substitute for somebody reading
+# what changed. Auto-merging on green is how a compromised release gets in on a Sunday.
+#
+# GROUPED, because ungrouped updates on a monorepo of this size open twenty pull requests a
+# week and the outcome is that none of them get read. Security updates are deliberately NOT
+# grouped: those want to be small, obvious and mergeable on their own.
+version: 2
+
+updates:
+  # ── npm (frontend + workspace root) ─────────────────────────────────────────
+  # Directory is `/` rather than `/frontend`: this is an npm workspaces monorepo with a
+  # single root package-lock.json, and pointing Dependabot at the workspace directory makes
+  # it resolve against a lockfile that is not there.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Next, React and the type packages move together and break together. One PR that can
+      # be tested as a unit beats four that are individually un-mergeable.
+      react-and-next:
+        patterns:
+          - next
+          - react
+          - react-dom
+          - '@types/react'
+          - '@types/react-dom'
+          - eslint-config-next
+      dev-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      production-minor-and-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+      - frontend
+
+  # ── Python (backend) ────────────────────────────────────────────────────────
+  # `/backend` because that is where pyproject.toml and uv.lock live.
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # SQLAlchemy, asyncpg and alembic are one decision, not three.
+      database:
+        patterns:
+          - sqlalchemy
+          - alembic
+          - asyncpg
+          - psycopg2-binary
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+      - backend
+    ignore:
+      # MAJOR VERSIONS OF THE MODEL SDKs ARE NOT A DEPENDENCY BUMP. `anthropic` and
+      # `zhipuai` majors change request and response shapes, and this codebase has a
+      # response parser, a JSON validator, a prompt cache and a cost ledger keyed to those
+      # shapes. Those upgrades are a piece of work with their own tests, not a PR to
+      # rubber-stamp. Minor and patch still come through.
+      - dependency-name: anthropic
+        update-types: [version-update:semver-major]
+      - dependency-name: zhipuai
+        update-types: [version-update:semver-major]
+
+  # ── GitHub Actions ──────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - '*'
+    labels:
+      - dependencies
+      - ci

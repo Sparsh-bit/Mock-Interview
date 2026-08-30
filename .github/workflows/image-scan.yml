@@ -1,0 +1,99 @@
+# Trivy — what is actually inside the image that gets deployed.
+#
+# DIFFERENT QUESTION FROM DEPENDABOT'S, and both are needed. Dependabot reads the manifests
+# and tells you a library you declared has an advisory. Trivy reads the BUILT IMAGE and tells
+# you what is in it — which includes everything nobody declared: the Debian packages in
+# `python:3.13-slim`, the OpenSSL it links against, the transitive wheels uv resolved. The
+# base image is the usual source of HIGH findings and no manifest in this repository mentions
+# it at all.
+#
+# IT BUILDS THE IMAGE RATHER THAN SCANNING THE FILESYSTEM, because the Dockerfile installs
+# with `uv sync --no-dev` and a filesystem scan of the repo would report the DEV dependencies
+# — pytest, ruff, mypy — which are not in production and would be noise that trains people to
+# ignore the report.
+#
+# THE BUILD CONTEXT IS THE REPO ROOT. The Dockerfile's own header says so: Alembic migrations
+# live at database/ and are copied in, so building from backend/ fails.
+
+name: Image scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, because a CVE is published against an image that has not changed. Without this
+    # the scan only ever reflects the day of the last commit.
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy:
+    name: Scan the production image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the production image
+        # Loaded into the local daemon rather than pushed. Nothing is published by this
+        # workflow; the image exists only to be scanned and is discarded with the runner.
+        run: docker build -t hotseat-backend:scan -f Dockerfile .
+
+      - name: Scan — report everything, fail on nothing
+        # RUNS FIRST AND ALWAYS SUCCEEDS. The gating step below stops at the first HIGH, so
+        # without this pass the log would show one finding and hide the other forty. This one
+        # is the inventory; the next one is the gate.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: hotseat-backend:scan
+          format: table
+          severity: LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Scan — fail the build on HIGH or CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: hotseat-backend:scan
+          format: table
+          severity: HIGH,CRITICAL
+          # `ignore-unfixed: true` IS A DELIBERATE NARROWING AND IT IS NOT AN ALLOWLIST.
+          #
+          # A vulnerability with no released fix cannot be actioned by this repository: there
+          # is no version to upgrade to, so the only ways to make the build green are to
+          # allowlist the CVE — which then stays allowlisted after the fix ships — or to stop
+          # looking. Both are worse than not gating on it.
+          #
+          # It is still REPORTED by the step above and by the SARIF upload below, so an
+          # unfixed CRITICAL is visible in the log and in the Security tab; it just does not
+          # block a merge that could not have fixed it. Anything with a fix available blocks,
+          # which is the class this gate exists for.
+          ignore-unfixed: true
+          exit-code: '1'
+          # Fresh database, and a scanner running on a stale vulnerability list is a scanner
+          # that passes for the wrong reason.
+          cache: 'false'
+
+      - name: Upload results to the Security tab
+        # `always()` so a FAILING scan still uploads. Without it the one run that found
+        # something is the one run with no record of what it found.
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: hotseat-backend:scan
+          format: sarif
+          output: trivy.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - name: Publish SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image

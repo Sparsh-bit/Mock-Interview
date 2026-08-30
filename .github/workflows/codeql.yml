@@ -1,0 +1,81 @@
+# CodeQL — semantic analysis for the two languages this repository actually contains.
+#
+# WHAT THIS ADDS OVER CI, which already runs ruff, mypy, eslint and tsc. Those check that the
+# code is well-formed and well-typed. CodeQL follows VALUES: it asks whether something a
+# request supplied can reach a query, a file path, a subprocess or a redirect, across function
+# and file boundaries. `tsc` cannot see that a `redirect_to` parameter reaches
+# `window.location`, and mypy cannot see that a filename reaches a storage path — and BOTH of
+# those are bugs this codebase has actually had and fixed (see the open-redirect and path-
+# traversal notes in docs/COMPLIANCE.md).
+#
+# `security-and-quality` RATHER THAN THE DEFAULT `security` SUITE. The default is tuned for
+# repositories where a large alert count would be abandoned. This one has a small, well-
+# commented surface, and the quality queries are where the dead code and the unreachable
+# branches show up.
+#
+# THE PYTHON BUILD IS `none` AND THAT IS CORRECT, not a shortcut: CodeQL's Python extractor
+# reads source and does not need the package installed. Adding `uv sync` here would double CI
+# time to analyse bytes it never looks at.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays, 06:00 UTC. NOT DECORATION: most CodeQL findings on a stable repository come
+    # from new QUERIES rather than new code, so a scan that only runs on push stops finding
+    # anything the week development slows down.
+    - cron: '0 6 * * 1'
+
+# Least privilege, declared rather than inherited. `security-events: write` is the only
+# elevated permission this needs, and it is what lets the results reach the Security tab.
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      # One language failing must not hide the other's results.
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            paths: frontend/src
+          - language: python
+            paths: backend/app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+          # Scanned paths are narrowed to the code we WRITE. Without this the extractor also
+          # walks node_modules and .venv, which triples the run time and fills the Security
+          # tab with alerts in third-party code that Dependabot is the right tool for.
+          config: |
+            paths:
+              - ${{ matrix.paths }}
+            paths-ignore:
+              - '**/node_modules'
+              - '**/.venv'
+              - '**/*.test.ts'
+              - '**/*.test.tsx'
+              - 'backend/tests'
+
+      # No build step. See the header — the Python and TypeScript extractors read source.
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
