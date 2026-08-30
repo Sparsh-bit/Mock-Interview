@@ -26,6 +26,7 @@ import pytest
 
 from app.api.v1 import users as users_api
 from app.services.interview import orchestrator as orch
+from app.services.progress import streak
 
 
 class TestNoMetricIsHardcoded:
@@ -106,9 +107,21 @@ class TestHoursPractisedIsRealData:
 
 class TestStreak:
     """
-    Verified against the real query on seeded data: four completed sessions on four
-    consecutive days returns 4. These cover the boundaries that data cannot.
+    THE LOGIC MOVED TO `services/progress/streak.py`, and these moved with it.
+
+    `_streak_days` is now a delegation, because the same number is shown by
+    `/users/me/stats` and by `/progress/me` and two implementations of it would eventually
+    disagree on the dashboard. The assertions below therefore read the module that owns the
+    rule — and `test_the_counting_rule` now CALLS it rather than replicating it, which is a
+    real strengthening: the old version copied the arithmetic into the test, so the one
+    failure it could never catch was the implementation diverging from it.
     """
+
+    def test_the_endpoint_delegates_rather_than_reimplementing(self):
+        src = inspect.getsource(users_api._streak_days)
+        assert "streak_service.for_user" in src, (
+            "two implementations of the streak means two numbers on one dashboard"
+        )
 
     def test_it_counts_from_today_or_yesterday(self):
         """
@@ -116,22 +129,29 @@ class TestStreak:
         have had any chance to practise — so a fourteen-day run reads as zero when
         they open the app in the morning.
         """
-        src = inspect.getsource(users_api._streak_days)
-        assert "> 1" in src, "the streak must survive until a day is actually missed"
+        assert streak.compute({dt.date(2026, 8, 2)}, dt.date(2026, 8, 3)) == (1, False, 1)
+        assert streak.compute({dt.date(2026, 8, 1)}, dt.date(2026, 8, 3)) == (0, False, 1)
 
-    def test_only_completed_sessions_count(self):
-        """An abandoned session is not a day of practice."""
-        src = inspect.getsource(users_api._streak_days)
-        assert '"completed"' in src
+    def test_only_real_practice_counts(self):
+        """
+        An abandoned session is not a day of practice — and this is the case the OLD
+        implementation got wrong. It required only `status == "completed"`, which
+        `complete_session` sets without looking at whether anything was answered, so
+        start-then-end-immediately counted.
+        """
+        src = inspect.getsource(streak.for_user)
+        assert "questions_asked > 0" in src
 
     def test_it_is_scoped_to_the_user(self):
-        src = inspect.getsource(users_api._streak_days)
-        assert "user_id == user_id" in src or "InterviewSession.user_id" in src
+        src = inspect.getsource(streak.for_user)
+        assert src.count("user_id == user_id") >= 2
 
     def test_days_are_deduplicated(self):
         """Three interviews in one day is a one-day streak, not three."""
-        src = inspect.getsource(users_api._streak_days)
-        assert "distinct" in src.lower()
+        moments = [
+            dt.datetime(2026, 8, 3, h, tzinfo=dt.UTC) for h in (9, 13, 21)
+        ]
+        assert streak.local_days(moments, streak.UTC_ZONE) == {dt.date(2026, 8, 3)}
 
     @pytest.mark.parametrize(
         ("days_ago", "expected"),
@@ -149,21 +169,16 @@ class TestStreak:
     )
     def test_the_counting_rule(self, days_ago: list[int], expected: int):
         """
-        The pure logic, replicated from _streak_days. Kept in step by the source
-        assertions above; here to pin the arithmetic at the boundaries — a gap of
-        one day continues a streak, a gap of two ends it, and a run that ended
-        more than a day ago is over.
+        The arithmetic at its boundaries: a gap of one day continues a streak, a gap of two
+        ends it, and a run that ended more than a day ago is over.
+
+        CALLS THE REAL FUNCTION. This used to re-implement the loop inside the test, which
+        meant it could pin the arithmetic and never notice the implementation drifting away
+        from it — the one failure a test of a pure function most needs to catch.
         """
         today = dt.date(2026, 8, 3)
-        days = sorted({today - dt.timedelta(days=d) for d in days_ago}, reverse=True)
-        if not days or (today - days[0]).days > 1:
-            got = 0
-        else:
-            got = 1
-            for newer, older in zip(days, days[1:], strict=False):
-                if (newer - older).days != 1:
-                    break
-                got += 1
+        days = {today - dt.timedelta(days=d) for d in days_ago}
+        got, _today, _best = streak.compute(days, today)
         assert got == expected
 
 

@@ -35,6 +35,7 @@ from app.services.interview.context import decide_technical
 from app.services.interview.dont_know import said_dont_know
 from app.services.interview.open_domain import OpenDomain
 from app.services.interview.research_lookup import find_research, render_research, slugify
+from app.services.progress import progression
 
 
 def _business_context(company: str) -> str:
@@ -2407,9 +2408,47 @@ class InterviewOrchestrator:
         # candidate about HR, so the number is a self-assessment of whatever they were asked
         # about — the difficulty banding below is the same either way.
         claimed = rating.get("rating")
-        if not isinstance(claimed, int):
-            return "medium", []
 
+        # ── WHAT THEY HAVE ALREADY PROVEN, AS A FLOOR ────────────────────────────────────
+        #
+        # This function used to consider ONLY what the candidate claimed, which is right for a
+        # first-timer and wrong for everybody else: somebody six rounds in, rated 1700, opened
+        # at whatever they said today and spent the first two questions being asked things they
+        # demonstrably outgrew four rounds ago. The adaptive loop then corrected it — so the
+        # cost was never a broken interview, it was two of their twelve questions, every time.
+        #
+        # IT ANSWERS THE DEFAULT, NOT THE PERSON. Whenever the candidate said something —
+        # high or low — that is what they get: a claim is self-correcting within two
+        # questions, as the note below already argues. What was never self-correcting is the
+        # case where they said nothing, because "medium" was then the answer for a first-timer
+        # and for somebody six rounds in, permanently. Either way this moves the starting
+        # point and never the adaptation.
+        #
+        # NEVER RAISES. A dashboard number failing must not cost somebody their interview, so
+        # any failure here leaves the claim-only behaviour this function has always had.
+        floor: str | None = None
+        if session is not None:
+            try:
+                rating_now, cleared = await progression.state_for(self.db, session.user_id)
+                floor = progression.opening_difficulty(
+                    rating=rating_now,
+                    cleared=cleared,
+                    self_rating=claimed if isinstance(claimed, int) else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "opening_difficulty_unavailable",
+                    session_id=str(session_id),
+                    error_type=type(exc).__name__,
+                )
+
+        if not isinstance(claimed, int):
+            # No claim. The ledger is then the only evidence there is, and "medium" remains
+            # the answer when there is none of that either.
+            return floor or "medium", []
+
+        # THEY SAID SOMETHING, SO THAT IS WHAT THEY GET. Unchanged from before this floor
+        # existed, deliberately — see the note above.
         if claimed <= 4:
             target = "easy"
         elif claimed <= 7:

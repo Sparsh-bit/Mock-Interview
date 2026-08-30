@@ -11,6 +11,60 @@ next thing is a ladder. The second one is what brings people back.
 
 Everything here is derived from the append-only ledger (models/progress.py). There
 is no stored current-rating to go stale.
+
+`GET /progress/me` was added alongside `GET /progress`, not instead of it. This one answers
+"where do I stand on the ladder"; that one answers "what should I do next" — the streak, the
+milestones, the unfinished session and the difficulty the next round opens at. They are
+separate because they are read by different screens and one of them is much cheaper.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+THE RE-ENGAGEMENT CHANNEL, DECIDED AND STATED
+────────────────────────────────────────────────────────────────────────────────────────────
+
+THE CHANNEL IS THIS ENDPOINT. In-app, pull, rendered on a page the candidate chose to open.
+Nothing here is sent to anybody.
+
+That is a decision rather than a limitation, and there were three reasons for it.
+
+1. NO OUTBOUND CHANNEL EXISTS, and the one that looks like it does is not one. Settings has an
+   "email notifications" toggle whose entire implementation is a `localStorage` key
+   (`interviewos:emailNotifications`); there is no mail sender, no push service and no SMS
+   vendor anywhere in this repository. Building the first one is not a feature flag — it is a
+   new vendor, a new row in `docs/COMPLIANCE.md`'s §16 cross-border table, a new consent
+   purpose in `models/consent.py`, and a deliverability surface. That is its own piece of
+   work and it should be decided on its own merits, not slipped in underneath a streak.
+
+2. THE CONSENT THIS WOULD NEED IS NOT THE CONSENT ANYONE HAS GIVEN. `CONSENT_PURPOSES` covers
+   terms, the privacy notice, an 18+ declaration, resume processing, cross-border transfer and
+   analytics. None of those is agreement to be CONTACTED, and DPDP §6 asks for consent that is
+   specific — reading "I have read what happens to my data" as "you may email me when I stop
+   practising" is exactly the bundling that section exists to forbid. So an outbound message
+   today would go to people who have not agreed to receive one, which the brief rules out and
+   which is independently the wrong thing to do.
+
+3. AN IN-APP NUDGE CANNOT MANUFACTURE URGENCY, AND THAT IS THE POINT. A push notification
+   arrives whether or not the person wanted to think about placements this evening; a line on
+   the dashboard is read by somebody who already opened the dashboard. `docs/COMPLIANCE.md`
+   records that this product has no reliable way to know it is not talking to a minor — the
+   18+ declaration at signup has a documented window — and DPDP §9 prohibits both behavioural
+   monitoring of children and advertising directed at them. A pull surface is the one shape
+   where "we got that wrong" costs a candidate a sentence they did not need to read.
+
+WHEN AN OUTBOUND CHANNEL DOES EXIST, the shape this should take is: a new
+`PURPOSE_REENGAGEMENT` in `models/consent.py`, unchecked by default at signup, withdrawable
+through the existing `/legal/consent` endpoint, and a send path that reads the consent ledger
+per recipient rather than a cached flag. The messages worth sending are the two the brief
+names — a lapsing streak and newly unlocked practice in a weak area — and both are already
+computed here, so the send path would be a reader of this rather than a second opinion about
+it. It is deliberately not built now.
+
+────────────────────────────────────────────────────────────────────────────────────────────
+WHAT THIS DELIBERATELY DOES NOT RETURN
+────────────────────────────────────────────────────────────────────────────────────────────
+
+No countdown to a lapsing streak, no comparison to other candidates, no "you have not
+practised in N days", and no reward attached to the streak at all. See `streak.py` and
+`milestones.py`, which each state at length why.
 """
 
 from __future__ import annotations
@@ -29,6 +83,9 @@ from app.core.security import CurrentUser
 from app.db.redis import CacheKeys
 from app.db.session import get_db
 from app.models.progress import RatingEvent
+from app.services.progress import milestones as milestone_service
+from app.services.progress import progression
+from app.services.progress import streak as streak_service
 from app.services.progress.rating import (
     BASE_RATING,
     RANKS,
@@ -130,6 +187,51 @@ def _note(ev: RatingEvent) -> str:
     if ev.delta >= 20:
         return "You beat expectation by a wide margin on a hard round."
     return "Solid round against a fair expectation."
+
+
+class StreakOut(BaseModel):
+    days: int
+    practised_today: bool
+    best: int
+    #: The zone the days were counted in, so a candidate who thinks the number is wrong can be
+    #: shown what it was computed against.
+    timezone: str
+    #: A live streak that today has not yet extended. STATED, never counted down.
+    at_risk: bool
+
+
+class MilestoneOut(BaseModel):
+    key: str
+    name: str
+    claim: str
+    #: What it takes, readable BEFORE it is earned — the property that makes this a goal
+    #: rather than a surprise reward.
+    requirement: str
+    earned: bool
+    #: 0.0–1.0. Honest partial credit rather than a binary that reads as nothing happening.
+    fraction: float
+
+
+class ResumeOut(BaseModel):
+    session_id: uuid.UUID
+    questions_answered: int
+    hours_ago: int
+
+
+class ProgressOut(BaseModel):
+    streak: StreakOut
+    rating: int
+    rank: str
+    next_rank: str | None
+    #: How far through the current rank, 0.0–1.0.
+    rank_fraction: float
+    #: Everything earned, then the two nearest not yet earned.
+    milestones: list[MilestoneOut]
+    #: An interview started and left, if there is one worth coming back to.
+    resume: ResumeOut | None
+    #: What the next round will OPEN at — easy | medium | hard — given what they have proven.
+    #: Shown so the progression is visible rather than merely happening.
+    opens_at: str
 
 
 @router.get(
@@ -272,3 +374,73 @@ async def get_base() -> dict:
             for t in (Tier.FOUNDATION, Tier.CORE, Tier.PANEL)
         ],
     }
+
+
+@router.get("/me", response_model=ProgressOut, dependencies=[Depends(_read_rate_limit)])
+async def my_progress(
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> ProgressOut:
+    """Everything the dashboard needs to say what this candidate has built."""
+    user_id = current_user.user_id
+
+    streak = await streak_service.for_user(db, user_id)
+    progress = await milestone_service.progress_for(db, user_id)
+    rank, ahead, fraction = milestone_service.rank_progress(progress.rating)
+    resume = await progression.resume_point(db, user_id)
+
+    earned = {m.key for m in milestone_service.earned(progress)}
+    upcoming = milestone_service.upcoming(progress)
+    rows = [
+        MilestoneOut(
+            key=m.key,
+            name=m.name,
+            claim=m.claim,
+            requirement=m.requirement,
+            earned=True,
+            fraction=1.0,
+        )
+        for m in milestone_service.MILESTONES
+        if m.key in earned
+    ] + [
+        MilestoneOut(
+            key=m.key,
+            name=m.name,
+            claim=m.claim,
+            requirement=m.requirement,
+            earned=False,
+            fraction=round(f, 3),
+        )
+        for m, f in upcoming
+    ]
+
+    return ProgressOut(
+        streak=StreakOut(
+            days=streak.days,
+            practised_today=streak.practised_today,
+            best=streak.best,
+            timezone=streak.timezone,
+            at_risk=streak.at_risk,
+        ),
+        rating=progress.rating,
+        rank=rank,
+        next_rank=ahead,
+        rank_fraction=round(fraction, 3),
+        milestones=rows,
+        resume=(
+            ResumeOut(
+                session_id=resume.session_id,
+                questions_answered=resume.questions_answered,
+                hours_ago=resume.hours_ago,
+            )
+            if resume
+            else None
+        ),
+        # Reported with `self_rating=None`: this is what the ledger alone says, before the
+        # candidate has been asked how they feel today. Showing it as a promise the panel then
+        # ignores would be worse than not showing it, so the panel's own floor uses the same
+        # function with the claim included.
+        opens_at=progression.opening_difficulty(
+            rating=progress.rating, cleared=progress.cleared, self_rating=None
+        ),
+    )

@@ -122,6 +122,7 @@ async def record_round(
     tier: Tier,
     score_out_of_100: float,
     topics: list[str] | None = None,
+    declined: int | None = None,
 ) -> RatingEvent | None:
     """
     Rate one finished round and append it to the ledger.
@@ -170,6 +171,19 @@ async def record_round(
                 # Stored so the next round's overlap can be computed from the ledger
                 # alone, without joining back through sessions to questions.
                 "topics": [t.strip() for t in topics if t and t.strip()][:40],
+                # How many questions the candidate declined rather than attempted.
+                #
+                # RECORDED, NOT SCORED. It changes no rating — declining is already reflected
+                # in the score, and charging for it twice would make honesty expensive, which
+                # is the exact incentive this product exists to work against. It is here
+                # because attempting everything is a real interview skill that nothing else
+                # measures, and `milestones.py` conditions on it.
+                #
+                # NULL, NOT ZERO, WHEN THE CALLER DOES NOT KNOW. A round recorded before this
+                # existed, or by a caller that cannot count declines, must not look like a
+                # round where nothing was declined — that would hand a milestone to people who
+                # never earned it, retroactively and invisibly.
+                "declined": declined,
             },
         )
         # ── THE INSERT GETS ITS OWN SAVEPOINT ────────────────────────────────────────────

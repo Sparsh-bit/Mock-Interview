@@ -17,6 +17,7 @@ import {
 import { useActivity } from '@/hooks/useActivity';
 import { useBalance, useStoreItems } from '@/hooks/useBilling';
 import { useUserStats } from '@/hooks/useData';
+import { useProgress } from '@/hooks/useProgress';
 import { cn } from '@/lib/utils';
 
 /**
@@ -156,6 +157,9 @@ export function NudgeDeck() {
   const { data: activity } = useActivity(100);
   const { data: balance } = useBalance({ enabled: true });
   const { data: items } = useStoreItems();
+  // Read defensively and never blocking, exactly as `stats` and `activity` are: a failed
+  // progress read must cost these two cards, never the whole deck.
+  const { data: progress } = useProgress();
   const [hidden, setHidden] = useState<string[]>([]);
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -185,6 +189,65 @@ export function NudgeDeck() {
   const gdLeft = left('gd');
 
   const deck: Nudge[] = [];
+
+  /*
+   * ── PICK UP WHERE YOU LEFT OFF ────────────────────────────────────────────────────────
+   *
+   * An interview that was started and abandoned — a dropped connection, a flatmate, a battery
+   * — leaves a live session with answers in it and nothing pointing back to it. The candidate
+   * returns to a dashboard offering them a brand new interview, which costs another credit and
+   * throws away the answers they already gave.
+   *
+   * FIRST IN THE DECK (weight -2), because unlike everything below it this is not a pitch: it
+   * is the candidate's own unfinished work, and it is the one card that saves them money
+   * rather than asking for it.
+   *
+   * NO URGENCY, AND THE ABSENT WORDS ARE THE POINT. `hours_ago` is available and is not
+   * rendered as a countdown; there is no "expires soon", no "before you lose it", no timer.
+   * The fact stated is how far in they got, which is the thing that makes coming back
+   * attractive on its own.
+   */
+  if (progress?.resume) {
+    const answered = progress.resume.questions_answered;
+    deck.push({
+      key: `resume-${progress.resume.session_id}`,
+      tone: 'indigo',
+      icon: ArrowRight,
+      hook: 'Aapka interview adhoora pada hai 🙂',
+      fact: `You answered ${answered} question${answered === 1 ? '' : 's'} and stopped. Pick it up where you left it — nothing to pay again.`,
+      cta: 'Resume the interview',
+      href: `/session/${progress.resume.session_id}`,
+      weight: -2,
+    });
+  }
+
+  /*
+   * ── THE STREAK, STATED ─────────────────────────────────────────────────────────────────
+   *
+   * ONLY WHEN THERE IS A RUN TO SPEAK OF, and never as a warning.
+   *
+   * The rejected version of this card is the obvious one: "your 6-day streak ends tonight",
+   * with a clock. That is manufactured urgency about a number that grants nothing, aimed at an
+   * audience this product cannot reliably confirm is over 18 — see `docs/COMPLIANCE.md` and
+   * DPDP §9. So the card says what is true and offers the ordinary next step; a candidate who
+   * closes the tab loses a count and nothing else, which is exactly what a streak here IS.
+   *
+   * Weight 6 puts it last: it is the least commercially useful card on the deck and the one
+   * most easily overused, and burying it is the right way round.
+   */
+  if (progress && progress.streak.days >= 2 && progress.streak.at_risk) {
+    deck.push({
+      key: 'streak-open',
+      tone: 'teal',
+      icon: TrendingUp,
+      hook: 'Aaj ka practice baaki hai.',
+      fact: `${progress.streak.days} days of practice in a row so far. Today is open — a quiz counts, and quizzes are free.`,
+      cta: 'Take a quiz',
+      href: '/quiz',
+      weight: 6,
+    });
+  }
+
   if (ready && !unlimited && interviewRs !== null && gdRs !== null) {
     /*
      * THE ORDER IS THE PITCH, and it is ordered by how close somebody is to buying rather than

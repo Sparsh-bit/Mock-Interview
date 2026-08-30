@@ -2114,6 +2114,15 @@ async def generate_report(
     # punish a candidate for our outage.
     if (report.raw_report or {}).get("generated_by") == "ai":
         topics_covered = sorted({topic_name for _, _, topic_name in transcript_rows})
+        # HOW MANY THEY DECLINED, decided by the same module that decides it live during the
+        # interview. A second rule here would eventually disagree with the one the panel
+        # pivoted on, and the candidate would be told two different things about the same
+        # round — see services/interview/dont_know.py, which is deliberately subtle.
+        from app.services.interview.dont_know import said_dont_know  # noqa: PLC0415
+
+        declined_count = sum(
+            1 for ans, _q, _t in transcript_rows if said_dont_know(ans.content or "")
+        )
         await record_round(
             db,
             user_id=current_user.user_id,
@@ -2130,6 +2139,7 @@ async def generate_report(
             ),
             score_out_of_100=float(report.overall_score),
             topics=topics_covered,
+            declined=declined_count,
         )
 
     await db.commit()

@@ -26,6 +26,7 @@ from app.db.session import AsyncSession, get_db
 from app.models.session import InterviewSession
 from app.models.user import Profile
 from app.services.interview.orchestrator import MAX_SESSION_SECONDS
+from app.services.progress import streak as streak_service
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -175,48 +176,31 @@ async def update_profile(
 
 async def _streak_days(db: AsyncSession, user_id: uuid.UUID) -> int:
     """
-    Consecutive days, ending today or yesterday, with at least one completed
-    session.
+    Consecutive days of real practice, in the CANDIDATE'S OWN timezone.
 
-    This was `streak_days=0,  # Phase 9: implement streak calculation` — a
-    hardcoded zero dressed up as a metric. A streak that never moves is worse
-    than no streak at all: it is the one number on the dashboard whose entire
-    purpose is to say "you are building a habit", and it said "you are not"
-    to everybody, permanently.
+    DELEGATES NOW, and the two things it used to do wrong are both fixed in the module it
+    delegates to.
 
-    Counting from today OR yesterday is deliberate. Anchoring only on today would
-    reset everyone's streak at midnight, before they have had any chance to
-    practise — so somebody with a fourteen-day run would open the app in the
-    morning and be told zero.
+    IT COUNTED UTC DAYS. This function's own docstring said so and called it "the right trade
+    for now": "wrong by up to a few hours for a candidate in IST". It is a bigger error than
+    that reads, because of who uses this product. IST is UTC+5:30, so a UTC day starts at
+    05:30 IST — and a student practising at eleven at night has that session filed under
+    TOMORROW. Practise every evening for a week and the ledger holds seven days, no two of
+    them adjacent. It is not a few hours out; it systematically files evening practice on the
+    wrong day for the population that uses this app most.
 
-    Days are UTC. That is wrong by up to a few hours for a candidate in IST, and
-    it is the right trade for now: the alternative needs the user's timezone
-    threaded into this query, and a streak that is occasionally a day generous is
-    better than one that is occasionally a day punitive.
+    IT COUNTED ATTENDANCE, NOT PRACTICE. The query took
+    `InterviewSession.status == "completed"`, and `complete_session` sets that status without
+    looking at whether anything was answered — so start-then-end-immediately was a streak day.
+    `_real_session()` is defined twenty lines below this and says "an abandoned plan is not
+    practice"; the streak did not use it. It also counted interviews ONLY, so a candidate
+    doing a quiz every day had a streak of zero — wrong, and an incentive pointed at the most
+    expensive feature rather than the most useful habit.
+
+    Kept as a function rather than inlined at the call site so `/users/me/stats` and
+    `/progress/me` cannot disagree about a number both of them show.
     """
-    rows = await db.scalars(
-        select(func.date(InterviewSession.completed_at))
-        .where(
-            InterviewSession.user_id == user_id,
-            InterviewSession.status == "completed",
-            InterviewSession.completed_at.isnot(None),
-        )
-        .distinct()
-    )
-    days = sorted({d for d in rows if d is not None}, reverse=True)
-    if not days:
-        return 0
-
-    today = datetime.now(UTC).date()
-    if (today - days[0]).days > 1:
-        return 0
-
-    streak = 1
-    for newer, older in zip(days, days[1:], strict=False):
-        if (newer - older).days != 1:
-            break
-        streak += 1
-    return streak
+    return (await streak_service.for_user(db, user_id)).days
 
 
 #: What counts as an interview the candidate actually SAT.
