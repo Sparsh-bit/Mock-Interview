@@ -40,6 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # VERSION PINNED WITH THE `v` PREFIX, and that is not cosmetic. The first version of
+      # this file used `aquasecurity/trivy-action@0.28.0`; that tag does not exist — the
+      # action's tags are v-prefixed and start at v0.30.0 — and an unresolvable action
+      # reference fails the job at "Set up job", BEFORE any step runs. So the log shows no
+      # scan output at all and reads like an infrastructure problem rather than a typo.
+      # Dependabot's github-actions ecosystem keeps this current.
       - name: Build the production image
         # Loaded into the local daemon rather than pushed. Nothing is published by this
         # workflow; the image exists only to be scanned and is discarded with the runner.
@@ -49,7 +55,7 @@ jobs:
         # RUNS FIRST AND ALWAYS SUCCEEDS. The gating step below stops at the first HIGH, so
         # without this pass the log would show one finding and hide the other forty. This one
         # is the inventory; the next one is the gate.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: hotseat-backend:scan
           format: table
@@ -58,7 +64,7 @@ jobs:
           exit-code: '0'
 
       - name: Scan — fail the build on HIGH or CRITICAL
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: hotseat-backend:scan
           format: table
@@ -84,7 +90,7 @@ jobs:
         # `always()` so a FAILING scan still uploads. Without it the one run that found
         # something is the one run with no record of what it found.
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: hotseat-backend:scan
           format: sarif
