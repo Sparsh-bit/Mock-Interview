@@ -27,6 +27,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from conftest import requires_live_supabase
 from httpx import ASGITransport, AsyncClient
 from jose import jwt
 from sqlalchemy import select
@@ -215,6 +216,11 @@ class TestItIsAdminOnlyAndRateLimited:
 
 
 @pytest.mark.asyncio
+# DELETION GOES THROUGH SUPABASE'S AUTH ADMIN API over the network — that is the whole point
+# of the ordering these tests pin, so mocking the call would remove what is being tested. With
+# placeholder credentials the request fails and the endpoint correctly answers 502, so the
+# tests failed rather than skipping. They need a live project.
+@requires_live_supabase
 class TestItDeletesARealAccountWithHistory:
     @pytest.fixture
     async def env(self):

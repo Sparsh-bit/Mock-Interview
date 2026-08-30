@@ -1,6 +1,6 @@
 # CI — what has to be true before anything merges.
 #
-# THIS USED TO RUN LINT AND TYPECHECK ONLY. There are 807 frontend tests and 1,890 backend
+# THIS USED TO RUN LINT AND TYPECHECK ONLY. There are 826 frontend tests and 1,908 backend
 # tests in this repository and CI ran none of them, so a green tick meant "it compiles" while
 # saying nothing about whether it works. Worse, it was misleading in the one direction that
 # matters: several of those tests exist specifically because a bug reached production once
@@ -11,6 +11,16 @@
 # a class assembled at runtime — `bg-accent-${tone}-soft` — type-checks, survives dev because
 # the JIT has usually seen the class elsewhere, and then silently vanishes from the production
 # stylesheet. Only a real build catches that.
+#
+# A SKIPPED TEST IS NOT A PASSING TEST, and this file has to be read with that in mind. Two
+# groups of tests skip by design — the ones needing live Supabase or a real model key, marked
+# in tests/conftest.py — and those are the only ones allowed to. Everything else must run,
+# which is why the Postgres image carries pgvector and why a step below asserts it does.
+#
+# Playwright is deliberately NOT here. `npm run test:e2e` needs browsers, a running frontend
+# AND a running backend with a seeded database; wiring that up badly buys a flaky gate, and a
+# gate people learn to re-run until it passes is worse than no gate. It stays a local command
+# until it can be made deterministic.
 
 name: CI
 
@@ -56,7 +66,23 @@ jobs:
     # way the suite means anything.
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector/pgvector, NOT postgres:16-alpine, AND IT MATTERS MORE THAN IT LOOKS.
+        #
+        # `tests/test_vector_cache_db.py` needs the `vector` extension — the ai_cache
+        # table has an `embedding vector(512)` column that migration 014 adds and the
+        # SQLAlchemy model deliberately does not carry. On a plain Postgres the whole
+        # file SKIPS, and it skips through a broad `except (SQLAlchemyError, OSError)`
+        # meant to spare developers who have no pgvector locally.
+        #
+        # So the failure mode is the one that file's own comments call the worst
+        # outcome: a green suite covering none of the semantic cache. Not a red build,
+        # not an error — twenty-odd tests quietly not running, on the feature that
+        # decides whether a GD round costs $0.065 or nothing.
+        #
+        # pg15 rather than pg16 because that is what docker-compose.yml runs, and the
+        # point of a service container is that CI and a developer's machine exercise
+        # the same database.
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: interviewos
           POSTGRES_PASSWORD: password
@@ -103,6 +129,17 @@ jobs:
         run: cd backend && uv run ruff check .
       - name: Typecheck (MyPy)
         run: cd backend && uv run mypy app
+      - name: Check the vector extension is actually available
+        # THE ASSERTION THAT KEEPS THE IMAGE CHOICE ABOVE HONEST. Without it, swapping
+        # the image back to a plain Postgres — or a future pgvector tag that drops the
+        # extension — turns test_vector_cache_db.py into silent skips and CI stays
+        # green. This fails loudly instead, at the step whose name says why.
+        run: |
+          PGPASSWORD=password psql -h localhost -p 5433 -U interviewos -d postgres \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector' \
+            -c "SELECT extname FROM pg_extension WHERE extname = 'vector'" \
+            | grep -q vector
+
       - name: Create the test database
         # tests/conftest.py DELIBERATELY REPOINTS AT A SEPARATE DATABASE, and says why: the
         # integration tests drop and truncate schema between runs, so pointing them at the dev
@@ -126,8 +163,41 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           # Required settings with no defaults — `Settings` fails startup without them, which
           # is deliberate. These are throwaway values for a throwaway database.
-          SUPABASE_URL: https://placeholder.supabase.co
-          SUPABASE_ANON_KEY: placeholder-anon-key
-          SUPABASE_SERVICE_KEY: placeholder-service-key
-          SUPABASE_JWT_SECRET: placeholder-jwt-secret-for-ci-only-not-a-real-secret
-          ENVIRONMENT: test
+          # THE EXACT PLACEHOLDERS FROM .env.example, not values of my own invention.
+          # `tests/conftest.py` decides whether a credential is real, and six tests that make
+          # live network calls to Supabase or a model provider skip when it is not. Inventing
+          # a different stand-in means those tests do not recognise it, so they run against a
+          # host that does not exist and fail — which is what the first version of this file
+          # did, and it read as six broken tests rather than six absent credentials.
+          SUPABASE_URL: https://your-project.supabase.co
+          SUPABASE_ANON_KEY: your-anon-key
+          SUPABASE_SERVICE_KEY: your-service-role-key
+          # SUPABASE_JWT_SECRET IS THE ONE EXCEPTION, and it has to be, because two
+          # mechanisms disagree about what a placeholder means.
+          #
+          # `core/security.py` refuses to verify an HS256 token when the secret is the
+          # literal `your-jwt-secret`, and fails closed rather than falling back to
+          # unverified claims. That is correct and deliberate: the .env.example value
+          # must never be usable as a real signing key. But 31 tests mint their own
+          # HS256 tokens with `settings.SUPABASE_JWT_SECRET` and call the API with
+          # them, so with the placeholder every one of them got a 401 and failed —
+          # reported as broken auth, IDOR, upload and rating tests, when the single
+          # cause was a signing key the app was right to reject.
+          #
+          # So: a throwaway value that is not the placeholder. This does NOT make any
+          # live-service test think it has real credentials — conftest asks that
+          # question of SUPABASE_SERVICE_KEY, SUPABASE_URL and the model keys, which
+          # stay as the .env.example placeholders above and below.
+          SUPABASE_JWT_SECRET: ci-throwaway-signing-key-not-used-by-any-real-project
+          # Non-empty so the provider factory can construct a client; obviously fake so the
+          # live-AI test skips rather than trying to spend money from a CI runner.
+          ANTHROPIC_API_KEY: your-anthropic-api-key
+          GLM_API_KEY: your-zhipuai-api-key
+          # `development`, NOT `test`. ENVIRONMENT is a Literal of
+          # 'development' | 'staging' | 'production' — I invented a fourth value and every
+          # test module failed at COLLECTION, because `settings` is constructed at import
+          # time, so the error arrived as 43 collection errors rather than as one clear
+          # message about a bad env var. `development` is also the correct choice on its
+          # merits: main.py hard-fails on an unreachable database only in production, and a
+          # test run should not inherit that.
+          ENVIRONMENT: development

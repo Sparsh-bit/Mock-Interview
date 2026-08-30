@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest  # noqa: E402
+import pytest
+from conftest import requires_live_ai, requires_live_supabase  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
@@ -348,6 +349,10 @@ class TestInterviewEndpoints:
 # ─── Report Endpoint Tests ──────────────────────────────────────────────────────
 
 class TestReportEndpoints:
+    # This one spends real money: it runs a full session and asks a real model for a real
+    # report. It had no guard, so in an environment with only placeholder keys it failed
+    # rather than skipping — reported as a broken report path when it was an absent key.
+    @requires_live_ai
     async def test_generate_report_real_ai(
         self, async_client: AsyncClient, auth_headers: dict, db_session
     ):
@@ -531,10 +536,10 @@ class TestDatabaseConnectivity:
 # ─── Supabase Integration Test ─────────────────────────────────────────────────
 
 class TestSupabaseIntegration:
-    @pytest.mark.skipif(
-        settings.SUPABASE_URL == "https://your-project.supabase.co",
-        reason="Supabase project not configured in .env"
-    )
+    # Was an equality check against one exact literal from .env.example, which meant it did
+    # not fire for any OTHER placeholder — including the ones the first CI config used. The
+    # question is now asked in one place; see conftest.
+    @requires_live_supabase
     async def test_supabase_health(self):
         import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -544,10 +549,7 @@ class TestSupabaseIntegration:
             )
             assert response.status_code == 200
 
-    @pytest.mark.skipif(
-        settings.SUPABASE_SERVICE_KEY == "your-service-role-key",
-        reason="Service role key not configured in .env"
-    )
+    @requires_live_supabase
     async def test_supabase_storage_bucket_exists(self):
         from supabase import create_client
         supabase = create_client(
