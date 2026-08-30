@@ -38,6 +38,7 @@ from app.db.redis import CacheKeys, cache_get, cache_set, get_redis
 from app.db.session import get_db
 from app.services.interview import context
 from app.services.interview.context import InterviewContext
+from app.services.interview.open_domain import OpenDomain
 from app.services.tts.base import TONE_PROSODY
 
 logger = structlog.get_logger(__name__)
@@ -162,7 +163,7 @@ _panel_rate_limit = rate_limiter(
 )
 
 
-def panel_for(role_title: str = "") -> list[Interviewer]:
+def panel_for(role_title: str = "", open_profile: OpenDomain | None = None) -> list[Interviewer]:
     """
     The panel, with DESIGNATIONS THAT MATCH THE JOB.
 
@@ -179,8 +180,16 @@ def panel_for(role_title: str = "") -> list[Interviewer]:
     """
     from app.data import domains  # noqa: PLC0415
 
-    profile = domains.profile_for(role_title, "")
-    designations = (profile["lead_role"], profile["specialist_role"])
+    # A GENERATED PROFILE WINS, because it is the one that was resolved for THIS field.
+    # `profile_for` falls through to the software profile for anything unmatched, so without
+    # this a sommelier is interviewed by a "Senior Engineering Manager" and a "Technical
+    # Lead" — the exact tell this function was written to remove, reached by a role the
+    # keyword list happens not to name rather than by one it names wrongly.
+    if open_profile is not None:
+        designations = (open_profile.lead_role, open_profile.specialist_role)
+    else:
+        profile = domains.profile_for(role_title, "")
+        designations = (profile["lead_role"], profile["specialist_role"])
     return [
         Interviewer(
             name=i.name,
@@ -220,6 +229,13 @@ def _rating_subject(ctx: InterviewContext) -> str:
     if ctx.is_technical and _is_java_role(ctx.role, ""):
         return "Java"
 
+    # RESOLVED FOR THIS FIELD, so it beats both branches below. The model was asked for a
+    # phrase that reads naturally in "how would you rate yourself in ___", which is a
+    # judgement about the field and exactly what the fall-through at the bottom of this
+    # function admits it cannot make.
+    if ctx.open_domain is not None:
+        return ctx.open_domain.rating_subject
+
     if ctx.domain_matched:
         profile = domains.profile_for(ctx.role, "")
         # The heaviest topic in the family is what the role is really screened on, and it is
@@ -236,9 +252,10 @@ def _rating_subject(ctx: InterviewContext) -> str:
     return "the core skills for this role"
 
 
-def _render_panel(role_title: str = "") -> str:
+def _render_panel(role_title: str = "", open_profile: OpenDomain | None = None) -> str:
     return "\n".join(
-        f"- {i.name} ({i.gender}, {i.role}): {i.disposition}" for i in panel_for(role_title)
+        f"- {i.name} ({i.gender}, {i.role}): {i.disposition}"
+        for i in panel_for(role_title, open_profile)
     )
 
 
@@ -592,6 +609,14 @@ def _pivot_order_for(ctx: InterviewContext) -> list[str]:
     if ctx.is_technical and _is_java_role(ctx.role, ""):
         return [t for t in _PIVOT_ORDER if t in java_fundamentals.ALL_TOPICS]
 
+    # THE FIELD'S OWN AREAS, heaviest first. Checked before every branch below because all of
+    # them are guesses about a role nobody authored: the non-technical branch would offer a
+    # sommelier "Situational judgement", and the technical one would offer a firmware
+    # candidate "Programming fundamentals, DBMS & SQL". A pivot is the moment a candidate has
+    # just admitted a gap, so it is the worst moment to hand them a topic from another field.
+    if ctx.open_domain is not None:
+        return ctx.open_domain.pivot_topics()
+
     # A NON-TECHNICAL ROLE GETS ITS OWN DOMAIN'S TOPICS, not the company's assessment
     # weighting. Morani Plastics is not in the catalogue and never will be — the employer
     # here is whoever the candidate typed — but "sales" is a domain we know how to interview
@@ -780,7 +805,7 @@ async def get_interviewers(
     ctx = await _context(db, session_id, current_user.user_id)
     # Both read from the same resolved context, so the chip the candidate sees, the panel the
     # prompt was written from, and the presence of the editor cannot disagree.
-    return PanelInfo(interviewers=panel_for(ctx.role), technical=ctx.is_technical)
+    return PanelInfo(interviewers=panel_for(ctx.role, ctx.open_domain), technical=ctx.is_technical)
 
 
 @router.post(
@@ -832,7 +857,7 @@ async def panel_turn(
             "## This moment",
             "",
             "### The panel",
-            _render_panel(ctx.role),
+            _render_panel(ctx.role, ctx.open_domain),
             "",
             f"### The candidate\n{name}",
             "",

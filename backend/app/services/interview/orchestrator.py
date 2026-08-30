@@ -30,8 +30,10 @@ from app.services.ai.generate import generate_structured
 from app.services.ai.prompt_builder import PromptBuilder
 from app.services.ai.schemas import GeneratedQuestion, InterviewPlan
 from app.services.interview import focus as focus_service
+from app.services.interview import open_domain
 from app.services.interview.context import decide_technical
 from app.services.interview.dont_know import said_dont_know
+from app.services.interview.open_domain import OpenDomain
 from app.services.interview.research_lookup import find_research, render_research, slugify
 
 
@@ -258,6 +260,7 @@ def _plan_brief(
     is_technical: bool,
     question_count: int,
     covered: frozenset[tuple[str, question_shape.Register]] = frozenset(),
+    open_profile: "OpenDomain | None" = None,
 ) -> PlanBrief:
     """
     THE one answer to "what is this interview about, in what shape, and what did the
@@ -333,6 +336,39 @@ def _plan_brief(
 
     from app.data import domains  # noqa: PLC0415
 
+    # THE OPEN-DOMAIN PATH. Third and last, reached only when neither of the two above had an
+    # answer — `open_domain.resolve` returns None for anything the catalogue names, so this
+    # cannot fire for a curated stream even if a caller passed one in.
+    #
+    # It changes only what the two unmatched branches were already guessing at: the subjects
+    # (a real weighting instead of a paragraph asking the model to infer one) and the kind (a
+    # resolved technical flag instead of the "unmatched means technical" default). Everything
+    # downstream — the grid-free plan, the live cross budget, the focus directive — behaves
+    # exactly as it does for a curated domain, because there is nothing here for it to treat
+    # differently.
+    if open_profile is not None:
+        kind = question_shape.resolve_kind(
+            is_technical=is_technical,
+            # The generated label, and `domain_matched=True`, because a resolved profile IS a
+            # finding rather than a fall-through — that is the whole distinction the flag
+            # carries, and reporting it as unmatched here would tell `resolve_kind` the
+            # opposite of what just happened.
+            domain=open_profile.label,
+            domain_matched=True,
+            company_tier=_company_tier(company),
+            program=program or track_name,
+        )
+        return PlanBrief(
+            cross_planned=0,
+            must_cover=_must_cover_block(
+                track_name, program, company, open_profile=open_profile
+            ),
+            question_mix=question_shape.shape_block(kind, question_count),
+            focus_directive=focus_service.focus_block(focus, question_count, syllabus=None),
+            kind=kind,
+            from_syllabus=False,
+        )
+
     kind = question_shape.resolve_kind(
         is_technical=is_technical,
         domain=domains.resolve(track_name or program, focus),
@@ -352,7 +388,13 @@ def _plan_brief(
     )
 
 
-def _must_cover_block(track_name: str, program: str, company: str = "") -> str:
+def _must_cover_block(
+    track_name: str,
+    program: str,
+    company: str = "",
+    *,
+    open_profile: "OpenDomain | None" = None,
+) -> str:
     """
     What the planner is told this interview must cover.
 
@@ -376,6 +418,39 @@ def _must_cover_block(track_name: str, program: str, company: str = "") -> str:
     from app.data import domains  # noqa: PLC0415
 
     company_block = _company_topic_block(company)
+
+    # A RESOLVED OPEN DOMAIN REPLACES THE UNMATCHED BRANCH ENTIRELY, and is checked before
+    # the Java test rather than after. "Firmware bring-up for RISC-V microcontrollers"
+    # contains no Java keyword, but the ordering is what makes the rule readable: a stream the
+    # catalogue does not name is answered by the profile that was generated FOR that stream,
+    # and never by a bank authored for a different one.
+    if open_profile is not None:
+        open_blocks: list[str] = [open_profile.topic_block()]
+        if not open_profile.is_technical:
+            # Word for word the prohibition the curated non-technical branch uses. It is the
+            # same instruction because it is the same failure — a candidate asked about Java
+            # in an interview for something else has been told the simulation does not know
+            # what they are preparing for — and two wordings of one rule is how they drift.
+            open_blocks.append(
+                "This is NOT a technical role. Do not ask about programming, data "
+                "structures, SQL, or any other computer-science topic — not as a warm-up, "
+                "and not as a 'general aptitude' question. A candidate asked about Java in "
+                "a sales interview has been told the simulation does not know what job "
+                "they applied for."
+            )
+        # NO COMPANY WEIGHTING HERE, and this is the one place the open path deliberately
+        # does LESS than the curated one. The catalogue's weights describe an IT-services
+        # campus assessment — Aptitude, DSA, DBMS — and shading a sommelier's interview with
+        # them would reintroduce, underneath a correct brief, exactly the computer-science
+        # subjects the brief above just excluded. The employer is named to the planner
+        # elsewhere in the prompt; it does not need a syllabus that belongs to another field.
+        open_blocks.append(
+            "The employer is not on this product's catalogue, and this field has no "
+            "authored syllabus — the areas above were resolved for this role specifically. "
+            "Treat them as the whole of what may be asked, and do not import areas from any "
+            "other field to fill the interview out."
+        )
+        return "\n\n".join(open_blocks)
 
     if not _is_java_role(track_name, program):
         blocks: list[str] = []
@@ -794,9 +869,34 @@ class InterviewOrchestrator:
         # matching over a free-text role and cannot know that "Civil Services" is not a
         # software job, only that it matches nothing — which it treats as technical, because
         # a missing editor costs a developer their question.
-        resolved_technical = (
-            is_technical if is_technical is not None else decide_technical(program, focus)
+        # WHAT FIELD IS THIS, WHEN THE CATALOGUE DOES NOT NAME ONE.
+        #
+        # Resolved BEFORE the technical flag, because it is one of that flag's inputs. Returns
+        # None for every stream the catalogue does name — the guard is inside `resolve`, not
+        # here — and None on any failure, in which case every line below behaves exactly as it
+        # did before this path existed.
+        #
+        # `track_name` is deliberately NOT consulted. It is the same hole `syllabus.resolve`
+        # closes by taking no track name at all: on a custom setup the track is a foreign-key
+        # carrier left over from a chip somebody clicked, and reading it is how a sales
+        # interview became an Accenture one.
+        open_profile = await open_domain.resolve(
+            program, program=program, company=company, focus=focus
         )
+
+        # THE CANDIDATE'S OWN ANSWER FIRST, THE RESOLVED FIELD SECOND, THE KEYWORD GUESS LAST.
+        #
+        # `decide_technical` returns True for anything it does not recognise, and that default
+        # is right when it is all we have: a missing editor costs a developer their question.
+        # But it is a guess about an unrecognised string, and an open-domain profile is an
+        # answer about the actual field — so where one exists, the guess has been superseded.
+        # This is what stops a sommelier being handed a compiler.
+        if is_technical is not None:
+            resolved_technical = is_technical
+        elif open_profile is not None:
+            resolved_technical = open_profile.is_technical
+        else:
+            resolved_technical = decide_technical(program, focus)
 
         # Set when a brief is built below. Zero on a plan-cache HIT, which is the honest
         # answer rather than a guess: a cached plan's grid is not in hand here, so the live
@@ -865,6 +965,7 @@ class InterviewOrchestrator:
                 focus=focus,
                 is_technical=resolved_technical,
                 question_count=_PLANNED_QUESTION_COUNT,
+                open_profile=open_profile,
             )
             brief_cross_planned = brief.cross_planned
             logger.info(
@@ -1043,6 +1144,12 @@ class InterviewOrchestrator:
             # An explicit choice removes the guess entirely, which is the whole reason the
             # setup form asks.
             "is_technical": resolved_technical,
+            # PINNED, NOT RE-DERIVED, for exactly the reason `is_technical` above it is.
+            # The panel reads this on every turn to get its designations, the self-rating
+            # subject and the pivot topics; regenerating it per request would cost a model
+            # call per turn AND let the room change field halfway through the interview.
+            # None when the catalogue covered this stream, which is the common case.
+            "open_domain": open_profile.to_metadata() if open_profile else None,
             # Recorded so `context.resolve` knows whether the track means anything. On a
             # custom setup the track is a foreign-key carrier and nothing more — see
             # PlanRequest.custom_setup.

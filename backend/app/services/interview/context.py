@@ -49,11 +49,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data import domains
+from app.services.interview.open_domain import OpenDomain
 
 logger = structlog.get_logger(__name__)
 
 #: Where the resolved technical flag lives on the session.
 _TECHNICAL_KEY = "is_technical"
+
+#: Where the generated open-domain profile lives on the session, for a stream the catalogue
+#: does not name. See services/interview/open_domain.py.
+_OPEN_DOMAIN_KEY = "open_domain"
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,27 @@ class InterviewContext:
     #: True when the role title actually matched a domain rather than falling through to the
     #: default. Callers phrase the brief more strongly on a confident match.
     domain_matched: bool
+    #: The generated profile for a field the catalogue does not name, pinned at plan time.
+    #: None for every curated stream, which is the common case.
+    #:
+    #: WHY IT LIVES ON THE CONTEXT. Everything that reads it — the panel's designations, the
+    #: self-rating subject, the pivot topics — already reads this object for the role and the
+    #: technical flag. Giving it a second place to look would be a seventh source of truth in
+    #: a module written because there were two.
+    open_domain: OpenDomain | None = None
+
+    @property
+    def field_label(self) -> str:
+        """
+        What this interview's field is CALLED, for a log line or a chip.
+
+        The generated label when there is one, the curated domain's label otherwise. One
+        property rather than `ctx.open_domain.label if ... else ...` at each call site, which
+        is how the two would come to disagree.
+        """
+        if self.open_domain is not None:
+            return self.open_domain.label
+        return domains.PROFILES[self.domain]["label"]
 
     @property
     def role_line(self) -> str:
@@ -130,6 +156,7 @@ async def resolve(
             domain=domains.resolve("", ""),
             is_technical=True,
             domain_matched=False,
+            open_domain=None,
         )
 
     meta, track_name, company_name = row
@@ -170,8 +197,20 @@ async def resolve(
     # appear halfway through a sales interview because a keyword matched differently on a
     # later request. Falling back to the same rule create_plan uses means an older session
     # with no stored value behaves identically.
+    # Pinned by `create_plan` for a stream the catalogue does not name. Read back rather than
+    # regenerated: it cost a model call to resolve, the panel needs it on every turn, and a
+    # field that could change mid-interview is the same defect `is_technical` is pinned to
+    # avoid. None — including on every session written before this existed — means the
+    # curated path, and every caller below behaves exactly as it always has.
+    open_profile = OpenDomain.from_metadata(meta.get(_OPEN_DOMAIN_KEY))
+
     stored = meta.get(_TECHNICAL_KEY)
-    is_technical = stored if isinstance(stored, bool) else decide_technical(role, focus)
+    if isinstance(stored, bool):
+        is_technical = stored
+    elif open_profile is not None:
+        is_technical = open_profile.is_technical
+    else:
+        is_technical = decide_technical(role, focus)
 
     return InterviewContext(
         company=company,
@@ -179,6 +218,7 @@ async def resolve(
         domain=domain,
         is_technical=is_technical,
         domain_matched=matched,
+        open_domain=open_profile,
     )
 
 

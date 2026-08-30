@@ -98,6 +98,12 @@ _AI_FEATURE_TO_BILLABLE: dict[str, str | None] = {
     "model_answer": "interview",
     "interview_panel_turn": "interview",
     "panel_code_review": "interview",
+    # Fires at plan time for a stream the hand-authored catalogue does not name, and the
+    # result is cached per FIELD rather than per candidate — so this is billed to the
+    # interview that paid for it, but the second candidate to type the same field pays
+    # nothing. It amortises rather than scaling, which is the opposite of every other line
+    # above and is worth remembering when this appears smaller than expected.
+    "open_domain_profile": "interview",
     # ── group discussion ─────────────────────────────────────────────────
     "gd_panel_turn": "gd",
     "gd_topic_prep": "gd",

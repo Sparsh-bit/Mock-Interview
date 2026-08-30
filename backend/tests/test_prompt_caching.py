@@ -87,6 +87,11 @@ CACHED_CALL_SITES: dict[str, int] = {
     # the same template verbatim, so whichever runs first writes the prefix the other
     # reads. Their briefs differ completely; their rules do not.
     "question_generator": 2,
+    # ~1,900 tokens, and the only one here whose entry is shared across CANDIDATES rather
+    # than within a session: it characterises a FIELD, so the same stream typed by two people
+    # reads the same prefix and, via Redis, usually skips the call entirely. Fires only for a
+    # stream the hand-authored catalogue does not name. See services/interview/open_domain.py.
+    "open_domain_profile": 1,
 }
 
 CACHED_TEMPLATES = tuple(CACHED_CALL_SITES)

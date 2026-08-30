@@ -83,6 +83,12 @@ FEATURE_LABELS: dict[str, str] = {
     "gd_panel_turn": "Group discussion — one AI panellist's turn",
     "gd_topic_prep": "Group discussion — turning a candidate's own topic into a motion",
     "gd_evaluation": "Group discussion scoring",
+    # Fires only for a stream the hand-authored catalogue does not name, and the entry is
+    # shared across every candidate who types that field — so this line should stay small
+    # even as interviews grow. If it does not, the catalogue is missing a family that a lot
+    # of people are asking for, and that is the signal to author one rather than to keep
+    # paying for it. See services/interview/open_domain.py.
+    "open_domain_profile": "Interview brief for a field the catalogue does not cover",
 }
 
 

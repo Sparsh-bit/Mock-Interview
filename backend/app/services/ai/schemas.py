@@ -523,3 +523,154 @@ class ModelAnswerResponse(BaseModel):
     what_was_missing: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
     verdict_line: str = ""
+
+
+class OpenDomainTopic(BaseModel):
+    """One weighted area of an open-domain interview. Mirrors `domains.DomainProfile.topics`."""
+
+    name: str = Field(min_length=2, max_length=48)
+    weight: int = Field(ge=1, le=60)
+    #: Is this the round about the candidate rather than about the subject — ownership,
+    #: working with people, handling pressure and mistakes?
+    #:
+    #: A FLAG AND NOT A NAME MATCH, and that is the whole reason it exists. The curated
+    #: profiles in `domains.py` all name this area "Behavioural & Ownership", so the pivot
+    #: filter there can find it with a substring test. A generated profile names it in the
+    #: field's own register — "Ownership & Collaboration", "Teamwork & Handover Discipline",
+    #: "Bedside Manner & Escalation" — and a substring list over free-form names is the exact
+    #: brittleness `domains._KEYWORDS` already demonstrates. So the model declares it.
+    #:
+    #: It matters because the pivot reads it: a candidate who has just admitted a gap is
+    #: looking for ground in the SUBJECT, and "shall we talk about teamwork instead?" reads as
+    #: giving up on the round rather than adapting it.
+    behavioural: bool = False
+
+
+class OpenDomainProfile(BaseModel):
+    """
+    A field of study or work the curated catalogue does not name, characterised as an
+    interview domain. Matches the output of app/prompts/open_domain_profile.md.
+
+    WHY THIS IS A SCHEMA AND NOT A FREE-TEXT BLOCK. The open-domain path exists because
+    `domains._KEYWORDS` is a finite list and a candidate can type anything — a sommelier, a
+    Bharatanatyam choreographer, a RISC-V firmware engineer. What it must NOT be is a second,
+    looser way of describing an interview: the panel designations, the topic weighting, the
+    self-rating subject and the technical flag are consumed by exactly the same code that
+    consumes `domains.PROFILES`, so this has to arrive in exactly that shape or the two paths
+    would diverge in the way `context.py`'s docstring describes as the worst bug this app has
+    had.
+
+    Being free-form is the reason for MORE validation here, not less. Every rule below has a
+    counterpart in a file that already enforces it against hand-authored data:
+
+      · weights summing to 100      `domains._validate` raises at import on the same thing.
+      · no question text            `syllabus.py`'s anti-hardcode contract. A topic NAME is a
+                                    subject; the moment it is a sentence addressed to the
+                                    candidate, generated question text has been smuggled into
+                                    the brief that is supposed to decide what gets generated.
+      · a bounded number of areas   Two areas is not an interview and twelve is a syllabus
+                                    nobody can allocate twelve questions across.
+    """
+
+    #: The field, named the way somebody in it would name it. "Sommelier & Wine Service".
+    label: str = Field(min_length=2, max_length=60)
+    #: Panel designations, lead first. Parallel to `domains.DomainProfile`.
+    lead_role: str = Field(min_length=2, max_length=60)
+    specialist_role: str = Field(min_length=2, max_length=60)
+    #: Is this role asked engineering/scientific/technical content at all? Decides the code
+    #: editor, the coding questions and the code-review stage.
+    is_technical: bool
+    #: What to ask the candidate to rate themselves on, as a noun phrase that reads naturally
+    #: in "how would you rate yourself in ___". Decided by the model here for the same reason
+    #: `_rating_subject` decides it from the profile elsewhere: the alternative is the model
+    #: guessing mid-interview, and asked to guess it guesses Java.
+    rating_subject: str = Field(min_length=2, max_length=60)
+    topics: list[OpenDomainTopic] = Field(min_length=4, max_length=8)
+
+    @model_validator(mode="after")
+    def _no_question_text(self) -> OpenDomainProfile:
+        """
+        Reject a profile whose topic names are questions rather than subjects.
+
+        The same rule `syllabus._validate` applies to hand-authored descriptors, applied here
+        to model output for the same reason: this block is the INPUT that decides what
+        questions get written, and a question in it is output fed back into input.
+        """
+        for topic in self.topics:
+            name = topic.name.strip()
+            if "?" in name:
+                raise ValueError(f"topic name is a question, not a subject: {name!r}")
+            first = name.lower().split(" ", 1)[0].strip("*_`")
+            if first in _INTERROGATIVES:
+                raise ValueError(f"topic name opens as a question: {name!r}")
+        names = [t.name.strip().lower() for t in self.topics]
+        if len(set(names)) != len(names):
+            raise ValueError("topic names repeat — the weighting would double-count an area")
+        return self
+
+    @model_validator(mode="after")
+    def _exactly_one_behavioural_area(self) -> OpenDomainProfile:
+        """
+        Every real interview has this round, and only one of them.
+
+        Zero means the pivot cannot tell a subject area from a personal one and the plan has
+        no behavioural row where every curated profile has one. Two or more means a third of
+        the interview is about the candidate rather than the field, which is a different
+        interview from the one they asked for.
+        """
+        flagged = [t for t in self.topics if t.behavioural]
+        if len(flagged) != 1:
+            raise ValueError(
+                f"{len(flagged)} areas are marked behavioural, expected exactly one"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _weights_are_a_distribution(self) -> OpenDomainProfile:
+        """
+        Normalise the weights to sum to exactly 100 — or reject them outright.
+
+        NORMALISING IS NOT THE SAME AS WAIVING THE RULE, and the band is what keeps the
+        difference honest. A model asked for five integer percentages returns 95 or 105 often
+        enough that rejecting those would spend a retry on arithmetic rather than on judgement,
+        and the reallocation is deterministic: `question_shape.largest_remainder` is the same
+        apportionment `focus.reserve` and `syllabus.plan_grid` already use, so there is one
+        rounding rule in this codebase rather than two.
+
+        Outside the band there is nothing to round. A set of weights summing to 40 or to 300 is
+        not a distribution that drifted, it is a model that answered a different question, and
+        the honest response is to fail validation so `generate_structured` retries.
+        """
+        from app.data.question_shape import largest_remainder  # noqa: PLC0415
+
+        raw = sum(t.weight for t in self.topics)
+        if not (80 <= raw <= 120):
+            raise ValueError(f"topic weights sum to {raw}, which is not a distribution")
+        if raw != 100:
+            shares = {t.name: float(t.weight) for t in self.topics}
+            fixed = largest_remainder(shares, 100)
+            for topic in self.topics:
+                topic.weight = fixed[topic.name]
+        # largest_remainder can zero an area that rounded to nothing. An area with no weight
+        # is an area the planner will never allocate a question to, so it is not an area.
+        self.topics = [t for t in self.topics if t.weight > 0]
+        if len(self.topics) < 4:
+            raise ValueError("fewer than four areas survived normalisation")
+        if not any(t.behavioural for t in self.topics):
+            raise ValueError("the behavioural area rounded away to nothing")
+        total = sum(t.weight for t in self.topics)
+        if total != 100:
+            raise ValueError(f"weights still sum to {total} after normalisation")
+        return self
+
+
+#: Words that open a question. Lifted from the same idea as `syllabus._check_phrase` — the
+#: obvious way past a "no question mark" rule is to delete the mark.
+_INTERROGATIVES = frozenset(
+    {
+        "what", "why", "how", "when", "where", "which", "who", "whom", "whose",
+        "is", "are", "do", "does", "did", "can", "could", "would", "should",
+        "explain", "describe", "define", "tell", "give", "name", "list", "walk",
+        "discuss", "compare", "state", "write",
+    }
+)

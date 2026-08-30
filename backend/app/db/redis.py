@@ -307,6 +307,24 @@ class CacheKeys:
         return f"panel:turn:{session_id}:{digest}"
 
     @staticmethod
+    def open_domain_profile(digest: str) -> str:
+        """
+        A generated interview profile for a field the catalogue does not name, keyed by a hash
+        of the stream text alone.
+
+        SHARED ACROSS CANDIDATES, deliberately, and that is the opposite of `panel_turn` above
+        for a reason that is worth stating: a panel turn quotes what one candidate said, and a
+        domain profile says what an air traffic control interview covers. The second is a fact
+        about a field, so every candidate who types it should read the same entry rather than
+        each paying for the same answer.
+
+        The digest is taken over the STREAM ONLY — never the focus box, which invites personal
+        text ("I struggle with...") and would put it in a globally-readable key. Same rule
+        `orchestrator._is_personal_focus` enforces for the plan cache.
+        """
+        return f"interview:open-domain:{digest}"
+
+    @staticmethod
     def rate_limit_read(user_id: str) -> str:
         """
         Plain authenticated reads — standing, profile, stats.
