@@ -80,7 +80,12 @@ class TestTheExemption:
 
         from app.services.ai.anthropic_provider import AnthropicProvider
 
-        src = inspect.getsource(AnthropicProvider.complete)
+        # THE GUARD MOVED, AND THAT IS THE POINT OF READING IT HERE. It was inline in
+        # `complete`, which was correct while `complete` was the only way to spend money on
+        # this provider. `stream` is a second one, so the guard was extracted to
+        # `_refuse_if_over_budget` and both call it — a guard living inside one caller is a
+        # guard the other caller silently does not have.
+        src = inspect.getsource(AnthropicProvider._refuse_if_over_budget)
         user_guard = src.index("_user_daily_budget_usd > 0")
         global_guard = src.index("_daily_budget_usd")
         # The global breaker is checked first — its comment says so, and it is the more urgent
@@ -89,6 +94,13 @@ class TestTheExemption:
         assert "not _current_user_is_admin()" in src
         # And the exemption appears only in the per-user branch.
         assert src.count("_current_user_is_admin()") == 1
+
+        # AND BOTH SPENDING PATHS GO THROUGH IT. Without this, extracting the guard would have
+        # been free to leave `stream` unguarded and every assertion above would still pass.
+        for path in (AnthropicProvider.complete, AnthropicProvider.stream):
+            assert "_refuse_if_over_budget()" in inspect.getsource(path), (
+                f"{path.__name__} can spend money without checking the budget"
+            )
 
 
 class TestTheAuthDependencySetsIt:

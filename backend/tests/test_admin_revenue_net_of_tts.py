@@ -497,9 +497,14 @@ class TestTheSpeechLedgerIsActuallyWritten:
             / "v1"
             / "tts.py"
         ).read_text()
-        assert source.count("await record_synthesis(") == 2, (
-            "both the cache-hit and the paid-synthesis paths of /tts/speak must record; a "
-            "ledger of misses alone can measure the bill and never measure what reduces it"
+        # FOUR, NOT TWO, BECAUSE THERE ARE NOW TWO ENDPOINTS. `/tts/speak` and
+        # `/tts/speak/stream` each have a cache-hit path and a paid-synthesis path, and all
+        # four record. The count went up because the endpoint was added, and it must never go
+        # DOWN — a streaming path that recorded nothing would be speech spend the margin sheet
+        # cannot see, which is the same hole this test was written to close for the first one.
+        assert source.count("await record_synthesis(") == 4, (
+            "every path of BOTH speak endpoints — cache hit and paid synthesis — must record; "
+            "a ledger of misses alone can measure the bill and never measure what reduces it"
         )
         assert "cached=True" in source
         assert "cached=False" in source

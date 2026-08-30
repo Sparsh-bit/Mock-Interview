@@ -27,7 +27,14 @@ from pydantic import BaseModel
 
 from app.core.exceptions import AIProviderUnavailableError
 
-from .base_provider import CostTier, ProviderError, ProviderMessage, ProviderRequest
+from .base_provider import (
+    BaseAIProvider,
+    CostTier,
+    ProviderError,
+    ProviderMessage,
+    ProviderRequest,
+    ProviderResponse,
+)
 from .burst_rung import eligible_providers
 from .json_validator import AIValidationError, JSONValidator
 from .provider_factory import get_ai_providers
@@ -51,6 +58,38 @@ _RETRY_BACKOFF_SECONDS = 0.4
 
 T = TypeVar("T", bound=BaseModel)
 
+
+async def _stream_into(
+    provider: BaseAIProvider,
+    request: ProviderRequest,
+    on_delta: Callable[[str], None],
+) -> ProviderResponse:
+    """
+    Run one attempt as a stream, feeding `on_delta`, and return the finished response.
+
+    A STREAM WITH NO TERMINATOR IS A FAILURE, NOT A SHORT ANSWER, and this function exists to
+    make that impossible to get wrong. A provider that dies half way through has emitted text
+    that looks like an answer — the deltas were real — and the ONLY evidence that it is
+    truncated is that the final chunk never came. Returning what was accumulated would hand
+    the caller half a JSON object to validate, and the dangerous case is the half that parses.
+
+    So: no terminator, no response. `ProviderError` puts it on exactly the same footing as any
+    other failed attempt, which means the existing retry, fallback and logging all apply with
+    no new branch anywhere.
+    """
+    final: ProviderResponse | None = None
+    async for chunk in provider.stream(request):
+        if chunk.text:
+            on_delta(chunk.text)
+        if chunk.final is not None:
+            final = chunk.final
+    if final is None:
+        raise ProviderError(
+            "stream ended without a final response — the answer is truncated",
+            provider=provider.provider_name,
+        )
+    return final
+
 _parser = ResponseParser(JSONValidator())
 
 
@@ -65,6 +104,8 @@ async def generate_structured(
     is_valid: Callable[[T], bool] | None = None,
     context: str = "ai_generation",
     cache_system: bool = False,
+    on_delta: Callable[[str], None] | None = None,
+    on_restart: Callable[[], None] | None = None,
 ) -> tuple[T, str]:
     """
     Generate a validated `schema` instance from the model, trying each provider
@@ -79,6 +120,23 @@ async def generate_structured(
     from a call site whose prompt template carries no per-request substitutions — a cache
     write bills at 1.25x input, so getting this wrong costs 25% extra on every call
     forever and never reads. See prompts/gd_panel.md and its test.
+
+    `on_delta`, when given, is called with each text delta as the model writes it, for a
+    caller that wants to show the answer being written. STREAMING CHANGES NOTHING ELSE: the
+    same provider chain is walked, the same retries happen, the same schema validates the
+    COMPLETE body, and the same ledger entry is written from the same token counts. It is a
+    view onto this call, not a second way of making it — which is why it is a parameter here
+    rather than an endpoint of its own that would have to re-implement all four.
+
+    `on_restart` is called before each attempt after the first. A caller rendering deltas MUST
+    handle it: a retry re-writes the answer from the beginning, so without it the second
+    attempt's text would be appended to the first attempt's and the reader would see a turn
+    twice. It is separate from `on_delta` rather than a sentinel delta value because "start
+    again" and "here is more text" are different events and a caller must not be able to
+    confuse them.
+
+    Neither callback may raise, and neither may block: they run inside the provider loop, so a
+    slow callback is latency added to the answer itself.
 
     Raises AIProviderUnavailableError if no provider produced a valid result.
     """
@@ -95,25 +153,36 @@ async def generate_structured(
     last_raw = ""
     spend_usd = 0.0
 
+    started = False
     for provider in providers:
         for attempt in range(attempts_per_provider):
+            # EVERY ATTEMPT AFTER THE VERY FIRST RE-WRITES THE ANSWER FROM SCRATCH, including
+            # the first attempt on a FALLBACK provider. A caller rendering deltas has to throw
+            # away what it has, and it can only know to if it is told — so this fires on the
+            # attempt boundary rather than on the retry-within-a-provider boundary, which
+            # would miss the provider switch entirely.
+            if on_restart is not None and started:
+                on_restart()
+            started = True
             try:
-                resp = await provider.complete(
-                    ProviderRequest(
-                        messages=messages,
-                        json_mode=True,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        cost_tier=cost_tier,
-                        cache_system=cache_system,
-                        # THE SAME `context` THE LEDGER AND THE BURST RUNG ALREADY USE, and
-                        # passed down rather than re-derived so the three cannot disagree
-                        # about what this call is. It lets a provider apply a feature-keyed
-                        # policy — currently model routing — without any of the thirteen
-                        # call sites learning that such a policy exists.
-                        feature=context,
-                    )
+                request = ProviderRequest(
+                    messages=messages,
+                    json_mode=True,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    cost_tier=cost_tier,
+                    cache_system=cache_system,
+                    # THE SAME `context` THE LEDGER AND THE BURST RUNG ALREADY USE, and
+                    # passed down rather than re-derived so the three cannot disagree about
+                    # what this call is. It lets a provider apply a feature-keyed policy —
+                    # currently model routing — without any of the thirteen call sites
+                    # learning that such a policy exists.
+                    feature=context,
                 )
+                if on_delta is not None and provider.supports_streaming:
+                    resp = await _stream_into(provider, request, on_delta)
+                else:
+                    resp = await provider.complete(request)
             except ProviderError as exc:
                 # THE REASON, NOT JUST THE FACT. This logged the context, the provider and the
                 # attempt number and nothing about what went wrong — so a production warning

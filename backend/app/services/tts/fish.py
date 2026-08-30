@@ -89,6 +89,31 @@ class FishAudioProvider:
     def provider_name(self) -> str:
         return "fish"
 
+    # NO `synthesize_stream`, AND THAT IS A FINDING RATHER THAN AN OMISSION.
+    #
+    # Checked separately from ElevenLabs rather than assumed to match it. `POST /v1/tts` — the
+    # endpoint this provider uses and the only one it is authorised for — answers with a
+    # complete MP3 and a Content-Length header, not chunked transfer. Fish's streaming path is
+    # a different protocol entirely: a WebSocket at `/v1/tts/live` carrying msgpack frames,
+    # with its own session lifecycle. That is a new integration, not a flag on this one.
+    #
+    # A `synthesize_stream` here that called `synthesize` and yielded the bytes once would
+    # satisfy `StreamingTTSProvider`, pass every type check, change nothing whatsoever about
+    # when the first byte arrives, and leave the code claiming a capability it does not have —
+    # so the honest thing is to not implement the protocol. `isinstance(provider,
+    # StreamingTTSProvider)` is then False, and the caller uses `synthesize`, which is exactly
+    # today's behaviour.
+    #
+    # This matters more than it sounds, because Fish is the DEFAULT vendor (`TTS_PROVIDER`):
+    # on a default deployment nothing streams audio and speech behaves precisely as it does
+    # now. The panel TEXT still streams — that is a different layer and the larger share of
+    # the wait.
+    #
+    # Attempted verification against the live API returned 402: Fish bills API credit
+    # separately from platform credit and this account's is spent. So this is a statement
+    # about the documented endpoint contract and about the response shape this file already
+    # handles, not a measurement.
+
     def estimate_cost_usd(self, characters: int) -> float:
         return characters * _USD_PER_CHAR
 

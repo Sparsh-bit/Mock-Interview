@@ -9,6 +9,8 @@ class directly. All AI access flows through provider_factory.get_ai_provider().
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -172,6 +174,22 @@ class ProviderError(Exception):
 # ─── Abstract base ────────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class StreamChunk:
+    """
+    One piece of a streamed answer.
+
+    Either a text delta (`text` set, `final` None) or the terminator (`final` set), never
+    something a caller has to guess about. The terminator may carry text as well — the default
+    implementation yields exactly one chunk that is both.
+    """
+
+    text: str = ""
+    #: Present only on the LAST chunk. Its absence at the end of iteration means the stream did
+    #: not finish, which is the one thing a caller must not mistake for a complete answer.
+    final: ProviderResponse | None = None
+
+
 class BaseAIProvider(ABC):
     """
     Abstract base class for all AI provider implementations.
@@ -214,6 +232,51 @@ class BaseAIProvider(ABC):
         Verify the provider is reachable and the API key is valid.
         Must not raise — return False on failure.
         """
+
+    # ─── Optional: token streaming ────────────────────────────────────────
+
+    @property
+    def supports_streaming(self) -> bool:
+        """
+        Can this provider hand back the answer as it is written, rather than all at once?
+
+        A CAPABILITY FLAG, following `supports_batching` below and for the identical reason:
+        the caller must be able to ASK, because the alternative is
+        `isinstance(provider, AnthropicProvider)` at the call site, which is the coupling this
+        base class exists to forbid.
+
+        False here means `stream_text` still works — it yields the whole answer as one chunk —
+        so a caller never has to branch on this to be correct. It branches on it to decide
+        whether streaming is worth the extra plumbing for a given call, and to say honestly in
+        a log which providers in the chain can actually do it.
+        """
+        return False
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[StreamChunk]:
+        """
+        The answer as it is written: text deltas, then one final chunk carrying the whole
+        `ProviderResponse`.
+
+        THE FINAL CHUNK IS NOT OPTIONAL AND IS WHY THIS DOES NOT SIMPLY YIELD STRINGS. Every
+        completed call in this product is billed and recorded — `services/ai/usage.py`, and
+        `tests/test_ai_usage.py` fails the build on a call site that spends without recording.
+        A stream that yielded only text would be spend the ledger could not see, so the
+        provider hands back the finished response at the end and the caller records it exactly
+        as it records a non-streamed one. A stream that ENDS WITHOUT a final chunk is a stream
+        that did not finish, which is precisely the distinction the caller needs.
+
+        THE DEFAULT IS CORRECT, NOT A STUB. It awaits `complete` and yields one chunk carrying
+        both the text and the response, so every provider in the chain can be streamed from
+        and no caller needs a fallback path of its own. A provider that can genuinely stream
+        overrides this and sets `supports_streaming`; the difference to the caller is only
+        WHEN the first bytes arrive, never what it eventually receives.
+
+        Raises ProviderError on any failure, exactly as `complete` does. A failure part-way
+        through raises from inside the iteration — which is what lets a caller tell a finished
+        answer from a truncated one that happens to look complete.
+        """
+        response = await self.complete(request)
+        yield StreamChunk(text=response.content, final=response)
 
     # ─── Optional: asynchronous batch submission ──────────────────────────
 

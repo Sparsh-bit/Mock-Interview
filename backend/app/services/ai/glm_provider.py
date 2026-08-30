@@ -20,10 +20,19 @@ Configuration:
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
+
 import httpx
 import structlog
 
-from .base_provider import BaseAIProvider, ProviderError, ProviderRequest, ProviderResponse
+from .base_provider import (
+    BaseAIProvider,
+    ProviderError,
+    ProviderRequest,
+    ProviderResponse,
+    StreamChunk,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -72,6 +81,125 @@ class OpenAICompatibleProvider(BaseAIProvider):
     @property
     def model_name(self) -> str:
         return self._model
+
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[StreamChunk]:
+        """
+        The answer as text deltas, over the OpenAI-compatible SSE protocol.
+
+        `"stream": true` turns the response into `data: {json}` lines terminated by
+        `data: [DONE]`. Everything else about the request is identical to `complete`, so a
+        streamed call and a whole one differ only in when the bytes arrive.
+
+        JSON MODE STILL APPLIES. The model is still told to answer with a JSON object; the
+        difference is that the caller sees it being written. That is exactly why the caller
+        must not act on a partial stream — half a JSON object parses as nothing, and the half
+        that DOES parse is the dangerous case. See api/v1/panel.py.
+
+        A MALFORMED SSE LINE IS SKIPPED, NOT FATAL. These endpoints emit keep-alive comments
+        and the occasional empty frame, and dying on one would turn a cosmetic protocol detail
+        into a failed interview turn.
+        """
+        model = request.model_override or self._model
+        payload: dict = {
+            "model": model,
+            "messages": [m.model_dump() for m in request.messages],
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "stream": True,
+            # THE USAGE FRAME. Without this the SSE stream ends with `[DONE]` and no token
+            # counts at all, so a streamed call would be spend the ledger cannot see. Servers
+            # that do not recognise the option ignore it — the terminator below is then built
+            # from what was actually received, which is honest about being an estimate rather
+            # than silently reporting zero.
+            "stream_options": {"include_usage": True},
+        }
+        if request.json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        log = logger.bind(provider=self.provider_name, model=model, streaming=True)
+        try:
+            async with self._client.stream(
+                "POST", _CHAT_COMPLETIONS_PATH, json=payload
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread())[:500].decode("utf-8", "replace")
+                    log.error("provider_stream_api_error", status_code=response.status_code)
+                    raise ProviderError(
+                        f"{self.provider_name} API returned {response.status_code}: {body}",
+                        provider=self.provider_name,
+                        status_code=response.status_code,
+                        raw_error=body,
+                    )
+                whole: list[str] = []
+                usage: dict = {}
+                finish = "stop"
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data)
+                    except ValueError:
+                        continue
+                    # The usage frame arrives with an EMPTY choices list, so it has to be read
+                    # before the choices are indexed rather than after.
+                    if isinstance(chunk.get("usage"), dict):
+                        usage = chunk["usage"]
+                    try:
+                        choice = chunk["choices"][0]
+                    except (KeyError, IndexError, TypeError):
+                        continue
+                    finish = choice.get("finish_reason") or finish
+                    delta = (choice.get("delta") or {}).get("content")
+                    if delta:
+                        whole.append(delta)
+                        yield StreamChunk(text=delta)
+
+                # THE TERMINATOR. Yielded only after the loop ran to completion, so a stream
+                # that was cut leaves none and the caller can tell a finished answer from a
+                # truncated one that happens to look complete.
+                #
+                # `prompt_tokens` FALLS BACK TO A CHARACTER ESTIMATE rather than to zero when
+                # the server sent no usage frame. Zero is not a smaller number here, it is a
+                # false one: it would report this call as free, and the margin sheet built on
+                # `ai_usage` would quietly understate the cost of every streamed turn. A rough
+                # figure that is roughly right is the honest answer, and the 4-characters-per-
+                # token ratio is the same one tests/test_prompt_caching.py already uses.
+                content = "".join(whole)
+                yield StreamChunk(
+                    final=ProviderResponse(
+                        content=content,
+                        model=model,
+                        prompt_tokens=int(
+                            usage.get("prompt_tokens")
+                            or sum(len(m.content) for m in request.messages) / 4
+                        ),
+                        completion_tokens=int(
+                            usage.get("completion_tokens") or len(content) / 4
+                        ),
+                        finish_reason=finish,
+                    )
+                )
+        except httpx.TimeoutException as exc:
+            log.error("provider_stream_timeout", error=str(exc))
+            raise ProviderError(
+                f"{self.provider_name} stream timed out after {exc}",
+                provider=self.provider_name,
+            ) from exc
+        except httpx.RequestError as exc:
+            # RAISED FROM INSIDE THE ITERATION. A stream cut half way through has produced
+            # text that looks like an answer, and the raise is the only thing that
+            # distinguishes it from a finished one.
+            log.error("provider_stream_network_error", error=str(exc))
+            raise ProviderError(
+                f"{self.provider_name} network error: {exc}", provider=self.provider_name
+            ) from exc
 
     async def complete(self, request: ProviderRequest) -> ProviderResponse:
         model = request.model_override or self._model

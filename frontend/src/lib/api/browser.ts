@@ -75,3 +75,27 @@ export function getBrowserApiClient(): ApiClient {
   }
   return _singleton;
 }
+
+/**
+ * The current access token, for the one thing ApiClient cannot do: a streaming response.
+ *
+ * `ApiClient` buffers a whole body — that is the right shape for every JSON call in this app
+ * and the wrong one for Server-Sent Events, where the point is to read the body as it arrives.
+ * So the SSE caller uses `fetch` directly and needs the token that the client would otherwise
+ * have attached for it.
+ *
+ * EXPORTED HERE RATHER THAN RE-DERIVED AT THE CALL SITE, because a second
+ * `createBrowserClient` with its own idea of the session is exactly how one request ends up
+ * authenticated and another does not. Same memoised Supabase client, same session, same
+ * refresh behaviour.
+ */
+export async function getBrowserAccessToken(): Promise<string | null> {
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  );
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}

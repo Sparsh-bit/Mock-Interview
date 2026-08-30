@@ -40,6 +40,7 @@ TWO RULES THAT ARE NOT NEGOTIABLE.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -184,6 +185,56 @@ class SynthesisResult:
 
 
 @runtime_checkable
+class StreamingTTSProvider(Protocol):
+    """
+    A vendor that can start sending audio before it has finished making it.
+
+    A SEPARATE PROTOCOL RATHER THAN AN OPTIONAL METHOD ON `TTSProvider`, and checked with
+    `isinstance` against a `runtime_checkable` Protocol rather than a boolean flag, because
+    the two vendors here genuinely differ and the difference is structural:
+
+      ELEVENLABS has a documented streaming endpoint — the same request to
+      `/v1/text-to-speech/{voice_id}/stream` returns the same audio as chunked transfer, so
+      playback can start on the first chunk. Implemented.
+
+      FISH AUDIO does not, through the API this product uses. `POST /v1/tts` answers with a
+      complete file and a Content-Length; their streaming path is a separate WebSocket
+      protocol with msgpack framing, which is a different integration rather than a flag on
+      this one. NOT implemented, and deliberately not faked: a `synthesize_stream` that
+      called `synthesize` and yielded the result once would satisfy every type checker,
+      change nothing about when the first byte arrives, and make the code claim a capability
+      it does not have.
+
+      Fish is the DEFAULT vendor (`TTS_PROVIDER=fish`), so on a default deployment this
+      protocol is unused and speech behaves exactly as it does today. That is the graceful
+      degradation, and it is the common case rather than the edge one.
+
+    NEITHER WAS VERIFIED AGAINST A LIVE VENDOR IN THIS REPOSITORY. There is no ElevenLabs key
+    configured here, and Fish answers 402 — its API credit is spent, which this codebase
+    already documents as distinct from platform credit. So the ElevenLabs implementation is
+    written from its published contract and is unproven end to end; `tests/test_tts_stream.py`
+    pins the shape and the fallback, which is what can be tested without a key, and the
+    fallback is what runs when the contract turns out to differ.
+    """
+
+    @property
+    def provider_name(self) -> str: ...
+
+    def synthesize_stream(
+        self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None
+    ) -> AsyncIterator[bytes]:
+        """
+        Audio for one utterance, in chunks, in order.
+
+        Raises TTSError before the first chunk on a refused request. A failure PART WAY
+        through raises from inside the iteration — a caller that has already played some
+        audio cannot un-play it, so its only sensible response is to stop, and it needs to be
+        able to tell that from a clean end.
+        """
+        ...
+
+
+@runtime_checkable
 class TTSProvider(Protocol):
     """
     One text-to-speech vendor.
@@ -194,6 +245,17 @@ class TTSProvider(Protocol):
 
     @property
     def provider_name(self) -> str: ...
+
+    def estimate_cost_usd(self, characters: int) -> float:
+        """
+        What `characters` will cost, before spending it.
+
+        ON THE PROTOCOL because a caller needs it without knowing the vendor: the streaming
+        endpoint bills after the last chunk, and at that point it has bytes rather than a
+        `SynthesisResult`. Both providers already implement it — this only writes down that
+        every provider must.
+        """
+        ...
 
     async def synthesize(
         self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None

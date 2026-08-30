@@ -26,6 +26,8 @@ anything speechSynthesis provides.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import httpx
 import structlog
 
@@ -97,6 +99,68 @@ class ElevenLabsProvider:
 
     def estimate_cost_usd(self, characters: int) -> float:
         return characters * self._credits_per_char * self._usd_per_credit
+
+    async def synthesize_stream(
+        self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None
+    ) -> AsyncIterator[bytes]:
+        """
+        The same audio as `synthesize`, chunked, from ElevenLabs' `/stream` endpoint.
+
+        SAME BODY, SAME MODEL, SAME VOICE SETTINGS — only the URL differs, so a streamed line
+        and a whole one are the same audio and cannot come out sounding different. The vendor
+        bills identically; what changes is that the first bytes arrive while the rest is still
+        being generated, which is most of a second on a four-line panel turn.
+
+        UNVERIFIED AGAINST A LIVE KEY IN THIS REPOSITORY — none is configured here — so this
+        is written from the published contract. `services/tts/base.StreamingTTSProvider` says
+        what that means and why the fallback matters: a caller that cannot stream falls back
+        to `synthesize`, which is a slower first byte and identical audio.
+        """
+        clean = (text or "").strip()
+        if not clean:
+            raise TTSError("nothing to speak")
+        if not voice_id:
+            raise TTSError("no voice_id for this speaker")
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client, client.stream(
+                "POST",
+                f"{_API}/{voice_id}/stream",
+                headers={
+                    "xi-api-key": self._key,
+                    "accept": "audio/mpeg",
+                    "content-type": "application/json",
+                },
+                json={
+                    "text": clean,
+                    "model_id": self._model,
+                    "voice_settings": {
+                        "stability": 0.45,
+                        "similarity_boost": 0.75,
+                        "style": 0.35,
+                        "use_speaker_boost": True,
+                    },
+                },
+            ) as resp:
+                if resp.status_code != 200:
+                    # READ BEFORE RAISING. On a streaming response the body has not been
+                    # fetched yet, so `resp.text` would be empty and the error would say
+                    # nothing — which is the failure mode the Fish provider's comments
+                    # describe at length.
+                    detail = (await resp.aread())[:200].decode("utf-8", "replace")
+                    logger.warning(
+                        "elevenlabs_stream_failed", status=resp.status_code, detail=detail
+                    )
+                    raise TTSError(f"elevenlabs returned {resp.status_code}: {detail}")
+                async for chunk in resp.aiter_bytes():
+                    if chunk:
+                        yield chunk
+        except httpx.HTTPError as exc:
+            # The type as well as the message: httpx raises ReadTimeout with an empty string,
+            # and a log line reading "request failed: " cost a long diagnosis once already.
+            raise TTSError(
+                f"elevenlabs stream failed: {exc or type(exc).__name__}"
+            ) from exc
 
     async def synthesize(
         self, text: str, *, voice_id: str, tone: str | None = None, speaker: str | None = None

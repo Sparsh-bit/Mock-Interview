@@ -19,6 +19,7 @@ import { useSpeechRecognition, useSpeechSynthesis, usePanelVoices } from '@/hook
 import { useCandidateName } from '@/hooks/useCandidateName';
 import { useConnection, isNetworkError } from '@/hooks/useConnection';
 import {
+  streamPanelTurn,
   useInterviewPanel,
   useInterviewers,
   useRecordPivot,
@@ -26,6 +27,7 @@ import {
   type PanelLine,
   type PanelStage,
 } from '@/hooks/useInterviewPanel';
+import { getBrowserAccessToken } from '@/lib/api/browser';
 import { PanelThread } from '@/components/interview/PanelThread';
 import { parseSelfRating } from '@/lib/interview/self-rating';
 import { countUnprofessional, summarizeDelivery } from '@/lib/speech/delivery';
@@ -682,14 +684,48 @@ export default function LiveSessionPage() {
        */
       tts.cancel();
       try {
-      const result = await panelTurn.mutateAsync({
+      const turnArgs = {
         session_id: sessionId,
         stage: args.stage,
         question: args.question ?? '',
         candidate_question: args.candidate_question ?? '',
         language: args.language ?? '',
         candidate_name: candidateName,
-      });
+      };
+
+      /*
+       * STREAMED, SO THE FIRST LINE STARTS SYNTHESISING WHILE THE REST IS STILL BEING WRITTEN.
+       *
+       * The panel writes its four lines into one JSON object left to right, so line one is
+       * finished long before line four. Measured against the live model by
+       * backend/scripts/panel_stream_latency.py: the first line closes about 30% of the way
+       * through the turn, ~680ms sooner than the closing brace. That is 680ms of vendor
+       * round-trip for line one moved off the critical path.
+       *
+       * `onLine` WARMS AUDIO AND NOTHING ELSE — it must never render.
+       *
+       * This page has fixed "the words appear seconds before the voice" twice, and the reveal
+       * below is driven by `onStart` precisely so a line and its audio arrive together.
+       * Showing streamed text here would undo that and reintroduce the bug in a new place,
+       * with the added twist that the streamed text is PROVISIONAL: it comes from reading a
+       * half-written object, and on a server-side retry it is thrown away. So the words that
+       * get shown are still the validated ones from `done`, spoken and revealed exactly as
+       * before. What moves earlier is the synthesis, which is where the wait actually is.
+       *
+       * `prefetchUtterance` is keyed by the exact text, so warming a line the turn then keeps
+       * is a cache hit at speak time — and warming one a retry discards costs a request that
+       * is never read, never a wrong line being spoken.
+       */
+      const streamed = await streamPanelTurn(
+        turnArgs,
+        (line) => voicesRef.current.prefetchTurn([line]),
+        await getBrowserAccessToken(),
+      );
+      // NULL IS NOT A FAILURE, it is "streaming was not available" — an SSE-hostile proxy, a
+      // browser without ReadableStream, a network blip. The whole-turn endpoint is the same
+      // turn from the same cache key, so the fallback costs latency and nothing else.
+      const result =
+        streamed ?? (await panelTurn.mutateAsync(turnArgs));
       setPanelPending(false);
       if (!result.turns.length) {
         return {

@@ -160,6 +160,88 @@ export function useInterviewers(sessionId?: string) {
   });
 }
 
+/**
+ * Fetch a turn as it is written, calling `onLine` for each line as it closes.
+ *
+ * WHAT THIS BUYS, AND WHAT IT MUST NOT BUY. The panel writes its four lines into one JSON
+ * object left to right, so the first line is finished long before the last. Streaming lets the
+ * caller start SYNTHESISING that first line while the rest is still being written, which is
+ * where the time actually goes — the vendor round-trip, not the model's last few tokens.
+ *
+ * It must NOT be used to put text on screen early. This page has fixed "the words appear
+ * seconds before the voice" twice, and `onStart` in the speak loop is what keeps a line and
+ * its audio together. So `onLine` here is for WARMING AUDIO ONLY. The rendering still happens
+ * where it always has.
+ *
+ * THE `done` EVENT IS THE TURN. Everything before it is provisional: the server says so, and
+ * it is telling the truth — its `line` events come from reading a half-written object. The
+ * resolved value is built from `done` alone, so a client that ignored every `line` event
+ * would still be correct, just slower. That is the property that makes this safe to fall back
+ * from.
+ *
+ * A `restart` event means the server retried and is writing the answer again from the top.
+ * Anything warmed before it is stale; the lines that matter arrive after.
+ *
+ * Falls back by returning null rather than by throwing — the caller then uses the ordinary
+ * whole-turn endpoint, which is what happens on any browser or proxy that cannot do SSE.
+ */
+export async function streamPanelTurn(
+  args: PanelTurnArgs,
+  onLine: (line: PanelLine) => void,
+  token: string | null,
+): Promise<PanelTurnResult | null> {
+  try {
+    const res = await fetch('/api/v1/panel/turn/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(args),
+    });
+    if (!res.ok || !res.body) return null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let done: PanelTurnResult | null = null;
+
+    for (;;) {
+      const { value, done: finished } = await reader.read();
+      if (finished) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames end at a blank line. Anything after the last one is a partial frame and
+      // stays in the buffer — parsing it would be reading half an event.
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        const name = /^event: (.+)$/m.exec(frame)?.[1]?.trim();
+        const raw = /^data: (.*)$/m.exec(frame)?.[1];
+        if (!name || raw === undefined) continue;
+        let payload: unknown;
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          // A malformed frame costs one line's warm-up, never the turn. `done` is what
+          // decides the outcome and it is validated server-side.
+          continue;
+        }
+        if (name === 'line') onLine(payload as PanelLine);
+        else if (name === 'restart') {
+          // Warmed audio for the abandoned attempt is simply unused — it is cached by text,
+          // so nothing is corrupted by it and nothing needs undoing.
+          done = null;
+        } else if (name === 'done') done = payload as PanelTurnResult;
+      }
+    }
+    return done;
+  } catch {
+    // Network failure, an SSE-hostile proxy, a browser without ReadableStream. The caller
+    // falls back to the whole-turn endpoint, which is exactly today's behaviour.
+    return null;
+  }
+}
+
 export function useInterviewPanel() {
   const api = getBrowserApiClient();
 

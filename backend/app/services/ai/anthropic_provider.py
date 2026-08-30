@@ -44,6 +44,7 @@ translation layer is not a passthrough:
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC
 
 import anthropic
@@ -56,6 +57,7 @@ from .base_provider import (
     ProviderError,
     ProviderRequest,
     ProviderResponse,
+    StreamChunk,
 )
 from .model_routing import wants_cheap_model
 
@@ -411,7 +413,16 @@ class AnthropicProvider(BaseAIProvider):
         # returns a 400 for non-default sampling parameters.
         return payload, model, max_tokens, thinking_enabled, effort
 
-    async def complete(self, request: ProviderRequest) -> ProviderResponse:
+    async def _refuse_if_over_budget(self) -> None:
+        """
+        Stop before spending, not after.
+
+        EXTRACTED SO STREAMING CANNOT SKIP IT. This was inline in `complete`, which was
+        correct while `complete` was the only way to spend money here. `stream_text` is a
+        second one, and a guard that lives inside one caller is a guard the other caller
+        silently does not have — the failure being "the daily breaker works, except on the
+        path nobody remembered", which is invisible until the bill arrives.
+        """
         # Refuse before spending, not after. Raising ProviderError lets the
         # generation layer fall through to the free provider, so features keep
         # working once the daily budget is gone.
@@ -461,6 +472,60 @@ class AnthropicProvider(BaseAIProvider):
                     "until tomorrow.",
                     provider=self.provider_name,
                 )
+
+    @property
+    def supports_streaming(self) -> bool:
+        return True
+
+    async def stream(self, request: ProviderRequest) -> AsyncIterator[StreamChunk]:
+        """
+        The answer as text deltas, through the SDK's own streaming helper.
+
+        SAME PAYLOAD AS `complete`, deliberately — `_build_payload` is called here rather than
+        rebuilt, so a streamed turn is the same request with the same model, the same budget
+        and the same cached prefix. If those could differ, the streamed panel would sound
+        subtly unlike the non-streamed one and nothing would say why.
+
+        THINKING BLOCKS ARE NOT YIELDED. `text_stream` emits only the visible answer, which is
+        what a caller rendering to a screen wants; a reasoning block arriving as if it were
+        dialogue would put the model's deliberation in the interviewer's mouth.
+        """
+        await self._refuse_if_over_budget()
+        payload, model, _max_tokens, _thinking, _effort = self._build_payload(request)
+        log = logger.bind(provider=self.provider_name, model=model, streaming=True)
+        try:
+            async with self._client.messages.stream(**payload) as sdk_stream:
+                async for delta in sdk_stream.text_stream:
+                    yield StreamChunk(text=delta)
+                # THE TERMINATOR, AND IT CARRIES THE USAGE. `get_final_message` returns the
+                # assembled message with real input/output token counts, so a streamed call is
+                # billed and recorded identically to a non-streamed one. Yielded only after
+                # the loop completes, so a stream that died leaves no terminator and the
+                # caller can tell.
+                message = await sdk_stream.get_final_message()
+                yield StreamChunk(final=self._to_response(message, model, log))
+        except anthropic.APIStatusError as exc:
+            body = str(exc.message)[:500]
+            log.error("provider_stream_api_error", status_code=exc.status_code, body=body)
+            raise ProviderError(
+                f"anthropic API returned {exc.status_code}: {body}",
+                provider=self.provider_name,
+                status_code=exc.status_code,
+                raw_error=body,
+            ) from exc
+        except anthropic.APIConnectionError as exc:
+            # RAISED FROM INSIDE THE ITERATION, which is the whole point. A stream that dies
+            # half way through has produced text that LOOKS like an answer, and the only thing
+            # separating it from a finished one is that the iterator raised rather than
+            # stopping. A caller that swallowed this would save half a panel turn as a whole
+            # one. See api/v1/panel.py's streaming endpoint.
+            log.error("provider_stream_network_error", error=str(exc))
+            raise ProviderError(
+                f"anthropic connection error: {exc}", provider=self.provider_name
+            ) from exc
+
+    async def complete(self, request: ProviderRequest) -> ProviderResponse:
+        await self._refuse_if_over_budget()
 
         payload, model, max_tokens, thinking_enabled, effort = self._build_payload(request)
 

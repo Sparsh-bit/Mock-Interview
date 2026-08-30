@@ -417,7 +417,13 @@ class TestABatchedReportIsTheSameReport:
         # quietly buy reasoning the live one does not.
         src = (BACKEND / "app" / "services" / "ai" / "anthropic_provider.py").read_text()
         assert src.count("def _build_payload(") == 1
-        assert src.count("self._build_payload(request)") == 2
+        # THREE CALLERS NOW: `complete`, `stream` and `submit_batch`. The number rose because
+        # streaming was added, and what this test asserts is unchanged and slightly stronger —
+        # ONE builder, and every way of reaching the model goes through it. A streamed turn
+        # that built its own payload could quietly use a different model or a different output
+        # clamp from the whole-turn one, and the only symptom would be the panel sounding
+        # subtly unlike itself on one code path.
+        assert src.count("self._build_payload(request)") == 3
 
     def test_the_batch_parts_carry_the_report_cost_tier_not_a_cheaper_one(self):
         # A batch is already half price. Dropping the tier as well would be paying less for

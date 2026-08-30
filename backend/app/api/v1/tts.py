@@ -26,9 +26,11 @@ outage must not be able to break a group discussion.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import AsyncIterator
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -37,6 +39,7 @@ from app.core.security import CurrentUser
 from app.db.redis import CacheKeys, cache_get_bytes, cache_set_bytes
 from app.services.tts.base import (
     TONE_PROSODY,
+    StreamingTTSProvider,
     TTSBudgetExceededError,
     TTSError,
     prosody_for,
@@ -355,4 +358,170 @@ async def tts_status(current_user: CurrentUser) -> TTSStatus:
         # back to the browser individually, which is better than the whole round doing so.
         voices=configured_voices(),
         reason=_for(failure),
+    )
+
+
+@router.post(
+    "/speak/stream",
+    dependencies=[Depends(_tts_rate_limit)],
+    summary="Speak one line, streamed so playback can start on the first chunk",
+)
+async def speak_stream(request: SpeakRequest, current_user: CurrentUser) -> StreamingResponse:
+    """
+    The same audio as POST /speak, delivered as it is made — where the vendor can do that.
+
+    WHAT THIS IS WORTH, AND WHERE. A panel turn is up to four spoken lines and the candidate
+    waits for each whole file before hearing anything. Starting playback on the first chunk
+    removes the synthesis time of the line rather than of the turn, which is the part a person
+    experiences as the room being slow to speak.
+
+    THE TWO VENDORS ARE NOT THE SAME AND ARE NOT TREATED AS THE SAME. This checks
+    `isinstance(provider, StreamingTTSProvider)` — ElevenLabs implements it, Fish does not,
+    and `services/tts/fish.py` records why at length. On Fish, which is the DEFAULT vendor,
+    this endpoint synthesises the whole file and sends it as a single chunk: the same bytes,
+    the same cost, the same first-byte time as today, and a response the client does not have
+    to special-case. `X-TTS-Streamed` says which happened, so "is it actually streaming?" is
+    answerable from a response header rather than from reading the deployment config.
+
+    NOTHING IS RECORDED OR CACHED UNTIL THE AUDIO IS COMPLETE, and that ordering is the whole
+    safety argument. A stream cut halfway has produced playable audio — the candidate heard
+    part of a sentence — and writing that to the cache would freeze a truncated line in place
+    for a day, so every candidate asked the same question would hear it cut off in the same
+    place. So the ledger write, the spend write and the cache write all happen after the last
+    chunk, together, or none of them happens. `tests/test_tts_stream.py` pins that.
+
+    The candidate's own experience of a cut stream is unchanged from any other speech failure:
+    they hear part of a line, the browser's fallback carries the rest, and the interview
+    continues.
+    """
+    if not settings.TTS_ENABLED:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "TTS is disabled")
+
+    text = request.text.strip()
+    voice_id = panel_voice_id(request.speaker)
+    if not voice_id:
+        logger.warning("tts_unknown_speaker", speaker=request.speaker)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "No voice for that speaker")
+
+    try:
+        provider = get_tts_provider()
+    except TTSError as exc:
+        logger.warning("tts_provider_unavailable", error=str(exc))
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+
+    tone = request.tone if request.tone in TONE_PROSODY else "neutral"
+    speed = prosody_for(tone, request.speaker)["speed"]
+    key = _cache_key(provider.provider_name, voice_id, text, tone, speed)
+
+    # Cache first and before the budget check, for the reason `speak` gives: a hit costs
+    # nothing, so a spent budget must not stop it being served.
+    cached = await cache_get_bytes(key)
+    if cached is not None:
+        await record_synthesis(
+            provider=provider.provider_name,
+            model=getattr(provider, "_model", ""),
+            speaker=request.speaker,
+            characters=len(text),
+            cost_usd=0.0,
+            cached=True,
+            user_id=current_user.user_id,
+        )
+
+        async def _cached() -> AsyncIterator[bytes]:
+            yield cached
+
+        return StreamingResponse(
+            _cached(),
+            media_type="audio/mpeg",
+            headers={"X-TTS-Cache": "hit", "X-TTS-Streamed": "cache", "Cache-Control": "no-cache"},
+        )
+
+    has_room, _remaining = await _budget_room()
+    if not has_room:
+        logger.error(
+            "tts_daily_budget_exceeded",
+            spent_usd=round(await tts_spend_today(), 4),
+            budget_usd=settings.TTS_DAILY_BUDGET_USD,
+        )
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED, "Speech budget for today is spent"
+        )
+
+    # `isinstance` against a runtime_checkable Protocol, not a config flag: the answer is a
+    # property of the vendor class, and reading it from settings would let the two disagree
+    # after a TTS_PROVIDER change.
+    streaming = isinstance(provider, StreamingTTSProvider)
+
+    async def audio() -> AsyncIterator[bytes]:
+        chunks: list[bytes] = []
+        try:
+            if isinstance(provider, StreamingTTSProvider):
+                async for chunk in provider.synthesize_stream(
+                    text, voice_id=voice_id, tone=tone, speaker=request.speaker
+                ):
+                    chunks.append(chunk)
+                    yield chunk
+                # ESTIMATED FROM THE CHARACTER COUNT, which is exactly how these vendors bill
+                # — per character, not per byte — so this is the same figure `synthesize`
+                # reports rather than an approximation of it.
+                cost = provider.estimate_cost_usd(len(text))
+            else:
+                # GRACEFUL DEGRADATION, and the common case: Fish is the default vendor. One
+                # chunk, the whole file, identical to POST /speak in every respect including
+                # when the first byte arrives.
+                result = await provider.synthesize(
+                    text, voice_id=voice_id, tone=tone, speaker=request.speaker
+                )
+                chunks.append(result.audio)
+                cost = result.estimated_cost_usd
+                yield result.audio
+        except TTSError as exc:
+            # NOTHING IS RECORDED AND NOTHING IS CACHED. The status is already 200 and some
+            # audio may already be playing, so this cannot become an HTTP error — the stream
+            # simply ends, which the browser's audio element reports as a decode or network
+            # failure and the client handles the way it handles any other speech failure.
+            logger.warning(
+                "tts_stream_failed",
+                speaker=request.speaker,
+                streamed=streaming,
+                bytes_sent=sum(len(c) for c in chunks),
+                error=str(exc) or type(exc).__name__,
+            )
+            return
+
+        # ONLY NOW. Complete audio, so it is worth billing, worth recording and worth keeping.
+        whole = b"".join(chunks)
+        await record_tts_spend(cost)
+        await record_synthesis(
+            provider=provider.provider_name,
+            model=getattr(provider, "_model", ""),
+            speaker=request.speaker,
+            characters=len(text),
+            cost_usd=cost,
+            cached=False,
+            user_id=current_user.user_id,
+        )
+        await cache_set_bytes(key, whole, ttl_seconds=settings.TTS_CACHE_TTL_SECONDS)
+        logger.info(
+            "tts_synthesised",
+            speaker=request.speaker,
+            tone=tone,
+            provider=provider.provider_name,
+            characters=len(text),
+            cost_usd=round(cost, 6),
+            streamed=streaming,
+        )
+
+    return StreamingResponse(
+        audio(),
+        media_type="audio/mpeg",
+        headers={
+            "X-TTS-Cache": "miss",
+            "X-TTS-Streamed": "vendor" if streaming else "whole",
+            # Never cached by the browser: the body is only complete if the stream finished,
+            # and a truncated response cached by an intermediary would be a silently broken
+            # line served for as long as it lived.
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        },
     )

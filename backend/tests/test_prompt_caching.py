@@ -61,7 +61,12 @@ API = BACKEND / "app" / "api" / "v1"
 #: template, never about a total.
 CACHED_CALL_SITES: dict[str, int] = {
     "gd_panel": 1,
-    "interview_panel": 1,
+    # TWO: the whole-turn endpoint and the streaming one. They send a byte-identical system
+    # block — both go through `_turn_context`, which is shared precisely so they cannot drift —
+    # so whichever runs first writes the prefix and the other reads it. Two call sites sharing
+    # one cache entry is the same arrangement `question_generator` below has, and for the same
+    # reason.
+    "interview_panel": 2,
     # Two each: the synchronous path, and the batch path that submits the identical
     # messages at half price. Both go through PromptBuilder.chat_static, so both are
     # byte-identical and both read the same provider cache entry.

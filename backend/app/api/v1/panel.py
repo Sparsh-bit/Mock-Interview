@@ -25,9 +25,12 @@ import asyncio
 import hashlib
 import json
 import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import structlog
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +39,8 @@ from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
 from app.db.redis import CacheKeys, cache_get, cache_set, get_redis
 from app.db.session import get_db
+from app.services.ai.base_provider import ProviderMessage
+from app.services.ai.schemas import InterviewPanelTurn
 from app.services.interview import context
 from app.services.interview.context import InterviewContext
 from app.services.interview.open_domain import OpenDomain
@@ -818,48 +823,54 @@ async def get_interviewers(
     return PanelInfo(interviewers=panel_for(ctx.role, ctx.open_domain), technical=ctx.is_technical)
 
 
-@router.post(
-    "/turn",
-    dependencies=[Depends(_panel_rate_limit)],
-    summary="What the panel says at this point in the interview",
-)
-async def panel_turn(
-    request: PanelTurnRequest,
-    current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> PanelTurnResponse:
-    # Reused from the GD panel rather than copied: it is the same job — reduce whatever the
-    # profile holds to something a person would actually say out loud — and two copies of a
-    # name rule is two rules that drift.
+@dataclass(frozen=True, slots=True)
+class _TurnContext:
+    """
+    Everything both turn endpoints need before a model call, resolved once.
+
+    EXTRACTED BECAUSE THERE ARE NOW TWO ENDPOINTS AND THERE MUST STILL BE ONE ANSWER. The
+    streaming turn and the whole turn are the same turn delivered differently: same brief,
+    same prompt, same cache key, same pivot topic, same rating subject. Two copies of a
+    hundred and thirty lines of brief assembly would be two briefs that drift, and the drift
+    would be invisible — both endpoints would keep working, and the panel would simply behave
+    slightly differently depending on which one the browser happened to call.
+    """
+
+    messages: list[ProviderMessage]
+    turn_key: str
+    pivot_topic: str
+    rating_subject: str
+
+
+async def _turn_context(
+    db: AsyncSession, request: PanelTurnRequest, user_id: uuid.UUID
+) -> _TurnContext:
+    """Build the prompt, the cache key and the server-chosen values for one turn."""
     from app.api.v1.gd import _candidate_name  # noqa: PLC0415
-    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
     from app.prompts.prompt_loader import get_prompt_loader  # noqa: PLC0415
-    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
-    from app.services.ai.generate import generate_structured  # noqa: PLC0415
     from app.services.ai.prompt_builder import PromptBuilder  # noqa: PLC0415
-    from app.services.ai.schemas import InterviewPanelTurn  # noqa: PLC0415
 
     name = _candidate_name(request.candidate_name)
     last_answer, last_expected = await _last_exchange(
-        db, request.session_id, current_user.user_id
+        db, request.session_id, user_id
     )
 
     # Chosen server-side, and only for the stage that uses it — see _pivot_topic for why the
     # client is not allowed to pick. An empty string means there is nothing left to offer,
     # and the prompt is told to close the topic out rather than invent one.
-    ctx = await _context(db, request.session_id, current_user.user_id)
+    ctx = await _context(db, request.session_id, user_id)
     role_line = ctx.role_line
     rating_subject = _rating_subject(ctx)
-    use_name = await _should_use_name(db, request.session_id, current_user.user_id, request.stage)
+    use_name = await _should_use_name(db, request.session_id, user_id, request.stage)
 
     pivot_topic = ""
     if request.stage == "pivot":
-        pivot_topic = await _pivot_topic(db, request.session_id, current_user.user_id)
+        pivot_topic = await _pivot_topic(db, request.session_id, user_id)
 
     code_verdict = ""
     if request.stage == "code_review":
         code_verdict = await _code_verdict(
-            db, request.session_id, current_user.user_id, request.language
+            db, request.session_id, user_id, request.language
         )
 
     brief = "\n".join(
@@ -973,6 +984,159 @@ async def panel_turn(
     ).hexdigest()[:32]
     turn_key = CacheKeys.panel_turn(str(request.session_id), turn_digest)
 
+    return _TurnContext(
+        messages=messages,
+        turn_key=turn_key,
+        pivot_topic=pivot_topic,
+        rating_subject=rating_subject,
+    )
+
+
+def _finalise_turn(
+    turn: InterviewPanelTurn, request: PanelTurnRequest
+) -> tuple[list[dict], bool, str]:
+    """
+    The validated model output, reduced to what may actually be sent and spoken.
+
+    RETURNS RATHER THAN REMEMBERS, and the separation from `_remember_turn` below is the
+    point rather than tidiness. The streaming endpoint has to be able to build this and then
+    decide, on the strength of whether the stream actually finished, whether anything is
+    saved at all. A function that validated and cached in one step could not offer that
+    choice, and a half-written turn frozen into the cache for fifteen minutes would be
+    structural rather than avoidable.
+    """
+    # Only real panel members may speak. The model must never be able to put words in the
+    # candidate's mouth — the same guard the GD panel carries, for the same reason.
+    # Nothing usable. Logged rather than silently degraded, because this is invisible from
+    # the outside — the interview carries on and only the wording changes — so without a log
+    # line there is no way to tell a provider problem from a prompt that stopped working.
+    if not turn.turns:
+        logger.warning(
+            "panel_turn_empty",
+            session_id=str(request.session_id),
+            stage=request.stage,
+            reason="the model returned no usable turns; the caller falls back to the "
+            "bare question",
+        )
+
+    # ── THE SPEAKER NAME IS CANONICALISED, NOT MATCHED EXACTLY ───────────────────────────
+    #
+    # REPORTED AS "priya is not speaking", and this is how a whole panelist goes quiet.
+    #
+    # The filter below used to be `c.speaker in INTERVIEWER_NAMES`, an exact case-sensitive
+    # comparison against ["Anil", "Priya"]. A model that writes "priya", "PRIYA", "Priya " or
+    # "Priya:" has said exactly what was asked of it — the prompt names the panel and the
+    # instruction is to use those names — but the contribution was DROPPED, silently, with no
+    # log and no fallback. Her turn simply did not exist by the time the browser saw it.
+    #
+    # It also fails asymmetrically, which is why it reads as "one person stopped talking"
+    # rather than "the panel is broken": whichever name the model happens to capitalise
+    # consistently keeps working, and the other one vanishes.
+    #
+    # So the name is normalised and mapped back to the CANONICAL spelling — the browser hands
+    # this straight to /tts/speak, which resolves a voice by name, so a lowercase "priya"
+    # reaching that lookup would find no voice and fall back to browser speech even if it did
+    # survive this filter.
+    valid: list[dict] = []
+    dropped: list[str] = []
+    for c in turn.turns:
+        text = c.text.strip()
+        if not text:
+            continue
+        canonical = canonical_speaker(c.speaker)
+        if canonical is None:
+            dropped.append(c.speaker)
+            continue
+        valid.append({
+            "speaker": canonical,
+            "text": text,
+            # Re-checked here rather than trusted: this is what the browser hands straight
+            # back to /tts/speak, and an unrecognised name there would silently become
+            # neutral anyway. Normalising at the boundary means the tone in the transcript
+            # is the tone that was actually spoken.
+            "tone": c.tone if c.tone in TONE_PROSODY else "neutral",
+        })
+    valid = valid[:4]
+
+    if dropped:
+        # NEVER SILENT AGAIN. A dropped contribution is a panelist who did not speak, and the
+        # only previous evidence was a candidate noticing that one interviewer had gone quiet.
+        logger.warning(
+            "panel_contribution_dropped_unknown_speaker",
+            speakers=dropped[:4],
+            known=INTERVIEWER_NAMES,
+        )
+
+    asked_question = turn.asked_question and bool(valid)
+
+    return valid, asked_question, (turn.candidate_turn if valid else "answered")
+
+
+async def _remember_turn(
+    turn_key: str, valid: list[dict], asked_question: bool, candidate_turn: str
+) -> None:
+    """Store a COMPLETE turn so the same moment is never written twice."""
+    # ── REMEMBERED, so the same moment is never written twice ─────────────────────────────
+    #
+    # Only on success: an empty turn must not be cached, or one provider failure would freeze
+    # the bare-question fallback in place for the rest of that question.
+    #
+    # WHAT THIS IS ACTUALLY FOR. The client retries this call on a network blip and refetches
+    # after a reconnect, and each of those used to pay the full generation again — the slowest
+    # thing in the flow, repeated for a turn already written. A short TTL because the key
+    # includes the candidate's last answer, so it changes as the interview moves; long enough
+    # to cover a retry, a reconnect and a page refresh on the same question.
+    #
+    # No quality is traded for this. The turn is generated by the same model with the same
+    # budget; the cache only stops it being generated a second time for the same moment.
+    if valid:
+        try:
+            await cache_set(
+                get_redis(),
+                turn_key,
+                json.dumps(
+                    {
+                        "turns": valid,
+                        "asked_question": asked_question,
+                        # STORED, because a cache hit that dropped this would report
+                        # "answered" for a turn whose whole point was that they did not.
+                        # The key already includes the candidate's last answer, so the read
+                        # belongs to the same moment as the words.
+                        "candidate_turn": candidate_turn,
+                    }
+                ),
+                ttl=900,
+            )
+        except Exception as exc:  # noqa: BLE001 — a cache write must never fail a turn
+            logger.warning(
+                "panel_turn_cache_store_failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+
+
+@router.post(
+    "/turn",
+    dependencies=[Depends(_panel_rate_limit)],
+    summary="What the panel says at this point in the interview",
+)
+async def panel_turn(
+    request: PanelTurnRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> PanelTurnResponse:
+    # Reused from the GD panel rather than copied: it is the same job — reduce whatever the
+    # profile holds to something a person would actually say out loud — and two copies of a
+    # name rule is two rules that drift.
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
+    from app.services.ai.schemas import InterviewPanelTurn  # noqa: PLC0415
+
+    turn_ctx = await _turn_context(db, request, current_user.user_id)
+    messages, turn_key = turn_ctx.messages, turn_ctx.turn_key
+    pivot_topic, rating_subject = turn_ctx.pivot_topic, turn_ctx.rating_subject
+
     cached_turn = await cache_get(get_redis(), turn_key)
     if cached_turn:
         try:
@@ -1068,107 +1232,8 @@ async def panel_turn(
             candidate_turn="answered",
         )
 
-    # Only real panel members may speak. The model must never be able to put words in the
-    # candidate's mouth — the same guard the GD panel carries, for the same reason.
-    # Nothing usable. Logged rather than silently degraded, because this is invisible from
-    # the outside — the interview carries on and only the wording changes — so without a log
-    # line there is no way to tell a provider problem from a prompt that stopped working.
-    if not turn.turns:
-        logger.warning(
-            "panel_turn_empty",
-            session_id=str(request.session_id),
-            stage=request.stage,
-            reason="the model returned no usable turns; the caller falls back to the "
-            "bare question",
-        )
-
-    # ── THE SPEAKER NAME IS CANONICALISED, NOT MATCHED EXACTLY ───────────────────────────
-    #
-    # REPORTED AS "priya is not speaking", and this is how a whole panelist goes quiet.
-    #
-    # The filter below used to be `c.speaker in INTERVIEWER_NAMES`, an exact case-sensitive
-    # comparison against ["Anil", "Priya"]. A model that writes "priya", "PRIYA", "Priya " or
-    # "Priya:" has said exactly what was asked of it — the prompt names the panel and the
-    # instruction is to use those names — but the contribution was DROPPED, silently, with no
-    # log and no fallback. Her turn simply did not exist by the time the browser saw it.
-    #
-    # It also fails asymmetrically, which is why it reads as "one person stopped talking"
-    # rather than "the panel is broken": whichever name the model happens to capitalise
-    # consistently keeps working, and the other one vanishes.
-    #
-    # So the name is normalised and mapped back to the CANONICAL spelling — the browser hands
-    # this straight to /tts/speak, which resolves a voice by name, so a lowercase "priya"
-    # reaching that lookup would find no voice and fall back to browser speech even if it did
-    # survive this filter.
-    valid: list[dict] = []
-    dropped: list[str] = []
-    for c in turn.turns:
-        text = c.text.strip()
-        if not text:
-            continue
-        canonical = canonical_speaker(c.speaker)
-        if canonical is None:
-            dropped.append(c.speaker)
-            continue
-        valid.append({
-            "speaker": canonical,
-            "text": text,
-            # Re-checked here rather than trusted: this is what the browser hands straight
-            # back to /tts/speak, and an unrecognised name there would silently become
-            # neutral anyway. Normalising at the boundary means the tone in the transcript
-            # is the tone that was actually spoken.
-            "tone": c.tone if c.tone in TONE_PROSODY else "neutral",
-        })
-    valid = valid[:4]
-
-    if dropped:
-        # NEVER SILENT AGAIN. A dropped contribution is a panelist who did not speak, and the
-        # only previous evidence was a candidate noticing that one interviewer had gone quiet.
-        logger.warning(
-            "panel_contribution_dropped_unknown_speaker",
-            speakers=dropped[:4],
-            known=INTERVIEWER_NAMES,
-        )
-
-    asked_question = turn.asked_question and bool(valid)
-
-    # ── REMEMBERED, so the same moment is never written twice ─────────────────────────────
-    #
-    # Only on success: an empty turn must not be cached, or one provider failure would freeze
-    # the bare-question fallback in place for the rest of that question.
-    #
-    # WHAT THIS IS ACTUALLY FOR. The client retries this call on a network blip and refetches
-    # after a reconnect, and each of those used to pay the full generation again — the slowest
-    # thing in the flow, repeated for a turn already written. A short TTL because the key
-    # includes the candidate's last answer, so it changes as the interview moves; long enough
-    # to cover a retry, a reconnect and a page refresh on the same question.
-    #
-    # No quality is traded for this. The turn is generated by the same model with the same
-    # budget; the cache only stops it being generated a second time for the same moment.
-    if valid:
-        try:
-            await cache_set(
-                get_redis(),
-                turn_key,
-                json.dumps(
-                    {
-                        "turns": valid,
-                        "asked_question": asked_question,
-                        # STORED, because a cache hit that dropped this would report
-                        # "answered" for a turn whose whole point was that they did not.
-                        # The key already includes the candidate's last answer, so the read
-                        # belongs to the same moment as the words.
-                        "candidate_turn": turn.candidate_turn,
-                    }
-                ),
-                ttl=900,
-            )
-        except Exception as exc:  # noqa: BLE001 — a cache write must never fail a turn
-            logger.warning(
-                "panel_turn_cache_store_failed",
-                error_type=type(exc).__name__,
-                error=str(exc)[:200],
-            )
+    valid, asked_question, candidate_turn = _finalise_turn(turn, request)
+    await _remember_turn(turn_key, valid, asked_question, candidate_turn)
 
     return PanelTurnResponse(
         turns=valid,
@@ -1178,4 +1243,238 @@ async def panel_turn(
         # Only when the panel actually spoke. A read attached to a turn that was dropped for
         # having no valid speakers is a judgement about an exchange that never happened.
         candidate_turn=turn.candidate_turn if valid else "answered",
+    )
+
+
+# ─── Streaming ────────────────────────────────────────────────────────────────
+
+
+def _sse(event: str, payload: dict) -> str:
+    """
+    One Server-Sent Event.
+
+    A named event per kind rather than one channel the client has to sniff, because the four
+    kinds mean genuinely different things — provisional text, a restart, the finished turn, a
+    failure — and a client that had to guess would eventually guess a partial turn was a whole
+    one. `json.dumps` guarantees no raw newline reaches the wire, which is what would otherwise
+    split one event into two.
+    """
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post(
+    "/turn/stream",
+    dependencies=[Depends(_panel_rate_limit)],
+    summary="What the panel says, streamed as it is written",
+)
+async def panel_turn_stream(
+    request: PanelTurnRequest,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> StreamingResponse:
+    """
+    The same turn as POST /turn, delivered as it is written.
+
+    WHY THIS EXISTS. A panel turn is four short spoken lines inside one JSON object, and the
+    candidate sees none of it until the object is complete — most of a second of silence at
+    the exact moment they are most alert, because the interviewer has stopped talking and they
+    are waiting to be asked something. The FIRST line is finished long before the last one
+    starts. `scripts/panel_stream_latency.py` measures what that is worth.
+
+    THE SAME TURN, NOT A CHEAPER ONE. Same brief, same prompt, same model, same budget, same
+    validation, same ledger entry — `_turn_context` and `_finalise_turn` are shared with the
+    whole-turn endpoint so the two cannot drift, and the streaming happens INSIDE
+    `generate_structured` so provider fallback, retries and usage recording all still apply.
+    What changes is when the bytes arrive.
+
+    ── WHAT IS PROVISIONAL AND WHAT IS TRUE ──────────────────────────────────────────────
+
+    `line` events are PROVISIONAL. They come from `StreamedObjects`, which reads complete
+    objects out of a half-written array — good enough to put words on a screen, and not good
+    enough to be believed. They may be superseded, and on a retry they are thrown away.
+
+    `done` carries the turn that actually happened: schema-validated as a whole, speaker names
+    canonicalised, capped at four lines. A client MUST render from `done` and treat everything
+    before it as a preview. That is the same discipline the non-streaming path has always had
+    — it is simply visible here.
+
+    ── AN INTERRUPTED STREAM SAVES NOTHING ───────────────────────────────────────────────
+
+    This is the property worth stating plainly, because it is the one that would be a silent
+    data bug rather than a visible failure. The Redis turn cache is the only thing this
+    endpoint writes, and a poisoned entry would be served for fifteen minutes as though it
+    were a complete turn — so the candidate would lose two of their four lines on a retry,
+    a reconnect and a refresh, long after the network blip that caused it.
+
+    Three things make that impossible rather than unlikely, and none of them is a check
+    somebody has to remember:
+
+      1. A provider stream that ends without its terminator raises inside
+         `generate._stream_into`, so a truncated answer is a FAILED ATTEMPT rather than a
+         short one.
+      2. Nothing reaches `_remember_turn` except a `turn` that came back from
+         `generate_structured`, which means it parsed and validated as a whole.
+      3. If the client disconnects, this generator is cancelled — and the cache write is
+         after the validation, in the same coroutine, so there is no path on which half a
+         turn is written.
+
+    `tests/test_panel_streaming.py` asserts all three, including by cutting a stream at every
+    single character position.
+    """
+    from app.core.exceptions import AIProviderUnavailableError  # noqa: PLC0415
+    from app.services.ai.base_provider import CostTier  # noqa: PLC0415
+    from app.services.ai.generate import generate_structured  # noqa: PLC0415
+    from app.services.ai.stream_parser import StreamedObjects  # noqa: PLC0415
+
+    turn_ctx = await _turn_context(db, request, current_user.user_id)
+
+    async def events() -> AsyncIterator[str]:
+        # A CACHE HIT IS STILL A STREAM, and it is the fastest one available: the lines are
+        # already written, so they go out immediately and the client's rendering path is the
+        # same either way. Returning JSON here instead would give the client two shapes to
+        # handle for one request.
+        cached = await cache_get(get_redis(), turn_ctx.turn_key)
+        if cached:
+            try:
+                payload = json.loads(cached)
+                logger.info(
+                    "panel_turn_stream_cache_hit", session_id=str(request.session_id)
+                )
+                for line in payload.get("turns", []):
+                    yield _sse("line", line)
+                yield _sse(
+                    "done",
+                    {
+                        "turns": list(payload.get("turns", [])),
+                        "asked_question": bool(payload.get("asked_question")),
+                        "pivot_topic": turn_ctx.pivot_topic,
+                        "rating_subject": turn_ctx.rating_subject,
+                        "candidate_turn": str(payload.get("candidate_turn") or "answered"),
+                    },
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "panel_turn_stream_cache_unreadable",
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
+
+        parser = StreamedObjects()
+        # Buffered rather than yielded from the callback, because `on_delta` is a plain
+        # function called from inside the provider loop and an async generator cannot yield
+        # from there. Drained between awaits below, which is often enough to be well ahead of
+        # the whole-turn path and simple enough to be obviously correct.
+        pending: list[str] = []
+
+        def on_delta(delta: str) -> None:
+            for obj in parser.feed(delta):
+                speaker = canonical_speaker(str(obj.get("speaker", "")))
+                text = str(obj.get("text", "")).strip()
+                if speaker is None or not text:
+                    # Dropped silently HERE and only here: `_finalise_turn` logs the same
+                    # rejection against the validated turn, and logging it twice for one line
+                    # would read as two panelists having gone quiet.
+                    continue
+                pending.append(
+                    _sse(
+                        "line",
+                        {
+                            "speaker": speaker,
+                            "text": text,
+                            "tone": obj.get("tone")
+                            if obj.get("tone") in TONE_PROSODY
+                            else "neutral",
+                        },
+                    )
+                )
+
+        def on_restart() -> None:
+            # A RETRY REWRITES THE ANSWER FROM THE BEGINNING. Without telling the client, the
+            # second attempt's lines would be appended to the first attempt's and the
+            # candidate would watch the panel say everything twice.
+            nonlocal parser
+            parser = StreamedObjects()
+            pending.clear()
+            pending.append(_sse("restart", {}))
+
+        task = asyncio.create_task(
+            generate_structured(
+                InterviewPanelTurn,
+                turn_ctx.messages,
+                max_tokens=320,
+                attempts_per_provider=2,
+                is_valid=lambda t: bool(t.turns),
+                cost_tier=CostTier.CHEAP,
+                context="interview_panel_turn",
+                cache_system=True,
+                on_delta=on_delta,
+                on_restart=on_restart,
+            )
+        )
+
+        try:
+            while not task.done():
+                # Short enough that a finished line reaches the browser promptly, long enough
+                # that this is not a spin loop. The turn's own latency is unaffected — the
+                # generation is running in its own task throughout.
+                await asyncio.sleep(0.05)
+                while pending:
+                    yield pending.pop(0)
+            turn, _raw = await task
+            while pending:
+                yield pending.pop(0)
+        except AIProviderUnavailableError as exc:
+            # The panel is presentation. The caller still has the question and puts it to the
+            # candidate the old way — a dialogue failure must never cost somebody their
+            # interview. Same contract as the non-streaming endpoint's empty response.
+            logger.warning(
+                "panel_turn_stream_unavailable",
+                session_id=str(request.session_id),
+                stage=request.stage,
+                error_type=type(exc).__name__,
+                error=str(exc) or type(exc).__name__,
+                consequence="client speaks the bare question itself",
+            )
+            yield _sse(
+                "done",
+                {
+                    "turns": [],
+                    "asked_question": False,
+                    "pivot_topic": turn_ctx.pivot_topic,
+                    "rating_subject": turn_ctx.rating_subject,
+                    "candidate_turn": "answered",
+                },
+            )
+            return
+        finally:
+            # THE CLIENT CLOSING THE TAB MUST NOT LEAVE A CALL RUNNING. Cancelling an
+            # already-finished task is a no-op, so this is safe on the happy path too.
+            if not task.done():
+                task.cancel()
+
+        valid, asked_question, candidate_turn = _finalise_turn(turn, request)
+        # AFTER validation, and only after. See the note on this function about why an
+        # interrupted stream cannot reach here.
+        await _remember_turn(turn_ctx.turn_key, valid, asked_question, candidate_turn)
+        yield _sse(
+            "done",
+            {
+                "turns": valid,
+                "asked_question": asked_question,
+                "pivot_topic": turn_ctx.pivot_topic,
+                "rating_subject": turn_ctx.rating_subject,
+                "candidate_turn": candidate_turn,
+            },
+        )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            # Proxies buffer by default and a buffered SSE stream is a slow non-streaming
+            # response with extra steps. Both headers are needed: nginx reads the second.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
