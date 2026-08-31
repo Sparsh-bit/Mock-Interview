@@ -300,7 +300,32 @@ as before.
 | 9 | No age gate | Unticked "I am 18 or older" at signup, refused rather than recorded if false |
 | 11 | No export | `GET /api/v1/users/me/export`, now including the consent history |
 | 12 | Admin-only erasure | Self-service, and the admin path takes the same retention rule |
-| 16 | No transfer disclosure | Country named per processor, shown before the first resume upload |
+| 16 | No transfer disclosure | Country named per processor on `/privacy` and `GET /api/v1/legal/disclosure`. **One click from the upload screen, no longer on it** — see the note below |
+
+### §16 is layered notice now, and that is a deliberate reduction
+
+**What changed.** `ResumeConsentGate` used to render the whole processor table — every vendor,
+its country, what it receives — inline above an "I understand" button. It now shows a two-
+sentence summary that states the two facts which change a decision (the full resume text is
+sent to AI services; some operate outside India), a **required tick box**, and a Confirm that
+cannot be pressed until it is ticked. The table itself is one click away on `/privacy`, from
+the same endpoint.
+
+**What it costs, stated plainly.** The country-per-processor detail is no longer on the screen
+at the moment of upload. If §16 is read to require the destination in front of the person at
+the point of transfer, this is weaker than what it replaced. That is the open question, and it
+is a lawyer's to answer — not resolved here, and not papered over.
+
+**What it buys.** A stronger §6 position: a button labelled "I understand" is a navigation
+control that happens to carry legal weight, while an unticked box cannot be clicked past and
+is an affirmative act. And plausibly a notice more people read — a 300-word table above a
+button is the thing everybody scrolls past.
+
+**What did not change.** The list is still derived from configuration, still has exactly one
+source, is still version-stamped onto every consent row via `notice_version`, and the upload
+endpoint still refuses with 428 when consent is absent. `lib/legal/consent.test.ts` fails if a
+vendor name is ever hardcoded into the frontend, and fails if the tick box acquires a default
+or the Confirm button stops being gated on it.
 
 ### The disclosure is derived, and that is the point
 
