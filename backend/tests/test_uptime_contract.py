@@ -101,11 +101,88 @@ class TestTheHealthEndpointIsShapedTheWayTheMonitorsExpect:
         body = response.json()
         assert body["database"] == "unreachable"
         assert body["dependencies_healthy"] is False
-        # And `status` stays "ok", which is exactly the trap: the shallow check passes.
-        assert body["status"] == "ok"
+        # `status` used to stay the literal "ok" here, which was the trap: a body saying
+        # `database: unreachable` and `dependencies_healthy: false` alongside a `status`
+        # saying everything was fine. The 200 above is still the runbook's claim and still
+        # deliberate — "the process answered" is what a status code means. `status` is not
+        # a status code and no longer pretends to be one.
+        assert body["status"] == "degraded"
 
     async def test_it_needs_no_authentication(self):
         # A monitor has no token, and giving one a standing credential for a real account is
         # not worth the coverage — see "What NOT to monitor" in docs/UPTIME.md.
         response = await _health()
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+class TestTheDatabaseProbeAgainstARealClosedSocket:
+    """
+    Everything above steers the result by replacing `check_db_connection` with a coroutine
+    that returns False. That proves the endpoint reports what the probe tells it; it proves
+    nothing about the probe, which is the part that actually has to notice an outage.
+
+    These sever the connection for real — a live engine pointed at a port with nothing
+    listening — and run the unmodified `check_db_connection` against it.
+    """
+
+    @staticmethod
+    def _dead_factory():
+        """A session factory whose connections cannot succeed.
+
+        127.0.0.1:1 is `tcpmux`; nothing binds it, so the kernel refuses the connection
+        immediately rather than leaving the test to a DNS or TCP timeout. NullPool because
+        a pooled engine would hold the failure and this must attempt a fresh connect.
+        """
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        engine = create_async_engine(
+            "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/nosuchdb",
+            poolclass=NullPool,
+            connect_args={"timeout": 5},
+        )
+        return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+    async def test_the_probe_itself_returns_false(self, monkeypatch):
+        from app.db import session as db_session
+
+        engine, factory = self._dead_factory()
+        monkeypatch.setattr(db_session, "AsyncSessionFactory", factory)
+        try:
+            # The real function, not a stand-in. It must swallow the connection error and
+            # answer False rather than propagating — a health check that raises is a 500,
+            # and a 500 tells a keyword monitor nothing about which dependency broke.
+            assert await db_session.check_db_connection() is False
+        finally:
+            await engine.dispose()
+
+    async def test_the_endpoint_reports_it_and_still_answers(self, monkeypatch):
+        """The whole path: closed socket -> probe -> body -> what a monitor reads."""
+        from app.db import session as db_session
+
+        engine, factory = self._dead_factory()
+        monkeypatch.setattr(db_session, "AsyncSessionFactory", factory)
+        try:
+            response = await _health()
+        finally:
+            await engine.dispose()
+
+        # Still 200. The runbook's central claim survives a real outage, not just a fake one.
+        assert response.status_code == 200
+        body = response.json()
+
+        assert body["database"] == "unreachable"
+        assert body["dependencies_healthy"] is False
+        assert body["status"] == "degraded", (
+            "A real, unfakeable database outage and the endpoint still says 'ok'. This is "
+            "the exact condition docs/UPTIME.md pages somebody on."
+        )
+
+    async def test_a_reachable_database_still_reads_healthy(self):
+        """The other direction. A probe hard-wired to False would pass every assertion above
+        while making the endpoint useless."""
+        body = (await _health()).json()
+        assert body["database"] == "connected"
+        # `status` tracks all three dependencies, so it is only "ok" when all three are.
+        assert body["status"] == ("ok" if body["dependencies_healthy"] else "degraded")

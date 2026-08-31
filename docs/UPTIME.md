@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # Uptime monitoring — runbook
 
@@ -55,6 +55,16 @@ Three checks. Each answers a different question, and the second is the one worth
 | **Healthy** | HTTP `200`, and the body contains `"status": "ok"` |
 | **Alert when** | 2 consecutive failures (~6 minutes) |
 | **Regions** | Mumbai (`ap-south-1`) primary; Singapore (`ap-southeast-1`) secondary |
+
+**`"status"` is not a constant.** It was, and that made this check unable to see a database
+outage: the endpoint answered `200` with `"status": "ok"` in the same body that said
+`"database": "unreachable"`. It now reads `"degraded"` whenever `dependencies_healthy` is
+false, so this check does fire on a dependency outage — about 9 minutes sooner than check 2
+(2 failures at 3 minutes against 3 at 5). Check 2 is still the one worth having, because it
+is what tells you *which* dependency broke.
+
+The HTTP status code has not changed and will not: `200` means the process answered. Every
+check here still asserts on the body, for the reason check 2 sets out.
 
 **Why 3 minutes and not 1.** Render's free tier is one small container. A 1-minute check from
 several regions is real traffic on a box that is also serving interviews, and it buys 2

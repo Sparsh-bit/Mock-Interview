@@ -29,6 +29,13 @@ async def health_check():
     instance in rotation — and it is why every monitor in docs/UPTIME.md asserts on
     the BODY. A status-code-only check shows a green tick through a total outage.
 
+    `status` IS NOT A CONSTANT, though it used to be. It was the literal "ok" on
+    every response, including one whose own body said the database was unreachable
+    and `dependencies_healthy` was false. Three fields describing the same request
+    disagreed, and the one that disagreed was the one a human skims and the one
+    monitoring/checks/health.check.ts asserts on first. "The process answered" is
+    what the 200 already means; `status` now means what it says.
+
     THE WHOLE HANDLER IS TIME-BOUNDED. Each probe below has its own timeout and the
     provider check has two, so a slow third party cannot make this endpoint slow. A
     health check that hangs is worse than one that reports a failure: the monitor
@@ -40,8 +47,12 @@ async def health_check():
     supabase_ok = await _check_supabase_connection()
     providers = await check_provider_chain()
 
+    dependencies_healthy = db_ok and redis_ok and supabase_ok
+
     return {
-        "status": "ok",
+        # "ok" | "degraded" — see the docstring. Reflects `dependencies_healthy`,
+        # deliberately NOT the provider chain, for the reason set out below.
+        "status": "ok" if dependencies_healthy else "degraded",
         "database": "connected" if db_ok else "unreachable",
         "redis": "connected" if redis_ok else "unreachable",
         "supabase": "connected" if supabase_ok else "unreachable",
@@ -67,7 +78,7 @@ async def health_check():
         #
         # It is reported so a human can see it. It is not wired to the alarm.
         # ═══════════════════════════════════════════════════════════════════
-        "dependencies_healthy": db_ok and redis_ok and supabase_ok,
+        "dependencies_healthy": dependencies_healthy,
     }
 
 

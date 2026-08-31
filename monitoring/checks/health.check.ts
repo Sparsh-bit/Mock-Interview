@@ -28,7 +28,18 @@ const email = new EmailAlertChannel('hotseat-email', {
   sendDegraded: false,
 });
 
-/** Is the API process alive? */
+/**
+ * Is the API process alive?
+ *
+ * `$.status` USED TO BE THE LITERAL 'ok' ON EVERY RESPONSE, so this check could only ever
+ * fail on a timeout or a non-200 — it could not see a database outage at all, which is why
+ * the comment above calls it the shallow one. It now reads 'degraded' whenever
+ * `dependencies_healthy` is false, so this check fires on a dependency outage too, ~9
+ * minutes sooner than the one below (2 failures at 3 minutes, against 3 at 5).
+ *
+ * The check below is still the one worth having: it is what tells you WHICH dependency
+ * broke, and docs/UPTIME.md routes the alert differently for each.
+ */
 new ApiCheck('api-liveness', {
   name: 'API — process alive',
   frequency: EVERY_3_MINUTES,
