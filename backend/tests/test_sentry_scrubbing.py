@@ -45,6 +45,7 @@ RESUME = (
 ANSWER = "A HashMap is not thread safe, you should use ConcurrentHashMap instead."
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.QWJjRGVmR2hpSktMbW5PcA"
 SESSION_ID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+DSN = "https://public@example.invalid/1"
 
 
 class _Capturing(Transport):
@@ -426,3 +427,123 @@ def test_no_dsn_is_hardcoded():
 
     source = Path(__file__).resolve().parents[1] / "app" / "core" / "observability.py"
     assert "ingest.sentry.io" not in source.read_text()
+
+
+# ── The gap the two groups above leave open ──────────────────────────────────
+#
+# Everything so far builds its own `sentry_sdk.Client` with the safe arguments
+# written out by hand. That proves the scrubbers work. It does not prove that
+# `init_sentry()` — the only thing that runs in production — passes them, and
+# deleting `include_local_variables=False` from observability.py leaves every
+# assertion above green. These close that: take the arguments the real function
+# actually passes, and run a real exception through a client built from them.
+
+
+def _real_init_kwargs(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """The kwargs `init_sentry()` hands to `sentry_sdk.init`, without installing
+    a process-global client (the reason the rest of this module avoids `init()`)."""
+    from app.core import config, observability
+
+    seen: dict[str, Any] = {}
+
+    def fake_init(**kwargs: Any) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(sentry_sdk, "init", fake_init)
+    monkeypatch.setattr(config.settings, "SENTRY_DSN", DSN, raising=False)
+
+    assert observability.init_sentry() is True, "init_sentry() reported it did not start"
+    return seen
+
+
+class TestTheRealInitialiserIsTheOneUnderTest:
+    def test_it_disables_local_variables(self, monkeypatch: pytest.MonkeyPatch):
+        # The single line this whole module exists to defend. Sentry's default is
+        # True, and the local in the frame that raises is the resume.
+        assert _real_init_kwargs(monkeypatch)["include_local_variables"] is False
+
+    def test_it_never_sends_a_request_body(self, monkeypatch: pytest.MonkeyPatch):
+        assert _real_init_kwargs(monkeypatch)["max_request_body_size"] == "never"
+
+    def test_it_does_not_send_default_pii(self, monkeypatch: pytest.MonkeyPatch):
+        assert _real_init_kwargs(monkeypatch)["send_default_pii"] is False
+
+    def test_it_installs_both_scrubbers(self, monkeypatch: pytest.MonkeyPatch):
+        kwargs = _real_init_kwargs(monkeypatch)
+        # `cast(Any, ...)` in the source means identity, not name, is what to check.
+        assert kwargs["before_send"] is scrub_event
+        assert kwargs["before_breadcrumb"] is scrub_breadcrumb
+
+    def test_tracing_is_off(self, monkeypatch: pytest.MonkeyPatch):
+        # Spans carry query text and are a separate cost centre.
+        kwargs = _real_init_kwargs(monkeypatch)
+        assert kwargs["traces_sample_rate"] == 0.0
+        assert kwargs["profiles_sample_rate"] == 0.0
+
+    def test_no_dsn_means_no_init_at_all(self, monkeypatch: pytest.MonkeyPatch):
+        from app.core import config, observability
+
+        called = False
+
+        def fake_init(**kwargs: Any) -> None:
+            nonlocal called
+            called = True
+
+        monkeypatch.setattr(sentry_sdk, "init", fake_init)
+        monkeypatch.setattr(config.settings, "SENTRY_DSN", "  ", raising=False)
+        assert observability.init_sentry() is False
+        assert not called
+
+
+def test_an_exception_through_the_real_configuration_carries_no_resume(
+    captured: _Capturing, monkeypatch: pytest.MonkeyPatch
+):
+    """
+    End to end, with nothing hand-written: the arguments come from `init_sentry()`,
+    a real exception is raised with the resume as a local in the failing frame and
+    the answer in the message, and the event that reaches the transport is read.
+    """
+    kwargs = _real_init_kwargs(monkeypatch)
+    kwargs.pop("dsn")
+    kwargs.pop("integrations", None)  # needs an app to install against; not used here
+
+    client = sentry_sdk.Client(
+        dsn="https://public@example.invalid/1",
+        transport=captured,
+        default_integrations=False,
+        **kwargs,
+    )
+
+    register_sensitive_text(ANSWER)
+
+    def parse_the_resume() -> None:
+        text = RESUME  # noqa: F841 — must not be exported
+        candidate_email = "sparsh@example.com"  # noqa: F841
+        raise ValueError(f"could not parse: {ANSWER}")
+
+    with sentry_sdk.isolation_scope() as scope:
+        scope.set_client(client)
+        scope.set_extra("resume_text", RESUME)
+        scope.set_user({"id": SESSION_ID, "email": "sparsh@example.com"})
+        try:
+            parse_the_resume()
+        except ValueError:
+            sentry_sdk.capture_exception()
+        client.flush()
+
+    assert captured.events, "the exception never reached the transport"
+    event = captured.events[-1]
+
+    # Still useful: the failure is identifiable.
+    assert event["exception"]["values"][-1]["type"] == "ValueError"
+
+    # No frame carries locals at all — the categorical guarantee, not a filter.
+    frames = event["exception"]["values"][-1]["stacktrace"]["frames"]
+    assert frames, "no stacktrace captured"
+    assert all("vars" not in frame for frame in frames), (
+        "include_local_variables is not in force under the real configuration"
+    )
+
+    blob = _blob(event)
+    for secret in (RESUME, ANSWER, JWT, SESSION_ID, "SPARSH", "sparsh@example.com", "98765 43210"):
+        assert secret not in blob, f"{secret[:24]!r} was exported to the error tracker"
