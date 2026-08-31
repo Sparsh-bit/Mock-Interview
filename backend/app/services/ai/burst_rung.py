@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from app.db import daily_counter
+
 from .base_provider import CostTier
 
 logger = structlog.get_logger(__name__)
@@ -129,56 +131,28 @@ def eligible_providers(
 # the conservative error, and "must not exceed" is the requirement.
 # ─────────────────────────────────────────────────────────────────────────────
 
-#: Per-process tally, used when Redis is unreachable. A single replica then still caps itself;
-#: several replicas each cap themselves, so the fleet ceiling becomes limit x replicas. That is
-#: a degradation of an already-degraded state, and the alternative — refusing the rung entirely
-#: whenever Redis blinks — throws away the fallback at exactly the moment the paid providers
-#: are already failing.
-_local_requests: dict[str, int] = {}
+#: THE COUNTER NOW LIVES IN db/daily_counter.py, because a second caller arrived that needed
+#: exactly it: the public Judge0 CE instance, capped in requests a day for the same reason this
+#: rung is — a free call costs $0.00, so AI_DAILY_BUDGET_USD is structurally blind to it. The
+#: behaviour is unchanged, including the Redis key, which is still `ai:rung:requests:<date>`.
+#:
+#: Two copies of a Redis accounting routine is two places for the expiry rule to be got subtly
+#: differently wrong, and only one of them would ever get fixed.
+_RUNG = "ai:rung"
 
-
-def _today_key() -> str:
-    """UTC, because the process timezone is not a thing to depend on across hosts."""
-    from datetime import UTC, datetime  # noqa: PLC0415
-
-    return f"ai:rung:requests:{datetime.now(UTC).date().isoformat()}"
+#: An alias to the shared tally dict, kept because it IS the same object: tests that clear
+#: `burst_rung._local_requests` between cases still clear the counter this module reads.
+_local_requests = daily_counter._tallies
 
 
 async def rung_requests_today() -> int:
     """How many rung calls have been reserved today, across the fleet where possible."""
-    key = _today_key()
-    local = _local_requests.get(key, 0)
-
-    from app.db.redis import cache_get, get_redis  # noqa: PLC0415
-
-    try:
-        raw = await cache_get(get_redis(), key)
-        shared = int(raw) if raw else 0
-    except Exception:  # noqa: BLE001 — accounting must never break a request
-        logger.warning("rung_request_count_read_failed_using_local", local=local)
-        return local
-    return max(local, shared)
+    return await daily_counter.used_today(_RUNG)
 
 
 async def note_rung_request() -> None:
     """Reserve one request against today's allowance."""
-    key = _today_key()
-    _local_requests[key] = _local_requests.get(key, 0) + 1
-    # Keep the dict from growing without bound across a long-lived process.
-    for stale in [k for k in _local_requests if k != key]:
-        _local_requests.pop(stale, None)
-
-    from app.db.redis import get_redis  # noqa: PLC0415
-
-    try:
-        redis = get_redis()
-        count = await redis.incr(key)
-        # Set the expiry only on the first write of the day, so a mid-day INCR cannot keep
-        # pushing the window out and leave yesterday's count alive into tomorrow.
-        if count == 1:
-            await redis.expire(key, 60 * 60 * 36)
-    except Exception:  # noqa: BLE001
-        logger.warning("rung_request_count_write_failed_local_only", local=_local_requests[key])
+    await daily_counter.reserve(_RUNG)
 
 
 async def rung_has_budget(limit: int) -> bool:
@@ -189,10 +163,4 @@ async def rung_has_budget(limit: int) -> bool:
     called synchronously in five tests. This is the only part that needs Redis, and keeping the
     two apart means the policy stays trivially testable.
     """
-    if limit <= 0:
-        return True
-    used = await rung_requests_today()
-    if used < limit:
-        return True
-    logger.warning("burst_rung_daily_request_limit_reached", used=used, limit=limit)
-    return False
+    return await daily_counter.has_budget(_RUNG, limit)

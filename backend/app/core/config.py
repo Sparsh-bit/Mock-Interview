@@ -104,7 +104,6 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"]
     )
-    REQUEST_TIMEOUT_SECONDS: int = 30
     MAX_UPLOAD_SIZE_MB: int = 10
 
     # ── Database ──────────────────────────────────────────────────────────
@@ -152,6 +151,34 @@ class Settings(BaseSettings):
     #: confidently wrong. 0 means "not configured" and startup says exactly that.
     DB_CONNECTION_CEILING: int = 0
 
+    #: The pooler's "Connection pool size" — connections it opens to ACTUAL POSTGRES, shared
+    #: across every client. NOT the same number as DB_CONNECTION_CEILING above, and the
+    #: difference is the one that matters:
+    #:
+    #:   DB_CONNECTION_CEILING   "Max client connections" — how many clients may connect TO
+    #:                           the pooler. 200 on Supabase Nano, and fixed there.
+    #:   DB_POOLER_POOL_SIZE     "Connection pool size" — how many Postgres backends the
+    #:                           pooler holds for all of them together. 15 on Nano by default,
+    #:                           and editable.
+    #:
+    #: WHY THIS IS THE TIGHTEST CEILING IN THE WHOLE SYSTEM. In transaction mode an IDLE
+    #: application connection costs zero Postgres backends — but one holding an OPEN
+    #: TRANSACTION occupies one of these for as long as it stays open. So the limit on real
+    #: concurrency is neither the app's pool (DB_POOL_SIZE + DB_MAX_OVERFLOW) nor the client
+    #: limit; it is this number of simultaneous open transactions. Past it, requests queue
+    #: INSIDE THE POOLER, where nothing in this process can see or log them.
+    #:
+    #: AND IT DOES NOT SCALE WITH WORKERS OR REPLICAS. Every other budget in this file is per
+    #: process and gets multiplied by PROCESS_COUNT. This one is a property of the database:
+    #: four workers share the same 15. Adding compute cannot relieve it — only raising the
+    #: pool size (bounded by Postgres's own max_connections) or holding transactions for less
+    #: time can.
+    #:
+    #: NO DEFAULT, for the same reason as the two ceilings above: it varies by compute size
+    #: and a guessed value is a check that is confidently wrong. 0 means "not configured".
+    #: Read it off Supabase → Settings → Database → Connection pooling.
+    DB_POOLER_POOL_SIZE: int = 0
+
     # ── Deployment topology ───────────────────────────────────────────────
     #: How many copies of this process the platform runs. NOT read by the app to
     #: change behaviour — it is read by the startup audits that multiply a per-process
@@ -160,6 +187,39 @@ class Settings(BaseSettings):
     #: count in render.yaml; a stale value here makes the audits silently wrong in
     #: the optimistic direction.
     WEB_REPLICA_COUNT: int = 1
+
+    #: Uvicorn worker processes INSIDE each replica.
+    #:
+    #: THE NAME IS NOT OURS AND THAT IS THE WHOLE POINT. Uvicorn already defaults
+    #: `--workers` to `$WEB_CONCURRENCY`, so setting this env var is what actually starts the
+    #: extra processes — no Dockerfile flag, no start command to keep in step. Declaring it
+    #: here means the application reads the SAME variable the server obeys, so the two cannot
+    #: disagree. A second knob of our own invention could.
+    #:
+    #: WHY IT HAD TO BE DECLARED AT ALL. Every connection ceiling in this file is per PROCESS,
+    #: and until now the audits multiplied by WEB_REPLICA_COUNT alone — which was correct only
+    #: because there was exactly one worker. Four workers on one replica is four pools, four
+    #: Redis pools and four report semaphores, and the audits would have reported one quarter
+    #: of the truth while saying nothing was wrong. That is the failure mode this file keeps
+    #: warning about, so it gets closed here rather than documented.
+    #:
+    #: ONE WORKER IS THE RIGHT DEFAULT. A worker is bounded by a core, so more than one buys
+    #: nothing on a fraction of a CPU (Render's free plan is 0.1 vCPU) and costs a full set of
+    #: per-process budgets. Raise it with the CPU allocation, never ahead of it.
+    WEB_CONCURRENCY: int = 1
+
+    @property
+    def PROCESS_COUNT(self) -> int:  # noqa: N802 - matches the settings naming convention
+        """
+        How many copies of this process exist across the whole deployment.
+
+        THE NUMBER EVERY PER-PROCESS BUDGET MUST BE MULTIPLIED BY, and the only one. A pool
+        belongs to a process, not to a container: `numReplicas: 2` with `WEB_CONCURRENCY=4`
+        is eight pools, eight Redis pools and eight report semaphores. Anything auditing a
+        fleet-wide ceiling reads this instead of either factor on its own — the two audits in
+        db/session.py and db/redis.py do, and test_process_count.py holds them to it.
+        """
+        return self.WEB_REPLICA_COUNT * self.WEB_CONCURRENCY
 
     # ── Redis ─────────────────────────────────────────────────────────────
     REDIS_URL: str = Field(
@@ -1068,6 +1128,29 @@ class Settings(BaseSettings):
         default="https://ce.judge0.com",
         description="Judge0 CE base URL. Self-host or use a RapidAPI host for higher limits.",
     )
+    #: Judge0 requests a day the whole deployment may make, across every process.
+    #:
+    #: COUNTED IN REQUESTS, BECAUSE THE FREE TIER IS. A Judge0 CE call costs $0.00, so
+    #: AI_DAILY_BUDGET_USD never moves and cannot see this at all — the same blindness that
+    #: GROQ_DAILY_REQUEST_LIMIT exists for.
+    #:
+    #: WHY A FLEET LIMIT WHEN THERE IS ALREADY A RATE LIMIT. RATE_LIMIT_CODE_EXEC_PER_MINUTE
+    #: is keyed PER USER, so it caps one candidate at 20 a minute and says nothing whatsoever
+    #: about two hundred of them. The default CODE_EXEC_PROVIDER is the PUBLIC Judge0 CE
+    #: instance, which is free and shared with the entire internet; a campus drive pointed at
+    #: it is a load nobody agreed to, and it ends in 429s and a blocked egress IP for the
+    #: whole deployment rather than a polite slowdown.
+    #:
+    #: 0 DISABLES IT, AND THAT IS THE DEFAULT. Judge0 CE publishes no per-IP number, and this
+    #: file's own rule for provider ceilings is that a guessed one is a check that is
+    #: confidently wrong (see DB_CONNECTION_CEILING). Set it for a drive — docs/RAILWAY.md
+    #: has the arithmetic — and leave it off for ordinary traffic.
+    #:
+    #: IGNORED WHEN JUDGE0_API_KEY IS SET. The guard protects a free shared service; with a
+    #: RapidAPI key the capacity has been bought, and throttling it would make the guard the
+    #: cause of the outage it exists to prevent.
+    JUDGE0_DAILY_REQUEST_LIMIT: int = 0
+
     JUDGE0_API_KEY: str = Field(
         default="",
         description="Optional RapidAPI key. Empty = use the free public CE instance.",

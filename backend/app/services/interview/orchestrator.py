@@ -1796,6 +1796,33 @@ class InterviewOrchestrator:
             and not last_was_cross
         ):
             last_q = await self.db.get(Question, last_answer.question_id)
+            avoid = await self._cross_question_avoid_list(session, remaining)
+
+            # ── RELEASE THE TRANSACTION BEFORE THE MODEL CALL ────────────────────────────
+            #
+            # THE CEILING THIS IS ABOUT IS NOT THE APPLICATION'S POOL. Behind Supabase's
+            # transaction pooler, an idle connection costs nothing, but one holding an OPEN
+            # TRANSACTION occupies one of the pooler's connections to real Postgres — 15 of
+            # them on a Nano compute, shared by every process. `get_next_question` opened a
+            # transaction on its first read and held it across this generation, which has an
+            # 18-second budget.
+            #
+            # The arithmetic: 120 candidates in interviews at one exchange every 90s is 1.33
+            # calls a second, a cross-question falls on every third answer, and at the full
+            # budget that is up to 24 simultaneous open transactions against 15. Past 15 the
+            # queue forms INSIDE THE POOLER, where no log in this application can see it —
+            # requests simply get slower and nothing here reports why.
+            #
+            # AND IT CANNOT BE FIXED WITH COMPUTE. Every other budget in this codebase is
+            # per-process and divides by the worker count; the pooler's pool belongs to the
+            # database, so four workers share the same 15.
+            #
+            # Committing here returns it. Every read this branch needs is already done —
+            # `last_q` and `avoid` above — and `expire_on_commit=False` keeps `session`
+            # usable, so the write below re-acquires lazily and commits as it always did.
+            # Same fix, same reasoning, as api/v1/reports.py and api/v1/panel.py.
+            await self.db.commit()
+
             cross = await self._generate_cross_question(
                 last_q,
                 last_answer.content,
@@ -1809,7 +1836,7 @@ class InterviewOrchestrator:
                 # The candidate's own history AND the rest of this plan, because both are
                 # repeats to the person in the chair and only one of them is visible to a
                 # session-scoped query.
-                avoid=await self._cross_question_avoid_list(session, remaining),
+                avoid=avoid,
             )
             if cross is not None:
                 meta["cross_asked"] = meta.get("cross_asked", 0) + 1

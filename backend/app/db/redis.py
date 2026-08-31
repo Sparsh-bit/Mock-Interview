@@ -508,7 +508,7 @@ def log_redis_configuration_audit() -> list[RedisConfigIssue]:
         url=settings.REDIS_URL,
         environment=settings.ENVIRONMENT,
         max_connections=settings.REDIS_MAX_CONNECTIONS,
-        replicas=settings.WEB_REPLICA_COUNT,
+        replicas=settings.PROCESS_COUNT,
         ceiling=settings.REDIS_CONNECTION_CEILING,
     )
     for issue in issues:

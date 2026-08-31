@@ -76,7 +76,13 @@ class TestItStillDescribesThisCodebase:
         assert planned == analysis.REPORT_CALLS
 
     def test_the_replica_count_matches_the_application_default(self, analysis):
-        assert analysis.REPLICAS == settings.WEB_REPLICA_COUNT
+        """
+        PROCESS_COUNT, not WEB_REPLICA_COUNT. What multiplies a per-process semaphore is the
+        number of PROCESSES — replicas times uvicorn workers — so an extra worker moves the
+        report burst exactly as much as an extra replica. Pinned against the derived value so
+        raising WEB_CONCURRENCY cannot leave this analysis quietly describing a smaller fleet.
+        """
+        assert analysis.REPLICAS == settings.PROCESS_COUNT
 
     def test_the_measured_report_output_fits_under_the_configured_budget(self, analysis):
         """
