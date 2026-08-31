@@ -54,7 +54,14 @@ RUN python -m pip uninstall -y pip 2>/dev/null || true
 COPY backend/ /app/backend/
 COPY database/ /app/database/
 WORKDIR /app/backend
-RUN uv sync --no-dev
+# --no-cache: uv otherwise leaves its download cache at /root/.cache/uv — 143 MB of wheel
+# archives carrying 83 .dist-info directories. That is the same defect .dockerignore already
+# fixes for the HOST cache (backend/.uv_cache), relocated: the image scanner reads package
+# versions out of .dist-info, and a cache is a second, independent set of them that no
+# upgrade to site-packages can ever correct. It happened once already — Trivy kept reporting
+# PyJWT 2.8.0 and cryptography 49.0.0 after both were upgraded. Nothing reads the cache at
+# runtime (appuser cannot even open /root), so it is pure weight and pure risk.
+RUN uv sync --no-dev --no-cache
 
 # ── Drop root ─────────────────────────────────────────────────────────────
 # The container defaults to running as root, which means a remote-code-execution
