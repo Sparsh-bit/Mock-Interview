@@ -294,6 +294,22 @@ class Settings(BaseSettings):
         default="https://api.groq.com/openai/v1",
         description="Groq's OpenAI-compatible endpoint — the same shape GLM and NVIDIA use.",
     )
+    GROQ_DAILY_REQUEST_LIMIT: int = Field(
+        default=2000,
+        description=(
+            "Requests a day the free-tier burst rung may make before it is dropped from the "
+            "provider chain. 0 disables the cap. "
+            "COUNTED IN REQUESTS BECAUSE THE FREE TIER IS: a Groq call costs $0.00, so "
+            "AI_DAILY_BUDGET_USD never moves and is structurally blind to it. Past the "
+            "ceiling Groq answers 429 — nothing breaks, because the rung is only reached "
+            "once the paid providers have already failed, but it fails after a round trip "
+            "and leaves the account rate-limited, which the next health check reports as a "
+            "provider outage. "
+            "NOTE: services/ai/burst_rung.py records 1,000/day for openai/gpt-oss-20b, "
+            "verified 2026-08-30. The limits are per-model and they change — set this to "
+            "what your plan actually allows for the model in GROQ_MODEL."
+        ),
+    )
 
     # Anthropic — Claude (paid; cost-controlled, see services/ai/anthropic_provider.py)
     ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key")

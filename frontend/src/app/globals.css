@@ -417,6 +417,53 @@
       0 0 0 4px hsl(var(--accent-amber) / 0.07);
   }
 
+  /*
+   * THE LOADER'S FLAME — see components/brand/BrandLoader.tsx.
+   *
+   * The chair holds still and the flame burns. Two things make it read as fire rather than as
+   * a logo being scaled:
+   *
+   *   THE ORIGIN IS THE BASE. `transform-box: fill-box` measures the transform against the
+   *   path's own bounding box instead of the SVG viewport, and the origin sits at the bottom
+   *   centre — so the flame grows UPWARD from where it is anchored. Scaled about its middle it
+   *   drifts down as it shrinks, and the whole thing reads as a wobble.
+   *
+   *   THE TIMING IS UNEVEN. A flame does not pulse on a metronome. The keyframes are spaced
+   *   at 0/28/46/72/100 with different amounts at each, so the loop never lands on an obvious
+   *   beat — which is the difference between a fire and a heartbeat icon.
+   *
+   * Transform and opacity only, so it stays on the compositor and does not repaint. That
+   * matters because this runs during route transitions on the mid-range Android phones
+   * DESIGN-RULES names, at the exact moment the main thread is busiest.
+   */
+  .hs-loader .hs-flame {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: hs-burn 1.55s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+    will-change: transform, opacity;
+  }
+
+  @keyframes hs-burn {
+    0%   { transform: scaleY(0.82) scaleX(0.96); opacity: 0.62; }
+    28%  { transform: scaleY(1.06) scaleX(1.02); opacity: 1;    }
+    46%  { transform: scaleY(0.94) scaleX(0.99); opacity: 0.86; }
+    72%  { transform: scaleY(1.02) scaleX(1.01); opacity: 0.97; }
+    100% { transform: scaleY(0.82) scaleX(0.96); opacity: 0.62; }
+  }
+
+  /*
+   * Reduced motion stops the burn and leaves the flame at full size and full brightness —
+   * still unmistakably the product, simply not moving. Not `display: none`: removing the mark
+   * would take away the only thing on screen telling somebody the page is working.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .hs-loader .hs-flame {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   /* Frosted translucent bar — for sticky headers / navbars only. */
   .frosted {
     background: hsl(38 38% 98% / 0.78);

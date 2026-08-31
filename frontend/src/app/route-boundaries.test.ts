@@ -118,7 +118,11 @@ describe('a wrong URL lands somewhere that looks like the product', () => {
 
   it('it is branded and offers a way out', () => {
     const src = readFileSync(join(APP, 'not-found.tsx'), 'utf8');
-    expect(src).toMatch(/Wordmark/);
+    // EITHER brand component satisfies this. The property is "somebody landing here can see
+    // whose product it is", not "this page uses the component it happened to use the day the
+    // test was written" — asserting the narrower thing failed the moment the page was
+    // upgraded from the small `Wordmark` to the full `Lockup`, which made it MORE branded.
+    expect(src, 'the 404 renders no brand mark at all').toMatch(/<(Lockup|Wordmark|BrandmarkArt)\b/);
     // TWO routes, not one: the reader is either signed in and mis-navigated, or arrived from
     // outside on a dead link. Offering only one of those strands the other.
     expect(src).toContain('href="/dashboard"');

@@ -65,3 +65,7 @@ dump.rdb
 # Obsidian scratch canvases created by a stray click in the vault. Two empty ones were
 # committed by a `git add -A`; a canvas that is genuinely wanted can be force-added.
 Untitled*.canvas
+
+# Claude Code's per-machine local settings — has held a live API key in this repo
+# before; settings.json (shared, no secrets) stays tracked, this does not.
+.claude/settings.local.json

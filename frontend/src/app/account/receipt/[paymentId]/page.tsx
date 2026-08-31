@@ -113,7 +113,7 @@ export default function ReceiptPage() {
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-6">
             <div className="flex items-center gap-2">
               <Code2 className="h-5 w-5 text-primary" aria-hidden />
-              <span className="font-bold">Hotseat</span>
+              <span className="font-bold">InterviewOS</span>
             </div>
             {/* `text-right` only once there are two columns. This is a `flex-wrap` row, so at
                 320px the Receipt/Paid block drops onto its own full-width line and

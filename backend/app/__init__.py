@@ -1,1 +1,1 @@
-"""Hotseat backend application package."""
+"""InterviewOS backend application package."""

@@ -17,7 +17,7 @@ import TextGenerateEffect from '@/components/lightswind-pro/text-generate-effect
 import { SiteFooter } from '@/components/layout/SiteFooter';
 
 /**
- * Hotseat — landing page.
+ * InterviewOS — landing page.
  *
  * ONE IDEA: the page marks up its own words in the product's own annotation
  * language. The product boxes your filler, stamps where you paused, strikes what
@@ -113,7 +113,7 @@ export default function LandingPage() {
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 sm:px-10">
         <span className="flex items-center gap-2.5 font-mono text-sm font-semibold tracking-tight">
           <span className="h-2.5 w-2.5 rounded-full bg-accent-indigo" />
-          Hotseat
+          InterviewOS
         </span>
         <div className="flex items-center gap-6 text-sm">
           <Link href="/login" className="text-muted-foreground transition-colors hover:text-foreground">
@@ -579,7 +579,7 @@ export default function LandingPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/img/developer.jpg"
-            alt="Sparsh Sharma, developer of Hotseat"
+            alt="Sparsh Sharma, developer of InterviewOS"
             width={900}
             height={1349}
             loading="lazy"

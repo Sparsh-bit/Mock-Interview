@@ -1,6 +1,6 @@
 # Redesign tracker
 
-> Product is now **Hotseat**. See [[DESIGN-LANGUAGE]] for what that means visually.
+> Product is now **InterviewOS**. See [[DESIGN-LANGUAGE]] for what that means visually.
 
 Every signed-in surface, what it needs, and whether it is done. The landing page is
 deliberately **out of scope** — it stays as it is.
@@ -50,7 +50,7 @@ These appear on every page, so they are worth the most and are done first.
 
 | Item | Done | Notes |
 |---|---|---|
-| New product name chosen | ✅ | **Hotseat** — one source at `lib/brand.ts` |
+| New product name chosen | ✅ | **InterviewOS** — one source at `lib/brand.ts` |
 | Pricing visible where it decides something | ✅ | Header balance chip; bundle lit on /pricing; paywall reframed |
 | Lightswind components reach signed-in pages | ✅ | All 7 in use; `focus-cards` now also on tracks |
 | Icons chosen per feature, not per whim | ✅ | Rail + drawer coloured from `ROUTE_TONE`; glyphs replaced with icons |

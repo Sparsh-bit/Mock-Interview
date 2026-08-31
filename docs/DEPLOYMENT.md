@@ -1,9 +1,9 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
-# Hotseat — Free Deployment Guide (no credit card required)
+# InterviewOS — Free Deployment Guide (no credit card required)
 
 > **The hostnames below still say `interviewos`, and that is correct.** The product was renamed
-> to Hotseat; the Cloudflare Pages project, the Render service and the domain were not. Those
+> to InterviewOS; the Cloudflare Pages project, the Render service and the domain were not. Those
 > are live infrastructure with DNS, TLS certificates and environment variables attached to
 > them, so renaming them is a migration rather than a find-and-replace — and a runbook that
 > names hosts which do not exist is worse than one carrying an old brand. Change them when you

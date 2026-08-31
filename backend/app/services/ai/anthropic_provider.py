@@ -1,7 +1,7 @@
 """
 Anthropic Claude provider — anthropic_provider.py
 
-The paid, production AI provider for Hotseat, built for a small fixed
+The paid, production AI provider for InterviewOS, built for a small fixed
 budget. Uses the official `anthropic` SDK Messages API.
 
 Configuration:

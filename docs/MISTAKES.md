@@ -491,7 +491,7 @@ produces an Invalid Date whose formatter returns the literal string "Invalid Dat
 Editing the real `.env`, I guarded the change so that only the product name could differ:
 
 ```python
-assert len(before) - len(s) == 3   # "InterviewOS" → "Hotseat"
+assert len(before) - len(s) == 3   # "InterviewOS" → "InterviewOS"
 ```
 
 The delta is 4, not 3. The guard fired on a correct edit and stopped the whole script.
@@ -499,7 +499,7 @@ The delta is 4, not 3. The guard fired on a correct edit and stopped the whole s
 Harmless because it failed closed on a file holding live credentials — which is exactly what I
 wanted it to do — but it is [P5](#p5--my-assertions-are-often-stricter-than-the-property) once
 more, and in its purest form: I wrote a number instead of computing one. The fix was to say
-what I meant, `len("InterviewOS") - len("Hotseat")`, which cannot be wrong.
+what I meant, `len("InterviewOS") - len("InterviewOS")`, which cannot be wrong.
 
 ### M22 — Documentation that promised more than the code allows
 
@@ -574,6 +574,30 @@ has the running table). Caught in seconds this time, because the rule is written
 reach for comment-stripping by reflex — but the fact that I still wrote it says the reflex
 belongs in the helper, not in my memory. Any new source-scanning assertion should start from a
 comment-stripped string, not add stripping after the first false positive.
+
+### M26 — `git checkout --` in a cleanup line, for the THIRD time
+
+P10 exists because this destroyed a session's work once. It has now happened twice more, both
+times as the tidy-up half of a mutation test:
+
+  M17  `git checkout -- "src/app/(dashboard)"`   fourteen redesigned pages, unrecoverable
+  —    `git checkout -- profile/page.tsx`         survived only because it was committed
+  M26  `git checkout -- app/core/config.py`       lost a setting added ninety seconds earlier
+
+The third one was cheap — one field, re-added from memory in a minute — and that is precisely
+why it is worth recording. The habit did not change after an expensive lesson; it changed the
+*cost* of the next occurrence by luck, because the file happened to be small and the work
+happened to be fresh.
+
+**The rule from P10 was already written and I did not follow it:** mutation cleanup restores
+from an explicit `cp` backup of exactly the files touched. I did that for the other four
+mutations in the same command and reached for `git checkout` on the fifth, because that file
+had not been backed up — which is the moment to make a backup, not the moment to reach for a
+destructive command.
+
+**Concretely: `git checkout`, `git restore`, `git clean` and `git reset --hard` do not belong
+in a command whose subject is something else.** If a cleanup needs one, it is a sign the setup
+step was skipped.
 
 ---
 

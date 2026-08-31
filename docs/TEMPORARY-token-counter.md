@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # TEMPORARY: the AI token & cost counter — how to remove it
 

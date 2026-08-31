@@ -25,6 +25,7 @@ from typing import TypeVar
 import structlog
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.exceptions import AIProviderUnavailableError
 
 from .base_provider import (
@@ -35,7 +36,12 @@ from .base_provider import (
     ProviderRequest,
     ProviderResponse,
 )
-from .burst_rung import eligible_providers
+from .burst_rung import (
+    eligible_providers,
+    is_burst_rung,
+    note_rung_request,
+    rung_has_budget,
+)
 from .json_validator import AIValidationError, JSONValidator
 from .provider_factory import get_ai_providers
 from .response_parser import ResponseParser
@@ -150,6 +156,22 @@ async def generate_structured(
     providers = eligible_providers(
         get_ai_providers(), feature=context, cost_tier=cost_tier
     )
+
+    # AND THE CAPACITY GATE, WHICH IS A SEPARATE QUESTION FROM THE POLICY ABOVE.
+    #
+    # `eligible_providers` answers "may this call use a model we do not pay for". It would
+    # still say yes on the two-thousand-and-first request of the day, because the free tier is
+    # counted in REQUESTS and a free call costs $0.00 — so AI_DAILY_BUDGET_USD never moves and
+    # cannot bound it. Asked only when the rung is actually in the chain, so the common case
+    # pays nothing for a Redis round trip it does not need.
+    # The `any(...)` short-circuits before the `await`, so a chain with no rung in it — the
+    # default configuration — never touches Redis here.
+    if (
+        settings.GROQ_DAILY_REQUEST_LIMIT
+        and any(is_burst_rung(p) for p in providers)
+        and not await rung_has_budget(settings.GROQ_DAILY_REQUEST_LIMIT)
+    ):
+        providers = [p for p in providers if not is_burst_rung(p)]
     last_raw = ""
     spend_usd = 0.0
 
@@ -165,6 +187,12 @@ async def generate_structured(
                 on_restart()
             started = True
             try:
+                # RESERVED BEFORE THE CALL, not after it succeeds. Incrementing on success
+                # would let a burst of concurrent requests all read 1,999 and all proceed.
+                # Counting an attempt that then fails is the conservative error, and the
+                # requirement is that the free tier is not exceeded.
+                if is_burst_rung(provider):
+                    await note_rung_request()
                 request = ProviderRequest(
                     messages=messages,
                     json_mode=True,

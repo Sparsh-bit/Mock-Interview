@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { FocusGroup, FocusItem } from '@/components/lightswind-pro/focus-cards';
 import { DataError } from '@/components/ui/data-error';
 import { useTracks } from '@/hooks/useData';
-import { Clock, Code2, Loader2, Play } from 'lucide-react';
+import { Clock, Code2, Play } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { buttonVariants } from '@/components/ui/button';
 import { fadeUp, staggerContainer } from '@/lib/motion';
@@ -43,7 +44,7 @@ export default function TracksPage() {
         />
       ) : isLoading ? (
         <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
+          <BrandLoader label="Loading tracks" size={56} />
         </div>
       ) : (
         /* Hovering one track dims the others, so a grid stops being a wall and becomes the

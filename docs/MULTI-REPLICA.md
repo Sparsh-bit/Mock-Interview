@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # What breaks when there is more than one of us
 

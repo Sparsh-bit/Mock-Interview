@@ -14,6 +14,7 @@ import {
   Target,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { DataError } from '@/components/ui/data-error';
 import { buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -225,7 +226,7 @@ export default function DetailedAnalysisPage() {
   if (isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-teal" />
+        <BrandLoader label="Loading your analysis" size={56} />
       </div>
     );
   }

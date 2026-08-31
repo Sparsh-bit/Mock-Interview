@@ -9,21 +9,29 @@
  *
  * So it lives here. Import it; never retype it.
  *
- * WHY "HOTSEAT". It does not name the preparation — it names the CHAIR. The product exists
- * because of a specific feeling: two strangers, one room, and every gap in what you know about
- * to be found in the next twenty minutes. Naming the fear and then making it practisable is a
- * stronger promise than any word about AI, and it earns the interviewer personas instead of
- * apologising for them. "Take the hotseat" is already an instruction, which is a rare thing to
- * get free from a name.
+ * THE NAME IS BACK TO "INTERVIEWOS", AND THE LOGO IS NOT. That combination is deliberate and
+ * worth stating, because the two look inconsistent if you only read one of them.
  *
- * It also gives the interface a spine — see docs/DESIGN-LANGUAGE.md. A hotseat is LIT: there
- * is a light on the person in it and everything else in the room is dim. That is a hierarchy
- * rule, not a mood, and it is what stops every page being a stack of identical white cards.
+ * The mark is a chair with a flame in it. It was drawn while the product was called InterviewOS and
+ * it survives the rename intact, because what it depicts — the seat, and the heat of being in
+ * it — is true of an interview simulator whatever the simulator is called. The design language
+ * built on it (docs/DESIGN-LANGUAGE.md: one lit element per page, heat means difficulty) is
+ * about the CHAIR, not about the word, so none of it moves either.
+ *
+ * The one thing that could not survive is the text-bearing lockup artwork, which has "InterviewOS"
+ * in its pixels. `<Lockup>` therefore composes the artwork mark with the name as LIVE TEXT —
+ * see components/brand/Brandmark.tsx. A name in an image is a name that cannot be renamed.
  */
 
 export const BRAND = {
-  /** The product name. Sentence case everywhere — never HOTSEAT, never hotSeat. */
-  name: 'Hotseat',
+  /**
+   * The product name.
+   *
+   * Renamed three times now — InterviewOS → Mockingbird → InterviewOS → InterviewOS — and every
+   * one of those was a single-line edit here, which is the entire argument for this file. It
+   * was originally retyped in 33 places.
+   */
+  name: 'InterviewOS',
 
   /**
    * What it says under the name. Deliberately about the chair rather than about AI —
@@ -42,7 +50,7 @@ export const BRAND = {
   supportEmail: 'support@interviewos.app',
 } as const;
 
-/** `Hotseat · Dashboard` — the one place the separator is decided. */
+/** `InterviewOS · Dashboard` — the one place the separator is decided. */
 export function pageTitle(page: string): string {
   return `${BRAND.name} · ${page}`;
 }

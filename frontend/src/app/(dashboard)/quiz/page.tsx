@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { AlertTriangle, CheckCircle2, Clock, Loader2, ListChecks, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -600,7 +601,7 @@ function Quiz() {
 
   return (
     <div className="flex items-center justify-center py-16">
-      <Loader2 className="h-8 w-8 animate-spin text-accent-amber" />
+      <BrandLoader label="Loading your quiz" size={56} />
     </div>
   );
 }

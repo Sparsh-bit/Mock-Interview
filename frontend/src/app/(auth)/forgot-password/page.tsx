@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
-import { Wordmark } from '@/components/brand/Brandmark';
+import { Lockup } from '@/components/brand/Brandmark';
 
 export const runtime = 'edge';
 const schema = z.object({
@@ -73,10 +73,10 @@ export default function ForgotPasswordPage() {
             heading — it identifies nothing. */}
         <Link
           href="/"
-          aria-label="Hotseat home"
+          aria-label="InterviewOS home"
           className="mb-6 block w-fit transition-opacity hover:opacity-70 sm:mb-10"
         >
-          <Wordmark />
+          <Lockup width={190} priority />
         </Link>
 
         <div>

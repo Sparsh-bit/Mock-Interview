@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { Card } from '@/components/ui/card';
 import { ResumeUploadCard } from '@/components/resume/ResumeUploadCard';
 import FloatingLabelInput from '@/components/lightswind-pro/floating-label-input';
@@ -58,7 +59,7 @@ export default function ProfilePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
+        <BrandLoader label="Loading your profile" size={56} />
       </div>
     );
   }

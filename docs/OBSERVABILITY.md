@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # Logs — what they contain, and where they go
 
@@ -148,7 +148,7 @@ Then search the destination for `log-drain-smoke-test-001`. You should find a li
 
 ```json
 {"event":"application_startup","request_id":"log-drain-smoke-test-001",
- "app":"Hotseat","env":"production","level":"info","timestamp":"..."}
+ "app":"InterviewOS","env":"production","level":"info","timestamp":"..."}
 ```
 
 `request_id` is chosen deliberately for this: it is the one field exempt from redaction, so it

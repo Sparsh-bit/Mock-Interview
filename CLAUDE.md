@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hotseat (formerly InterviewOS) is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `docs/prompt.md` — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
+InterviewOS (formerly InterviewOS) is an AI-powered mock interview simulation platform (currently scoped to Cognizant Digital Nurture / Java FSE prep). It runs adaptive interview sessions, scores answers across multiple vectors, detects confident-but-wrong ("bluffing") answers, and produces hire/no-hire style reports. Full product context and phased roadmap live in `docs/prompt.md` — read it before making architectural decisions, since it documents what's intentionally stubbed vs. fully wired.
 
 This is an npm workspaces monorepo: `frontend` (Next.js) + `backend` (FastAPI/Python, managed with `uv`).
 
@@ -75,7 +75,7 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 
 ## Branding
 
-The product is **Hotseat**. The name lives in exactly one place — `frontend/src/lib/brand.ts`
+The product is **InterviewOS**. The name lives in exactly one place — `frontend/src/lib/brand.ts`
 (`BRAND.name`) — and the backend's `APP_NAME` setting. Never retype it: it used to be written
 out in 33 files, and it has since been renamed twice.
 

@@ -1,4 +1,4 @@
-> Part of the [[index|Hotseat documentation]].
+> Part of the [[index|InterviewOS documentation]].
 
 # Anthropic rate-limit headroom at 200 concurrent users
 

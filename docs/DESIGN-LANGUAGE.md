@@ -1,4 +1,4 @@
-# Hotseat — the design language
+# InterviewOS — the design language
 
 `DESIGN-RULES.md` says what *not* to do and holds for every surface. This says what
 *this product is*, now that it has a name that means something. Read both.
@@ -9,7 +9,7 @@
 
 ## The idea, in one line
 
-**Hotseat does not name the preparation. It names the chair.**
+**InterviewOS does not name the preparation. It names the chair.**
 
 Two strangers, one room, and every gap in what you know about to be found in the
 next twenty minutes. The product exists because of that specific feeling. It does
@@ -101,6 +101,47 @@ in the writing *around* the controls.
 And never let it get lurid. No flames, no "feel the heat", no sweat. The chair is
 calm and well lit — that is what makes it unnerving. One overcooked line and the
 product is a toy.
+
+## 4a. The mark
+
+The logo is a chair seen head-on, arms flaring open, with a flame in the bowl.
+It says the whole proposition in one shape: the seat, and the heat of being in it.
+
+**There are two of it, and which one is correct depends on size.**
+
+`frontend/public/brand/mark.png` and `lockup.png` are the artwork — three flame
+tongues, four-stop gradients, a pale light cone, three tapered legs. Rendered on a
+size ladder from 16 to 128px it holds together from about **48px** and turns to
+mud below that: the legs become single scratchy pixels and the tongues merge.
+
+`<Brandmark>` in `components/brand/Brandmark.tsx` is an SVG of the same
+silhouette with the detail that cannot survive **removed rather than shrunk** —
+one flame, no cone, arms and legs thickened. It is not a second logo; it is the
+same logo drawn for the size it is used at.
+
+| where | what | why |
+|---|---|---|
+| navigation rail, drawer, header | `<Wordmark>` (SVG, 22px) | the artwork is illegible here |
+| auth screens, 404, pricing header | `<Lockup>` (artwork, ≥180px) | there is room, and the descriptor is legible from 180px up |
+| loading | `<BrandLoader>` (SVG) | must animate with no JavaScript |
+| browser tab | `src/app/icon.png`, `apple-icon.png` | see below |
+
+**Colours are sampled from the artwork**, not chosen beside it — navy `#28344A`,
+flame `#E85A1E → #FBA627`, cone `#FDECD0`, exported as `BRAND_COLORS`. The two
+versions cannot drift into two brands.
+
+**The mark never sits on a coloured tile.** Its negative space is open — the page
+shows through inside the chair and behind the flame — because it was drawn for a
+light ground. A filled tile behind it fills those gaps and destroys the
+silhouette. The favicons are the one exception and carry their own paper ground,
+because a browser tab may be dark and would otherwise show through the flame.
+
+**Loading is the logo burning.** The chair holds perfectly still; the flame rises,
+brightens and settles on uneven timing so it never lands on a beat. Nothing spins.
+It is pure CSS on transform and opacity, because it renders during route
+transitions when the page's JavaScript has not arrived — a loader that needs a
+hydrated tree sits frozen for exactly as long as it is needed. Reduced motion
+stops the burn and leaves the mark at full brightness rather than removing it.
 
 ## 5. Type
 

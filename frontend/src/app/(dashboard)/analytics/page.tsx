@@ -3,8 +3,9 @@
 import Link from 'next/link';
 
 import { motion } from 'framer-motion';
-import { BarChart2, Clock, Loader2, Play, Target, Trophy } from 'lucide-react';
+import { BarChart2, Clock, Play, Target, Trophy } from 'lucide-react';
 
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { DataError } from '@/components/ui/data-error';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
@@ -22,7 +23,7 @@ export default function AnalyticsPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-teal" />
+        <BrandLoader label="Loading your analytics" size={56} />
       </div>
     );
   }

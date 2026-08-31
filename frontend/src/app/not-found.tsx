@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-import { Wordmark } from '@/components/brand/Brandmark';
+import { Lockup } from '@/components/brand/Brandmark';
 import { BRAND } from '@/lib/brand';
 // From the pure variants module, not from `button.tsx` — that file is a client
 // component, and a server component cannot call a function exported by one.
@@ -30,7 +30,7 @@ export default function NotFound() {
   return (
     <main className="mx-auto flex min-h-[70vh] max-w-xl flex-col justify-center px-6 py-16">
       <Link href="/" aria-label={`${BRAND.name} home`} className="mb-10 w-fit">
-        <Wordmark />
+        <Lockup width={200} />
       </Link>
 
       {/* The only lit element, because it is the only element — docs/DESIGN-LANGUAGE §1. */}

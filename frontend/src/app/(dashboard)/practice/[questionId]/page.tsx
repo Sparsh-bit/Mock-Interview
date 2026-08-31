@@ -5,6 +5,7 @@ import { Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Code2, Info, Loader2 } from 'lucide-react';
+import { BrandLoader } from '@/components/brand/BrandLoader';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CodingWorkspace } from '@/components/interview/CodingWorkspace';
@@ -45,7 +46,7 @@ export default function PracticePage() {
     <Suspense
       fallback={
         <div className="flex min-h-[50vh] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <BrandLoader label="Loading this question" size={56} />
         </div>
       }
     >
@@ -69,7 +70,7 @@ function Practice() {
   if (isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-indigo" />
+        <BrandLoader label="Loading this question" size={56} />
       </div>
     );
   }
