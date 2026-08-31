@@ -13,11 +13,58 @@ Load order:
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REDACTED_VALUE = "[redacted]"
+
+#: A field is redacted if any of these appears in its name. Substring, upper-cased,
+#: and broader than it strictly needs to be.
+#:
+#: NOT `observability.PII_KEY_PARTS`, which was the obvious reuse and is wrong here:
+#: that list is tuned for event payloads and matches none of `SUPABASE_SERVICE_KEY`
+#: (it has "api_key" but not bare "key"), `SECRET_KEY` or `DATABASE_URL`. Checked,
+#: not assumed — see tests/test_settings_redaction.py, which asserts every currently
+#: secret-bearing field on this class is covered rather than trusting this list to
+#: have been kept up to date.
+_SECRET_NAME_PARTS: frozenset[str] = frozenset(
+    {
+        "SECRET",
+        "KEY",  # bare, unlike the observability list: SUPABASE_SERVICE_KEY.
+        "TOKEN",
+        "PASSWORD",
+        "PASSWD",
+        "CREDENTIAL",
+        "DSN",
+        "SIGNATURE",
+        "WEBHOOK",
+        "SALT",
+        "PRIVATE",
+        "AUTH",
+    }
+)
+
+#: `scheme://user:password@host`. DATABASE_URL and REDIS_URL carry a password and
+#: match no name pattern — the credential is inside the value, not named by the key.
+_URL_CREDENTIALS = re.compile(r"(?P<scheme>[a-zA-Z][\w+.-]*://)(?P<user>[^:/@\s]+):[^@/\s]+@")
+
+
+def _is_secret_name(name: str) -> bool:
+    upper = name.upper()
+    return any(part in upper for part in _SECRET_NAME_PARTS)
+
+
+def _redact_url_credentials(value: str) -> str:
+    """Blank the password inside a URL, keeping scheme, user and host.
+
+    Those three are what makes the repr useful — which database, as whom — and the
+    password is the only part that is a credential.
+    """
+    return _URL_CREDENTIALS.sub(rf"\g<scheme>\g<user>:{REDACTED_VALUE}@", value)
 
 
 class Settings(BaseSettings):
@@ -1041,6 +1088,47 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── What this object is allowed to say about itself ───────────────────
+
+    def __repr__(self) -> str:
+        """
+        Pydantic's generated repr prints every field value. On this machine that is
+        the Supabase JWT secret (88 chars, signs every auth token), the service key
+        (219 chars, bypasses Row Level Security entirely), both model-provider keys
+        and the database password — 4.5 KB of it, in one string.
+
+        THAT STRING REACHES CI LOGS WITHOUT ANYBODY WRITING IT OUT. pytest prints the
+        repr of every local in a failing frame, so one assertion touching `settings`
+        publishes the lot to a build log; so does a logged exception, a Sentry event
+        that got past the scrubber, a debugger, or a stray print in a script.
+
+        Fixed HERE and not in a pytest hook on purpose: a conftest hook covers pytest
+        and nothing else, and the same object is repr'd by all four of those paths.
+
+        The redaction is by field NAME, and deliberately broad — over-redacting a repr
+        costs nothing, under-redacting costs every credential. It is not
+        `SecretStr`, which would be the idiomatic answer but changes the type at ~200
+        call sites, and not `Field(repr=False)`, which hides that the field exists at
+        all and has to be remembered for each new field.
+        """
+        parts = []
+        for name, value in self:
+            if isinstance(value, str) and value and _is_secret_name(name):
+                parts.append(f"{name}={REDACTED_VALUE!r}")
+            elif isinstance(value, str) and value:
+                parts.append(f"{name}={_redact_url_credentials(value)!r}")
+            else:
+                # Non-strings and empty strings: a bool, an int, a list of CORS
+                # origins. None of these has ever been a credential, and blanking
+                # them would make the repr useless for the thing it is for.
+                parts.append(f"{name}={value!r}")
+        return f"{type(self).__name__}({', '.join(parts)})"
+
+    # `str()` does not fall back to `__repr__` when the class defines `__str__`,
+    # and pydantic's BaseModel defines one. Without this, `f"{settings}"` prints
+    # everything the line above just removed.
+    __str__ = __repr__
+
     # ── Computed properties ───────────────────────────────────────────────
 
     @property
@@ -1061,8 +1149,31 @@ def get_settings() -> Settings:
     """
     Returns the application settings singleton.
     Cached after first call — safe to call multiple times.
+
+    THE `except` IS THE SECOND HALF OF THE REDACTION ABOVE, and it guards a leak
+    `__repr__` cannot reach. When a required variable is missing, pydantic raises a
+    ValidationError whose every error carries `input_value` — and for a BaseSettings
+    that input is THE WHOLE ENVIRONMENT-DERIVED DICT, every other secret included.
+    Nobody writes that repr; pydantic does, and pytest prints it on any test that
+    constructs Settings, into CI logs that are readable by anyone who can read the
+    build.
+
+    Re-raised carrying the field NAMES and the reason, which is the entire useful
+    content of the original — "SUPABASE_ANON_KEY: Field required" tells you what to
+    set. `from None` because chaining would print the original, which is the thing
+    being suppressed.
     """
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:  # pragma: no cover - exercised in tests
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc']) or '<model>'}: {err['msg']}"
+            for err in exc.errors()
+        )
+        raise RuntimeError(
+            f"Settings failed to load ({exc.error_count()} problem(s)): {problems}. "
+            "Values are omitted deliberately — see core/config.py."
+        ) from None
 
 
 # Module-level alias for ergonomic imports:
