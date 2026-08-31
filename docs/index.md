@@ -36,6 +36,9 @@ moved to. Prefer them over relative Markdown links for anything inside this vaul
 - [[COMPLIANCE]] — DPDP Act and adjacent regimes: what the code does, the gaps, what has
   since been built (consent ledger, age gate, self-service export and erasure, retention),
   and the blocker list that needs a lawyer and a named officer rather than more code
+- [[AUTOPAY-EMANDATE]] — the auto top-up mandate flow, traced end to end and **not built**:
+  what Razorpay's recurring rails actually require, where RBI's Additional Factor
+  Authentication happens, and the one thing it is blocked on (a Razorpay test account)
 - [[DEPLOYMENT]] — the older, longer infrastructure write-up. Overlaps [[DEPLOY]]; where they
   disagree, [[DEPLOY]] is newer.
 - [[OBSERVABILITY]] — what a log line is allowed to contain (the PII audit and its result),
