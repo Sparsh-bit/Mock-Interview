@@ -1,4 +1,4 @@
-# Data protection compliance — where Hotseat actually stands
+# Data protection compliance — where InterviewOS actually stands
 
 An audit of the codebase against India's **Digital Personal Data Protection Act, 2023** and the
 regimes that sit alongside it. Written from what the code does, not from what a policy says,
@@ -76,8 +76,12 @@ recorded speech — is materially more sensitive than a typical SaaS account.
 ### §9 — children, and why it is the sharpest risk here
 
 This product is aimed at **campus placement preparation**. A meaningful share of first-year
-undergraduates in India are 17. The code collects **no date of birth and has no age gate**, so
-it cannot tell.
+undergraduates in India are 17. The code collects no date of birth, but there **is** an age
+gate: `age_18_plus` is a required, non-defaulting field on `POST /legal/consent/signup`
+(`api/v1/legal.py`), shown as an unticked "I am 18 or older" box on the registration screen
+and recorded in the consent ledger like any other answer. It cannot be changed afterwards —
+`update_consent` refuses that purpose outright and points at account deletion, because
+flipping the flag later would leave every measurement already taken.
 
 Two §9 prohibitions bite directly:
 
@@ -87,8 +91,13 @@ Two §9 prohibitions bite directly:
   promotional cards selected from what the user has and has not bought — which is targeted
   advertising by any ordinary reading.
 
-Neither is a problem for adults. Both are prohibited for under-18s, and right now the product
-has no way to know which it is talking to.
+Neither is a problem for adults. Both are prohibited for under-18s.
+
+**What the gate does and does not settle.** It is a self-declaration, so it discharges §9 only
+to the extent self-declaration is accepted — which is the open question below and a lawyer's
+call, not an engineering one. What it does settle is that the product no longer has *no way to
+know*: there is a recorded, timestamped answer against a notice version for every account, and
+a refusal is refused at signup rather than recorded and ignored.
 
 ### §16 — cross-border transfer
 
@@ -104,10 +113,26 @@ Personal data leaves India in the ordinary course of a request:
 | Supabase | Everything — it is the database and file store | Region-dependent |
 | Razorpay | Payment details | India ✅ |
 
-DPDP §16 permits transfer except to countries the Central Government restricts, and that list
-has not been notified. **The exposure is that the list, when it appears, may include China** —
-and the resume of every Indian candidate has already been sent there. That is a business
-decision rather than a bug, but it should be a decision somebody makes on purpose.
+DPDP §16 permits transfer except to countries the Central Government restricts. **That list
+still has not been notified** — but the deadline is no longer open-ended, and this note used
+to leave it vague.
+
+The Digital Personal Data Protection Rules, 2025 were notified on **13 November 2025**. Rule
+15, which operationalises §16, is in the tranche that comes into force **eighteen months
+later — 13 May 2027**. Two earlier dates matter on the way there:
+
+| Date | What starts |
+|---|---|
+| 13 November 2025 | Rules notified. The Data Protection Board is operational |
+| 13 November 2026 | Penalties, and Consent Manager registration |
+| **13 May 2027** | **Rule 15 and the rest of the substantive obligations** |
+
+So the position is: transfers to China are lawful today and remain lawful unless and until a
+restricted-country notification says otherwise, with 13 May 2027 as the date by which the
+framework is fully in force. **The exposure is that the list, when it appears, may include
+China** — and the resume of every Indian candidate has already been sent there. Nothing about
+that is retroactively fixable, which is why it is a decision to make on purpose rather than a
+deadline to wait out.
 
 ---
 
@@ -194,9 +219,10 @@ The gaps are mostly cheap. The first four are the ones that turn "unlawful" into
    it is currently reachable only by an admin. Exposing it is a small piece of work.
 5. **Add "download my data."** One endpoint assembling profile, sessions, answers, reports and
    payments as JSON. *DPDP §11.*
-6. **Decide the children question.** Either collect date of birth and gate under-18s out of the
-   behavioural metrics and the promotional cards, or state that the service is 18+ and enforce
-   it at signup. Doing neither is the current position and is the riskiest one.
+6. **Decide the children question.** ~~Doing neither is the current position.~~ The second
+   option was taken: the service states it is 18+ and enforces it at signup (see §9 above).
+   What remains is not engineering — whether self-declaration discharges §9 for this audience
+   is the lawyer's call listed at the end of this document.
 7. **Define retention** and implement it — the first thing here that is real engineering.
    Something like: resumes and transcripts deleted N months after the last session; audit logs
    180 days (CERT-In); financial records 8 years (Companies Act).
@@ -306,9 +332,10 @@ the position unlawful rather than merely imperfect.
    - whether **self-declared 18+** discharges §9, or whether verifiable parental consent
      machinery is required for a product aimed at campus placement where a meaningful share
      of first-years are 17;
-   - the **§16 position on ZhipuAI**. The restricted-country list is not notified and may
-     include China. The code names the destination; whether to keep sending resumes there is
-     a business decision somebody should make on purpose.
+   - the **§16 position on ZhipuAI**. The restricted-country list is still not notified and
+     may include China; Rule 15 comes into force 13 May 2027 (see §16 above). The code names
+     the destination; whether to keep sending resumes there is a business decision somebody
+     should make on purpose, and before that date rather than on it.
    - **§6(3)** — the notice in English plus the 8th Schedule languages. Only English exists.
 3. **Decide and document the retention *policy*.** `FINANCIAL_RETENTION_YEARS = 8` and
    `SECURITY_LOG_RETENTION_DAYS = 180` are in `services/legal/retention.py` and are what the
