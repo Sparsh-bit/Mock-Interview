@@ -82,11 +82,18 @@ class TestTheCapHolds:
         assert await burst_rung.rung_requests_today() == 2
 
     async def test_yesterdays_tally_does_not_count_against_today(self, _no_redis, monkeypatch):
-        real = burst_rung._today_key
-        monkeypatch.setattr(burst_rung, "_today_key", lambda: "ai:rung:requests:2020-01-01")
+        # The day-key helper moved to db/daily_counter.py when the Judge0 gate became its
+        # second caller. Same behaviour, same `ai:rung:requests:<date>` key — patched there
+        # now, because that is where the date is read.
+        from app.db import daily_counter
+
+        real = daily_counter._key
+        monkeypatch.setattr(
+            daily_counter, "_key", lambda name: f"{name}:requests:2020-01-01"
+        )
         for _ in range(10):
             await burst_rung.note_rung_request()
-        monkeypatch.setattr(burst_rung, "_today_key", real)
+        monkeypatch.setattr(daily_counter, "_key", real)
         assert await burst_rung.rung_requests_today() == 0
         assert await burst_rung.rung_has_budget(1) is True
         # And the stale key is not retained — a long-lived process must not grow a dict

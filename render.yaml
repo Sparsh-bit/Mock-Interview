@@ -243,6 +243,17 @@ services:
       # decision, and test_multi_replica.py holds them together.
       - key: WEB_REPLICA_COUNT
         sync: false
+      # Uvicorn worker processes INSIDE each instance. Uvicorn defaults `--workers` to this
+      # exact env var, and core/config.py reads the same one, so the server and the startup
+      # audits cannot disagree about how many processes exist. PROCESS_COUNT —
+      # WEB_REPLICA_COUNT x this — is what both connection audits multiply by.
+      #
+      # LEAVE IT AT 1 ON THIS PLAN. Render free is 0.1 vCPU; a second worker on a tenth of a
+      # core buys nothing and costs a second full set of per-process budgets (a pool, a Redis
+      # pool, a report semaphore). It is the knob to raise on a host with real CPU — see
+      # docs/RAILWAY.md.
+      - key: WEB_CONCURRENCY
+        sync: false
 
       # ── Database pool ─────────────────────────────────────────────────────
       # Lower to 5 / 10 behind the Supabase transaction pooler; see numInstances above
@@ -257,10 +268,31 @@ services:
       # log says so (`db_connection_ceiling_unknown`).
       - key: DB_CONNECTION_CEILING
         sync: false
+      # THE POOLER'S "Connection pool size" — a DIFFERENT number from the ceiling above, and
+      # the tightest limit in the whole system. That one is "Max client connections" (200 on a
+      # Supabase Nano, fixed): how many clients may connect TO the pooler. This one is how many
+      # connections the pooler opens to REAL POSTGRES, shared by everybody — 15 on Nano by
+      # default, and editable.
+      #
+      # In transaction mode an idle connection costs no Postgres backend, but one holding an
+      # OPEN TRANSACTION occupies one of these until it commits. So real concurrency is bounded
+      # by this, not by DB_POOL_SIZE + DB_MAX_OVERFLOW and not by the client cap. It is also the
+      # ONLY budget here that does not multiply by the process count: the pool belongs to the
+      # database, so four workers share the same 15 and more compute cannot relieve it.
+      #
+      # Past it the queue forms INSIDE the pooler, where nothing in this app can log it.
+      # 0 = unset and unchecked. See docs/RAILWAY.md.
+      - key: DB_POOLER_POOL_SIZE
+        sync: false
 
       # ── Redis connection budget ───────────────────────────────────────────
       # REDIS_MAX_CONNECTIONS x WEB_REPLICA_COUNT is checked against this at startup. Read
       # it off the Redis plan page; see docs/REDIS-CUTOVER.md §1.
+      # PER PROCESS, so the fleet number is this x PROCESS_COUNT and that product is what the
+      # startup audit checks against the ceiling below. Default 20; drop it when raising
+      # WEB_CONCURRENCY.
+      - key: REDIS_MAX_CONNECTIONS
+        sync: false
       - key: REDIS_CONNECTION_CEILING
         sync: false
       # Only for a provider whose certificate does not chain to the system trust store.
@@ -297,6 +329,16 @@ services:
       # Optional RapidAPI key for higher compiler limits. Empty uses the free instance.
       - key: JUDGE0_API_KEY
         sync: false
+      # A FLEET-WIDE daily ceiling on Judge0 calls, counted in requests because a Judge0 CE
+      # call costs $0.00 and no money cap can see it. RATE_LIMIT_CODE_EXEC_PER_MINUTE is
+      # per USER and says nothing about 200 of them; the default provider is the PUBLIC CE
+      # instance, shared with the whole internet, and a drive aimed at it ends in a blocked
+      # egress IP rather than a slowdown. 0 disables it, which is the default — CE publishes
+      # no per-IP figure and a guessed ceiling is a confidently wrong check. Ignored when
+      # JUDGE0_API_KEY is set, because bought capacity must not be throttled by a guard that
+      # exists to protect a free service. See docs/RAILWAY.md.
+      - key: JUDGE0_DAILY_REQUEST_LIMIT
+        sync: false
 
       # ── Payments ──────────────────────────────────────────────────────────
       # No card data ever reaches this service — Razorpay's hosted checkout keeps
@@ -312,6 +354,21 @@ services:
       # Cloudflare Turnstile on high-value coupon paths. Optional: a deployment with no
       # Turnstile account works normally as long as no offer sets `requires_captcha`.
       - key: TURNSTILE_SECRET_KEY
+        sync: false
+
+      # ── Reports ───────────────────────────────────────────────────────────
+      # PER PROCESS, and the semaphore that is really the provider rate limiter: this x
+      # PROCESS_COUNT slots, each capable of ~15,940 output tokens a minute. The default of 12
+      # on four workers is 48 slots = 191% of Anthropic's Start-tier OTPM. docs/RAILWAY.md has
+      # the arithmetic; scripts/capacity_preflight.py checks it.
+      - key: REPORT_CONCURRENCY
+        sync: false
+      # Reports through the provider's batch API: half price, minutes instead of seconds, and a
+      # SEPARATE rate-limit pool — which is what makes a whole cohort finishing together
+      # survivable, because the batch path returns before the semaphore is ever acquired.
+      # Only first generation is batched; a retry stays synchronous, because somebody is
+      # watching that one.
+      - key: REPORT_BATCH_ENABLED
         sync: false
 
       # ── Interview shape ───────────────────────────────────────────────────

@@ -250,7 +250,7 @@ def log_db_connection_budget_audit() -> list[DbConfigIssue]:
     issues = audit_db_connection_budget(
         pool_size=settings.DB_POOL_SIZE,
         max_overflow=settings.DB_MAX_OVERFLOW,
-        replicas=settings.WEB_REPLICA_COUNT,
+        replicas=settings.PROCESS_COUNT,
         ceiling=settings.DB_CONNECTION_CEILING,
     )
     for issue in issues:

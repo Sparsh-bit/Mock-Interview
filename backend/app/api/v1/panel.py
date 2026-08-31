@@ -1138,6 +1138,29 @@ async def panel_turn(
     from app.services.ai.schemas import InterviewPanelTurn  # noqa: PLC0415
 
     turn_ctx = await _turn_context(db, request, current_user.user_id)
+
+    # RELEASE THE POOLED CONNECTION BEFORE THE MODEL CALL.
+    #
+    # `_turn_context` runs five or six reads and then does not touch the database again —
+    # `_remember_turn` writes to Redis, and the response is built from a dataclass of plain
+    # strings. But `Depends(get_db)` holds the session open until the response returns, and a
+    # session with a transaction open holds one of the pool's connections. So every panel turn
+    # used to occupy a connection for the whole ~12s generation while using it for none of it.
+    #
+    # The arithmetic is the same one reports.py already lost this fight to: the pool is
+    # DB_POOL_SIZE + DB_MAX_OVERFLOW = 30 per process, and a GD round is a turn every 18s per
+    # candidate. At 50 candidates in rounds that is 2.8 turns a second, and 2.8 x 12s = 34
+    # connections held for a 30-connection pool — past it, EVERY other endpoint blocks for up
+    # to DB_POOL_TIMEOUT (30s) waiting for a connection it will not get. The symptom is not
+    # "the panel is slow", it is the whole API stalling, and it arrives exactly when a cohort
+    # is mid-round.
+    #
+    # Committing here returns the connection. The reads are done, the session factory sets
+    # expire_on_commit=False so anything already loaded stays usable, and nothing below reads
+    # the database — if that ever changes, the session re-acquires a connection lazily and
+    # correctly, it just costs the checkout again. Net: milliseconds instead of 12 seconds.
+    await db.commit()
+
     messages, turn_key = turn_ctx.messages, turn_ctx.turn_key
     pivot_topic, rating_subject = turn_ctx.pivot_topic, turn_ctx.rating_subject
 
@@ -1331,6 +1354,28 @@ async def panel_turn_stream(
     from app.services.ai.stream_parser import StreamedObjects  # noqa: PLC0415
 
     turn_ctx = await _turn_context(db, request, current_user.user_id)
+
+    # RELEASE THE POOLED CONNECTION BEFORE THE MODEL CALL.
+    #
+    # `_turn_context` runs five or six reads and then does not touch the database again —
+    # `_remember_turn` writes to Redis, and the response is built from a dataclass of plain
+    # strings. But `Depends(get_db)` holds the session open until the response returns, and a
+    # session with a transaction open holds one of the pool's connections. So every panel turn
+    # used to occupy a connection for the whole ~12s generation while using it for none of it.
+    #
+    # The arithmetic is the same one reports.py already lost this fight to: the pool is
+    # DB_POOL_SIZE + DB_MAX_OVERFLOW = 30 per process, and a GD round is a turn every 18s per
+    # candidate. At 50 candidates in rounds that is 2.8 turns a second, and 2.8 x 12s = 34
+    # connections held for a 30-connection pool — past it, EVERY other endpoint blocks for up
+    # to DB_POOL_TIMEOUT (30s) waiting for a connection it will not get. The symptom is not
+    # "the panel is slow", it is the whole API stalling, and it arrives exactly when a cohort
+    # is mid-round.
+    #
+    # Committing here returns the connection. The reads are done, the session factory sets
+    # expire_on_commit=False so anything already loaded stays usable, and nothing below reads
+    # the database — if that ever changes, the session re-acquires a connection lazily and
+    # correctly, it just costs the checkout again. Net: milliseconds instead of 12 seconds.
+    await db.commit()
 
     async def events() -> AsyncIterator[str]:
         # A CACHE HIT IS STILL A STREAM, and it is the fastest one available: the lines are

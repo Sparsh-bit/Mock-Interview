@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.rate_limit import rate_limiter
 from app.core.security import CurrentUser
+from app.db import daily_counter
 from app.db.redis import CacheKeys
 
 logger = structlog.get_logger(__name__)
@@ -119,7 +120,7 @@ async def execute_code(
         return CodeExecuteResponse(
             language=lang,
             stdout="",
-            stderr=f"Could not reach the code execution service ({provider}). {exc}",
+            stderr=f"Code execution is unavailable ({provider}). {exc}",
             exit_code=None,
             supported_languages=sorted(_LANGUAGES),
         )
@@ -145,6 +146,30 @@ async def _run_on_judge0(
     Execute on Judge0 CE. `wait=true` makes this a single synchronous call, so
     there is no token to poll.
     """
+    # ── THE FLEET-WIDE DAILY CEILING ─────────────────────────────────────────────────────
+    #
+    # RATE_LIMIT_CODE_EXEC_PER_MINUTE is per USER. It caps one candidate and is blind to two
+    # hundred of them, which is exactly the load a campus drive puts on the free public
+    # Judge0 CE instance. Refused locally rather than remotely: a call that is going to be
+    # 429'd is worse than no call, because it still costs the round trip, still counts against
+    # the shared instance, and can leave the whole deployment's egress IP blocked.
+    #
+    # RESERVED HERE, BEFORE THE REQUEST, so concurrent submissions cannot all read
+    # one-below-the-limit and all proceed. Reserving on success would make the cap advisory.
+    #
+    # ALWAYS COUNTED, ONLY SOMETIMES ENFORCED. The tally is kept even with a paid key, so the
+    # number in Redis is the truth about usage either way; the refusal below applies only to
+    # the free instance, because a bought quota must not be throttled by a guard meant to
+    # protect a free one.
+    if not settings.JUDGE0_API_KEY and not await daily_counter.has_budget(
+        "judge0", settings.JUDGE0_DAILY_REQUEST_LIMIT
+    ):
+        raise _RunnerUnavailable(
+            "The daily code-execution allowance for this deployment is spent. "
+            "Your code was not run — this is a capacity limit, not a problem with your code."
+        )
+    await daily_counter.reserve("judge0")
+
     headers = {"Content-Type": "application/json"}
     if settings.JUDGE0_API_KEY:
         # RapidAPI-hosted Judge0 needs these; the public CE instance ignores them.

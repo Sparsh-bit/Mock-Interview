@@ -237,6 +237,31 @@ async def generate_structured(
                     status_code=getattr(exc, "status_code", None),
                 )
 
+                # ── A SPENT ACCOUNT IS PERMANENT FOR THE MONTH ────────────────────────────
+                #
+                # CHECKED BEFORE THE BACKOFF BELOW, which is the whole point. Anthropic's
+                # monthly spend cap answers 429, so `is_rate_limit()` is true and this used to
+                # earn the two-second rate-limit sleep AND a second doomed attempt before the
+                # fallback was reached. Time cannot clear it — there is no `retry-after`
+                # because there is no moment at which the call would succeed.
+                #
+                # Four wasted seconds is a third of a panel turn's 12s budget, spent waiting
+                # at the exact moment the fallback provider is the only thing that can still
+                # answer. Same reasoning, and the same `break`, as the auth-error and
+                # daily-budget cases below; this was simply the third permanent failure and
+                # the only one wearing a retryable status code.
+                #
+                # ERROR, not warning: unlike a rate limit this does not pass on its own. It
+                # means the account is done for the month and somebody has to raise the cap.
+                if isinstance(exc, ProviderError) and exc.is_spend_cap():
+                    logger.error(
+                        "ai_generate_provider_spend_cap_reached",
+                        context=context,
+                        provider=provider.provider_name,
+                        consequence="straight to the fallback provider; no retry, no backoff",
+                    )
+                    break
+
                 # ── A RETRY WITH NO PAUSE IS NOT A RETRY ──────────────────────────────────
                 #
                 # FROM A PRODUCTION LOG: glm returned 429 — "您的账户已达到速率限制，请您控制

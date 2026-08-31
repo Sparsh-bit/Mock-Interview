@@ -126,8 +126,15 @@ REPORT_SECONDS = 21
 #: served from the banks in app/data, so those users cost nothing against these limits.
 MIX = {"interview": 0.60, "gd": 0.25, "idle_or_quiz": 0.15}
 
-#: [CODE] render.yaml numInstances. The fleet-wide report concurrency is this times
-#: REPORT_CONCURRENCY, which is what actually bounds the report burst.
+#: [CODE] settings.PROCESS_COUNT — WEB_REPLICA_COUNT x WEB_CONCURRENCY. The fleet-wide report
+#: concurrency is this times REPORT_CONCURRENCY, which is what actually bounds the report
+#: burst.
+#:
+#: IT COUNTS PROCESSES, NOT CONTAINERS, and the distinction is the whole reason PROCESS_COUNT
+#: exists. `_report_slots` is a per-process semaphore, so four uvicorn workers inside one
+#: replica are four independent semaphores and four times the provider-facing concurrency —
+#: identical to four replicas as far as Anthropic's buckets are concerned. Reading the replica
+#: count alone would report a quarter of the real peak and call it headroom.
 REPLICAS = 1
 
 

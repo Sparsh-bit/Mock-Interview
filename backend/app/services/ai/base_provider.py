@@ -167,6 +167,25 @@ class ProviderError(Exception):
     def is_auth_error(self) -> bool:
         return self.status_code in {401, 403}
 
+    def is_spend_cap(self) -> bool:
+        """
+        A 429 that TIME CANNOT CLEAR: the account's own spend limit, not a rate limit.
+
+        Anthropic enforces a monthly spend cap and reports the breach as 429 with
+        `error_code: enforced_spend_limit_reached` and no `retry-after` — because there is no
+        moment at which the request would succeed. It is a rate limit by status code and a
+        permanent refusal by nature, and the two want opposite handling: a real rate limit is
+        the one error where waiting is the entire fix, while this one must go straight to the
+        fallback provider.
+
+        MATCHED ON THE DOCUMENTED ERROR CODE, not on the human-readable message, which is
+        prose and can be reworded without notice. Both the status and the code must agree, so
+        a 500 whose body happens to quote the phrase cannot be misrouted.
+        """
+        if self.status_code != 429:
+            return False
+        return "enforced_spend_limit_reached" in f"{self}{self.raw_error or ''}"
+
     def is_server_error(self) -> bool:
         return self.status_code is not None and self.status_code >= 500
 
