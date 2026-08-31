@@ -316,3 +316,124 @@ class TestItDoesNotChangeTheAlerting:
         assert body["dependencies_healthy"] is True, (
             "an unreachable model provider flipped the field the pager is wired to"
         )
+
+
+# ── A day of monitoring, against the ledger ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+class TestADayOfPollingCostsNothing:
+    """
+    The tests above prove no completion path is *reachable* from the probe. This proves
+    the consequence that actually matters, by running the endpoint at the runbook's real
+    cadence and watching the ledger writer rather than the source.
+
+    docs/UPTIME.md check 1 polls every 3 minutes and check 2 every 5. Over 24 hours that
+    is 480 + 288 = 768 requests to /api/v1/health, from two monitors, in two regions
+    each — so 1536. Every one of them used to be a candidate for a billed completion and
+    a synthetic row in `ai_usage`, the ledger docs/AI-COST-MODEL.md and every pricing
+    decision are derived from.
+    """
+
+    #: 24h / 3min for check 1 and 24h / 5min for check 2, doubled for the two regions
+    #: docs/UPTIME.md configures. Named rather than inlined so the arithmetic is checkable.
+    POLLS_PER_DAY = (480 + 288) * 2
+
+    async def test_no_row_is_even_attempted_over_a_full_day(self, one_provider, monkeypatch):
+        """
+        A tripwire on the ledger's own session, not a row count: this asserts nothing
+        even *tries* to write, which a count cannot distinguish from a write that failed.
+        """
+        writes = 0
+
+        def tripwire(*_a, **_k):
+            nonlocal writes
+            writes += 1
+            raise AssertionError("the health check reached the AI usage ledger")
+
+        monkeypatch.setattr("app.db.session.get_db_session", tripwire, raising=True)
+
+        requests: list[str] = []
+
+        async def fake_get(self, url, **kwargs):  # noqa: ANN001, ARG001
+            requests.append(url)
+            return httpx.Response(200, json={"data": []})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+        for _ in range(self.POLLS_PER_DAY):
+            await reachability.check_provider_chain()
+
+        assert writes == 0, f"{writes} ledger writes from health polling alone"
+        # And the outbound calls were model-list reads, never a completion.
+        assert requests, "the probe made no request at all — the cache cannot be the reason"
+        assert all(url.endswith("/models") for url in requests), (
+            f"a non-/models endpoint was called: {sorted(set(requests))}"
+        )
+
+    async def test_the_cache_holds_the_outbound_count_to_the_ttl(self, one_provider, monkeypatch):
+        """
+        Zero cost is not only about which endpoint is called. Without the cache, /health
+        is an amplifier: anything that can reach it opens connections to Anthropic as fast
+        as it likes. At a 240s TTL a day of polling is 360 probes, not 1536 — and the
+        1536 figure is only the *scheduled* traffic.
+        """
+        probes = 0
+        clock = [0.0]
+
+        async def counting_get(self, url, **kwargs):  # noqa: ANN001, ARG001
+            nonlocal probes
+            probes += 1
+            return httpx.Response(200, json={"data": []})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", counting_get)
+        monkeypatch.setattr(reachability.time, "monotonic", lambda: clock[0])
+
+        # 24h at check 1's 3-minute cadence, advancing a real clock.
+        for _ in range(480):
+            await reachability.check_provider_chain()
+            clock[0] += 180.0
+
+        # 86400s / 240s TTL = 360 ceiling; the 3-minute cadence lands on 240 exactly
+        # every 4th poll, so the real figure is one per full TTL window.
+        assert probes <= 360, f"{probes} outbound probes in a day — the cache is not holding"
+        assert probes > 0
+
+    async def test_the_endpoint_route_is_the_one_measured(self, one_provider, monkeypatch):
+        """The two tests above call `check_provider_chain` directly. This confirms that is
+        genuinely what a request to /api/v1/health reaches — otherwise they measure a
+        function nothing calls."""
+        from httpx import ASGITransport
+        from httpx import AsyncClient as HTTPXClient
+
+        from app.main import app
+
+        seen: list[str] = []
+        real_get = httpx.AsyncClient.get
+
+        async def fake_get(self, url, **kwargs):  # noqa: ANN001
+            # The test client is itself an httpx.AsyncClient, so an unconditional patch
+            # intercepts the request to /api/v1/health and the app never runs at all.
+            # Only outbound calls are faked; the in-process one is passed through.
+            if "/api/v1/health" in str(url):
+                return await real_get(self, url, **kwargs)
+            seen.append(str(url))
+            return httpx.Response(200, json={"data": []})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
+        async with (
+            app.router.lifespan_context(app),
+            HTTPXClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+                timeout=30.0,
+            ) as ac,
+        ):
+            body = (await ac.get("/api/v1/health")).json()
+
+        assert body["ai_providers"] == {"anthropic": "reachable"}
+        assert any(url.endswith("/models") for url in seen), (
+            f"/api/v1/health did not probe the model list: {seen}"
+        )
+        assert not any("messages" in url or "completions" in url for url in seen)
