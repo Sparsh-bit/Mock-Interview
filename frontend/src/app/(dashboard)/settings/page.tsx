@@ -12,7 +12,6 @@ import { Switch } from '@/components/ui/switch';
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { PageHeader } from '@/components/ui/page-header';
 
-export const runtime = 'edge';
 const NOTIFY_KEY = 'interviewos:emailNotifications';
 
 export default function SettingsPage() {

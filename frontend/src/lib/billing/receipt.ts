@@ -87,8 +87,8 @@ export interface PaymentsResponse {
  * and "₹49.5" reads as a bug.
  *
  * NO LOCALE GROUPING, on purpose. `toLocaleString('en-IN')` would put the separators where an
- * Indian reader expects them and depends on the runtime shipping full ICU data — which the
- * edge runtime and Node's test environment do not agree about, so the same amount could render
+ * Indian reader expects them and depends on the runtime shipping full ICU data — which
+ * workerd and Node's test environment do not agree about, so the same amount could render
  * differently in a test, in the browser and on paper. Nothing in this catalogue reaches four
  * digits, so the grouping would never be visible and the risk buys nothing.
  */

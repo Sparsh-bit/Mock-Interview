@@ -1,7 +1,29 @@
-name = "interviewos"
-main = "frontend"
+# The Cloudflare WORKER that serves the frontend.
+#
+# THIS WAS A PAGES PROJECT AND IS NOW A WORKER. `@opennextjs/cloudflare` builds a Worker plus
+# a static asset directory, where `@cloudflare/next-on-pages` built a Pages deployment. That
+# is a change in the Cloudflare dashboard as well as in this file — a Pages project cannot be
+# converted in place, so the Worker is created alongside it and the custom domain moved once
+# it answers correctly. See docs/DEPLOYMENT.md.
 
-[env.production]
-routes = [
-  { pattern = "*.pages.dev", zone_name = "pages.dev" }
-]
+name = "interviewos"
+
+# THE BUILD OUTPUT, NOT A SOURCE DIRECTORY. This previously read `main = "frontend"`, which was
+# vestigial and pointed at nothing runnable. `opennextjs-cloudflare build` writes both paths
+# below; neither is checked in.
+main = ".open-next/worker.js"
+
+# nodejs_compat REQUIRES a compatibility_date of 2024-09-23 or later, and this adapter requires
+# nodejs_compat — it runs Next on the Node.js runtime rather than the edge runtime. Without the
+# flag the Worker fails at startup on the first `node:` import, which is immediately.
+compatibility_date = "2026-08-31"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+# NO `routes` BLOCK. The old one bound `*.pages.dev`, which does not apply to a Worker. The
+# custom domain (interviewos.dev) is attached in the dashboard so that DNS and TLS are not
+# split between a config file and a control panel — CLAUDE.md lists the domain among the
+# things whose identity is deployed infrastructure rather than a name in the repo.

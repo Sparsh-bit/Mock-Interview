@@ -14,7 +14,6 @@ import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 import { heatFor } from '@/lib/tones';
 
-export const runtime = 'edge';
 
 
 export default function TracksPage() {

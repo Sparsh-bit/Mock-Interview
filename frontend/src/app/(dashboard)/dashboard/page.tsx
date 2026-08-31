@@ -23,7 +23,6 @@ import { PageHeader } from '@/components/ui/page-header';
 import { CreditMeter } from '@/components/billing/CreditMeter';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
-export const runtime = 'edge';
 
 export default function DashboardPage() {
   const { user } = useAuth();

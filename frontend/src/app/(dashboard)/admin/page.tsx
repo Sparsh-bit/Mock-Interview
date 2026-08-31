@@ -49,7 +49,6 @@ import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 interface UserRow {
   id: string;

@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# @opennextjs/cloudflare build output — the Worker bundle and its static assets.
+.open-next/
 __pycache__/
 *.pyc
 .venv/

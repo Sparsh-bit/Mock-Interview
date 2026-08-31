@@ -128,22 +128,36 @@ A production `Dockerfile` is in the repo root (build context = repo root, becaus
 
 ---
 
-## 6. Frontend → Cloudflare Pages
+## 6. Frontend → Cloudflare Workers
 
-Next.js 15 App Router on Pages uses the Cloudflare adapter.
+**THIS WAS A PAGES PROJECT AND IS NOW A WORKER.** `@cloudflare/next-on-pages` is deprecated
+and, more pressingly, it pinned `next` at `<=15.5.2` while every fix for the ~26 advisories
+against Next 15.x lands at `>=15.5.21` — no version of Next both satisfied the old adapter and
+was patched. `@opennextjs/cloudflare` replaced it and *requires* `next >=15.5.24`, so the
+migration and the security fix were one change.
 
-1. Add the adapter locally (one-time), commit:
-   ```bash
-   cd frontend
-   npm install --save-dev @cloudflare/next-on-pages
-   ```
-2. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** → pick the repo.
-3. Build settings:
-   - **Framework preset:** Next.js
+**A Pages project cannot be converted in place.** Create the Worker alongside the existing
+Pages project, verify it answers, then move the custom domain. The old project stays until
+then, so there is no window where nothing is serving.
+
+The adapter is already in `frontend/package.json`, with `open-next.config.ts` and
+`frontend/wrangler.toml` committed.
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Worker → Connect to Git** → pick the repo.
+2. Build settings:
    - **Root directory:** `frontend`
-   - **Build command:** `npx @cloudflare/next-on-pages@1`
-   - **Build output directory:** `.vercel/output/static`
-   - **Compatibility flags:** add `nodejs_compat`
+   - **Build command:** `npm run cf:build`
+   - **Deploy command:** `npx opennextjs-cloudflare deploy`
+   - `wrangler.toml` supplies `main`, `compatibility_date` and `nodejs_compat` — do not also
+     set them in the dashboard, or the two disagree and the file loses.
+
+   Locally: `npm run cf:preview -w frontend` runs the built Worker in workerd before deploying.
+
+> **Do not add `export const runtime = 'edge'` to a route.** The old adapter required it on
+> everything server-rendered; this one runs Next on the Node.js runtime and does not support
+> edge routes at all. `src/app/edge-runtime.test.ts` now fails if one appears — the direction
+> reversed, the test did not, because the failure mode is identical: `next build` passes either
+> way and the frontend silently stops deploying.
 4. Environment variables (Production **and** Preview):
 
    | Key | Value |

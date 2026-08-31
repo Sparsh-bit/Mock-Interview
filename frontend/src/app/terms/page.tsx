@@ -6,7 +6,6 @@ import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BRAND } from '@/lib/brand';
 import { TERMS } from '@/lib/legal/policies';
 
-export const runtime = 'edge';
 
 export const metadata: Metadata = {
   title: TERMS.title,

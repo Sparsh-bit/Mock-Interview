@@ -7,7 +7,6 @@ import { BRAND } from '@/lib/brand';
 import type { Disclosure } from '@/lib/legal/disclosure';
 import { RESPONSE_WINDOW_DAYS } from '@/lib/legal/policies';
 
-export const runtime = 'edge';
 
 export const metadata: Metadata = {
   title: 'Complaints and grievances',

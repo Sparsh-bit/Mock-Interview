@@ -11,7 +11,6 @@ import { scoreBarTone, scoreChipTone } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
-export const runtime = 'edge';
 
 interface PublicReport {
   report_id: string;

@@ -16,7 +16,6 @@ import { createClient } from '@/lib/supabase/client';
 import { scalePop } from '@/lib/motion';
 import { Lockup } from '@/components/brand/Brandmark';
 
-export const runtime = 'edge';
 
 /**
  * Where a password reset is actually COMPLETED.

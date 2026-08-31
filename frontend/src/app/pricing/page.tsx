@@ -32,7 +32,6 @@ import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 
-export const runtime = 'edge';
 
 /**
  * The store — app/pricing/page.tsx

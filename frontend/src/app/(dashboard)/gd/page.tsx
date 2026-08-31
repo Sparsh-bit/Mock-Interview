@@ -28,7 +28,6 @@ import { scoreBand } from '@/lib/score-bands';
 import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billing/Paywall';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
-export const runtime = 'edge';
 type Phase = 'setup' | 'discussion' | 'results';
 
 const YOU = 'You';

@@ -23,7 +23,6 @@ import { useProgress, useUserStats, type RoundSummary, type TierProgress } from 
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 /**
  * Standing — the page that has to bring people back.

@@ -17,7 +17,6 @@ import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
 import { Lockup } from '@/components/brand/Brandmark';
 
-export const runtime = 'edge';
 const schema = z.object({
   email: z.string().email('Enter a valid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),

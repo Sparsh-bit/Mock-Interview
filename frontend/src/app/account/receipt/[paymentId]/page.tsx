@@ -13,7 +13,6 @@ import {
   statusLabel,
 } from '@/lib/billing/receipt';
 
-export const runtime = 'edge';
 
 /**
  * One payment, as something the candidate can keep — app/account/receipt/[paymentId]/page.tsx

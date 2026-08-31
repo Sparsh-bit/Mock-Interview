@@ -92,25 +92,27 @@ const nextConfig: NextConfig = {
    */
   productionBrowserSourceMaps: false,
 
-  // Emit the build to the REPO ROOT (../.next) rather than frontend/.next.
+  // Emit the build to the REPO ROOT (../.next) only when NEXT_DIST_ROOT=1.
   //
-  // @cloudflare/next-on-pages resolves two things relative to its own cwd: the
-  // build directory, and the asset paths recorded by `vercel build`. In an npm
-  // workspace those disagree — Vercel records `frontend/.next/...` (relative to
-  // the monorepo root) while the adapter runs in `frontend/`, so it looks for
-  // `frontend/frontend/.next/...` and dies copying the edge-runtime wasm.
-  // Building from the root with the output at the root makes both agree.
+  // THIS EXISTS FOR THE VERCEL PATH, AND NO LONGER FOR CLOUDFLARE. It was added because
+  // @cloudflare/next-on-pages resolved its build directory and its asset paths relative to
+  // different working directories, which disagree inside an npm workspace. That adapter is
+  // gone; @opennextjs/cloudflare runs from `frontend/` and reads a normal `.next`, so the
+  // default branch below is the Cloudflare one. The root `vercel-build` script still sets
+  // the flag, so the conditional stays rather than the behaviour being silently changed for
+  // whoever is using it.
   distDir: process.env.NEXT_DIST_ROOT === '1' ? '../.next' : '.next',
   // Enable React strict mode for better development warnings
   reactStrictMode: true,
 
   images: {
-    // Cloudflare Pages via @cloudflare/next-on-pages has no Next image
-    // optimizer behind it, so the /_next/image endpoint cannot resize or
-    // re-encode anything — it serves the original bytes, or 500s. Saying so
-    // explicitly means <Image> emits a plain <img> with the right width/height
-    // and lazy-loading instead of routing through an endpoint that isn't there.
-    // The landing photography is therefore pre-encoded; see Photo.tsx.
+    // LEFT ON THROUGH THE ADAPTER CHANGE, DELIBERATELY. There is no Next image optimizer
+    // behind the Worker, so /_next/image cannot resize or re-encode — it serves the original
+    // bytes or 500s. Saying so explicitly means <Image> emits a plain <img> with the right
+    // width/height and lazy-loading instead of routing through an endpoint that is not there.
+    // The landing photography is pre-encoded for this; see Photo.tsx. @opennextjs/cloudflare
+    // can be wired to Cloudflare Images later, which is a change with a bill attached and
+    // therefore a decision, not a migration detail.
     unoptimized: true,
     remotePatterns: [
       {

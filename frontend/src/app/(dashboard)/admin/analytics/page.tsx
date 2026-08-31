@@ -31,7 +31,6 @@ import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { formatBytes, formatRupees, saturationPct, usd } from '@/lib/format/admin-metrics';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 const WINDOWS = [7, 30, 90] as const;
 

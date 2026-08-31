@@ -64,9 +64,11 @@ describe('the journey has an end', () => {
     }
   });
 
-  it('is an edge route like every other page in this app', () => {
-    // A missing runtime export has broken this project's Cloudflare build before.
-    expect(readFileSync(PAGE, 'utf8')).toMatch(/export const runtime = 'edge'/);
+  it('runs on the Node.js runtime like every other page in this app', () => {
+    // INVERTED WITH THE ADAPTER. @opennextjs/cloudflare replaced next-on-pages and does not
+    // support edge routes; app/edge-runtime.test.ts carries the full reasoning. Kept rather
+    // than deleted because a wrong runtime export here still breaks the deploy silently.
+    expect(readFileSync(PAGE, 'utf8')).not.toMatch(/export const runtime = ['"]edge['"]/);
   });
 });
 

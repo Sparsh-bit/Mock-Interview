@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { AIWorkingIndicator } from '@/components/ui/ai-working-indicator';
 
-export const runtime = 'edge';
 export default function InterviewSetupPage() {
   return (
     <Suspense fallback={<div className="mt-10 text-center text-sm text-muted-foreground">Loading…</div>}>

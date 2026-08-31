@@ -15,7 +15,6 @@ import { fadeUp, staggerContainer } from '@/lib/motion';
 import { scoreBand } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 export default function AnalyticsPage() {
   const { data: stats, isLoading, error, refetch, isFetching } = useUserStats();

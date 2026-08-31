@@ -18,7 +18,6 @@ import { HEAT } from '@/lib/tones';
 import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/page-header';
 
-export const runtime = 'edge';
 
 /**
  * The selected difficulty chip.

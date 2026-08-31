@@ -15,7 +15,6 @@ import { fadeUp, staggerContainer } from '@/lib/motion';
 import { heatFor } from '@/lib/tones';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 interface PracticeQuestion {
   id: string;

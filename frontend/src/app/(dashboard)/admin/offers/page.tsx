@@ -16,21 +16,6 @@ import { getBrowserApiClient } from '@/lib/api';
 import { ApiError } from '@/lib/api/errors';
 import { cn } from '@/lib/utils';
 
-/*
- * REQUIRED BY CLOUDFLARE PAGES, and its absence broke the deploy.
- *
- * Every non-static route in this app must opt into the Edge Runtime — @cloudflare/next-on-pages
- * refuses to produce a build otherwise, and the failure names the route:
- *
- *     ERROR: Failed to produce a Cloudflare Pages build from the project.
- *         The following routes were not configured to run with the Edge Runtime:
- *           - /admin/offers
- *
- * `next build` passes without it, which is what makes it easy to miss: the whole frontend
- * stopped deploying the moment this page was added, so every fix after it sat unshipped
- * while looking merged. tests/edge-runtime.test.ts now fails on any route missing this.
- */
-export const runtime = 'edge';
 
 /**
  * Offers and promo codes — app/(dashboard)/admin/offers/page.tsx

@@ -7,7 +7,6 @@ import type { Disclosure } from '@/lib/legal/disclosure';
 import { DisclosureBody } from '@/components/legal/DisclosureBody';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 
-export const runtime = 'edge';
 
 export const metadata: Metadata = {
   title: 'Your data',

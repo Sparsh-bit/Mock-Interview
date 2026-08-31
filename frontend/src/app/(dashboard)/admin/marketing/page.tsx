@@ -1,12 +1,5 @@
 'use client';
 
-/*
- * REQUIRED BY CLOUDFLARE PAGES, and its absence breaks the deploy rather than this page.
- * `next build` passes without it and @cloudflare/next-on-pages refuses to produce a build,
- * naming the route — so the whole frontend stops deploying while every later commit looks
- * merged. See app/edge-runtime.test.ts, which fails on any route missing this line.
- */
-export const runtime = 'edge';
 
 /**
  * Admin — the mailing list. /admin/marketing

@@ -144,6 +144,56 @@ describe('the resume gate', () => {
   });
 });
 
+describe('the resume gate asks for an explicit tick', () => {
+  /*
+   * WHAT CHANGED AND WHY. The gate used to render the whole processor list inline and offer a
+   * single "I understand" button. It now shows a short summary, a REQUIRED tick box, and a
+   * Confirm that stays disabled until it is ticked, with the full list one click away on
+   * /privacy.
+   *
+   * That is layered notice, and it is a trade with a real cost on one side: §16's country-per-
+   * processor detail is now one click away at the moment of upload rather than on the screen.
+   * docs/COMPLIANCE.md §16 records the change rather than still claiming the old behaviour.
+   *
+   * What it buys is a stronger §6 position. A button labelled "I understand" is a navigation
+   * control that happens to carry legal weight; a tick box is an affirmative act, and an
+   * unticked one cannot be clicked past. It is also the control people actually read, because
+   * a 300-word table above a button is the thing everybody scrolls past.
+   */
+  it('has a consent checkbox, and it is not pre-ticked', () => {
+    // A pre-ticked box is the one thing §6 names explicitly as not consent.
+    expect(GATE).toContain('ConsentCheckbox');
+    expect(GATE).not.toMatch(/defaultChecked/);
+    expect(GATE).not.toMatch(/checked=\{true\}/);
+  });
+
+  it('cannot be confirmed until the box is ticked', () => {
+    // Gated on the tick, not only on the disclosure having loaded. Without this the checkbox
+    // is decoration and the old click-through behaviour is unchanged.
+    expect(GATE).toMatch(/disabled=\{[^}]*!agreed/);
+  });
+
+  it('does not restate the processor list at the moment of upload', () => {
+    // The whole point of the change. The list lives on /privacy, from the same endpoint.
+    expect(GATE).not.toContain('DisclosureBody');
+  });
+
+  it('still reaches both policies from the gate', () => {
+    // Layered notice only works if the layer underneath is one click away, in a new tab so
+    // the chosen file is not lost.
+    expect(GATE).toContain('/terms');
+    expect(GATE).toContain('/privacy');
+    expect(GATE).toContain('target="_blank"');
+  });
+
+  it('still records which version of the notice was shown', () => {
+    // Unchanged obligation: consent you cannot evidence is consent you do not have, and the
+    // version stamp is what stops a later rewrite re-characterising it.
+    expect(GATE).toContain('notice_version');
+    expect(GATE).toContain('/api/v1/legal/disclosure');
+  });
+});
+
 describe('the disclosure is never restated on this side', () => {
   it('names no vendor, country or retention period in the frontend', () => {
     /*

@@ -24,7 +24,7 @@ import {
  * PaymentHistory.tsx and the obvious way to build the second surface is to copy them.
  *
  * So the money-facing rules are asserted as functions, and the two facts that cannot be
- * expressed as a function — that the page opts into the Edge Runtime, and that it does not
+ * expressed as a function — that the page stays off the edge runtime, and that it does not
  * fetch a payment by id — are asserted against the source. Both of those fail silently: the
  * first passes `next build` and breaks only the Cloudflare Pages deploy (see
  * app/edge-runtime.test.ts), and the second would be a working feature that is also a way to
@@ -169,11 +169,15 @@ const PAGE_CODE = strip(PAGE);
 const HISTORY_CODE = strip(HISTORY);
 
 describe('the printable receipt page', () => {
-  it('opts into the Edge Runtime', () => {
+  it('runs on the Node.js runtime, not the edge runtime', () => {
     // Duplicated from app/edge-runtime.test.ts on purpose: that check is a loop over every
-    // route, and this is the route it was added for. Missing it passes `next build`, passes
-    // lint, passes tsc, and silently stops the whole frontend deploying to Cloudflare Pages.
-    expect(PAGE_CODE).toMatch(/export const runtime = 'edge'/);
+    // route, and this is the route it was added for.
+    //
+    // INVERTED WITH THE ADAPTER. @opennextjs/cloudflare replaced @cloudflare/next-on-pages
+    // and runs Next on Node.js inside a Worker, where edge routes are unsupported. The
+    // failure mode is unchanged and is the expensive kind: getting this wrong passes
+    // `next build`, passes lint, passes tsc, and silently stops the frontend deploying.
+    expect(PAGE_CODE).not.toMatch(/export const runtime = ['"]edge['"]/);
   });
 
   it('prints through the browser rather than a PDF dependency', () => {

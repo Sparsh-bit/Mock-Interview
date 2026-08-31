@@ -30,7 +30,6 @@ import { Badge } from '@/components/ui/badge';
 import { ApiError, getBrowserApiClient } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 interface FeatureRow {
   feature: string;

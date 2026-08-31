@@ -26,7 +26,6 @@ import { cn } from '@/lib/utils';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 import { DisputeAssessment } from '@/components/report/DisputeAssessment';
 
-export const runtime = 'edge';
 
 const REPORT_GENERATION_MESSAGES = [
   'Reading through your full session…',

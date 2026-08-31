@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-export const runtime = 'edge';
 
 // Handles Supabase auth redirects (e.g. password reset links) by exchanging
 // the recovery code for a session and sending the user to the settings page,

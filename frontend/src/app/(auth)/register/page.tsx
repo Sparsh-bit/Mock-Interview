@@ -21,7 +21,6 @@ import ConsentCheckbox from '@/components/legal/ConsentCheckbox';
 import { EVENTS, analytics, track } from '@/lib/analytics';
 import { createClient } from '@/lib/supabase/client';
 
-export const runtime = 'edge';
 /*
  * The password rules come from lib/auth/password.ts rather than living here.
  *

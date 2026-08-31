@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
-export const runtime = 'edge';
 
 const ACTIVITY_META: Record<
   ActivityType,

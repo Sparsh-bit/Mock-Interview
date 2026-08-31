@@ -1,6 +1,5 @@
 'use client';
 
-export const runtime = 'edge';
 
 import Link from 'next/link';
 import { ArrowLeft, Calendar, FileText, TrendingUp } from 'lucide-react';

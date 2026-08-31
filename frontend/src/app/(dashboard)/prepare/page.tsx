@@ -32,7 +32,6 @@ import { formatDayMonth } from '@/lib/format-date';
 import { cn } from '@/lib/utils';
 import { brandFill, brandInk } from '@/lib/brand-accent';
 
-export const runtime = 'edge';
 
 /**
  * Target company → study plan.

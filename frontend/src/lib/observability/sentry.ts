@@ -19,12 +19,12 @@ import { scrubBreadcrumb, scrubEvent } from './scrub';
  *
  * WHY `@sentry/browser` AND NOT `@sentry/nextjs`.
  *
- * Every page in this app carries `export const runtime = 'edge'` — there is a test,
- * `src/app/edge-runtime.test.ts`, that fails the build if one does not — because the
- * frontend deploys to Cloudflare Pages through `@cloudflare/next-on-pages`, and Pages
- * runs workerd, not Node. `@sentry/nextjs` splits into a Node server SDK and a Vercel
- * Edge SDK, and neither targets workerd; Sentry ships a separate `@sentry/cloudflare`
- * for that runtime, wired through the Pages adapter rather than through Next. Adding
+ * No page in this app declares `export const runtime = 'edge'` — there is a test,
+ * `src/app/edge-runtime.test.ts`, that fails if one does — because the frontend deploys to
+ * Cloudflare Workers through `@opennextjs/cloudflare`, which runs Next on the Node.js
+ * runtime inside workerd. That is still not Node: `@sentry/nextjs` splits into a Node server
+ * SDK and a Vercel Edge SDK, and neither targets workerd; Sentry ships a separate
+ * `@sentry/cloudflare` for that runtime, wired through the adapter rather than Next. Adding
  * `@sentry/nextjs` here would install a build plugin and server instrumentation into
  * the one runtime it is not built for, on a deployment path CI cannot exercise.
  *

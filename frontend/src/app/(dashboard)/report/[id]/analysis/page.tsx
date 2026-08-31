@@ -29,7 +29,6 @@ import {
 import { fadeUp, staggerContainer } from '@/lib/motion';
 import { cn } from '@/lib/utils';
 
-export const runtime = 'edge';
 
 /** Coding answers arrive as a fenced block, since that is how they were submitted. */
 function parseCodeSubmission(answer: string): { language: string; code: string } | null {

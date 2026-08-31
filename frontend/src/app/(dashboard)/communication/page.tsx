@@ -25,7 +25,6 @@ import { Paywall, paywallFromError, type PaywallInfo } from '@/components/billin
 import { CreditMeter } from '@/components/billing/CreditMeter';
 import { AiAssessmentNotice } from '@/components/report/AiAssessmentNotice';
 
-export const runtime = 'edge';
 
 type Mode = 'speaking' | 'reading';
 
