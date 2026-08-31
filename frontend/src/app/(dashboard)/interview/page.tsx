@@ -1,7 +1,9 @@
 'use client';
 
 import { useInterview } from '@/hooks/useInterview';
-import { useTracks, usePrimaryResume, useUploadResume } from '@/hooks/useData';
+import { useTracks, usePrimaryResume } from '@/hooks/useData';
+import { useResumeUploadFlow } from '@/hooks/useResumeUploadFlow';
+import { ResumeConsentGate } from '@/components/legal/ResumeConsentGate';
 import { Play, Code2, Loader2, Check, CheckCircle2, Sparkles, ArrowRight, ListChecks, FileCheck2, Plus, Upload } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -112,7 +114,7 @@ function InterviewSetup() {
   const [resumeText, setResumeText] = useState('');
   // Shown so a blank box does not look like opting out of personalisation.
   const { data: storedResume } = usePrimaryResume();
-  const uploadResume = useUploadResume();
+  const resumeUpload = useResumeUploadFlow();
   //: Either source counts. Trimmed, so whitespace is not an answer.
   const hasResume = !!storedResume?.has_text || resumeText.trim().length >= 20;
 
@@ -492,6 +494,27 @@ function InterviewSetup() {
   }
 
   // ─── Step 1: Setup ────────────────────────────────────────────────────────
+  /*
+   * THE DISCLOSURE, SHOWN HERE RATHER THAN ON ANOTHER PAGE.
+   *
+   * `submit` holds the file back until consent exists, so without this the candidate would
+   * pick a file and see nothing happen at all — which is a worse failure than the misleading
+   * error it replaces. It takes over the whole view deliberately: it is a decision about
+   * where a person's resume is sent, and it should not be a footnote beside a form.
+   */
+  if (resumeUpload.awaitingConsent) {
+    return (
+      <div className="mx-auto mt-10 max-w-2xl">
+        <div className="lit rounded-2xl p-6 sm:p-8">
+          <ResumeConsentGate
+            onGranted={() => resumeUpload.consentGranted()}
+            onCancel={resumeUpload.cancelConsent}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto mt-10 max-w-3xl space-y-6">
       {/* The count, before anything is filled in. A candidate who spends five minutes on the
@@ -862,15 +885,15 @@ function InterviewSetup() {
               className={cn(
                 'inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold transition-colors',
                 'hover:bg-secondary focus-within:ring-2 focus-within:ring-ring',
-                uploadResume.isPending && 'pointer-events-none opacity-60',
+                resumeUpload.isUploading && 'pointer-events-none opacity-60',
               )}
             >
-              {uploadResume.isPending ? (
+              {resumeUpload.isUploading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
                 <Upload className="h-3.5 w-3.5" aria-hidden />
               )}
-              {uploadResume.isPending
+              {resumeUpload.isUploading
                 ? 'Reading your resume…'
                 : storedResume?.has_text
                   ? 'Upload a different resume'
@@ -879,19 +902,24 @@ function InterviewSetup() {
                 type="file"
                 className="sr-only"
                 accept=".pdf,.doc,.docx,.txt"
-                disabled={uploadResume.isPending}
+                disabled={resumeUpload.isUploading}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   // Cleared immediately so choosing the SAME file twice still fires a change
                   // event — otherwise a failed upload cannot be retried with the same file.
                   e.target.value = '';
                   if (!file) return;
-                  uploadResume.mutate(file, {
-                    onSuccess: () =>
-                      toast.success('Resume saved — every interview will use it from now on.'),
-                    onError: () =>
-                      toast.error('Could not read that file. Try a PDF, DOCX or plain text.'),
-                  });
+                  // THROUGH THE SHARED FLOW, which is what makes this work at all.
+                  //
+                  // This used to call the mutation directly with the generic onError below,
+                  // and the upload endpoint answers 428 PRECONDITION REQUIRED when no
+                  // consent row exists. So for anybody who had not already consented on the
+                  // profile page, choosing a file here produced "Could not read that file.
+                  // Try a PDF, DOCX or plain text." — which is not what happened, offers no
+                  // way forward, and cannot be fixed by trying another file. The resume is
+                  // REQUIRED to start an interview, so the form simply could not be
+                  // completed from this page.
+                  resumeUpload.submit(file);
                 }}
               />
             </label>

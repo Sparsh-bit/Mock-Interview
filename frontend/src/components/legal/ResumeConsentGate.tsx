@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 
+import Link from 'next/link';
+
 import { Button } from '@/components/ui/button';
 import { DisclosureBody } from '@/components/legal/DisclosureBody';
 import { getBrowserApiClient } from '@/lib/api';
@@ -83,7 +85,7 @@ export function ResumeConsentGate({
         </p>
       )}
 
-      <div className="mt-6 flex flex-wrap gap-3">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <Button onClick={agree} loading={saving} disabled={!disclosure}>
           I understand — continue
         </Button>
@@ -91,6 +93,43 @@ export function ResumeConsentGate({
           Not now
         </Button>
       </div>
+
+      {/*
+        * THE FULL TERMS, ON THEIR OWN PAGE, IN A NEW TAB.
+        *
+        * `target="_blank"` rather than a normal navigation, and that is the whole reason this
+        * is a link and not a route change: the candidate is mid-upload with a file already
+        * chosen and held in this component's state. Navigating away discards it, and they
+        * come back to an empty form having read the terms and lost their place — so the one
+        * action that is supposed to reassure them costs them their work.
+        *
+        * `rel="noopener noreferrer"` because `target="_blank"` otherwise hands the opened page
+        * a `window.opener` reference back into this one.
+        *
+        * The summary above stays. This is the long form, not a replacement for telling
+        * somebody what happens to their resume before they send it.
+        */}
+      <p className="mt-4 border-t border-border/50 pt-4 text-xs text-muted-foreground">
+        By continuing you agree to our{' '}
+        <Link
+          href="/terms"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-accent-indigo-ink underline underline-offset-2 hover:text-foreground"
+        >
+          Terms and Conditions
+        </Link>{' '}
+        and{' '}
+        <Link
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-accent-indigo-ink underline underline-offset-2 hover:text-foreground"
+        >
+          Privacy Policy
+        </Link>
+        . They open in a new tab, so the file you have chosen is not lost.
+      </p>
     </div>
   );
 }

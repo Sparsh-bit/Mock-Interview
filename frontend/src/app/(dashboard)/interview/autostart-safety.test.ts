@@ -68,19 +68,63 @@ describe('autostart cannot be triggered by something the candidate does on this 
   });
 
   it('uploading does not call the paid plan endpoint itself', () => {
-    // The upload handler must do exactly one thing. Calling handleGenerate from it would be
-    // the same purchase by a more obvious route.
-    const at = CODE.indexOf('uploadResume.mutate(file');
-    expect(at).toBeGreaterThan(-1);
-    const handler = CODE.slice(at, at + 500);
+    // THE PROPERTY, not the mechanism. This used to look for `uploadResume.mutate(file` — the
+    // literal call — and broke the moment the upload moved into hooks/useResumeUploadFlow.ts
+    // so the interview page could share the consent handling the profile page already had.
+    // What must stay true is that choosing a file cannot reach the endpoint that SPENDS A
+    // CREDIT, whatever the upload is called.
+    // SCOPED TO THE HANDLER'S OWN BRACES, not to a character count.
+    //
+    // This read `CODE.slice(at, at + 500)`, and 500 characters past the upload call now runs
+    // clean out of the handler and into the Build button's `onClick={handleGenerate}` — which
+    // is correct code doing exactly what it should. The test failed on the button it was never
+    // about. A fixed-width window is the "reaching a neighbour" shape in docs/MISTAKES.md P1,
+    // and it fails in the direction that looks like a real finding.
+    // ANCHORED ON THE FILE INPUT, then the next onChange after it. Anchoring on
+    // `onChange={(e) => {` alone finds the COMPANY text field, which is the first one on the
+    // page — the third anchor I tried here and the second that silently pointed at the wrong
+    // element. `type="file"` appears exactly once and is unambiguous.
+    const fileInput = CODE.indexOf('type="file"');
+    expect(fileInput, 'no file input on this page').toBeGreaterThan(-1);
+    const start = CODE.indexOf('onChange={(e) => {', fileInput);
+    expect(start, 'the upload onChange handler could not be found').toBeGreaterThan(-1);
+    let depth = 0;
+    let i = CODE.indexOf('{', start + 'onChange='.length);
+    const from = i;
+    do {
+      if (CODE[i] === '{') depth++;
+      else if (CODE[i] === '}') depth--;
+      i++;
+    } while (depth > 0 && i < CODE.length);
+    const handler = CODE.slice(from, i);
+
+    expect(handler, 'the handler no longer submits the file').toMatch(/resumeUpload\.submit\(file/);
     expect(handler).not.toMatch(/handleGenerate|createPlan\.mutate/);
   });
 });
 
 describe('the upload control itself', () => {
   it('is on this page rather than a link to the profile', () => {
-    expect(CODE).toMatch(/useUploadResume/);
+    // A real file input on THIS page. The point of the original assertion was that somebody
+    // blocked by the required resume field is not sent away to find another page and lose the
+    // setup they had already filled in.
+    expect(CODE).toMatch(/useResumeUploadFlow/);
     expect(CODE).toMatch(/type="file"/);
+    expect(CODE).not.toMatch(/href="\/profile"/);
+  });
+
+  it('handles the consent step, which is why it used to fail here', () => {
+    /*
+     * THE BUG THIS TEST EXISTS FOR. The upload endpoint answers 428 PRECONDITION REQUIRED
+     * when no consent row exists. This page called the mutation directly with one generic
+     * onError, so an un-consented candidate saw "Could not read that file. Try a PDF, DOCX
+     * or plain text." — untrue, unactionable, and unfixable by trying another file. The
+     * resume is REQUIRED to start an interview, so the form could not be completed from here
+     * at all; the only route was to find the profile page and consent there.
+     */
+    expect(CODE).toMatch(/awaitingConsent/);
+    expect(CODE).toMatch(/<ResumeConsentGate/);
+    expect(CODE).toMatch(/consentGranted/);
   });
 
   it('clears the input so the same file can be retried after a failure', () => {
@@ -90,13 +134,27 @@ describe('the upload control itself', () => {
   });
 
   it('cannot be fired twice while one upload is in flight', () => {
-    expect(CODE).toMatch(/disabled=\{uploadResume\.isPending\}/);
+    expect(CODE).toMatch(/disabled=\{resumeUpload\.isUploading\}/);
   });
 
   it('says what happened either way', () => {
-    const at = CODE.indexOf('uploadResume.mutate(file');
-    const handler = CODE.slice(at, at + 600);
-    expect(handler).toMatch(/onSuccess/);
-    expect(handler).toMatch(/onError/);
+    /*
+     * ASSERTED AGAINST THE HOOK, because that is where the outcome is now reported from — and
+     * checking it here rather than dropping the test is the point: the property is that a
+     * candidate is told what happened, not that a particular file contains `onSuccess`.
+     *
+     * The hook also does something the old inline handler did not: it surfaces the SERVER'S
+     * message rather than a generic one, because the server explains exactly why a file could
+     * not be read ("that PDF is a scan — upload the original export").
+     */
+    const flow = readFileSync(
+      join(process.cwd(), 'src/hooks/useResumeUploadFlow.ts'),
+      'utf8',
+    );
+    expect(flow).toMatch(/onSuccess/);
+    expect(flow).toMatch(/onError/);
+    // The 428 branch specifically — that is the whole reason this hook exists, and a
+    // version of it that dropped the branch would still satisfy the two assertions above.
+    expect(flow).toMatch(/=== 428/);
   });
 });
