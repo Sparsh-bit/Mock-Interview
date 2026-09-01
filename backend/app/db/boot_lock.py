@@ -50,6 +50,25 @@ BOOT_LOCK_KEY = 0x484F5453454154  # "HOTSEAT" in ASCII, as an integer
 _POLL_SECONDS = 0.5
 
 
+def lock_is_meaningless(database_url: str) -> bool:
+    """
+    True when a SESSION-scoped advisory lock cannot be honoured by the far end.
+
+    Supabase's TRANSACTION pooler (port 6543, or any URL carrying `pgbouncer=true`) assigns a
+    server backend per TRANSACTION. `pg_try_advisory_lock` taken through it can land on one
+    backend while the migration runs on another and the unlock on a third, so the lock protects
+    nothing — and the code that believes it does can loop or raise, which is fatal here because
+    the container runs `boot.py && uvicorn`: no boot, no server, and the platform answers 502
+    with no application error to read.
+
+    THE SESSION POOLER (port 5432 on the same host) IS FINE and must not be caught: a client
+    keeps one backend for the life of the connection there, which is exactly the guarantee a
+    session-scoped lock needs. Only the transaction port is a problem, which is why this tests
+    the port rather than the hostname.
+    """
+    return ":6543" in database_url or "pgbouncer=true" in database_url
+
+
 @asynccontextmanager
 async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
     """
@@ -71,7 +90,30 @@ async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
     process dies outright, by Postgres when the connection drops. There is no path that
     leaves it held.
     """
+    from app.core.config import settings  # noqa: PLC0415
     from app.db.session import engine  # noqa: PLC0415 — avoids an import cycle at module load
+
+    # ── THE LOCK IS UNAVAILABLE BEHIND A TRANSACTION POOLER ──────────────────────────────
+    #
+    # Skipped rather than attempted, and said out loud. See lock_is_meaningless: through
+    # transaction pooling this lock cannot be honoured, and pretending otherwise risks the
+    # boot hanging on a connection — which takes uvicorn with it, because CMD is
+    # `boot.py && uvicorn`.
+    #
+    # YIELDS TRUE, so the boot work still happens. At one replica nothing is lost: there is no
+    # second booter to race. At several, concurrent migrations become possible again — which is
+    # precisely what this lock was written to prevent — so the warning names the fix.
+    if lock_is_meaningless(settings.DATABASE_URL):
+        logger.warning(
+            "boot_lock_skipped_behind_transaction_pooler",
+            hint=(
+                "A session-scoped advisory lock cannot be honoured through transaction "
+                "pooling, so it is not attempted. Safe at one replica. For several, point "
+                "boot at a DIRECT (non-pooled) database URL so the lock works again."
+            ),
+        )
+        yield True
+        return
 
     deadline = time.monotonic() + wait_seconds
     connection = await engine.connect()
