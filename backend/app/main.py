@@ -12,6 +12,7 @@ Wires together all application layers:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -38,6 +39,15 @@ configure_logging(
 init_sentry()
 
 logger = structlog.get_logger(__name__)
+
+
+#: How long the startup schema-drift diagnostic may take before it is abandoned.
+#:
+#: WELL INSIDE the platform's boot window, which railway.json sets to 120 seconds and which
+#: also has to cover migrations and reference-data seeding. 15 seconds is generous for a check
+#: that is pure metadata reads, and short enough that four workers doing it at once cannot
+#: consume the whole allowance between them.
+_SCHEMA_DRIFT_BUDGET_SECONDS = 15.0
 
 
 @asynccontextmanager
@@ -68,7 +78,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # errors — so without this it is near-invisible. Logged, never fatal.
         from app.db.session import check_schema_drift  # noqa: PLC0415
 
-        drift = await check_schema_drift()
+        # ── BOUNDED, BECAUSE "NEVER FATAL" HAS TO INCLUDE "NEVER SLOW ENOUGH TO KILL BOOT" ──
+        #
+        # check_schema_drift cannot raise — it is written not to. But it was awaited with no
+        # deadline, and an unbounded await during startup is fatal in effect: the platform
+        # gives boot a fixed window (healthcheckTimeout: 120 in railway.json, shared with
+        # migrations and seeds) and kills the container when it expires. That presents as a
+        # crash loop whose last log line is an unrelated pgvector SAWarning, and as a 502 that
+        # answers in two milliseconds.
+        #
+        # WHY IT ONLY BIT IN PRODUCTION. The cost is round trips x tables: the check asks for
+        # every table's columns. Locally that is a millisecond each. In production the API and
+        # the database were ~200ms apart in different regions, through a transaction pooler that
+        # assigns a fresh backend per statement — and WEB_CONCURRENCY=4 means four uvicorn
+        # workers each run this whole lifespan at once, against a pooler holding 15 connections.
+        #
+        # KEPT RATHER THAN DELETED, because it earns its place: a missing column otherwise
+        # surfaces only as a 500 on whichever endpoint touches it, and those reach the browser
+        # as a CORS error pointing nowhere near the schema. It just may not outlive its window.
+        try:
+            drift = await asyncio.wait_for(
+                check_schema_drift(), timeout=_SCHEMA_DRIFT_BUDGET_SECONDS
+            )
+        except TimeoutError:
+            # Not a failure to start. The diagnostic did not finish; the app is fine.
+            drift = None
+            logger.warning(
+                "schema_drift_check_timed_out",
+                budget_seconds=_SCHEMA_DRIFT_BUDGET_SECONDS,
+                hint=(
+                    "startup continued. Usually means the database is far from the API or "
+                    "behind a saturated pooler — run `alembic upgrade head` locally to check "
+                    "drift instead."
+                ),
+            )
         if drift:
             logger.error(
                 "schema_drift_detected",
