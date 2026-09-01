@@ -139,6 +139,43 @@ class Settings(BaseSettings):
     #: the other end already closed. Supabase's pooler cuts idle connections well
     #: before 30 minutes, so 25 minutes is the safe side of it.
     DB_POOL_RECYCLE: int = 1500
+    #: A SEPARATE connection for schema changes, because migrations and request traffic want
+    #: opposite things from a pooler.
+    #:
+    #: THE OUTAGE THIS EXISTS TO PREVENT. Alembic's correctness rests on one guarantee: a
+    #: revision either fully applies — its DDL *and* its `alembic_version` update — or not at
+    #: all. That guarantee is transactional, and a TRANSACTION-MODE pooler cannot provide it:
+    #: each statement may be handed a different backend, so DDL can commit while the version
+    #: update lands somewhere that never commits. The schema then sits AHEAD of the stamp, and
+    #: the next `upgrade head` re-runs a revision whose table already exists:
+    #:
+    #:     asyncpg.exceptions.DuplicateTableError: relation "report_jobs" already exists
+    #:
+    #: boot.py treats a failed migration as fatal and the container runs `boot.py && uvicorn`,
+    #: so the `&&` short-circuits and the server never starts. Every path answers 502, the
+    #: browser calls it a CORS error because a 502 page carries no CORS headers, and — because
+    #: the condition is deterministic — it never self-heals.
+    #:
+    #: SO: the app keeps the transaction pooler (port 6543), which is what lets 200 candidates
+    #: share 15 Postgres backends, and schema changes get a SESSION-mode connection (port 5432
+    #: on the same Supabase host) where a transaction means what Alembic thinks it means. This
+    #: also restores db/boot_lock.py's session-scoped advisory lock for free.
+    #:
+    #: EMPTY MEANS "USE DATABASE_URL", so a deployment against a direct Postgres — local dev,
+    #: or any host without a pooler — needs no second variable and behaves exactly as before.
+    MIGRATION_DATABASE_URL: str = ""
+
+    @property
+    def migration_database_url(self) -> str:
+        """The URL schema changes should use: MIGRATION_DATABASE_URL, else DATABASE_URL."""
+        raw = (self.MIGRATION_DATABASE_URL or "").strip() or self.DATABASE_URL
+        # Same driver normalisation the DATABASE_URL validator applies, so the two cannot
+        # disagree about which driver they mean.
+        for prefix in ("postgresql://", "postgres://"):
+            if raw.startswith(prefix):
+                return raw.replace(prefix, "postgresql+asyncpg://", 1)
+        return raw
+
     DB_ECHO: bool = False  # Set True to log all SQL queries
     #: The pooler's own limit on simultaneous CLIENT connections, off the Supabase
     #: dashboard. Startup checks (DB_POOL_SIZE + DB_MAX_OVERFLOW) x WEB_REPLICA_COUNT

@@ -61,15 +61,63 @@ _STEPS: list[tuple[str, list[str], bool]] = [
 ]
 
 
+#: The signature of a schema that is AHEAD of `alembic_version`.
+#:
+#: WHY THIS IS WORTH RECOGNISING BY HAND. The raw failure is
+#: `DuplicateTableError: relation "report_jobs" already exists`, which names a table and
+#: nothing else — not that the version stamp is behind, not that the container is about to
+#: exit, not what to do. Downstream the symptom is 502 on every path and a browser console
+#: full of CORS errors, because a 502 page carries no Access-Control-Allow-Origin. Nothing in
+#: that chain points back here, and the condition is deterministic, so it never self-heals.
+#: Naming it turns hours of bisecting into one command.
+_SCHEMA_AHEAD_MARKERS = ("already exists", "DuplicateTable", "DuplicateColumn", "DuplicateObject")
+
+
+def _diagnose_schema_ahead(output: str) -> None:
+    """Explain a migration that failed because the object it creates is already there."""
+    if not any(marker in output for marker in _SCHEMA_AHEAD_MARKERS):
+        return
+    logger.error(
+        "migration_failed_schema_ahead_of_alembic_version",
+        why=(
+            "A revision tried to create something that already exists, which means the "
+            "database schema is AHEAD of the revision recorded in alembic_version. Alembic "
+            "will retry the same revision on every boot, so this never clears by itself."
+        ),
+        how_it_happens=(
+            "Most often migrations were run through a TRANSACTION-MODE pooler (Supabase port "
+            "6543), where a revision's DDL can commit while its alembic_version update does "
+            "not — the two are only atomic on a session-mode connection. Set "
+            "MIGRATION_DATABASE_URL to the session pooler (port 5432) so this cannot recur."
+        ),
+        repair=(
+            "Find the true state, then stamp it: `SELECT version_num FROM alembic_version;` "
+            "and compare against database/migrations/versions/. Stamp the highest revision "
+            "whose objects all exist — `alembic stamp <rev>` — then `alembic upgrade head`. "
+            "Stamping does not touch data; it only corrects the bookmark."
+        ),
+    )
+
+
 def _run(name: str, argv: list[str], fatal: bool) -> bool:
     """Run one step. Returns False only when a fatal step failed."""
     logger.info("boot_step_started", step=name)
-    result = subprocess.run(argv, check=False)  # noqa: S603 — fixed argv, no shell
+    # CAPTURED SO IT CAN BE READ, THEN RE-EMITTED SO NOTHING IS LOST. The traceback is how the
+    # next unknown failure gets diagnosed; swallowing it to inspect it would trade one blind
+    # spot for another.
+    result = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        argv, check=False, capture_output=True, text=True
+    )
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
     if result.returncode == 0:
         logger.info("boot_step_finished", step=name)
         return True
     if fatal:
         logger.error("boot_step_failed", step=name, exit_code=result.returncode)
+        _diagnose_schema_ahead(f"{result.stdout}{result.stderr}")
         return False
     logger.warning("boot_step_skipped", step=name, exit_code=result.returncode)
     return True

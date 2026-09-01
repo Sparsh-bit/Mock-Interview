@@ -85,12 +85,30 @@ class TestItYieldsWithoutTouchingTheDatabase:
         async with mod.boot_lock(wait_seconds=5) as acquired:
             assert acquired is True
 
-    async def test_it_warns_so_the_skip_is_in_the_deploy_log(self, monkeypatch, capsys):
-        # A silent skip would be the same class of bug as the broken lock it replaces: a
-        # guarantee quietly not being provided. capsys rather than caplog because structlog is
-        # configured to write to stdout, so nothing reaches the stdlib logging handler.
+    async def test_it_warns_so_the_skip_is_in_the_deploy_log(self, monkeypatch):
+        """
+        A silent skip would be the same class of bug as the broken lock it replaces: a
+        guarantee quietly not being provided.
+
+        THE LOGGER IS RECORDED RATHER THAN THE OUTPUT CAPTURED. Both caplog and capsys are
+        unreliable here — structlog's configuration is process-wide and other tests in the
+        suite reconfigure it, so this passed alone and failed in the full run. Asserting on the
+        call is deterministic and is what the test is actually about.
+        """
         monkeypatch.setattr(mod, "lock_is_meaningless", lambda _url: True)
+
+        events: list[str] = []
+
+        class _Recorder:
+            def warning(self, event: str, **_kw) -> None:
+                events.append(event)
+
+            def __getattr__(self, _name):  # info/error/debug are irrelevant here
+                return lambda *a, **k: None
+
+        monkeypatch.setattr(mod, "logger", _Recorder())
+
         async with mod.boot_lock(wait_seconds=5):
             pass
-        out = capsys.readouterr()
-        assert "boot_lock_skipped_behind_transaction_pooler" in (out.out + out.err)
+
+        assert "boot_lock_skipped_behind_transaction_pooler" in events

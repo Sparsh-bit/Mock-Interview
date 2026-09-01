@@ -33,8 +33,22 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Override DATABASE_URL from environment if set
-database_url = os.environ.get("DATABASE_URL")
+# ── WHICH CONNECTION SCHEMA CHANGES USE ──────────────────────────────────────────────────
+#
+# MIGRATION_DATABASE_URL FIRST, and the reason is an outage rather than tidiness. Alembic's
+# correctness rests on a revision applying atomically — its DDL and its `alembic_version`
+# update together. That is a transactional guarantee, and a TRANSACTION-MODE pooler cannot
+# provide it: each statement may land on a different backend, so DDL can commit while the
+# version update never does. The schema ends up AHEAD of the stamp, and the next
+# `upgrade head` re-runs a revision whose table already exists:
+#
+#     asyncpg.exceptions.DuplicateTableError: relation "report_jobs" already exists
+#
+# boot.py treats that as fatal, the container runs `boot.py && uvicorn`, and the server never
+# starts. Deterministic, so it never recovers on its own.
+#
+# Falls back to DATABASE_URL, so a deployment with no pooler needs no second variable.
+database_url = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL")
 if database_url:
     # Ensure we use the async driver for asyncpg
     if database_url.startswith("postgresql://"):

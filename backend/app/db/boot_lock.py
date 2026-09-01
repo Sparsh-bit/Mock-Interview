@@ -103,7 +103,11 @@ async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
     # YIELDS TRUE, so the boot work still happens. At one replica nothing is lost: there is no
     # second booter to race. At several, concurrent migrations become possible again — which is
     # precisely what this lock was written to prevent — so the warning names the fix.
-    if lock_is_meaningless(settings.DATABASE_URL):
+    # THE MIGRATION URL, not the app's. When a session-mode MIGRATION_DATABASE_URL is
+    # configured the lock is honoured again and this branch does not trigger — which is the
+    # point: give schema work a connection whose sessions are real and both problems go away
+    # together.
+    if lock_is_meaningless(settings.migration_database_url):
         logger.warning(
             "boot_lock_skipped_behind_transaction_pooler",
             hint=(
