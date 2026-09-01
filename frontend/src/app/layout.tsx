@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 
+import { siteUrl } from '@/lib/seo/site-url';
 import { BRAND } from '@/lib/brand';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
@@ -39,7 +40,22 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: BRAND.name }],
   creator: BRAND.name,
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://interviewos.dev'),
+  /*
+   * THE HOST EVERY ABSOLUTE URL IS BUILT FROM — canonical, OpenGraph, Twitter.
+   *
+   * This read NEXT_PUBLIC_APP_URL directly, which is the DEPLOYMENT url. In production that was
+   * the Cloudflare Pages subdomain while the site people visit is a custom domain, so every
+   * canonical and every share card named `*.pages.dev`. Two hosts serving identical content with
+   * no canonical signal is the textbook duplicate-content split.
+   *
+   * `siteUrl()` prefers NEXT_PUBLIC_SITE_URL — the canonical identity of the site, which is a
+   * product decision rather than a property of where the build ran — and falls back to the
+   * deployment URL so preview builds link to themselves.
+   */
+  metadataBase: new URL(siteUrl()),
+  // Self-referencing canonical on the root. Relative, so metadataBase resolves it; per-page
+  // metadata can override it, and the pages that need to already do.
+  alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     locale: 'en_US',

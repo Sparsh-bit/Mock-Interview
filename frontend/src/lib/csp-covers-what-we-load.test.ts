@@ -119,7 +119,12 @@ const NOT_LOADED = new Set([
   'hotseat-login.example',
   'api.example.com',
   'api.hotseat.app',
+  // OUR OWN ORIGIN, in both its old and current form. These appear as the fallback for
+  // `metadataBase` / `siteUrl()` — used to build canonical, OpenGraph and sitemap URLs, which
+  // are strings in markup and an XML file, not fetches. The browser reaches this host as
+  // `'self'`; no directive needs to name it.
   'interviewos.dev',
+  'interviewos.net.in',
   // Rendered as <a href> for the reader to click. A link is not a load: no directive
   // governs where a user may navigate, and form-action already covers submissions.
   'www.linkedin.com',
