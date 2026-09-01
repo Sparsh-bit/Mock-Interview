@@ -1,6 +1,40 @@
 import type { NextConfig } from 'next';
 
 /**
+ * An API base URL that Next and the browser can both actually use.
+ *
+ * THIS EXISTS BECAUSE A MISSING `https://` COST THREE DEPLOY CYCLES. `INTERNAL_API_URL` was set
+ * to a bare host — `mock-interview-production-2530.up.railway.app` — and the build died with
+ * "`destination` does not start with `/`, `http://`, or `https://` ... Invalid rewrite found",
+ * which names the rewrite rather than the env var that broke it.
+ *
+ * THE SECOND FAILURE IS THE DANGEROUS ONE. `connectOrigins()` below calls `new URL(value)`,
+ * which throws on a bare host, and its catch deliberately swallows that so a malformed variable
+ * cannot take a build down. So a scheme-less value ALSO drops the API origin out of
+ * `connect-src` — silently. The result is a site that loads perfectly and cannot make a single
+ * API call, with no build error anywhere to explain it.
+ *
+ * A bare host is unambiguous in intent, so it is repaired rather than rejected: refusing to
+ * build over eight missing characters helps nobody, and accepting it unusable is worse. The
+ * assumption is announced in the build log instead of applied invisibly, because silent
+ * repair is how a typo reaches production. A leading `/` is left alone — a relative destination
+ * is legitimate for a rewrite — and trailing slashes are stripped, since the rewrite appends
+ * its own `/api/v1/:path*` and `//api/v1/...` is a different path to some proxies.
+ */
+function apiOrigin(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return undefined;
+  if (/^https?:\/\//.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/')) return trimmed;
+  console.warn(
+    `[next.config] "${trimmed}" has no scheme; assuming https://${trimmed}. ` +
+      'Set INTERNAL_API_URL / NEXT_PUBLIC_API_URL with an explicit https:// to silence this.',
+  );
+  return `https://${trimmed}`;
+}
+
+/**
  * Origins the browser is allowed to talk to, for `connect-src`.
  *
  * Derived rather than hardcoded, because the API and Supabase origins differ between local,
@@ -10,7 +44,9 @@ import type { NextConfig } from 'next';
  */
 function connectOrigins(): string[] {
   const raw = [
-    process.env.NEXT_PUBLIC_API_URL,
+    // NORMALISED, so a bare host still reaches the CSP. Unnormalised it throws in the loop
+    // below and is dropped, which is the silent half of the bug this helper exists for.
+    apiOrigin(process.env.NEXT_PUBLIC_API_URL),
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_APP_URL,
   ];
@@ -144,7 +180,8 @@ const nextConfig: NextConfig = {
   // Rewrites for API proxy in development
   // In production, the backend is deployed separately
   async rewrites() {
-    const backendUrl = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+    const backendUrl =
+      apiOrigin(process.env.INTERNAL_API_URL) || apiOrigin(process.env.NEXT_PUBLIC_API_URL);
     if (!backendUrl) return [];
 
     return [
