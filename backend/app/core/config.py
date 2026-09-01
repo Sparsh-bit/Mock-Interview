@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, ValidationError, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REDACTED_VALUE = "[redacted]"
 
@@ -101,9 +101,98 @@ class Settings(BaseSettings):
 
     # ── API ───────────────────────────────────────────────────────────────
     API_V1_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list[str] = Field(
+    #: Origins the browser is allowed to call this API from.
+    #:
+    #: `NoDecode` IS LOAD-BEARING AND THE REASON THIS FIELD LOOKS UNUSUAL. A `list[str]` is a
+    #: COMPLEX field, so pydantic-settings JSON-decodes it inside
+    #: `EnvSettingsSource.prepare_field_value` — before any validator here runs, and before
+    #: main.py has configured structlog. A value that is not clean JSON therefore did not
+    #: produce a validation message; it produced this, at import:
+    #:
+    #:     json.decoder.JSONDecodeError: Expecting value: line 1 column 2 (char 1)
+    #:     SettingsError: error parsing value for field "CORS_ORIGINS" from source
+    #:       "EnvSettingsSource"
+    #:
+    #: The container then exits instantly with a raw traceback and NO structured logging, the
+    #: platform reports the deployment unhealthy, its edge answers 502, and the browser reports
+    #: every request as "blocked by CORS policy: No Access-Control-Allow-Origin" — because a
+    #: 502 page carries no CORS headers. Four symptoms, none of them adjacent to a malformed
+    #: environment variable.
+    #:
+    #: MEASURED IN A CONTAINER: of the four shapes a person plausibly pastes, one booted.
+    #: `["https://a"]` worked; backslash-escaped JSON, JSON copied with its surrounding quotes,
+    #: and a comma-separated list all crashed the process.
+    #:
+    #: NoDecode turns the decoding off at the source so the validator below owns it, which is
+    #: the only layer that can fail by name.
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"]
     )
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> object:
+        """
+        Accept the shapes people actually paste, and refuse the rest BY NAME.
+
+        WHY TOLERANCE RATHER THAN STRICTNESS. Every shape handled here is unambiguous about
+        intent — they all mean "these origins". Refusing them bought no safety; it only moved
+        the failure to the worst possible place, a production boot with no diagnosis.
+        Deployment dashboards and CLIs render values escaped, runbooks carry shell quoting, and
+        a comma-separated list is the obvious guess. All three used to be fatal.
+
+        WHAT IS DELIBERATELY NOT TOLERATED. Nothing here widens what is ALLOWED. There is no
+        wildcard fallback and no "on error, allow everything" — that would convert a loud crash
+        into a silent security hole, which is strictly worse than the bug being fixed. A value
+        that genuinely cannot be read still raises, and `allow_credentials` is only ever paired
+        with an explicit list. Blank entries are dropped rather than kept, because an empty
+        string in an allowlist matches nothing while looking like an entry.
+        """
+        if v is None:
+            return []
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if not isinstance(v, str):
+            return v
+
+        text = v.strip()
+        if not text:
+            return []
+
+        # Peel one layer of wrapping quotes, then un-escape \" — the two ways a JSON array
+        # arrives mangled by a dashboard, a CLI, or a shell.
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+            text = text[1:-1].strip()
+        if '\\"' in text:
+            text = text.replace('\\"', '"')
+
+        if text.startswith("["):
+            import json  # noqa: PLC0415 - only needed on this path
+
+            try:
+                parsed = json.loads(text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"CORS_ORIGINS looks like a JSON array but could not be parsed: {exc}. "
+                    'Accepted forms: ["https://a","https://b"] (JSON) or '
+                    "https://a,https://b (comma-separated)."
+                ) from exc
+            if not isinstance(parsed, list):
+                raise ValueError(
+                    "CORS_ORIGINS parsed to "
+                    f"{type(parsed).__name__}, not a list. Accepted forms: "
+                    '["https://a","https://b"] (JSON) or https://a,https://b (comma-separated).'
+                )
+            return [str(x).strip() for x in parsed if str(x).strip()]
+
+        if text.startswith("{"):
+            raise ValueError(
+                "CORS_ORIGINS is a list of origins, not an object. Accepted forms: "
+                '["https://a","https://b"] (JSON) or https://a,https://b (comma-separated).'
+            )
+
+        # A bare origin, or several separated by commas.
+        return [part.strip() for part in text.split(",") if part.strip()]
     MAX_UPLOAD_SIZE_MB: int = 10
 
     # ── Database ──────────────────────────────────────────────────────────
