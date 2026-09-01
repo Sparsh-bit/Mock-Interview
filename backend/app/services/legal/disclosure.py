@@ -175,6 +175,64 @@ def leaves_india() -> bool:
     return any(p.country != "India" for p in active_processors())
 
 
+#: Values that are instructions or examples rather than a contact. Matched case-insensitively.
+_PLACEHOLDER_MARKERS = (
+    "your-", "your_", "yourname", "your name", "your full name", "your address",
+    "changeme", "change me", "todo", "tbd", "fixme", "redacted", "placeholder",
+    "example.com", "example.org", "example.net", "role mailbox", "named human",
+    "their address", "xxx", "n/a",
+)
+
+
+def looks_like_placeholder(value: str | None) -> bool:
+    """
+    True when a grievance contact is setup text rather than a person.
+
+    WHY THIS IS NEEDED AT ALL. `DPO_NAME` and `DPO_EMAIL` were set in production to the literal
+    placeholder text from a setup guide — `<a named human, not a role mailbox>` and
+    `<their address>` — and `configured` was `bool(DPO_NAME and DPO_EMAIL)`, so a non-empty
+    string of instructions counted as an appointed officer. `/privacy` then told every visitor
+    that the grievance officer was "<a named human, not a role mailbox>", and the disclosure
+    asserted the §8(9) obligation had been discharged.
+
+    TREATED AS UNSET, NOT AS A STARTUP FAILURE. Refusing to boot would take the API down over
+    legal copy, which is worse than the gap it protects against. docs/COMPLIANCE.md already
+    settles the right default: an obvious gap beats a plausible fabrication, because a made-up
+    name looks like the obligation was met. So a placeholder falls back to the honest "no
+    grievance officer has been appointed yet" — which is true.
+
+    ANGLE BRACKETS ARE THE STRONGEST SIGNAL and are checked first: no real name or address
+    contains them, and every documentation placeholder in this repository uses them.
+    """
+    if value is None:
+        return True
+    text = value.strip()
+    if not text:
+        return True
+    if "<" in text or ">" in text:
+        return True
+    lowered = text.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+
+
+def _grievance_block() -> dict:
+    """The §8(9)-(10) contact, or an honest admission that there is not one."""
+    from app.core.config import settings  # noqa: PLC0415 - matches this module's convention
+
+    name = settings.DPO_NAME
+    email = settings.DPO_EMAIL
+    configured = not looks_like_placeholder(name) and not looks_like_placeholder(email)
+    return {
+        "role": "Grievance Officer / Data Protection contact",
+        # Emptied rather than passed through, so placeholder text cannot reach the page even
+        # if a caller ignores `configured`.
+        "name": name if configured else "",
+        "email": email if configured else "",
+        "response_days": settings.GRIEVANCE_RESPONSE_DAYS,
+        "configured": configured,
+    }
+
+
 def disclosure() -> dict:
     """
     The whole disclosure, as the API returns it and the upload screen renders it.
@@ -182,8 +240,9 @@ def disclosure() -> dict:
     `draft` is part of the payload rather than a comment, so the UI cannot show this
     text without also showing that it has not been through a lawyer.
     """
-    from app.core.config import settings  # noqa: PLC0415
-
+    # No `settings` import here any more: the only reader of it in this function was the
+    # grievance block, which moved into _grievance_block() so a placeholder contact could be
+    # caught in one place rather than at every call site.
     return {
         "notice_version": NOTICE_VERSION,
         "draft": True,
@@ -197,13 +256,11 @@ def disclosure() -> dict:
             for p in active_processors()
         ],
         "leaves_india": leaves_india(),
-        "grievance": {
-            "role": "Grievance Officer / Data Protection contact",
-            "name": settings.DPO_NAME,
-            "email": settings.DPO_EMAIL,
-            "response_days": settings.GRIEVANCE_RESPONSE_DAYS,
-            "configured": bool(settings.DPO_NAME and settings.DPO_EMAIL),
-        },
+        # BOTH HALVES MUST BE REAL. A name with no address is not a contact anybody can
+        # reach, and setup placeholder text is worse than nothing — see looks_like_placeholder.
+        # Neither value is published unless both survive, so a half-configured contact reads as
+        # the honest gap rather than as a partially discharged obligation.
+        "grievance": _grievance_block(),
         "retention": RETENTION_SUMMARY,
         "rights": [
             "See everything held about you — Settings, or GET /api/v1/users/me/export",

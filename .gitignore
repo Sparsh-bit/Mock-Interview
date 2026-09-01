@@ -1,5 +1,9 @@
 node_modules/
 .next/
+# @opennextjs/cloudflare build output. NOT just noise: opennext writes the resolved
+# process environment into .open-next/cloudflare/next-env.mjs, so this directory holds
+# every secret from the root .env. GitHub push protection caught it once.
+.open-next/
 __pycache__/
 *.pyc
 .venv/
