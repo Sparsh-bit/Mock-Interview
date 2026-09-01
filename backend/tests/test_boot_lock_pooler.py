@@ -112,3 +112,53 @@ class TestItYieldsWithoutTouchingTheDatabase:
             pass
 
         assert "boot_lock_skipped_behind_transaction_pooler" in events
+
+
+class TestTheLockConnectsWhereItChecked:
+    """
+    THE INCONSISTENCY THAT CAUSED A CRASH LOOP, and the reason this class exists.
+
+    `lock_is_meaningless` was pointed at `settings.migration_database_url` — correct, since the
+    lock guards schema work — while the connection was still opened from
+    `app.db.session.engine`, which is built from DATABASE_URL. With MIGRATION_DATABASE_URL on
+    the session pooler (5432) and DATABASE_URL on the transaction pooler (6543), the check said
+    "the lock is honoured here" and the lock was then taken through transaction pooling anyway,
+    where a session-scoped lock cannot stick.
+
+    `pg_try_advisory_lock` then keeps returning false, the poll loop runs for
+    BOOT_LOCK_WAIT_SECONDS — 300 by default — and the platform kills the container at its 120s
+    boot window. A five-minute wait inside a two-minute window is an outage, and because the
+    loop is quiet until it gives up, the deploy log shows nothing at all.
+
+    So the rule: the connection must come from the SAME url the decision was made about.
+    """
+
+    def test_it_does_not_borrow_the_application_engine(self):
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1].joinpath("app/db/boot_lock.py").read_text()
+        assert "from app.db.session import engine" not in src, (
+            "boot_lock still opens the APP's engine (DATABASE_URL) while deciding on the "
+            "MIGRATION url. Those differ the moment MIGRATION_DATABASE_URL is set, and the "
+            "lock is then attempted through a pooler that cannot honour it."
+        )
+
+    def test_it_builds_its_connection_from_the_migration_url(self):
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1].joinpath("app/db/boot_lock.py").read_text()
+        assert "create_async_engine" in src
+        # And from the same setting the decision used.
+        assert src.count("migration_database_url") >= 2, (
+            "the decision and the connection must both read migration_database_url"
+        )
+
+    def test_the_poll_wait_cannot_outlive_a_typical_boot_window(self):
+        """
+        Defence in depth. Even correctly configured, a 300s wait inside a 120s platform window
+        is unreachable — it can only ever end as a kill. The default is now bounded to
+        something a boot can actually survive.
+        """
+        from app.db import boot_lock as m
+
+        assert m._DEFAULT_LOCK_WAIT_SECONDS <= 90

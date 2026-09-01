@@ -47,6 +47,24 @@ BOOT_LOCK_KEY = 0x484F5453454154  # "HOTSEAT" in ASCII, as an integer
 
 #: How often a waiting replica retries. Short enough that it starts promptly once the
 #: migration finishes, long enough not to spin.
+#: How long to wait for the lock before booting without it.
+#:
+#: THE OLD DEFAULT WAS 300 SECONDS, WHICH COULD ONLY EVER END AS A KILL. The reasoning behind
+#: it was sound in isolation — "the cost of waiting is a slower boot; the cost of giving up
+#: early is booting against a half-applied schema" — but it ignored the ceiling: the platform
+#: gives the whole boot 120 seconds (healthcheckTimeout in railway.json). A five-minute wait
+#: inside a two-minute window is not patience, it is an outage, and a quiet one: the poll loop
+#: logs nothing until it gives up, so the deploy log ends mid-startup with no explanation.
+#:
+#: 60 seconds is longer than any migration in database/migrations/ takes and leaves the rest of
+#: the window for the migration itself, the seeds and the lifespan. Past it, the caller boots
+#: anyway and says so — main.py's schema-drift check reports if that turns out to have been
+#: the wrong call.
+#:
+#: Overridable with BOOT_LOCK_WAIT_SECONDS for a deployment whose platform window is genuinely
+#: larger. Raising it past the window buys nothing.
+_DEFAULT_LOCK_WAIT_SECONDS = 60.0
+
 _POLL_SECONDS = 0.5
 
 
@@ -90,8 +108,9 @@ async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
     process dies outright, by Postgres when the connection drops. There is no path that
     leaves it held.
     """
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
     from app.core.config import settings  # noqa: PLC0415
-    from app.db.session import engine  # noqa: PLC0415 — avoids an import cycle at module load
 
     # ── THE LOCK IS UNAVAILABLE BEHIND A TRANSACTION POOLER ──────────────────────────────
     #
@@ -119,8 +138,36 @@ async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
         yield True
         return
 
+    # ── ITS OWN CONNECTION, FROM THE URL THE DECISION WAS MADE ABOUT ─────────────────────
+    #
+    # THIS BORROWED THE APPLICATION'S ENGINE AND THAT CAUSED A CRASH LOOP. The check above
+    # reads `migration_database_url`, correctly — the lock guards schema work. The connection
+    # was opened from app.db.session.engine, which is built from DATABASE_URL. Those are the
+    # SAME url until MIGRATION_DATABASE_URL is set, and different the moment it is: the check
+    # then said "the lock is honoured here" (session pooler, 5432) while the lock was actually
+    # taken through the transaction pooler (6543), where a session-scoped lock cannot stick.
+    #
+    # pg_try_advisory_lock then keeps returning false, this poll loop runs to `wait_seconds`,
+    # and the platform kills the container at its own boot window first — quietly, because the
+    # loop logs nothing until it gives up.
+    #
+    # NullPool because this is one connection used once. Its own engine, disposed in the
+    # `finally`, so it cannot disturb the application's pool — which at four workers is
+    # already sized against a pooler with a fixed number of backends.
+    from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+    lock_engine = create_async_engine(
+        settings.migration_database_url,
+        poolclass=NullPool,
+        connect_args=(
+            {"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+            if lock_is_meaningless(settings.migration_database_url)
+            else {}
+        ),
+    )
+
     deadline = time.monotonic() + wait_seconds
-    connection = await engine.connect()
+    connection = await lock_engine.connect()
     acquired = False
     try:
         while True:
@@ -154,3 +201,6 @@ async def boot_lock(*, wait_seconds: float) -> AsyncIterator[bool]:
             except Exception:  # noqa: BLE001 — never let unlock failure mask the real error
                 logger.warning("boot_lock_unlock_failed", exc_info=True)
         await connection.close()
+        # Its own engine, so its own disposal. Leaving it would hold a pooler client
+        # connection open for the life of the process for nothing.
+        await lock_engine.dispose()

@@ -41,6 +41,36 @@ init_sentry()
 logger = structlog.get_logger(__name__)
 
 
+#: How long the startup database probe may take before it is abandoned.
+#:
+#: THE CALL THIS BOUNDS WAS THE WORST OF THE UNBOUNDED ONES, because it is the FIRST network
+#: call in the lifespan and its `except Exception` made it look safe. It is safe for a REFUSED
+#: connection — that raises and is logged. A connection that HANGS never raises, so startup
+#: never finishes, the platform's boot window expires, the container is killed from outside,
+#: and NOTHING is logged about the database at all. The deploy log simply stops after the last
+#: unrelated warning while the URL answers 502 and the browser blames CORS.
+#:
+#: 20 seconds is far longer than any healthy connect — including cross-region, which is
+#: hundreds of milliseconds, not tens of seconds — and far inside the 120s the whole boot has.
+_DB_CONNECT_BUDGET_SECONDS = 20.0
+
+
+def _db_target(url: str) -> str:
+    """
+    `host:port/database` from a DSN, with the credentials removed.
+
+    "Cannot reach the database" is only actionable if the log says WHICH database, and a DSN
+    carries a password that must never reach a log line. Total tolerance for junk on purpose:
+    this runs while diagnosing a failure and must not become the failure.
+    """
+    try:
+        after_scheme = url.split("://", 1)[-1]
+        # Everything before the last @ is userinfo. rsplit, because a password may contain @.
+        return after_scheme.rsplit("@", 1)[-1] or "unknown"
+    except Exception:  # noqa: BLE001 - a diagnostic may not raise
+        return "unparseable"
+
+
 #: How long the startup schema-drift diagnostic may take before it is abandoned.
 #:
 #: WELL INSIDE the platform's boot window, which railway.json sets to 120 seconds and which
@@ -63,9 +93,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     initialize_event_bus()
     logger.info("event_bus_ready")
 
-    # Verify DB connection
+    # Verify DB connection.
+    #
+    # BOUNDED, AND THE TARGET NAMED BEFORE THE ATTEMPT. See _DB_CONNECT_BUDGET_SECONDS: an
+    # unbounded probe here does not fail, it HANGS, and a hang inside a fixed boot window is
+    # an outage with no error message anywhere. Logging the host first means the failure says
+    # what it could not reach.
     from app.db.session import check_db_connection
-    db_ok = await check_db_connection()
+
+    logger.info(
+        "database_connecting",
+        target=_db_target(settings.DATABASE_URL),
+        budget_seconds=_DB_CONNECT_BUDGET_SECONDS,
+    )
+    try:
+        db_ok = await asyncio.wait_for(
+            check_db_connection(), timeout=_DB_CONNECT_BUDGET_SECONDS
+        )
+    except TimeoutError:
+        # A DISTINCT, SEARCHABLE EVENT. Folding this into the generic "unreachable" path would
+        # lose the one fact that separates the two failures: a refusal means the host answered
+        # and said no, a timeout means nothing answered at all — a firewall, a wrong port, a
+        # region that cannot route, or a pooler with no capacity left to hand out.
+        db_ok = False
+        logger.error(
+            "database_connect_timed_out",
+            target=_db_target(settings.DATABASE_URL),
+            budget_seconds=_DB_CONNECT_BUDGET_SECONDS,
+            hint=(
+                "nothing answered within the budget — this is a hang, not a refusal. Check "
+                "the host and port are right for this network, that the pooler port matches "
+                "the mode you intend (6543 transaction, 5432 session), and that the pooler "
+                "has client connections left."
+            ),
+        )
     if not db_ok:
         logger.error("database_unreachable_at_startup")
         if settings.is_production:

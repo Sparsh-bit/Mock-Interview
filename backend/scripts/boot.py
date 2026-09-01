@@ -36,17 +36,23 @@ import sys
 
 import structlog
 
-from app.db.boot_lock import boot_lock
+from app.db.boot_lock import _DEFAULT_LOCK_WAIT_SECONDS, boot_lock
 
 logger = structlog.get_logger(__name__)
 
 #: How long a replica waits for whichever one is migrating.
 #:
-#: Generous on purpose. The cost of waiting is a slower boot for the replicas that are not
-#: doing the work; the cost of giving up early is booting against a half-applied schema. This
-#: is comfortably longer than any migration in database/migrations/ takes, and the platform's
-#: own health-check grace period is what bounds it in practice.
-_LOCK_WAIT_SECONDS = float(os.environ.get("BOOT_LOCK_WAIT_SECONDS", "300"))
+#: THE DEFAULT NOW COMES FROM boot_lock, and the old comment here is why it had to move. It
+#: read "the platform's own health-check grace period is what bounds it in practice" — which
+#: was the mistake. The platform does not bound a wait, it KILLS the container: 300 seconds
+#: inside a 120-second boot window could only ever end that way, quietly, because the poll
+#: loop logs nothing until it gives up.
+#:
+#: Kept overridable for a platform with a genuinely larger window. See
+#: boot_lock._DEFAULT_LOCK_WAIT_SECONDS for the arithmetic.
+_LOCK_WAIT_SECONDS = float(
+    os.environ.get("BOOT_LOCK_WAIT_SECONDS", str(_DEFAULT_LOCK_WAIT_SECONDS))
+)
 
 #: Ordered. Migrations first — the seeds write rows into tables the migrations create.
 #:
