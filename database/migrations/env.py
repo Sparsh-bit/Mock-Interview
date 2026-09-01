@@ -61,12 +61,49 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+#: Is the migration URL going through a TRANSACTION-MODE pooler?
+#:
+#: MIRRORS app/db/session.py DELIBERATELY, because the two engines point at the same database
+#: and must agree about what that database requires. They did not, and the split crashed every
+#: deploy:
+#:
+#:     asyncpg.exceptions.DuplicatePreparedStatementError:
+#:       prepared statement "__asyncpg_stmt_1__" already exists
+#:     HINT: pgbouncer with pool_mode set to "transaction" ... does not support prepared
+#:           statements properly ... set statement_cache_size to 0
+#:     [SQL: select pg_catalog.version()]
+#:
+#: asyncpg prepares every parameterised statement server-side and caches the handle on the
+#: connection. Through a transaction-mode pooler a "connection" is a different backend from one
+#: transaction to the next, so the handle points at a statement that does not exist there.
+#: `select pg_catalog.version()` is SQLAlchemy's own dialect probe on first connect, so this
+#: fails before a single migration runs.
+#:
+#: WHY IT TOOK THE WHOLE SERVICE DOWN. The container runs `boot.py && uvicorn`. A failed
+#: migration short-circuits the `&&`, uvicorn never starts, and the platform reports CRASHED or
+#: 502 "Application failed to respond" — while the real cause is a prepared-statement complaint
+#: several screens up the deploy log, with nothing connecting the two.
+_VIA_POOLER = bool(database_url) and (":6543" in database_url or "pgbouncer=true" in database_url)
+
+#: Both names on purpose: `statement_cache_size` reaches asyncpg itself, and
+#: `prepared_statement_cache_size` is SQLAlchemy's asyncpg dialect setting. Setting one and not
+#: the other leaves half the caching in place.
+#:
+#: CONDITIONAL, not unconditional. A direct Postgres benefits from the cache and there is no
+#: reason to give it up locally — and an unconditional setting would hide whether the detection
+#: above works at all.
+_CONNECT_ARGS = (
+    {"statement_cache_size": 0, "prepared_statement_cache_size": 0} if _VIA_POOLER else {}
+)
+
+
 async def run_async_migrations() -> None:
     """Run migrations in 'online' async mode using asyncpg."""
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=_CONNECT_ARGS,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
