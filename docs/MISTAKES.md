@@ -607,6 +607,77 @@ New entries go here with a date, then get promoted into the numbered list once t
 clear. If a new mistake matches an existing pattern, say so explicitly — a repeat is a
 stronger signal than a novelty.
 
+### 2026-09-02 — Two correct decisions that were a bug together: the landing page scrolled late
+
+**Symptom, as reported:** the landing page "scrolling is not working correctly", and "after
+scrolling the site is responding very late".
+
+**Cause.** Two settings, each defensible on its own, and no file in which both were visible:
+
+  `globals.css`                    `html { @apply scroll-smooth }`   — nice anchor jumps
+  `marketing.css`                  `html:has(.mk) { scroll-behavior: smooth }` — same, gated
+  `useSmoothScroll.ts`             `window.scrollTo(0, current)` sixty times a second
+
+`window.scrollTo(x, y)` — the **positional** form — scrolls with behavior `auto`, and `auto`
+means *use the scrolling element's computed `scroll-behavior`*. So every frame of the inertial
+loop asked the browser to begin its own ~300ms eased animation toward a target the loop was
+itself still easing toward, and the next frame aborted it a pixel or two in. The page crawled
+far behind the wheel and kept drifting for about a second after the wheel stopped. Two eases
+stacked, each one individually the right call.
+
+**The pattern, and it is a new one.** Every existing entry is a mistake visible in the diff
+that made it. This one was not in any diff: the hook was correct against a default
+`scroll-behavior`, the CSS was correct against a page with no scroll loop, and each was
+written believing the other did not exist. The reviewable unit was not a file — it was the
+pair, and nothing brings a pair like that into one view.
+
+The tell that generalises: **a CSS property and a JS API that read the same underlying
+setting.** `scroll-behavior`/`scrollTo`, `prefers-reduced-motion`/`matchMedia`,
+`scroll-snap-type`/`scrollTo`, `touch-action`/`preventDefault`. Whenever code writes through
+one of those APIs on a schedule, it must state the mode explicitly rather than inherit it,
+because the inherited value lives in a stylesheet that nobody editing the loop will open.
+
+**Fixed by:** naming the behavior at the call site (`{ top, behavior: 'instant' }`), which
+overrides the CSS for the loop's writes only and leaves `#hash` links smooth. Pinned by
+`components/marketing/smooth-scroll.test.ts`.
+
+**Found alongside it, same file, same root:** the loop's re-sync guard read
+`if (running) return`, so *every* non-wheel scroll arriving during an ease — the scrollbar,
+PageDown, `scrollIntoView`, and the film's own rail buttons — was ignored, and the next frame's
+write yanked the page back. Clicking a rail mark within a second of a wheel notch did nothing
+at all. The guard was asking "am I running?" when the question is "did I write this?"; it now
+compares against the last position the loop wrote. Note this was a *second* bug reachable only
+by reading the whole file — the reported symptom did not point at it, and a fix aimed only at
+the reported symptom would have shipped with it still in place.
+
+**Two more, found only by reading the rest of the page rather than the reported path.** Both
+are the same shape as each other and neither would have been found from the symptom:
+
+  · The hero marquee was tagged `data-native-scroll` — the attribute that tells the wheel loop
+    to keep off a region *because the region scrolls itself*. It is `overflow: hidden` and
+    moves by CSS animation; there is nothing in it to scroll. So the loop stepped aside over a
+    full-width band directly under the fold and the browser scrolled the page natively there:
+    two different scroll physics, in the first strip most visitors put the pointer over.
+
+  · The mobile menu is `fixed inset-0` and its open-effect locks `body`, which makes its
+    `<nav>` the only scrollable thing on screen — and it had no `overflow-y-auto`. Its content
+    is about 650px tall, so every phone in landscape (390px on an iPhone 14) and every short or
+    zoomed desktop window clipped it. `justify-center` turned a clipped list into an unreachable
+    one at *both* ends, and the end that mattered held "Start free". The signed-in equivalent,
+    `components/layout/MobileNav.tsx`, has always been `flex-1 overflow-y-auto`; the public copy
+    drifted from it and nothing compared the two.
+
+The generalisation is the same in both: **an attribute or a lock that describes scrolling is a
+claim about the element, and nothing checks it.** `data-native-scroll` asserts "this scrolls";
+`fixed inset-0` plus a body lock asserts "I am now the scroller". Both were wrong, in opposite
+directions, on the same page.
+
+**And:** `globals.css` set `scroll-smooth` on `html` with no media query, which silently
+defeated `marketing.css`'s carefully gated copy — `html` is not a descendant of `.mk`, so the
+blanket `.mk *` reduced-motion reset could never reach it. Reduce-motion visitors got eased
+anchor scrolling on all sixteen pages. This half is [P2](#p2--fixing-the-mechanism-does-not-fix-the-people-already-broken-by-it)
+wearing a new hat: the gate was written, and an ungated rule elsewhere made it decorative.
+
 ---
 
 ## The verification checklist

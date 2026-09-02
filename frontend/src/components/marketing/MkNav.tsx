@@ -228,7 +228,29 @@ export function MkNav() {
             </button>
           </div>
 
-          <nav className="flex flex-1 flex-col justify-center gap-1 px-[var(--mk-gutter)] pb-24">
+          {/* THE SHEET HAS TO SCROLL, AND IT DID NOT.
+              This is `fixed inset-0` and the effect above locks `body`, so this <nav> is the
+              only thing on screen that can scroll — and it had no `overflow-y-auto`, which
+              meant nothing could. The content is about 650px tall (five 78px rows, the CTA and
+              its `pb-24`), so every phone in landscape — 390px on an iPhone 14 — and any short
+              or zoomed desktop window clipped it. `justify-center` made that worse rather than
+              better: overflow was split across BOTH ends, so the first link and the "Start
+              free" button went out of reach together, and the primary conversion action on the
+              site was the thing you could not tap.
+
+              `safe center` is the fix rather than dropping the centring: it centres while the
+              content fits and falls back to flex-start the moment it does not, so nothing is
+              ever pushed past the top edge. An engine that does not know `safe` drops the
+              declaration and lands on `normal`, which is flex-start — the safe direction.
+
+              `data-native-scroll` because this is now a real scroller, and the page's inertial
+              wheel loop must let it have the wheel. `components/layout/MobileNav.tsx` is the
+              signed-in equivalent and has always been `flex-1 overflow-y-auto`; this is the
+              same shape, and it is the public copy that drifted. */}
+          <nav
+            data-native-scroll
+            className="flex flex-1 flex-col [justify-content:safe_center] gap-1 overflow-y-auto px-[var(--mk-gutter)] pb-24"
+          >
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}

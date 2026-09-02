@@ -203,12 +203,29 @@
   }
 
   html {
-    @apply scroll-smooth;
     /* Force light form controls / scrollbars regardless of OS dark mode. */
     color-scheme: light;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Smooth anchor scrolling, gated on `prefers-reduced-motion`.
+
+     This used to be a bare `@apply scroll-smooth` on `html` with no media query, which made
+     it the one animation on the site a visitor could not turn off. It also silently defeated
+     `marketing.css`, which gates its own `html:has(.mk) { scroll-behavior: smooth }` on
+     `no-preference` and whose blanket `.mk *` reduced-motion reset cannot reach `html`
+     because `html` is not a descendant of `.mk`. So the landing page's careful gating was
+     overridden from here and reduce-motion users got eased anchor jumps anyway.
+
+     Note this governs `scrollTo`/`scrollIntoView` calls too, not just `#hash` links — any
+     call that does not name its own behavior inherits this one. Per-frame scroll loops must
+     pass `behavior: 'instant'` explicitly; see `components/marketing/useSmoothScroll.ts`. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
   }
 
   /* The dashboard's scroll container.

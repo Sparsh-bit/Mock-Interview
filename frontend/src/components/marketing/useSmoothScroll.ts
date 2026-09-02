@@ -42,6 +42,13 @@ import { useEffect } from 'react';
  */
 const EASE = 0.115;
 const MULT = 1;
+/* The refresh rate `EASE` is expressed against. It is a unit, not an assumption about the
+   display — see `tick`, which rescales for whatever the frame actually took. */
+const BASE_HZ = 60;
+/* A frame longer than this was a stall or a backgrounded tab, not a slow display. Easing
+   across the whole gap in one step is a teleport; clamping turns it into a fast catch-up over
+   the next few frames, which is what the eye expects after the main thread unblocks. */
+const MAX_FRAME_MS = 64;
 /* Below this, snap. Chasing the last half-pixel keeps a rAF loop alive forever and shows up
    as a permanently busy main thread in a performance trace. */
 const EPSILON = 0.4;
@@ -59,26 +66,66 @@ export function useSmoothScroll(enabled = true) {
     let current = target;
     let frame = 0;
     let running = false;
+    /* The last position this loop wrote, so a scroll event can be attributed. */
+    let written = -1;
 
     const maxScroll = () =>
       Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
 
-    const tick = () => {
+    /* `behavior: 'instant'` is load-bearing, not a default spelled out.
+       `window.scrollTo(0, y)` — the two-argument form — scrolls with behavior `auto`, and
+       `auto` means "obey the scrolling element's computed `scroll-behavior`". Both
+       `globals.css` (`html { scroll-smooth }`) and `marketing.css` (`html:has(.mk)`) set that
+       to `smooth`, so every one of these sixty-a-second calls used to hand the browser a
+       fresh ~300ms eased animation, each aborted by the next before it had travelled more
+       than a pixel or two. The page crawled far behind the wheel and kept drifting for a
+       second after it stopped — this loop easing a target the browser was itself easing
+       towards. Passing an explicit behavior overrides the CSS for these writes only, so
+       in-page `#hash` links keep their smooth scroll and this loop gets the raw seek it has
+       always assumed it was making. */
+    const seek = (y: number) => {
+      window.scrollTo({ top: y, behavior: 'instant' });
+      /* Read back rather than trusting `y`. The browser clamps and snaps to device pixels, so
+         what it landed on is the only value the scroll event will report. */
+      written = window.scrollY;
+    };
+
+    /* WHY THE EASE IS RESCALED BY FRAME TIME.
+       `current += delta * EASE` covers a fixed fraction of the remaining distance *per frame*,
+       which makes the scroll speed a function of the display's refresh rate: identical wheel
+       input resolves in half the time on a 120Hz laptop as on a 60Hz monitor, and drags
+       noticeably whenever the frame rate dips under load — which on this page is exactly when
+       the film is being scrubbed and six mock-ups are on stage. The film's beats are a
+       function of scroll position, so a scroll position that advances per-frame means the
+       frames advance at a rate set by the hardware rather than by the wheel.
+
+       Compounding the same per-frame fraction over `dt` worth of 60Hz frames is what makes it
+       a rate per unit time instead: `1 - (1 - EASE)^n` is the fraction covered by n frames of
+       an exponential ease, and n is simply how many base frames this one lasted. At exactly
+       60Hz n is 1 and this is the original expression, unchanged. */
+    let last = 0;
+
+    const tick = (now: number) => {
+      const dt = last ? Math.min(now - last, MAX_FRAME_MS) : 1000 / BASE_HZ;
+      last = now;
+
       const delta = target - current;
       if (Math.abs(delta) < EPSILON) {
         current = target;
-        window.scrollTo(0, current);
+        seek(current);
         running = false;
         return;
       }
-      current += delta * EASE;
-      window.scrollTo(0, current);
+      current += delta * (1 - Math.pow(1 - EASE, dt / (1000 / BASE_HZ)));
+      seek(current);
       frame = requestAnimationFrame(tick);
     };
 
     const start = () => {
       if (running) return;
       running = true;
+      /* A resumed loop must not measure against the timestamp of whenever it last stopped. */
+      last = 0;
       frame = requestAnimationFrame(tick);
     };
 
@@ -98,10 +145,21 @@ export function useSmoothScroll(enabled = true) {
     };
 
     /* Anything that moved the page without the wheel — a hash link, the scrollbar, a
-       keyboard PageDown, the browser restoring a position — becomes the new truth. Without
-       this the next wheel notch teleports back to wherever the loop still believed it was. */
+       keyboard PageDown, the film's rail buttons, the browser restoring a position — becomes
+       the new truth. Without this the next wheel notch teleports back to wherever the loop
+       still believed it was.
+
+       This asks "did I write this?" rather than "am I running?", and the difference is a bug
+       rather than a refinement. The old `if (running) return` swallowed every one of those
+       inputs that arrived DURING an ease, and the next frame's write then yanked the page
+       back — so clicking a rail mark in the second after a wheel notch did nothing at all,
+       and neither did dragging the scrollbar. Comparing against the last written position
+       tells the loop's own echo apart from somebody else moving the page, at which point it
+       can yield to any of them at any time. Yielding is just adopting the new position:
+       `delta` collapses to zero and the loop retires on the next frame, leaving a programmatic
+       smooth scroll to finish on its own. */
     const onScroll = () => {
-      if (running) return;
+      if (window.scrollY === written) return;
       target = window.scrollY;
       current = target;
     };

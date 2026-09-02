@@ -132,7 +132,14 @@ function HeroMarquee() {
         campus recruiters
       </p>
 
-      <div className="mk-marquee" data-native-scroll>
+      {/* NOT `data-native-scroll`. That attribute tells the page's inertial wheel loop to keep
+          its hands off a region because the region scrolls itself — the showcase rail, which
+          is a real `overflow-x-auto` scroller. This marquee is `overflow: hidden` and moves by
+          CSS animation; there is nothing here to scroll. Marking it meant the wheel was handed
+          straight to the browser over a full-width band directly under the hero, so the page
+          jumped natively there and eased everywhere else — two different scroll physics, in
+          the first band most visitors put the pointer over. */}
+      <div className="mk-marquee">
         <div className="mk-marquee-track">
           {[0, 1].map((copy) => (
             <ul
