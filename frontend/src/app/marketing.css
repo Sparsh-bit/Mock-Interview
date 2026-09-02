@@ -1,0 +1,876 @@
+/* ─── MARKETING SURFACES ─────────────────────────────────────────────────────
+
+   WARM PAPER, ESPRESSO INK, ONE GOLD.
+
+   globals.css themes the SIGNED-IN product: warm paper ground, ink indigo, and
+   six working colours each bound to one meaning. That system is right for a page
+   whose job is to tell you what your score was. It is not right for a page whose
+   job is to make you want a score at all — six information colours on a landing
+   page is six colours carrying no information.
+
+   So the public surfaces get their own layer, scoped to `.mk` and never applied
+   to `:root`. Everything here is one hue family — cream, espresso, gold — plus
+   two verdict colours held back for the moments the film actually renders a
+   verdict. The restraint is the point: when the whole page is one warm hue, a
+   single gold pill reads as the only thing you can do.
+
+   WHY IT IS SCOPED, NOT GLOBAL. `theme-contrast.test.ts` pins the product's
+   token contrast ratios and `lit-hierarchy.test.ts` pins its one-lit-element
+   rule. Both read `:root`. Retoning `:root` to move a landing page would break
+   fourteen signed-in pages and two test files in the same commit, and there
+   would be no way to tell which change caused which failure. Add `mk` to a
+   wrapper and the layer applies; remove it and the page is exactly as it was.
+
+   TYPE. Fraunces sets display, DM Sans sets everything else. Fraunces is a
+   variable serif with an optical-size axis, so it holds its proportions from an
+   11px eyebrow to a 100px hero without needing two cuts — which is the whole
+   reason a display serif normally costs two font files. The italic is load-
+   bearing: exactly one clause per heading is set in it, and that clause is
+   always the turn in the sentence.
+
+   The `--mk-` prefix is not decoration. It means "this token does not exist in
+   the product" — so a component that reaches for one has told you, in its own
+   class list, that it belongs to the public site. ------------------------- */
+
+.mk {
+  /* ── Ground ladder ──────────────────────────────────────────────────────
+     Three warm values and one white, in the same relationship globals.css
+     uses: the page is warm paper, bands recess below it, cards are white and
+     float on both. The dark pair is not a fourth ground — it is the film
+     stage, and the only place on the site that inverts. */
+  --mk-paper: #fbf6ec;
+  --mk-bg: #f4efe7;
+  --mk-bg-raised: #fbf6ec;
+  --mk-band: #f2ede4;
+  --mk-surface: #ffffff;
+
+  --mk-dark: #15110c;
+  --mk-dark-top: #0e0b08;
+  --mk-dark-bot: #1b150e;
+  --mk-dark-warm: #221a10;
+
+  /* ── Ink ────────────────────────────────────────────────────────────────
+     Espresso, not black, for the same reason globals.css uses ink and not
+     #000: a true black headline on a cream ground has more contrast than
+     print can produce and reads as a rendering error rather than as weight. */
+  --mk-ink: #2e2218;
+  --mk-body: #5c4d3f;
+  --mk-muted: #6b5d4e;
+  --mk-border: #e7dece;
+  --mk-hairline: rgb(59 43 28 / 0.1);
+
+  --mk-on-dark: #f0e9dd;
+  --mk-on-dark-bright: #f3ead9;
+  --mk-on-dark-muted: #b7a88f;
+
+  /* ── The one accent ─────────────────────────────────────────────────────
+     Gold does three jobs and no others: the primary action, the film's beat
+     label, and the second half of the wordmark. `--mk-gold` is 3.1:1 on paper
+     and is for fills and strokes only; `--mk-gold-ink` is 5.4:1 and is the
+     only one of the three that may carry text under 18px. Same split, same
+     reason, as the amber pair in globals.css. */
+  --mk-gold: #c8923a;
+  --mk-gold-glow: #e7b65e;
+  --mk-gold-ink: #96691e;
+  --mk-gold-soft: rgb(200 146 58 / 0.14);
+  --mk-gold-line: rgb(200 146 58 / 0.5);
+
+  /* ── The two verdicts ───────────────────────────────────────────────────
+     Held back for the film and the score panels. A landing page that tints a
+     panel green because green is pleasant has spent the only colour that could
+     have meant "this answer was correct". */
+  --mk-good: #5a7a3e;
+  --mk-good-bg: #f5f8f1;
+  --mk-bad: #a64a35;
+  --mk-bad-bg: #fbeeea;
+
+  /* ── Type ───────────────────────────────────────────────────────────────
+     Fluid from the phone to a 1440 desktop with no breakpoints. The clamp
+     minimums are set from the narrowest real device rather than from a round
+     number: 2.375rem is the largest the hero can be at 320px without the
+     longest word in it breaking to its own line. */
+  --mk-font-display: var(--font-fraunces), 'Fraunces', Georgia, 'Times New Roman', serif;
+  --mk-font-text: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
+  --mk-font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', 'Menlo', monospace;
+
+  --mk-display: clamp(2.375rem, 1.08rem + 5.75vw, 6.25rem);
+  --mk-display-2: clamp(2.25rem, 1rem + 4.3vw, 5rem);
+  --mk-h2-xl: clamp(2.125rem, 1.2rem + 2.6vw, 3.625rem);
+  --mk-h2: clamp(2rem, 1.4rem + 1.6vw, 2.75rem);
+  --mk-h3: clamp(1.375rem, 1.2rem + 0.55vw, 1.75rem);
+  --mk-final: clamp(2.5rem, 1.75rem + 3.35vw, 3.625rem);
+  --mk-lead: clamp(1rem, 0.93rem + 0.35vw, 1.125rem);
+  --mk-eyebrow: 0.6875rem;
+  --mk-small: 0.875rem;
+  --mk-micro: 0.8125rem;
+
+  /* ── Shape and depth ────────────────────────────────────────────────────
+     Three radii, not five, because the public site nests two levels deep at
+     most. Pills for every control — the reference this page answers to uses
+     them and they are the single strongest signal that a surface is marketing
+     rather than product. */
+  --mk-r-card: 16px;
+  --mk-r-control: 10px;
+  --mk-r-pill: 999px;
+
+  --mk-shadow-card: 0 8px 24px -14px rgb(59 43 28 / 0.16);
+  --mk-shadow-raised: 0 26px 64px -30px rgb(46 34 24 / 0.4);
+  --mk-shadow-pill: 0 10px 26px -12px rgb(46 34 24 / 0.45);
+
+  /* ── Motion ─────────────────────────────────────────────────────────────
+     One curve for entrances (out-expo: fast out, long settle) and one for
+     springs. Every transition on the public site uses one of the two, which
+     is what makes six independently-written components feel like one page. */
+  --mk-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --mk-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Layout */
+  --mk-gutter: clamp(1.25rem, 0.6rem + 2.6vw, 2.5rem);
+  --mk-max: 1120px;
+
+  background: var(--mk-paper);
+  color: var(--mk-ink);
+  font-family: var(--mk-font-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Base type inside the scope ───────────────────────────────────────────
+   The product's `@layer base` sets h1–h6 in Inter at product sizes. Those
+   rules still apply inside `.mk`, so every display element restates its face
+   and size here rather than relying on inheritance — a heading that picks up
+   `text-4xl font-semibold` from globals and Fraunces from here is the exact
+   combination that reads as a serif trying to be a UI font. */
+.mk h1,
+.mk h2,
+.mk h3,
+.mk .mk-display {
+  font-family: var(--mk-font-display);
+  font-weight: 480;
+  font-optical-sizing: auto;
+  letter-spacing: -0.018em;
+  color: var(--mk-ink);
+}
+
+.mk p {
+  color: var(--mk-body);
+}
+
+.mk em,
+.mk .mk-turn {
+  font-style: italic;
+  color: var(--mk-gold-ink);
+}
+
+/* On the dark stage the gold has room to be the brighter of the two tones —
+   #96691E on espresso is 2.2:1 and unreadable. */
+.mk-on-dark .mk-turn,
+.mk-on-dark em {
+  color: var(--mk-gold-glow);
+}
+
+/* ── Eyebrow ──────────────────────────────────────────────────────────────
+   The one typographic device shared by every section, and the site's answer to
+   numbered section marks: 11px, uppercase, wide tracking, preceded by a 14px
+   gold rule. It is what tells you a new argument has started without needing a
+   border across the page. */
+.mk-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-family: var(--mk-font-text);
+  font-size: var(--mk-eyebrow);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mk-gold-ink);
+  font-style: normal;
+}
+
+.mk-eyebrow::before {
+  content: '';
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--mk-gold);
+  flex: none;
+}
+
+.mk-on-dark .mk-eyebrow {
+  color: var(--mk-gold-glow);
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────────
+   Two buttons exist on the public site. The filled one is espresso on paper
+   and gold on the dark stage — the same button, inverted, so that "the primary
+   action" is one idea and not two. Both lift 2px on hover and neither moves on
+   press, because a control that travels down under the cursor on a page with
+   this much vertical motion reads as the page scrolling, not as a click. */
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 3.125rem;
+  padding: 0 1.75rem;
+  border-radius: var(--mk-r-pill);
+  font-family: var(--mk-font-display);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 0.18s var(--mk-ease),
+    box-shadow 0.18s var(--mk-ease),
+    background 0.18s var(--mk-ease),
+    border-color 0.18s var(--mk-ease);
+}
+
+.mk-btn-primary {
+  background: var(--mk-ink);
+  color: var(--mk-paper);
+  border: 1px solid var(--mk-ink);
+  box-shadow: var(--mk-shadow-pill);
+}
+
+.mk-btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 34px -14px rgb(46 34 24 / 0.55);
+}
+
+.mk-btn-gold {
+  background: var(--mk-gold);
+  color: #1b150e;
+  border: 1px solid var(--mk-gold);
+  box-shadow: 0 12px 30px -14px rgb(200 146 58 / 0.75);
+}
+
+.mk-btn-gold:hover {
+  transform: translateY(-2px);
+  background: var(--mk-gold-glow);
+  border-color: var(--mk-gold-glow);
+}
+
+.mk-btn-ghost {
+  background: transparent;
+  color: var(--mk-ink);
+  border: 1px solid var(--mk-border);
+}
+
+.mk-btn-ghost:hover {
+  transform: translateY(-2px);
+  background: var(--mk-surface);
+  border-color: var(--mk-gold-line);
+}
+
+.mk-on-dark .mk-btn-ghost {
+  color: var(--mk-on-dark);
+  border-color: rgb(255 255 255 / 0.18);
+}
+
+.mk-on-dark .mk-btn-ghost:hover {
+  background: rgb(255 255 255 / 0.06);
+  border-color: var(--mk-gold-line);
+}
+
+/* Arrow inside a button slides on hover. One gesture, every CTA. */
+.mk-btn .mk-arrow {
+  transition: transform 0.18s var(--mk-ease);
+}
+
+.mk-btn:hover .mk-arrow {
+  transform: translateX(3px);
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────────────*/
+.mk-card {
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-r-card);
+  box-shadow: var(--mk-shadow-card);
+}
+
+.mk-band {
+  background: var(--mk-bg);
+  border-top: 1px solid var(--mk-border);
+  border-bottom: 1px solid var(--mk-border);
+}
+
+.mk-shell {
+  width: 100%;
+  max-width: var(--mk-max);
+  margin-inline: auto;
+  padding-inline: var(--mk-gutter);
+}
+
+.mk-section {
+  padding-block: clamp(4.5rem, 3rem + 6vw, 8.5rem);
+}
+
+/* ── Numerals ─────────────────────────────────────────────────────────────
+   Same rule as the product: every score, count, price and duration is mono and
+   tabular, so a number that ticks up does not reflow the line it sits on. */
+.mk-num {
+  font-family: var(--mk-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: -0.02em;
+}
+
+/* ── The paper's own texture ──────────────────────────────────────────────
+   A single fractal-noise tile at 3.5%, painted as a background layer rather
+   than a fixed overlay. As an overlay it forces the compositor to repaint the
+   full viewport on every scroll frame, which on a mid-range Android costs more
+   than every animation on this page put together. */
+.mk-grain::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
+}
+
+.mk-on-dark {
+  color: var(--mk-on-dark);
+}
+
+.mk-on-dark p,
+.mk-on-dark .mk-body {
+  color: var(--mk-on-dark-muted);
+}
+
+.mk-on-dark h1,
+.mk-on-dark h2,
+.mk-on-dark h3 {
+  color: var(--mk-on-dark-bright);
+}
+
+/* ── Smooth scrolling ─────────────────────────────────────────────────────
+   Anchor jumps ease rather than teleport. Guarded on `prefers-reduced-motion`
+   because a smooth-scrolled anchor is a full-screen animation the user did not
+   ask for, and it is one of the specific things that setting exists to stop.
+   The inertia on the wheel is done in JS (`useSmoothScroll`) and is a separate
+   decision — this rule alone costs nothing and helps every in-page link. */
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.mk) {
+    scroll-behavior: smooth;
+  }
+}
+
+/* Sticky film stages set their own scroll padding so a hash link never lands a
+   heading underneath the floating nav. */
+.mk {
+  scroll-padding-top: 6rem;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Every marketing animation is either a CSS transition/animation on a `.mk-*`
+   class or a framer-motion component that reads `useReducedMotion()` itself.
+   This blanket rule catches the first kind. The scroll-film catches the second
+   by rendering all six beats stacked and static instead of stage-managing them,
+   which is a different page rather than the same page with the motion removed —
+   and that is the correct answer, because with no motion the film has no way to
+   advance. */
+@media (prefers-reduced-motion: reduce) {
+  .mk *,
+  .mk *::before,
+  .mk *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── The marquee ──────────────────────────────────────────────────────────
+   Two identical rows inside one track, translated by exactly -50%. Anything
+   other than -50% leaves a visible seam at the loop point, and the usual
+   attempts to fix a seam — a fade at both edges, a slower speed — treat the
+   symptom. The mask below is there for a different reason: so the row appears
+   to pass behind the page rather than stopping at an edge.
+
+   `width: max-content` on the track is what makes -50% mean "exactly one copy"
+   regardless of how many items are in the list. Set a fixed width here and the
+   seam comes back the next time somebody adds a recruiter. */
+.mk-marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.mk-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: mk-marquee 42s linear infinite;
+}
+
+.mk-marquee-row {
+  display: flex;
+  align-items: baseline;
+  gap: 2.75rem;
+  padding-inline: 1.375rem;
+  list-style: none;
+  margin: 0;
+}
+
+/* Hovering stops it. A moving list you cannot read is a list that should not
+   have moved, and a visitor who has put the pointer on it is telling you they
+   are trying to read it. */
+.mk-marquee:hover .mk-marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes mk-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* Reduced motion gets a static, horizontally scrollable row. Not a frozen
+   marquee — half the list would be permanently off-screen — but the same
+   content the animation would have shown, reachable by drag or shift-wheel. */
+@media (prefers-reduced-motion: reduce) {
+  .mk-marquee {
+    overflow-x: auto;
+  }
+  .mk-marquee-track {
+    animation: none;
+  }
+}
+
+/* ── The scroll cue ───────────────────────────────────────────────────────
+   Four seconds between nudges, not one. A cue that bounces continuously is a
+   thing in the corner of your eye that never stops, and on a page this long it
+   becomes the most animated element on screen — which is the opposite of what
+   a hint is for. */
+.mk-scroll-cue {
+  animation: mk-cue 4s var(--mk-ease) infinite;
+}
+
+@keyframes mk-cue {
+  0%,
+  72%,
+  100% {
+    transform: translateY(0);
+  }
+  82% {
+    transform: translateY(5px);
+  }
+  91% {
+    transform: translateY(0);
+  }
+}
+
+/* ═══ THE FILM ════════════════════════════════════════════════════════════
+   Everything below styles the sticky dark stage in MkFilm.tsx and the six
+   beats in film-beats.tsx.
+
+   THE ONE STRUCTURAL DECISION: all six beats are in the DOM at all times,
+   stacked absolutely, and only opacity separates them. The alternative —
+   mounting the active beat and unmounting the rest — sounds cheaper and is
+   worse in three ways. It cannot cross-fade, because the outgoing beat is
+   already gone. It reflows the stage on every transition, which on a phone is
+   a visible hitch at exactly the moment the film is meant to look expensive.
+   And it hides five sixths of the page's actual content from anything that
+   reads the DOM rather than the screen.
+
+   Six beats of cream cards is a few hundred nodes. That is nothing; the
+   compositor animates opacity on layers it has already painted. ---------- */
+
+.mk-beat {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 5vw 4vw;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s var(--mk-ease);
+}
+
+.mk-beat.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The beat's headline, in gold, above the artefact. It is the only text on the
+   stage that is not part of a product surface, and it is the sentence the beat
+   is an argument for. The glow is 14px and low — enough that gold on near-black
+   does not read as flat, far short of neon. */
+.mk-beat-label {
+  max-width: 34ch;
+  font-family: var(--mk-font-display);
+  font-size: clamp(1.125rem, 0.9rem + 1.05vw, 1.625rem);
+  font-weight: 480;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  text-align: center;
+  color: var(--mk-gold-glow);
+  text-shadow: 0 0 14px rgb(231 182 94 / 0.28);
+}
+
+.mk-beat.on .mk-beat-label {
+  animation: mk-label 0.7s var(--mk-ease) 0.05s both;
+}
+
+@keyframes mk-label {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* THE SLOW PUSH. An eight-second 1 → 1.035 on the artefact only, never on the
+   label, so the type stays pin-sharp while the card drifts toward you. It is
+   the difference between six slides and six shots. Two constraints make it
+   safe: it is on a wrapper that owns no text rendering of its own, and it is
+   `both`-filled so a beat you linger on settles rather than snapping back. */
+.mk-beat-body {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.mk-beat.on .mk-beat-body {
+  animation: mk-kenburns 8s var(--mk-ease) both;
+  will-change: transform;
+}
+
+@keyframes mk-kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.035);
+  }
+}
+
+/* ── The two entrances ────────────────────────────────────────────────────
+   `mk-in` rises from below; `mk-in-r` arrives from the right. The direction is
+   semantic and it is the same grammar the previous landing page used: content
+   that belongs to the flow rises with it, and content that interrupts the flow
+   comes across it. Every cross-question, flag and callout on this site uses
+   `mk-in-r`, and nothing else does. */
+.mk-in,
+.mk-in-r {
+  animation-delay: var(--d, 0s);
+  animation-fill-mode: both;
+  animation-timing-function: var(--mk-ease);
+}
+
+.mk-in {
+  animation-name: mk-rise;
+  animation-duration: 0.6s;
+}
+
+.mk-in-r {
+  animation-name: mk-cross;
+  animation-duration: 0.55s;
+}
+
+@keyframes mk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mk-cross {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Beat furniture ───────────────────────────────────────────────────────*/
+.mk-fcard {
+  background: #fbf8f2;
+  color: #1e1710;
+  border: 1px solid #efe9df;
+  border-radius: 14px;
+  box-shadow: 0 24px 50px -28px rgb(0 0 0 / 0.7);
+  text-align: left;
+}
+
+.mk-flabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mk-muted);
+  margin-bottom: 2px;
+}
+
+.mk-fmono {
+  font-family: var(--mk-font-mono);
+  font-size: 0.9em;
+}
+
+.mk-fcode {
+  font-family: var(--mk-font-mono);
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: #3f3428;
+  background: rgb(59 43 28 / 0.045);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.mk-favatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgb(59 43 28 / 0.08);
+  font-family: var(--mk-font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--mk-body);
+}
+
+.mk-fchip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-border);
+  background: #fff;
+  font-size: 11px;
+  color: var(--mk-body);
+}
+
+/* ── The mic level ───────────────────────────────────────────────────────
+   Five bars on staggered delays of the same keyframe. Not driven by any audio
+   and not pretending to be: it is the universal sign for "this one is
+   talking", and the alternative — a per-frame JS oscillator — would cost real
+   main-thread work to say the same thing. */
+.mk-wave i {
+  display: block;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--mk-gold);
+  animation: mk-wave 0.9s ease-in-out infinite;
+  animation-delay: calc(var(--b) * 0.11s);
+}
+
+@keyframes mk-wave {
+  0%,
+  100% {
+    height: 4px;
+    opacity: 0.55;
+  }
+  50% {
+    height: 13px;
+    opacity: 1;
+  }
+}
+
+/* ── The two annotation marks ────────────────────────────────────────────
+   Carried over unchanged in meaning from the previous landing page, because
+   they are the product's own vocabulary and it would be strange for the public
+   site to invent a second one.
+
+   The filler box is DRAWN, left to right, by animating a clip-path rather than
+   fading in. A fade is decoration; a stroke travelling across a word is
+   somebody marking it. That distinction is most of why this page reads as a
+   marking scheme rather than a highlight reel — and it costs the same. */
+.mk-fill {
+  position: relative;
+  display: inline-block;
+  padding: 1px 5px;
+  color: var(--mk-bad);
+  white-space: nowrap;
+}
+
+.mk-fill::after {
+  content: '';
+  position: absolute;
+  inset: -2px -1px;
+  border: 1.5px solid var(--mk-bad);
+  border-radius: 5px;
+  clip-path: inset(0 100% 0 0);
+  animation: mk-draw 0.45s var(--mk-ease) var(--d, 0s) both;
+}
+
+@keyframes mk-draw {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* The pause stamp. Scales in from 0.6 on the spring curve — a stamp lands, it
+   does not appear. */
+.mk-pause {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--mk-gold-soft);
+  border: 1px solid var(--mk-gold-line);
+  font-family: var(--mk-font-mono);
+  font-size: 11px;
+  color: var(--mk-gold-ink);
+  animation: mk-stamp 0.4s var(--mk-ease-spring) var(--d, 0s) both;
+}
+
+@keyframes mk-stamp {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ── Quiz options ────────────────────────────────────────────────────────
+   The verdict colours arrive a beat after the options do, so you read the four
+   choices before the page tells you which one was right. Landed together, the
+   question is rhetorical. */
+.mk-fopt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--mk-border);
+  background: #fff;
+  transition:
+    background 0.4s var(--mk-ease),
+    border-color 0.4s var(--mk-ease),
+    color 0.4s var(--mk-ease);
+}
+
+.mk-fopt-right {
+  animation:
+    mk-rise 0.6s var(--mk-ease) var(--d, 0s) both,
+    mk-opt-right 0.5s var(--mk-ease) 1.1s both;
+}
+
+.mk-fopt-wrong {
+  animation:
+    mk-rise 0.6s var(--mk-ease) var(--d, 0s) both,
+    mk-opt-wrong 0.5s var(--mk-ease) 0.95s both;
+}
+
+@keyframes mk-opt-right {
+  to {
+    background: var(--mk-good-bg);
+    border-color: var(--mk-good);
+    color: var(--mk-good);
+  }
+}
+
+@keyframes mk-opt-wrong {
+  to {
+    background: var(--mk-bad-bg);
+    border-color: var(--mk-bad);
+    color: var(--mk-bad);
+  }
+}
+
+/* ── Bars and the ring ───────────────────────────────────────────────────
+   Both grow from nothing to their value. A score bar that is simply present at
+   its final width states a fact; one that travels to it shows a measurement
+   being taken, which is the whole claim the report makes. */
+.mk-fbar {
+  width: 0;
+  animation: mk-bar 0.9s var(--mk-ease) var(--d, 0s) both;
+}
+
+@keyframes mk-bar {
+  to {
+    width: var(--w);
+  }
+}
+
+.mk-ring {
+  stroke-dashoffset: var(--from);
+  animation: mk-ring 1.4s var(--mk-ease) 0.25s both;
+}
+
+@keyframes mk-ring {
+  to {
+    stroke-dashoffset: var(--to);
+  }
+}
+
+/* ── The showcase rail ────────────────────────────────────────────────────
+   A native horizontal scroller, not a transform carousel. It bleeds past the
+   text column on both sides via spacer elements rather than padding, because
+   trailing padding on a scroll container is ignored when the browser computes
+   the scroll extent — the last card would stop flush against the viewport edge
+   with no air after it, which is the one thing a rail must not do.
+
+   `scrollbar-width: none` and the WebKit equivalent hide the bar. That is
+   normally a bad idea, and it is safe here for one reason: two arrow buttons
+   sit above the rail and they disable at each end, so the affordance and the
+   position feedback both still exist. Hiding a scrollbar with nothing in its
+   place is how a rail becomes invisible. */
+.mk-rail {
+  scrollbar-width: none;
+  scroll-padding-inline: var(--mk-gutter);
+}
+
+.mk-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.mk-rail-pad {
+  width: calc((100vw - min(100vw, var(--mk-max))) / 2 + var(--mk-gutter) - 0.75rem);
+  min-width: var(--mk-gutter);
+}
+
+.mk-shotnav {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--mk-border);
+  background: var(--mk-surface);
+  color: var(--mk-ink);
+  box-shadow: var(--mk-shadow-card);
+  transition:
+    background 0.18s var(--mk-ease),
+    opacity 0.2s var(--mk-ease),
+    border-color 0.18s var(--mk-ease);
+}
+
+.mk-shotnav:hover:not(:disabled) {
+  background: var(--mk-bg);
+  border-color: var(--mk-gold-line);
+}
+
+/* Faded rather than hidden. A control that vanishes at the end of a rail makes
+   the remaining one jump sideways, and the jump reads as a bug. */
+.mk-shotnav:disabled {
+  opacity: 0.32;
+  cursor: default;
+}

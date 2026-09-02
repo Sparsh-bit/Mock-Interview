@@ -481,7 +481,13 @@ class Settings(BaseSettings):
         description="Groq's OpenAI-compatible endpoint — the same shape GLM and NVIDIA use.",
     )
     GROQ_DAILY_REQUEST_LIMIT: int = Field(
-        default=2000,
+        # 1,000 BECAUSE THAT IS WHAT GROQ_MODEL'S DEFAULT ALLOWS. This was 2,000 - twice the
+        # ceiling it was capping - so the cap could never fire, and the rung kept calling until
+        # Groq answered 429. That is exactly the outcome the note below describes as the reason
+        # this field exists, and a cap that cannot fire is worse than no cap because it reads as
+        # protection. The rung is only reached during an outage, when nobody is reading two
+        # field descriptions to notice the defaults disagree.
+        default=1000,
         description=(
             "Requests a day the free-tier burst rung may make before it is dropped from the "
             "provider chain. 0 disables the cap. "

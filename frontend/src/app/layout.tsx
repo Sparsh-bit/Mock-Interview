@@ -2,8 +2,15 @@ import type { Metadata, Viewport } from 'next';
 
 import { siteUrl } from '@/lib/seo/site-url';
 import { BRAND } from '@/lib/brand';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { DM_Sans, Fraunces, Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+/*
+ * Imported AFTER globals.css and never before it. Everything in marketing.css is plain CSS at
+ * the same specificity as a Tailwind utility, so source order is the whole tie-break: load it
+ * first and `.mk-btn`'s background loses to any `bg-*` class that happens to be on the same
+ * element, which is a bug that only shows up on the two or three controls that carry both.
+ */
+import './marketing.css';
 import { Providers } from '@/components/providers';
 import { Toaster } from 'sonner';
 
@@ -16,6 +23,31 @@ const inter = Inter({
 const jetbrainsMono = JetBrains_Mono({
   subsets: ['latin'],
   variable: '--font-jetbrains-mono',
+  display: 'swap',
+});
+
+/*
+ * THE MARKETING FACES. Fraunces sets every display line on the public surfaces and the
+ * onboarding wizard; DM Sans sets the body underneath it. They are loaded here rather than in
+ * the marketing layout because next/font hoists to the document root either way, and declaring
+ * them once means the two variables are always defined even on a page that only borrows one of
+ * them (the 404, a legal page, a shared report).
+ *
+ * Fraunces carries an italic — the hero, the section headings and the final CTA all set one
+ * clause in it, and that clause is the only place the display face changes shape. Without
+ * `style` here next/font ships the roman only and the italic silently falls back to a synthetic
+ * oblique of Georgia, which is visibly wrong next to the real thing.
+ */
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  variable: '--font-fraunces',
+  display: 'swap',
+  style: ['normal', 'italic'],
+});
+
+const dmSans = DM_Sans({
+  subsets: ['latin'],
+  variable: '--font-dm-sans',
   display: 'swap',
 });
 
@@ -101,7 +133,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${inter.variable} ${jetbrainsMono.variable} ${fraunces.variable} ${dmSans.variable}`}
       suppressHydrationWarning
     >
       <body className="min-h-screen bg-background font-sans antialiased">
