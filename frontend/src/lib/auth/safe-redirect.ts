@@ -21,15 +21,26 @@
 
 /** Where anybody with no valid destination ends up. */
 /*
- * `/welcome` and not `/dashboard`: it is the onboarding wizard, and it forwards to the
- * dashboard by itself for any account that is already set up or has skipped. Sending an
- * established user through it costs one client-side redirect; sending a new one straight to
- * the dashboard costs them the whole first session.
+ * `/dashboard`, and it used to be `/welcome`. The reasoning for the wizard was that it
+ * forwards to the dashboard by itself for anyone already set up, so an established account
+ * paid only one client-side redirect. That is true only for accounts that FINISHED setup:
+ * `/welcome` self-skips on `target_company && resume`, which is "has completed onboarding",
+ * not "has been here before". Anybody who skipped it, or who set a target and never uploaded
+ * a resume, was handed the four-step wizard again on every single login — and because the
+ * skip flag is `localStorage`, skipping on a laptop did nothing for the same person on their
+ * phone.
+ *
+ * A login is somebody who already has an account saying so with their password. It goes to
+ * the dashboard. The wizard belongs to the signup flow and is now reached from there
+ * explicitly, via `emailRedirectTo` in `hooks/useAuth.ts`.
+ *
+ * This is also the value `safeRedirect` falls back to when it rejects a hostile
+ * `?redirectTo=`, which is a second reason for it to be the plain landing page.
  *
  * An explicit `?redirectTo=` still wins — somebody deep-linked to a report is going to the
  * report.
  */
-export const DEFAULT_REDIRECT = '/welcome';
+export const DEFAULT_REDIRECT = '/dashboard';
 
 /**
  * A same-origin path, or `DEFAULT_REDIRECT`.

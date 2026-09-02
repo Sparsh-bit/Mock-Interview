@@ -44,10 +44,24 @@ export const BRAND = {
     'Take the seat, face a panel that asks what the real one will ask, and find out what they would have said about you — while it still costs you nothing.',
 
   /**
-   * NOT renamed with the product. This is a live mailbox people already write to, and a brand
-   * decision must not silently break support. Move it deliberately, with a forwarding rule.
+   * MOVED DELIBERATELY, and the old address is not dead. This was `support@interviewos.app`,
+   * kept through two product renames on the rule that a live mailbox outlives a brand
+   * decision. That rule still holds — this is not a rename following the product, it is a
+   * move to a different domain that is actually read.
+   *
+   * WHICH MEANS THE OLD MAILBOX STILL HAS TO WORK. Changing this line only changes what new
+   * visitors are shown; everyone who already has the old address in their sent items, and
+   * every page cached or indexed with it, still writes to `support@interviewos.app`. Put a
+   * forwarding rule on it before this ships and leave the rule in place indefinitely — a
+   * bounce from a support address reads as "this company is gone", which is worse than the
+   * inconsistency it fixes.
+   *
+   * This is NOT the DPDP §8(9)–(10) grievance contact. That is a named human, configured
+   * server-side via `DPO_EMAIL`, served from `/api/v1/legal/disclosure`, and deliberately
+   * empty until somebody is actually appointed. A role mailbox does not satisfy the statute,
+   * so do not point the legal pages here.
    */
-  supportEmail: 'support@interviewos.app',
+  supportEmail: 'interview@concilio.solutions',
 } as const;
 
 /** `InterviewOS · Dashboard` — the one place the separator is decided. */

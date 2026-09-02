@@ -126,9 +126,12 @@ describe('there is exactly one grievance contact', () => {
   it('no legal page hardcodes an email address', () => {
     /*
      * THE FAILURE THIS PREVENTS. A second address typed into a page is a second inbox, and
-     * a person who writes to the stale one concludes nobody answered. `support@interviewos.app`
-     * is a live mailbox CLAUDE.md says to keep — which is exactly why it must not be
-     * scattered into new pages that will not be updated when it moves.
+     * a person who writes to the stale one concludes nobody answered. The support address is
+     * `BRAND.supportEmail`, and it HAS now moved once (to `interview@concilio.solutions`),
+     * which is the case this rule was written for: one line changed and every page followed,
+     * because no page had retyped it. Note the support mailbox is not what these pages show
+     * anyway — the DPDP contact comes from the backend — so a literal here would be wrong
+     * twice over.
      */
     const offenders: string[] = [];
     for (const route of LEGAL_ROUTES) {

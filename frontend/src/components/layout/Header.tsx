@@ -142,7 +142,7 @@ export function AppHeader({ user }: HeaderProps) {
       <div className="flex items-center gap-1">
         {/* Help — real support link */}
         <a
-          href="mailto:support@interviewos.app?subject=InterviewOS%20Help"
+          href={`mailto:${BRAND.supportEmail}?subject=${encodeURIComponent(`${BRAND.name} Help`)}`}
           title="Get help"
           className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >

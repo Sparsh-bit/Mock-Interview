@@ -87,7 +87,7 @@ colours each bind to one meaning (`frontend/src/lib/tones.ts`).
 
 | Thing | Why |
 |---|---|
-| `support@interviewos.app` | A live mailbox people already write to. Move it with a forwarding rule, not a rename. |
+| `support@interviewos.app` | **Moved 2026-09-02** to `interview@concilio.solutions` (`BRAND.supportEmail`). The old mailbox is still live and must stay forwarding — people have it in their sent items and it is in cached copies of the site. Do not delete it, and do not point the legal pages at either one: the DPDP grievance contact is a named human in `DPO_EMAIL`, not a role mailbox. |
 | `interviewos:*` localStorage keys | Already written in people's browsers. Renaming resets every existing user's notification preference and un-dismisses every nudge. |
 | Postgres user/db `interviewos` | Matches `docker-compose.yml` and the `conftest.py` fallback. Renaming means recreating every local dev database for nothing. |
 | `interviewos.dev` / `wrangler.toml` name | The deployed domain and the Cloudflare Worker's identity. Changing them is a migration, not a rename. |

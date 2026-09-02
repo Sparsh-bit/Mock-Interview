@@ -55,11 +55,31 @@ export function useAuth() {
     return { data, error };
   };
 
+  /*
+   * `emailRedirectTo` IS WHAT MAKES THE WIZARD A SIGNUP-ONLY STEP.
+   *
+   * The confirmation link is the only moment in the system that knows for certain it is
+   * carrying a brand-new account, so it is the only honest place to decide that this person
+   * should see onboarding. Everywhere else has to infer it, and the inference the app used to
+   * make — "send everyone to /welcome, it forwards on if setup looks done" — treated an
+   * unfinished setup as a new user and re-ran all four steps on every login forever.
+   *
+   * Same `/auth/callback?next=…` shape `resetPassword` below already uses, so there is one
+   * redirect route to keep allowlisted rather than two.
+   *
+   * IF THE URL IS NOT ALLOWLISTED in the Supabase dashboard, Supabase silently falls back to
+   * the project's Site URL and the new account lands on the landing page instead of the
+   * wizard. That degrades to "no onboarding", not to a broken signup — but it is worth
+   * checking the dashboard lists this path, because the failure is invisible from here.
+   */
   const signUp = async (email: string, password: string, metadata?: { full_name?: string }) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: metadata },
+      options: {
+        data: metadata,
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/welcome`,
+      },
     });
     return { data, error };
   };

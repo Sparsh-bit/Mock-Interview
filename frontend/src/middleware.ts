@@ -98,17 +98,28 @@ export async function middleware(request: NextRequest) {
   /*
    * Redirect authenticated users away from auth routes.
    *
-   * THE LANDING PAD IS `/welcome`, NOT `/dashboard`. This used to send every authenticated
-   * visitor straight to a dashboard of zeros, which for a brand-new account is three dead
-   * ends in a row: no resume (so the interview form's submit is disabled), no target company
-   * (so the study plan is unpersonalised), and no interview credit (so the front door is a
-   * 402). `/welcome` fixes all three and then redirects here itself the moment setup is done
-   * or the visitor has skipped it — so for an established account this costs one client-side
-   * redirect and nothing else, and there is no `onboarding_completed` flag to drift out of
-   * sync with the data it claims to describe.
+   * THE LANDING PAD IS `/dashboard`, AND IT USED TO BE `/welcome`. The argument for the
+   * wizard was that a brand-new account meeting a dashboard of zeros hits three dead ends —
+   * no resume, no target company, no interview credit — and that `/welcome` forwards to the
+   * dashboard by itself for anyone already set up, so an established account paid one
+   * client-side redirect and nothing more.
+   *
+   * The second half of that is what was wrong. `/welcome` self-skips on
+   * `target_company && resume`, which is "finished onboarding", not "been here before". Every
+   * account that skipped the wizard or half-completed it got all four steps again on every
+   * login, forever — and the skip flag lives in `localStorage`, so skipping it on a laptop
+   * did nothing for the same person on a phone.
+   *
+   * Anyone arriving here has a session and has just typed their password: they are returning,
+   * by definition. Returning users go to the dashboard. A NEW account reaches the wizard from
+   * the signup flow instead, through the `emailRedirectTo` set in `hooks/useAuth.ts` — which
+   * is the only point in the system that actually knows the difference.
+   *
+   * `/welcome` stays reachable and keeps its self-skip, so a signup who somehow already has
+   * a target and a resume still passes straight through.
    */
   if (user && isAuthRoute(pathname)) {
-    return NextResponse.redirect(new URL('/welcome', request.url));
+    return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
   return supabaseResponse;
