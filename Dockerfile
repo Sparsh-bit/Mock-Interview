@@ -29,6 +29,40 @@ RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+# ── LibreOffice, for rasterizing uploaded .pptx decks. OFF BY DEFAULT. ────────────────────
+#
+# WHAT IT BUYS: the deck review's vision pass. A .pptx has to be converted before its slides
+# can be shown to the model, and LibreOffice is the only thing that can do it. Without this,
+# a .pptx is scored on its text and its typography, and the response says so
+# (`vision_unavailable_reason: "libreoffice_missing"`). A PDF upload is unaffected — that
+# path is PyMuPDF and pure Python — so a candidate who exports to PDF gets the full review
+# either way.
+#
+# WHY IT IS NOT ON BY DEFAULT, given that it makes a shipped feature work properly:
+#
+#   SIZE. `libreoffice-impress` and its dependencies are roughly 400 MB unpacked, against a
+#   python:3.13-slim base of about 150 MB. It would be, by a wide margin, the largest thing
+#   in the image, for one optional stage of one endpoint.
+#
+#   THE SCAN GATE. image-scan.yml fails the build on any HIGH or CRITICAL with a fix
+#   available. LibreOffice is an enormous C++ surface with a steady CVE cadence, and it
+#   would be the package most likely to break a deploy that has nothing to do with it. That
+#   is a bad trade to make silently on somebody else's behalf.
+#
+# SO IT IS A DECISION WITH A SWITCH, not a default:
+#
+#   docker build --build-arg INSTALL_LIBREOFFICE=true .
+#
+# `libreoffice-impress` alone, not `libreoffice` — the full suite adds Writer, Calc, Base
+# and Java for no benefit here. Verify with `soffice --version` in the running container;
+# the renderer looks it up on PATH at request time, so nothing needs configuring.
+ARG INSTALL_LIBREOFFICE=false
+RUN if [ "$INSTALL_LIBREOFFICE" = "true" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends libreoffice-impress \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # uv handles the Python deps (matches local dev).
 #
 # COPIED FROM ASTRAL'S OWN IMAGE RATHER THAN `pip install uv`, AND PIP IS THEN REMOVED.

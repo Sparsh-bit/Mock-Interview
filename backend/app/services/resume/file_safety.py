@@ -50,7 +50,17 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-DocumentKind = Literal["pdf", "docx"]
+#: What `verify` is willing to say a file is.
+#:
+#: `pptx` JOINED THIS FOR THE DECK EVALUATOR, and it goes through the identical archive
+#: and member checks a DOCX does — it is the same OOXML container with a different main
+#: part, so every one of the three attacks in the module docstring applies unchanged. A
+#: presentation has no more business carrying a VBA project than a resume does.
+#:
+#: LEGACY `.ppt` IS DELIBERATELY ABSENT. It is an OLE compound file, not a zip, so none of
+#: the checks below can see inside it — and it is the format whose macro story is worst.
+#: `sniff` returns None for it and the candidate is told to save as .pptx.
+DocumentKind = Literal["pdf", "docx", "pptx"]
 
 # ── Archive limits ──────────────────────────────────────────────────────────────
 
@@ -84,10 +94,27 @@ _READ_CHUNK = 512 * 1024
 # ── What must not be in a DOCX ──────────────────────────────────────────────────
 
 #: Archive members that carry executable or embeddable content.
-_MACRO_MEMBERS = ("vbaproject.bin", "vbadata.xml", "word/embeddings/", "macros/")
+#: `vbaproject.bin` is matched as a SUBSTRING, so it catches `word/vbaProject.bin` and
+#: `ppt/vbaProject.bin` alike — the part name differs by package, the payload does not.
+#: The embeddings directory has to be named per package, hence both.
+_MACRO_MEMBERS = (
+    "vbaproject.bin",
+    "vbadata.xml",
+    "word/embeddings/",
+    "ppt/embeddings/",
+    "macros/",
+)
 
 #: Content-type declarations that mean "this document can run code".
-_MACRO_CONTENT_TYPES = (b"macroenabled", b"ms-office.vbaproject", b"ms-word.document.macroenabled")
+#: `macroenabled` alone already catches every one of these — the two specific strings are
+#: kept because they name what was actually measured getting through, and the PowerPoint
+#: one is listed for the same reason now that presentations are accepted.
+_MACRO_CONTENT_TYPES = (
+    b"macroenabled",
+    b"ms-office.vbaproject",
+    b"ms-word.document.macroenabled",
+    b"ms-powerpoint.presentation.macroenabled",
+)
 
 #: Relationship types Word RESOLVES when the document opens, rather than when a human clicks.
 #: An External Target on one of these is fetched on open, which is the mechanism behind a
@@ -199,8 +226,14 @@ def sniff(data: bytes) -> DocumentKind | None:
         except (zipfile.BadZipFile, OSError, ValueError):
             return None
         # BOTH required. The manifest alone is any OOXML file — a spreadsheet has one too.
-        if "[content_types].xml" in names and "word/document.xml" in names:
+        if "[content_types].xml" not in names:
+            return None
+        if "word/document.xml" in names:
             return "docx"
+        # The main part is what distinguishes a presentation from a document or a workbook.
+        # `ppt/presentation.xml` is mandatory in the OOXML presentation package.
+        if "ppt/presentation.xml" in names:
+            return "pptx"
         return None
 
     return None
@@ -316,9 +349,14 @@ def inspect_archive(data: bytes) -> ArchiveReport:
         )
 
 
-def _scan_docx_members(data: bytes) -> tuple[str, str] | None:
+def _scan_ooxml_members(data: bytes, kind: DocumentKind) -> tuple[str, str] | None:
     """
     Look for macros, OLE objects and auto-resolved external references.
+
+    ONE SCAN FOR EVERY OOXML PACKAGE. A .pptx is the same zip with a different main part,
+    so the members that can carry executable content are the same members and the checks
+    below are byte-for-byte the ones a .docx gets. `kind` only names the reason, so a log
+    line and a test can tell a presentation refusal from a document one.
 
     Returns `(reason, member)` or None. Reads only the parts that can carry the evidence,
     each with a bounded read — the archive has already passed `inspect_archive`, so the
@@ -334,7 +372,7 @@ def _scan_docx_members(data: bytes) -> tuple[str, str] | None:
         for name in archive.namelist():
             lowered = name.lower()
             if any(marker in lowered for marker in _MACRO_MEMBERS):
-                return ("docx_macro", name)
+                return (f"{kind}_macro", name)
 
         for name in archive.namelist():
             lowered = name.lower()
@@ -345,7 +383,7 @@ def _scan_docx_members(data: bytes) -> tuple[str, str] | None:
                 except (zipfile.BadZipFile, OSError, ValueError):
                     continue
                 if any(marker in body for marker in _MACRO_CONTENT_TYPES):
-                    return ("docx_macro", name)
+                    return (f"{kind}_macro", name)
 
             if lowered.endswith(".rels"):
                 try:
@@ -369,7 +407,7 @@ def _scan_docx_members(data: bytes) -> tuple[str, str] | None:
                     # The last path segment of the type URI is the relationship's name.
                     leaf = rel_type.group(1).rstrip(b"/").rsplit(b"/", 1)[-1].lower()
                     if leaf.decode("ascii", "ignore") in _AUTO_RESOLVED_RELATIONSHIPS:
-                        return ("docx_remote_reference", name)
+                        return (f"{kind}_remote_reference", name)
 
     return None
 
@@ -471,25 +509,71 @@ def _pdf_active_content(data: bytes) -> str | None:
 # ── The one entry point ─────────────────────────────────────────────────────────
 
 
-def verify(data: bytes, *, declared_mime: str = "", filename: str = "") -> DocumentKind:
+#: What the resume upload accepts. The historical behaviour of `verify`, and its default,
+#: so adding presentations to `DocumentKind` did not quietly make a slide deck a valid CV.
+RESUME_KINDS: tuple[DocumentKind, ...] = ("pdf", "docx")
+
+#: What the deck evaluator accepts. A deck is a presentation or a PDF export of one; a
+#: Word document is not a deck and is refused with a message that says so.
+DECK_KINDS: tuple[DocumentKind, ...] = ("pdf", "pptx")
+
+#: How each kind is named to somebody who just had their file refused.
+_KIND_NAMES: dict[DocumentKind, str] = {
+    "pdf": "PDF",
+    "docx": "Word document",
+    "pptx": "PowerPoint presentation",
+}
+
+
+def _accepted_phrase(allowed: tuple[DocumentKind, ...]) -> str:
+    """"a PDF or a Word document" — the accepted kinds, written for a human."""
+    names = [f"a {_KIND_NAMES[k]}" for k in allowed]
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} or {names[-1]}"
+
+
+def verify(
+    data: bytes,
+    *,
+    declared_mime: str = "",
+    filename: str = "",
+    allowed: tuple[DocumentKind, ...] = RESUME_KINDS,
+) -> DocumentKind:
     """
-    Decide what this file is, and refuse it if it carries something a resume should not.
+    Decide what this file is, and refuse it if it carries something the caller should not take.
 
     Returns the kind, so the caller dispatches on the answer rather than on what the
     caller was told. `declared_mime` and `filename` are accepted only so a refusal can be
     logged against what was claimed; NEITHER influences the decision.
 
+    `allowed` IS THE CALLER'S LIST, AND IT DEFAULTS TO THE RESUME'S. `sniff` recognising a
+    format is not the same as an endpoint wanting it: presentations were added to
+    `DocumentKind` for the deck evaluator, and without this the resume upload would have
+    started accepting a slide deck as a CV on the same commit. Every caller states what it
+    takes; the default is what this module accepted before there was more than one caller.
+
     Raises `UnsafeDocument` with a message written for the candidate.
     """
     kind = sniff(data)
-    if kind is None:
+    if kind is None or kind not in allowed:
+        # SNIFFED-BUT-UNWANTED READS DIFFERENTLY FROM UNRECOGNISED, because the fix is
+        # different: one person uploaded the wrong file, the other exported it wrongly.
+        if kind is not None:
+            raise UnsafeDocument(
+                f"That is a {_KIND_NAMES[kind]}, and this upload takes "
+                f"{_accepted_phrase(allowed)}.",
+                reason="unsupported_type",
+            )
         raise UnsafeDocument(
-            f"That file is not a PDF or a Word document ({declared_mime or 'unknown type'}). "
-            "Upload the resume itself — a PDF exported from your editor works best.",
+            f"That file is not {_accepted_phrase(allowed)} "
+            f"({declared_mime or 'unknown type'}). "
+            "Upload the document itself — a PDF exported from your editor works best.",
             reason="unsupported_type",
         )
 
-    if kind == "docx":
+    if kind in ("docx", "pptx"):
+        readable = _KIND_NAMES[kind]
         report = inspect_archive(data)
         if report.refuse_reason == "archive_too_large":
             logger.warning(
@@ -501,8 +585,9 @@ def verify(data: bytes, *, declared_mime: str = "", filename: str = "") -> Docum
                 offending_member=report.offending_member,
             )
             raise UnsafeDocument(
-                "That Word file expands to far more data than a resume contains, so it was "
-                "not opened. Re-save it from Word, or export it as a PDF, and try again.",
+                f"That {readable} expands to far more data than a document contains, so it "
+                "was not opened. Re-save it from the app that made it, or export it as a "
+                "PDF, and try again.",
                 reason="archive_too_large",
             )
         if report.refuse_reason == "archive_unsafe":
@@ -513,18 +598,18 @@ def verify(data: bytes, *, declared_mime: str = "", filename: str = "") -> Docum
                 members=report.members,
             )
             raise UnsafeDocument(
-                "That Word file is not structured like a document and was not opened. "
-                "Re-save it from Word, or export it as a PDF, and try again.",
+                f"That {readable} is not structured like a document and was not opened. "
+                "Re-save it from the app that made it, or export it as a PDF, and try again.",
                 reason="archive_unsafe",
             )
 
-        macro_found = _scan_docx_members(data)
+        macro_found = _scan_ooxml_members(data, kind)
         if macro_found is not None:
             reason, member = macro_found
-            logger.warning("upload_active_content", kind="docx", reason=reason, member=member)
+            logger.warning("upload_active_content", kind=kind, reason=reason, member=member)
             raise UnsafeDocument(
-                "That Word file contains a macro or a linked object, so it was not opened. "
-                "Resumes do not need either, and a document that can run code is not "
+                f"That {readable} contains a macro or a linked object, so it was not "
+                "opened. It does not need either, and a document that can run code is not "
                 "something this service will store. Export it as a PDF and upload that "
                 "instead.",
                 reason=reason,

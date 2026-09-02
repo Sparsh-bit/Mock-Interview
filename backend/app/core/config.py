@@ -428,6 +428,15 @@ class Settings(BaseSettings):
         default="https://open.bigmodel.cn/api/paas/v4",
         description="GLM (ZhipuAI) base URL"
     )
+    GLM_SUPPORTS_VISION: bool = Field(
+        default=False,
+        description=(
+            "Can GLM_MODEL look at images? Set true only for a vision model "
+            "(e.g. glm-4v-plus). The default glm-4-flash cannot, so a request "
+            "carrying images will skip this provider rather than be answered "
+            "without the images being seen."
+        ),
+    )
 
     # NVIDIA NIM — alternate provider, same OpenAI-compatible shape as GLM
     NVIDIA_API_KEY: str = Field(default="", description="NVIDIA NIM API key")
@@ -437,6 +446,13 @@ class Settings(BaseSettings):
     NVIDIA_BASE_URL: str = Field(
         default="https://integrate.api.nvidia.com/v1",
         description="NVIDIA NIM base URL"
+    )
+    NVIDIA_SUPPORTS_VISION: bool = Field(
+        default=False,
+        description=(
+            "Can NVIDIA_MODEL look at images? Set true only for a vision-language "
+            "model on the NIM catalogue. See GLM_SUPPORTS_VISION for what False means."
+        ),
     )
 
     # OpenAI (future)
@@ -479,6 +495,14 @@ class Settings(BaseSettings):
     GROQ_BASE_URL: str = Field(
         default="https://api.groq.com/openai/v1",
         description="Groq's OpenAI-compatible endpoint — the same shape GLM and NVIDIA use.",
+    )
+    GROQ_SUPPORTS_VISION: bool = Field(
+        default=False,
+        description=(
+            "Can GROQ_MODEL look at images? Left False deliberately: the rung is a free "
+            "tier reachable only by panel dialogue, and no image-bearing feature is on "
+            "that allowlist. See services/ai/burst_rung.py."
+        ),
     )
     GROQ_DAILY_REQUEST_LIMIT: int = Field(
         # 1,000 BECAUSE THAT IS WHAT GROQ_MODEL'S DEFAULT ALLOWS. This was 2,000 - twice the
@@ -974,6 +998,41 @@ class Settings(BaseSettings):
     #: still personalises the interview. Zero disables the budget, restoring the unbounded
     #: behaviour that made this a 3.5-minute request. Do not.
     RESUME_ANALYSIS_BUDGET_SECONDS: float = 35.0
+
+    # ── Deck evaluation ───────────────────────────────────────────────────
+    #
+    # Scoring an uploaded pitch deck against the rubric in services/deck/criteria.py.
+    # The format criterion is measured by a parser; the other eight come from the model.
+    DECK_VISION_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Render slides and show them to the model. Needs a vision-capable provider "
+            "(see *_SUPPORTS_VISION) and, for .pptx, LibreOffice on PATH. When either is "
+            "missing the deck is scored on text and formatting alone and the response "
+            "says which. Set false to switch the vision pass off deliberately."
+        ),
+    )
+    #: Slides sent to the vision model, per deck.
+    #:
+    #: TWELVE IS A COST CEILING, NOT A LIMIT ON DECKS. Each rendered slide is on the order
+    #: of a thousand input tokens, so a 40-slide deck sent whole would cost more than the
+    #: interview it is attached to. Twelve covers the argument of essentially every pitch
+    #: deck; a longer one is scored on its first twelve slides plus the full text of all
+    #: of them, which is stated in the response rather than left implied.
+    DECK_MAX_VISION_IMAGES: int = Field(default=12, ge=1, le=40)
+    #: Seconds allowed for one LibreOffice pptx-to-pdf conversion.
+    #:
+    #: A cold LibreOffice takes several seconds to start before it converts anything, and
+    #: it is started per request with a private profile. Past this the deck is scored
+    #: without its images rather than holding the worker.
+    DECK_RENDER_TIMEOUT_S: int = Field(default=90, ge=10, le=600)
+    #: Upload ceiling for a deck, in MB, separate from MAX_UPLOAD_SIZE_MB.
+    #:
+    #: HIGHER THAN A RESUME'S ON PURPOSE. Ten megabytes is generous for a CV and tight for
+    #: a deck: screenshots and embedded diagrams put a legitimate 25-slide deck over it,
+    #: measured. The archive expansion ceiling in file_safety is what actually protects
+    #: the worker, and it is unchanged.
+    DECK_MAX_UPLOAD_SIZE_MB: int = Field(default=25, ge=1, le=100)
     RATE_LIMIT_INTERVIEW_PER_HOUR: int = 10
     RATE_LIMIT_AI_REQUESTS_PER_MINUTE: int = 30
     RATE_LIMIT_CODE_EXEC_PER_MINUTE: int = 20
@@ -1373,6 +1432,10 @@ class Settings(BaseSettings):
     @property
     def upload_size_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def deck_upload_size_bytes(self) -> int:
+        return self.DECK_MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
 @lru_cache(maxsize=1)

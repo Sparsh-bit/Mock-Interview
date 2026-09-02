@@ -55,6 +55,7 @@ from .base_provider import (
     BaseAIProvider,
     CostTier,
     ProviderError,
+    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     StreamChunk,
@@ -273,6 +274,38 @@ _MIN_TOKENS_FOR_THINKING = 3072
 _STREAMING_THRESHOLD = 16_000
 
 
+def _turn_content(message: ProviderMessage) -> str | list[dict]:
+    """
+    One conversation turn's content in Claude's shape.
+
+    A TEXT-ONLY TURN STAYS A PLAIN STRING. Claude accepts either, and every existing call
+    in this application sends the string — keeping it means adding vision changes the wire
+    format of exactly the calls that use vision, and of nothing else.
+
+    IMAGE BLOCKS COME FIRST, TEXT LAST. Anthropic's own guidance is that Claude attends
+    better to a question asked after the images it is about than to one asked before them,
+    and this order is the documented recommendation for multi-image prompts. The OpenAI
+    translator puts text first because that is the shape its examples use; the two
+    providers legitimately differ here, which is the whole reason each one owns its own
+    translation.
+    """
+    if not message.images:
+        return message.content
+    blocks: list[dict] = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": image.base64_data,
+            },
+        }
+        for image in message.images
+    ]
+    blocks.append({"type": "text", "text": message.content})
+    return blocks
+
+
 class AnthropicProvider(BaseAIProvider):
     """
     Claude provider via the official Anthropic Python SDK.
@@ -475,6 +508,18 @@ class AnthropicProvider(BaseAIProvider):
 
     @property
     def supports_streaming(self) -> bool:
+        return True
+
+    @property
+    def supports_vision(self) -> bool:
+        """
+        Every Claude 3 model and later can look at an image, so this is unconditional.
+
+        NOT read from a setting, unlike the OpenAI-compatible class. That one is shared by
+        three providers whose configured model may be anything; this class only ever talks
+        to Claude, and there is no Claude in the API that cannot see. A model old enough to
+        fail this has been retired.
+        """
         return True
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[StreamChunk]:
@@ -817,9 +862,19 @@ class AnthropicProvider(BaseAIProvider):
 
         for msg in request.messages:
             if msg.role == "system":
+                # IMAGES ON A SYSTEM MESSAGE ARE DROPPED, LOUDLY. Claude's `system`
+                # parameter takes text blocks only, so there is nowhere to put them. No
+                # call site builds one; a future one that does gets a warning rather than
+                # a score computed from evidence that was silently discarded.
+                if msg.images:
+                    logger.warning(
+                        "anthropic_dropped_system_images",
+                        count=len(msg.images),
+                        reason="Claude's system parameter accepts text blocks only",
+                    )
                 system_parts.append(msg.content)
             else:
-                turns.append({"role": msg.role, "content": msg.content})
+                turns.append({"role": msg.role, "content": _turn_content(msg)})
 
         # A trailing assistant turn is a response prefill, which Sonnet 5
         # rejects with a 400. No current call site builds one; drop it loudly

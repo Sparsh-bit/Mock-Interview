@@ -21,7 +21,7 @@ Configuration:
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 import httpx
 import structlog
@@ -29,6 +29,7 @@ import structlog
 from .base_provider import (
     BaseAIProvider,
     ProviderError,
+    ProviderMessage,
     ProviderRequest,
     ProviderResponse,
     StreamChunk,
@@ -37,6 +38,36 @@ from .base_provider import (
 logger = structlog.get_logger(__name__)
 
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
+
+
+def _to_api_messages(messages: Sequence[ProviderMessage]) -> list[dict]:
+    """
+    Our messages in the OpenAI wire shape, with images as `image_url` content parts.
+
+    A TEXT-ONLY MESSAGE KEEPS `content` AS A PLAIN STRING, and that is not a stylistic
+    choice. Every existing call in this application is text-only, the string form is what
+    they have always sent, and some OpenAI-compatible servers treat a single-element array
+    differently from the equivalent string — for prompt caching in particular, where the
+    cache key is the serialised request. Only a message that actually carries an image
+    changes shape.
+
+    THIS REPLACED A BARE `model_dump()` OVER THE MESSAGE MODEL. That worked for exactly as
+    long as the model had only the two fields the API accepts; adding `images` made it emit
+    an unknown key on every request, which these servers answer with a 400. A translator
+    that names the fields it sends cannot acquire that bug again when the next one is added.
+    """
+    payload: list[dict] = []
+    for message in messages:
+        if not message.images:
+            payload.append({"role": message.role, "content": message.content})
+            continue
+        parts: list[dict] = [{"type": "text", "text": message.content}]
+        parts.extend(
+            {"type": "image_url", "image_url": {"url": image.data_url}}
+            for image in message.images
+        )
+        payload.append({"role": message.role, "content": parts})
+    return payload
 
 
 class OpenAICompatibleProvider(BaseAIProvider):
@@ -55,12 +86,18 @@ class OpenAICompatibleProvider(BaseAIProvider):
         base_url: str,
         provider_name: str,
         read_timeout: float = 120.0,
+        supports_vision: bool = False,
     ) -> None:
         if not api_key:
             raise ValueError(f"{provider_name} provider requires a non-empty api_key.")
         self._api_key = api_key
         self._model = model
         self._provider_name = provider_name
+        # DECLARED BY THE FACTORY, NOT INFERRED HERE. Three providers share this class —
+        # GLM, NVIDIA and Groq — and vision is a property of the configured MODEL, not of
+        # the OpenAI-shaped transport they have in common. The class cannot know whether
+        # `_model` can see; whoever set the model does. See provider_factory._build_provider.
+        self._supports_vision = supports_vision
         self._client = httpx.AsyncClient(
             base_url=base_url,
             # Conservative timeouts: connect fast, allow long reads for
@@ -86,6 +123,10 @@ class OpenAICompatibleProvider(BaseAIProvider):
     def supports_streaming(self) -> bool:
         return True
 
+    @property
+    def supports_vision(self) -> bool:
+        return self._supports_vision
+
     async def stream(self, request: ProviderRequest) -> AsyncIterator[StreamChunk]:
         """
         The answer as text deltas, over the OpenAI-compatible SSE protocol.
@@ -106,7 +147,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
         model = request.model_override or self._model
         payload: dict = {
             "model": model,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": _to_api_messages(request.messages),
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": True,
@@ -206,7 +247,7 @@ class OpenAICompatibleProvider(BaseAIProvider):
 
         payload: dict = {
             "model": model,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": _to_api_messages(request.messages),
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }

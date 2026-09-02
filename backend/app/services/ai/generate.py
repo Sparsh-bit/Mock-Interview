@@ -157,6 +157,43 @@ async def generate_structured(
         get_ai_providers(), feature=context, cost_tier=cost_tier
     )
 
+    # ── THE CAPABILITY GATE, AND IT FAILS CLOSED ─────────────────────────────────────────
+    #
+    # A provider that cannot see images and is handed some does not error. It answers, the
+    # answer reads exactly like every other answer, and it was produced without the images
+    # ever being looked at. For a call that SCORES somebody on the strength of a diagram,
+    # that is the worst failure available: a confident number derived from evidence that
+    # was silently dropped somewhere in the transport.
+    #
+    # So a request carrying images walks only the providers that answer `supports_vision`,
+    # and if that empties the chain the call fails here rather than returning a score. No
+    # score is a state the caller can report honestly; a wrong one is not.
+    #
+    # Text-only calls — which is every other call in this application — are untouched. The
+    # check costs one `has_images` read per message, over the two or three a call carries.
+    if any(m.has_images for m in messages):
+        blind = [p.provider_name for p in providers if not p.supports_vision]
+        providers = [p for p in providers if p.supports_vision]
+        if blind:
+            logger.info(
+                "ai_vision_providers_filtered",
+                context=context,
+                skipped=blind,
+                remaining=[p.provider_name for p in providers],
+            )
+        if not providers:
+            logger.error(
+                "ai_no_vision_provider",
+                context=context,
+                skipped=blind,
+                detail=(
+                    "this call carries images and no provider in the chain can see them. "
+                    "Configure a vision-capable model and set the matching "
+                    "*_SUPPORTS_VISION setting, or call without images"
+                ),
+            )
+            raise AIProviderUnavailableError(provider=blind[0] if blind else "unknown")
+
     # AND THE CAPACITY GATE, WHICH IS A SEPARATE QUESTION FROM THE POLICY ABOVE.
     #
     # `eligible_providers` answers "may this call use a model we do not pay for". It would

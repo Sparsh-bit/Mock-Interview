@@ -53,6 +53,7 @@ const FEATURE_COPY: Record<string, string> = {
   interview: 'mock interviews',
   gd: 'group discussions',
   communication: 'communication drills',
+  deck: 'deck reviews',
 };
 
 //: The singular is needed now that the heading can say "Buy a mock interview to continue".
@@ -60,6 +61,7 @@ const FEATURE_COPY_SINGULAR: Record<string, string> = {
   interview: 'mock interview',
   gd: 'group discussion',
   communication: 'communication drill',
+  deck: 'deck review',
 };
 
 export function Paywall({

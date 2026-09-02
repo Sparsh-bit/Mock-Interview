@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
-import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, Loader2, MessageSquare, Play, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
+import { BarChart3, BookOpen, ChevronLeft, Coins, FileText, LayoutDashboard, ListChecks, Loader2, MessageSquare, Play, Presentation, Settings, ShieldCheck, Sparkles, Tag, Target, TrendingUp, Trophy, User, Users } from 'lucide-react';
 
 import { Wordmark } from '@/components/brand/Brandmark';
 import { BRAND } from '@/lib/brand';
@@ -63,6 +63,7 @@ export const NAV_ITEMS: Array<{ group: string; items: NavItem[] }> = [
       { href: '/communication', icon: MessageSquare, label: 'Communication', tone: 'teal' },
       { href: '/gd', icon: Users, label: 'Group Discussion', tone: 'plum' },
       { href: '/report', icon: FileText, label: 'Reports', tone: 'teal' },
+      { href: '/deck', icon: Presentation, label: 'Deck Review', tone: 'teal' },
     ],
   },
   {

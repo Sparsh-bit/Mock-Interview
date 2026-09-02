@@ -71,6 +71,10 @@ FEATURE_LABELS: dict[str, str] = {
     "resume_analysis_skills": "Resume parsing — skills and experience",
     "resume_analysis_projects": "Resume parsing — projects",
     "quiz_generation": "Practice quiz questions",
+    # TWO CALLS PER DECK, named separately because only one of them carries images and
+    # they will diverge in cost the moment the vision model or the image cap changes.
+    "deck_diagrams": "Deck review — reading the slides and diagrams (vision)",
+    "deck_evaluation": "Deck review — scoring against the rubric",
     "code_analysis": "Coding round evaluation",
     "communication_evaluation": "Communication round scoring",
     "communication_cross_question": "Communication round follow-up",

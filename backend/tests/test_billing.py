@@ -34,11 +34,22 @@ class TestTheTrial:
         anyone only for the admins". Admins were already unmetered — `consume` returns before
         charging an operator account — so that half needed no change.
 
+        DECK REVIEWS JOINED AT ZERO. A vision pass over a dozen rendered slides plus a DEEP
+        judging call costs nearer an interview than a drill, so it is priced like one. The
+        test's name still holds: communication remains the only trialable feature.
+
         Pinned as an exact dict because it is a pricing decision and every one of these numbers
         is revenue: a stray 1 gives a product away to every new account, and a stray 0 on
         communication drills silently paywalls the last thing a candidate can try for free.
+        That is also why this is not loosened to "communication is the only non-zero entry" —
+        a new feature must break this test and be decided, not inherit a default.
         """
-        assert TRIAL_ALLOWANCE == {"interview": 0, "gd": 0, "communication": 1}
+        assert TRIAL_ALLOWANCE == {
+            "interview": 0,
+            "gd": 0,
+            "communication": 1,
+            "deck": 0,
+        }
 
     def test_every_metered_feature_has_an_explicit_trial_entry(self):
         """

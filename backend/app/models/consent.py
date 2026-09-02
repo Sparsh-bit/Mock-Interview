@@ -50,6 +50,19 @@ PURPOSE_PRIVACY_NOTICE = "privacy_notice"
 PURPOSE_AGE_18_PLUS = "age_18_plus"
 PURPOSE_RESUME_PROCESSING = "resume_processing"
 PURPOSE_CROSS_BORDER = "cross_border_transfer"
+#: Uploading a pitch deck for review.
+#:
+#: SEPARATE FROM `resume_processing`, AND NOT BECAUSE A DECK IS MORE SENSITIVE — it is
+#: usually less. §6 wants consent that is SPECIFIC, and the argument this file already
+#: makes for analytics applies here in the same shape: somebody who agreed to have their
+#: CV read has not thereby agreed to have their startup idea read. They are different
+#: documents, uploaded for different reasons, and a candidate must be able to grant one
+#: and withhold the other.
+#:
+#: No migration was needed to add this: `purpose` is a String(64) validated against
+#: CONSENT_PURPOSES in Python, and `/legal/consent` enumerates the set, so a purpose
+#: nobody has been asked about reports as null rather than as a refusal.
+PURPOSE_DECK_PROCESSING = "deck_processing"
 #: Product analytics. A SEPARATE PURPOSE, and it has to be: §6 asks for consent that is
 #: SPECIFIC, and "I have read what happens to my data" is not agreement to be measured by
 #: a third-party product-analytics vendor. Bundling it into the privacy notice would make
@@ -67,6 +80,7 @@ CONSENT_PURPOSES: frozenset[str] = frozenset(
         PURPOSE_AGE_18_PLUS,
         PURPOSE_RESUME_PROCESSING,
         PURPOSE_CROSS_BORDER,
+        PURPOSE_DECK_PROCESSING,
         PURPOSE_ANALYTICS,
     }
 )

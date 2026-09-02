@@ -99,6 +99,10 @@ export const ROUTE_TONE: Record<string, Tone> = {
   '/communication': 'teal',
   '/gd': 'plum',
   '/report': 'teal',
+  // Measurement, like the reports and the analytics it sits beside: the deck review
+  // produces a score out of 100 against a fixed rubric. Not amber — amber is effort
+  // and preparation, and this measures a finished artefact rather than practising one.
+  '/deck': 'teal',
   '/tracks': 'indigo',
   '/analytics': 'teal',
   '/achievements': 'emerald',

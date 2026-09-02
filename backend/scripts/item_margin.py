@@ -108,6 +108,11 @@ _AI_FEATURE_TO_BILLABLE: dict[str, str | None] = {
     "gd_panel_turn": "gd",
     "gd_topic_prep": "gd",
     "gd_evaluation": "gd",
+    # ── deck review ──────────────────────────────────────────────────────
+    # Both calls belong to one delivered item. The vision pass is the one that carries
+    # images, so it is also the one whose cost moves when DECK_MAX_VISION_IMAGES does.
+    "deck_diagrams": "deck",
+    "deck_evaluation": "deck",
     # ── communication drill ──────────────────────────────────────────────
     "communication_evaluation": "communication",
     "communication_cross_question": "communication",
@@ -170,6 +175,18 @@ _MEASURED_AI_COST_PER_ITEM: dict[str, float] = {
     "gd": 0.1423,
     # plans.py: "~$0.02 (₹1.7)". No per-call breakdown is published for this one.
     "communication": 0.02,
+    # ESTIMATED, NOT MEASURED, AND THE ONLY ENTRY HERE THAT IS. The other three come from
+    # real ledger runs; this feature has not been run against a live vision provider, so
+    # there is nothing to measure yet. Derived instead: twelve rendered slides at roughly
+    # 1.1k input tokens each is ~13k image tokens, plus ~10k of deck text, across two
+    # calls — one CHEAP with the images, one DEEP with both. At Claude Sonnet input
+    # pricing that is ~$0.05, and the DEEP tier's reasoning output is the part most likely
+    # to make it larger.
+    #
+    # REPLACE THIS WITH A LEDGER FIGURE ONCE THE FEATURE HAS RUN. Until then the deck
+    # margin line is an estimate resting on an estimate, and `ai_source` will say
+    # "measured" for it in the report, which for this one row is generous.
+    "deck": 0.05,
 }
 
 # ─── Speech: how much of it each item actually is ────────────────────────────
@@ -223,6 +240,17 @@ class SpeechProfile:
 _CHARS_PER_UTTERANCE = 300
 
 SPEECH: dict[str, SpeechProfile] = {
+    # NOTHING IS SPOKEN. A deck review is an upload and a written report — no question is
+    # read aloud, no panel replies. Zero is the honest figure rather than a placeholder,
+    # and it is present rather than absent because `test_item_margin` requires every
+    # billable feature to have a profile: a feature missing from this table would raise
+    # inside the report instead of costing zero, which is the correct design for the three
+    # features that DO speak.
+    "deck": SpeechProfile(
+        shared_chars=0,
+        unique_chars=0,
+        note="no speech — the deck review is uploaded and read, never spoken",
+    ),
     "interview": SpeechProfile(
         # [CODE] config.py TTS_RATE_LIMIT_PER_HOUR: "an interview ~16" utterances, of which
         # [CODE] config.py TTS_CACHE_TTL_SECONDS: "the interview reads questions from a

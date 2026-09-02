@@ -338,6 +338,7 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 model=settings.GLM_MODEL,
                 base_url=settings.GLM_BASE_URL,
                 provider_name="glm",
+                supports_vision=settings.GLM_SUPPORTS_VISION,
             )
         case "nvidia":
             return cls(
@@ -345,6 +346,7 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 model=settings.NVIDIA_MODEL,
                 base_url=settings.NVIDIA_BASE_URL,
                 provider_name="nvidia",
+                supports_vision=settings.NVIDIA_SUPPORTS_VISION,
                 # Large reasoning models (e.g. nemotron-3-ultra) can take
                 # noticeably longer than GLM's flash-tier models.
                 read_timeout=180.0,
@@ -355,6 +357,7 @@ def _build_provider(name: str, cls: Callable[..., BaseAIProvider]) -> BaseAIProv
                 model=settings.GROQ_MODEL,
                 base_url=settings.GROQ_BASE_URL,
                 provider_name="groq",
+                supports_vision=settings.GROQ_SUPPORTS_VISION,
                 # Short. The rung exists because the paid providers are already failing, so
                 # a call has usually spent its retries by the time it arrives — waiting a
                 # further two minutes on a free tier would hold a worker past the point the

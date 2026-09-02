@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,13 +48,61 @@ class CostTier(StrEnum):
 # ─── Request / Response value objects ────────────────────────────────────────
 
 
+#: Image formats every vision-capable provider in the registry accepts.
+#:
+#: Deliberately narrow. JPEG and PNG are what this application's own renderers produce;
+#: WEBP and GIF are included because both providers document them and refusing a format
+#: the model would have accepted is a failure with no upside. Anything else is refused at
+#: the edge rather than translated, because a provider that rejects a media type answers
+#: with a 400 that reads like a bug in our request.
+ImageMediaType = Literal["image/jpeg", "image/png", "image/webp", "image/gif"]
+
+
+class ImagePart(BaseModel):
+    """
+    One image, carried as base64 rather than a URL.
+
+    BASE64 AND NOT A URL, on purpose. A URL would mean the provider fetches it, which
+    needs the bytes to be publicly reachable — so an uploaded document would have to be
+    published to storage with a guessable address before it could be scored. These images
+    are rendered from a candidate's own upload and exist for the duration of one request.
+
+    `media_type` is the type of the DECODED bytes and is set by whoever rendered them, not
+    by anything a caller was told: the renderers in this application emit JPEG and say so.
+    """
+
+    base64_data: str
+    media_type: ImageMediaType = "image/jpeg"
+
+    model_config = {"frozen": True}
+
+    @property
+    def data_url(self) -> str:
+        """An OpenAI-shaped `data:` URL for this image."""
+        return f"data:{self.media_type};base64,{self.base64_data}"
+
+
 class ProviderMessage(BaseModel):
     """A single message in a conversation."""
 
     role: str  # "system" | "user" | "assistant"
     content: str
+    #: Images attached to this message, for a model that can look at them.
+    #:
+    #: A TUPLE, NOT A LIST, because this model is frozen and a list would make it
+    #: unhashable — several call sites put messages in sets and dict keys.
+    #:
+    #: Providers translate these into their own native shape; a provider that cannot
+    #: see images must never silently drop them, which is why `supports_vision` exists
+    #: and why `generate_structured` filters the chain on it before calling anyone.
+    #: Only `user` messages may carry images — a system block is text on both providers.
+    images: tuple[ImagePart, ...] = ()
 
     model_config = {"frozen": True}
+
+    @property
+    def has_images(self) -> bool:
+        return bool(self.images)
 
 
 class ProviderRequest(BaseModel):
@@ -103,6 +151,11 @@ class ProviderRequest(BaseModel):
     #: "not on any allowlist". A provider must still not contain the policy itself; this is
     #: the fact the policy needs, not the decision.
     feature: str | None = None
+
+    @property
+    def has_images(self) -> bool:
+        """Does any message in this request carry an image?"""
+        return any(m.has_images for m in self.messages)
 
 
 class ProviderResponse(BaseModel):
@@ -251,6 +304,29 @@ class BaseAIProvider(ABC):
         Verify the provider is reachable and the API key is valid.
         Must not raise — return False on failure.
         """
+
+    # ─── Optional: vision ─────────────────────────────────────────────────
+
+    @property
+    def supports_vision(self) -> bool:
+        """
+        Can this provider look at an image, rather than only read text?
+
+        A CAPABILITY FLAG for the same reason as `supports_streaming` below: the caller
+        must be able to ASK. The alternative is `isinstance(provider, AnthropicProvider)`
+        at the call site, which is the coupling this base class exists to forbid.
+
+        FALSE IS THE DEFAULT AND IT MATTERS MORE HERE THAN IT DOES FOR STREAMING. A
+        provider that cannot stream still returns the right answer, in one chunk; a
+        provider that cannot see images and is handed some returns an answer that reads
+        completely normally and was produced without ever looking at them. There is no
+        error to notice and nothing in the response says the evidence was dropped.
+
+        So this is not advisory. `generate_structured` removes providers that answer False
+        from the chain of any request carrying images, and fails the call outright if that
+        empties the chain — a wrong score is worse than no score.
+        """
+        return False
 
     # ─── Optional: token streaming ────────────────────────────────────────
 

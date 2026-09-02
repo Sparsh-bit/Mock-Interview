@@ -30,6 +30,21 @@ dependencies = [
     "rich>=13.7.0",
     # File handling
     "python-docx>=1.1.2",
+    # Deck review: .pptx text and typography.
+    #
+    # THIS BRINGS PILLOW IN TRANSITIVELY, which is worth stating because
+    # services/media/image_meta.py documents a deliberate decision NOT to depend on Pillow
+    # ("four header reads did not justify a native build"). That reasoning was about
+    # whether Pillow was worth ADDING for that one job; it is now in the tree regardless,
+    # as python-pptx requires it to handle embedded images. `image_meta.py` is left alone
+    # on purpose — its hand-rolled parsing works, is tested against 31 real files, and
+    # rewriting working code because a dependency arrived is churn. But a future reader
+    # deciding that question again should know Pillow is already here.
+    "python-pptx>=1.0.2",
+    # Deck review: rasterizing slides for the vision pass, and encoding them as JPEG
+    # directly (Pixmap.tobytes("jpeg")) so the render path needs no image library of its
+    # own. Ships manylinux wheels, so this is not a native build at install time.
+    "PyMuPDF>=1.24.0",
     # Storage (Supabase)
     "supabase>=2.10.0",
     # Utilities

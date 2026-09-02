@@ -63,9 +63,9 @@ from typing import Literal
 #: nothing to serve from the curated bank, they are the habit that brings somebody back on a
 #: day they have no time for an interview, and an unlimited feature behaves differently at
 #: the boundary from one with a high cap.
-Feature = Literal["interview", "gd", "communication"]
+Feature = Literal["interview", "gd", "communication", "deck"]
 
-FEATURES: tuple[Feature, ...] = ("interview", "gd", "communication")
+FEATURES: tuple[Feature, ...] = ("interview", "gd", "communication", "deck")
 
 # Keyed by `str` rather than by `Feature`, deliberately. A feature name reaching this at
 # runtime has come from a database column or a request body, so it is a plain string however
@@ -75,6 +75,7 @@ FEATURE_LABELS: dict[str, str] = {
     "interview": "mock interviews",
     "gd": "group discussions",
     "communication": "communication drills",
+    "deck": "deck reviews",
 }
 
 #: Singular, for "buy 1 more ___" copy. Kept beside the plural so a new feature cannot ship
@@ -83,6 +84,7 @@ FEATURE_LABELS_SINGULAR: dict[str, str] = {
     "interview": "mock interview",
     "gd": "group discussion",
     "communication": "communication drill",
+    "deck": "deck review",
 }
 
 #: THE TRIAL. One of everything, once, for the lifetime of the account.
@@ -116,6 +118,12 @@ TRIAL_ALLOWANCE: dict[str, int] = {
     "interview": 0,
     "gd": 0,
     "communication": 1,
+    # ZERO, MATCHING INTERVIEWS AND GDs RATHER THAN COMMUNICATION DRILLS. A deck evaluation
+    # is a vision call over a dozen rendered slides plus a DEEP judging call, which puts it
+    # nearer an interview's cost than a drill's — and the direction this file records is
+    # that the expensive features became paid-only. One free evaluation is a one-line
+    # change here if the product decides adoption is worth it.
+    "deck": 0,
 }
 
 
@@ -168,6 +176,25 @@ ITEMS: tuple[Item, ...] = (
         price_paise=1_900,
         name="1 communication drill",
         tagline="Speak an answer, get scored on delivery.",
+    ),
+    Item(
+        id="deck_1",
+        feature="deck",
+        quantity=1,
+        # ₹29. Between a communication drill (₹19) and a group discussion (₹39), which is
+        # where its cost sits: one vision pass over the slides plus one judging call, with
+        # no speech at all. See scripts/item_margin.py for the arithmetic.
+        price_paise=2_900,
+        name="1 deck review",
+        tagline="Upload your pitch deck, get it scored against nine criteria.",
+    ),
+    Item(
+        id="deck_5",
+        feature="deck",
+        quantity=5,
+        price_paise=11_900,
+        name="5 deck reviews",
+        tagline="Iterate on the deck and re-score it as it improves.",
     ),
     Item(
         id="interview_5",
