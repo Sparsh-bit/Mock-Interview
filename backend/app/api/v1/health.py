@@ -5,6 +5,8 @@ GET /api/v1/health
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 
 from app.db.redis import check_redis_connection
@@ -12,6 +14,34 @@ from app.db.session import check_db_connection
 from app.services.ai.reachability import check_provider_chain
 
 router = APIRouter()
+
+
+#: Per-probe deadline for the health endpoint.
+#:
+#: A HEALTHCHECK PROBE THAT TAKES LONGER THAN THIS IS ITSELF THE PROBLEM. The endpoint's own
+#: docstring says a health check that hangs is worse than one that reports a failure, because
+#: the monitor times out and reports the whole service down. 3 seconds is far longer than a
+#: healthy round trip — including cross-region, which is hundreds of milliseconds — and short
+#: enough that four probes cannot outlast a platform's patience.
+_PROBE_BUDGET_SECONDS = 3.0
+
+
+async def _probe_all(*coros):
+    """
+    Run dependency probes concurrently, each bounded, each falling back to False.
+
+    A TIMEOUT READS AS UNREACHABLE, NEVER AS HEALTHY. Bounding a probe must not make a broken
+    dependency look fine — that would trade a visible outage for silent data errors, which is
+    strictly worse than the slow endpoint it fixes.
+    """
+
+    async def one(coro):
+        try:
+            return bool(await asyncio.wait_for(coro, timeout=_PROBE_BUDGET_SECONDS))
+        except Exception:  # noqa: BLE001 — a probe may not break the endpoint that reports it
+            return False
+
+    return await asyncio.gather(*(one(c) for c in coros))
 
 
 @router.get("", summary="Service health check")
@@ -42,9 +72,18 @@ async def health_check():
     times out and reports the entire service down because somebody else was having a
     bad minute.
     """
-    db_ok = await check_db_connection()
-    redis_ok = await check_redis_connection()
-    supabase_ok = await _check_supabase_connection()
+    # BOUNDED, BECAUSE THE DOCSTRING ABOVE PROMISES IT AND THE CODE DID NOT DELIVER IT.
+    # `check_db_connection` had no deadline, so a slow database made THIS endpoint slow — and a
+    # platform healthcheck that times out marks the deployment unhealthy and stops routing to
+    # it. That produces the same 502 and the same x-railway-fallback header as a dead
+    # container, from an application that is running perfectly: the worst failure to debug,
+    # because every observable says "not running" and the process is fine.
+    #
+    # Run CONCURRENTLY as well as bounded, so the endpoint costs one probe's latency rather
+    # than the sum of four — this is the request a monitor makes every few seconds.
+    db_ok, redis_ok, supabase_ok = await _probe_all(
+        check_db_connection(), check_redis_connection(), _check_supabase_connection()
+    )
     providers = await check_provider_chain()
 
     dependencies_healthy = db_ok and redis_ok and supabase_ok

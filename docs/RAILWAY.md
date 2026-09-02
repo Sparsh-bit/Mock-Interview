@@ -44,6 +44,22 @@ tuning.
 **Do not set `PORT`.** Railway injects it. Setting it by hand overrides the injection
 and the health check then hits a port nothing is listening on.
 
+**THE TARGET PORT IN THE DOMAIN DIALOG MUST BE WHAT RAILWAY INJECTS, NOT THE DOCKERFILE
+DEFAULT.** This cost a long outage. `Generate Service Domain` asks for "the port your app is
+listening on" and pre-fills **8080**, which is correct: Railway injects `PORT=8080`, and the
+Dockerfile's `${PORT:-8000}` therefore binds **8080** — the `8000` default applies only when
+`PORT` is unset, which on Railway it never is. `EXPOSE 8000` in the Dockerfile is documentation
+of the local default and is not what the platform routes to.
+
+Overriding that field to `8000` produces a perfectly healthy application that is never routed
+to: the edge answers `502 {"message":"Application failed to respond"}` with
+`x-railway-fallback: true`, and a browser reports every request as a CORS failure because a 502
+page carries no CORS headers. The deploy log says `Uvicorn running on http://0.0.0.0:8080` and
+`Application startup complete`, so nothing in the symptoms points at the port.
+
+**Confirm it against the log, not against this file:** whatever `Uvicorn running on
+http://0.0.0.0:<port>` says is the number that belongs in the dialog.
+
 Three need thought rather than copying:
 
 ### `REDIS_URL` — the one that can fail silently

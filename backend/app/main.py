@@ -128,9 +128,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             ),
         )
     if not db_ok:
-        logger.error("database_unreachable_at_startup")
-        if settings.is_production:
-            raise RuntimeError("Database is unreachable. Aborting startup.")
+        # DEGRADE, DO NOT ABORT — and this is a deliberate reversal of the previous behaviour.
+        #
+        # This used to raise RuntimeError("Database is unreachable. Aborting startup.") in
+        # production. Fail-fast is usually right; here it traded a diagnosable degraded service
+        # for an undiagnosable absent one. A platform's answer to a crash-looping container is
+        # a 502 with no body, each restart discards the logs, and the operator cannot tell "the
+        # database is unreachable" from "the code crashed" from "the target port is wrong". An
+        # outage took hours to diagnose for exactly that reason.
+        #
+        # The codebase already made this call for Redis and wrote down why: refusing to boot
+        # trades a working-but-degraded service for no service at all. It applies with more
+        # force here, because /api/v1/health already knows how to report this — a mechanism
+        # that is worth nothing if the process is not alive to serve it.
+        #
+        # NOTHING IS HIDDEN. This is an ERROR, health reports status=degraded with
+        # database=unreachable, and every endpoint that needs the database still fails. What
+        # changes is that one curl now answers "why".
+        logger.error(
+            "database_unreachable_at_startup",
+            consequence=(
+                "starting DEGRADED rather than aborting, so the failure can be reported. "
+                "GET /api/v1/health will show database=unreachable; every endpoint that "
+                "needs the database will fail until it is fixed."
+            ),
+        )
     else:
         logger.info("database_connected")
 
