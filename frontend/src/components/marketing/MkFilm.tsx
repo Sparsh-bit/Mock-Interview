@@ -146,8 +146,15 @@ export function MkFilm() {
           />
           <div
             aria-hidden
+            /* THE VIGNETTE, SIZED IN VIEWPORT UNITS. A fixed 150px blur with 36px of spread
+               is a quarter of the way into a 390px phone from each edge, which darkened the
+               beat card itself rather than the stage around it — the cards read grey and the
+               gold label lost most of its brightness. Capping both against `vw` keeps the
+               same proportion of the stage darkened at every width. */
             className="pointer-events-none absolute inset-0 z-[4]"
-            style={{ boxShadow: 'inset 0 0 150px 36px rgb(0 0 0 / 0.55)' }}
+            style={{
+              boxShadow: 'inset 0 0 min(150px, 22vw) min(36px, 5vw) rgb(0 0 0 / 0.55)',
+            }}
           />
 
           {BEATS.map((Beat, i) => {
@@ -199,7 +206,7 @@ export function MkFilm() {
                     'mk-num text-[10px] tracking-[0.1em] transition-colors duration-300',
                     i === active
                       ? 'text-[var(--mk-gold-glow)]'
-                      : 'text-[rgb(183_168_143/0.45)] group-hover:text-[var(--mk-on-dark-muted)]',
+                      : 'text-[rgb(183_168_143/0.62)] group-hover:text-[var(--mk-on-dark-muted)]',
                   )}
                 >
                   {round.n}
@@ -209,7 +216,7 @@ export function MkFilm() {
                     'block h-[2px] rounded-full transition-all duration-500',
                     i === active
                       ? 'w-7 bg-[var(--mk-gold-glow)]'
-                      : 'w-3.5 bg-[rgb(183_168_143/0.3)] group-hover:bg-[rgb(183_168_143/0.6)]',
+                      : 'w-3.5 bg-[rgb(183_168_143/0.45)] group-hover:bg-[rgb(183_168_143/0.6)]',
                   )}
                 />
               </button>

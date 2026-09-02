@@ -17,6 +17,10 @@ import { createServerClient, type SetAllCookies } from '@supabase/ssr';
  */
 const PROTECTED_ROUTES = [
   '/dashboard',
+  /* The post-signup wizard. Protected for the same reason every other route here is — it
+     reads and writes the account's profile — and listed before '/dashboard' has any effect
+     because `isProtected` is a prefix match over the whole array. */
+  '/welcome',
   '/interview',
   '/session',
   '/report',
@@ -91,9 +95,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Redirect authenticated users away from auth routes
+  /*
+   * Redirect authenticated users away from auth routes.
+   *
+   * THE LANDING PAD IS `/welcome`, NOT `/dashboard`. This used to send every authenticated
+   * visitor straight to a dashboard of zeros, which for a brand-new account is three dead
+   * ends in a row: no resume (so the interview form's submit is disabled), no target company
+   * (so the study plan is unpersonalised), and no interview credit (so the front door is a
+   * 402). `/welcome` fixes all three and then redirects here itself the moment setup is done
+   * or the visitor has skipped it — so for an established account this costs one client-side
+   * redirect and nothing else, and there is no `onboarding_completed` flag to drift out of
+   * sync with the data it claims to describe.
+   */
   if (user && isAuthRoute(pathname)) {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.redirect(new URL('/welcome', request.url));
   }
 
   return supabaseResponse;

@@ -14,7 +14,19 @@ import { BRAND } from '@/lib/brand';
  * The signed-in half is handled separately: somebody who is already paying lives inside the
  * dashboard and never scrolls past a marketing page again, so Settings links the same four.
  */
-const LEGAL_LINKS = [
+/**
+ * THE FOUR LEGAL LINKS, AND THE ONLY DECLARATION OF THEM.
+ *
+ * Exported because there are now two footers: this one (the product's, on /pricing and the
+ * legal pages) and `components/marketing/MkFooter` (the public site's, on the landing page).
+ * Both have to carry all four, and `legal-pages.test.ts` checks the list against THIS file —
+ * so a second footer with its own copy would be a set of legal links nothing verifies. It
+ * would also be the exact shape of the bug this file was extracted to fix, one level up:
+ * a legal page reachable from one footer and not the other.
+ *
+ * Add a route here and both footers get it.
+ */
+export const LEGAL_LINKS = [
   { href: '/terms', label: 'Terms' },
   { href: '/refund', label: 'Refunds' },
   { href: '/privacy', label: 'Your data' },

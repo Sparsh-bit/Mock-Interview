@@ -67,7 +67,18 @@ OTPM_PER_REPORT_SLOT = (60 / REPORT_SECONDS) * REPORT_TOTAL_OUTPUT
 #: case; the report is 58% of it and batching halves the report.
 INTERVIEW_USD = 0.1544
 GD_ROUND_USD = 0.142
-REPORT_SHARE_OF_INTERVIEW = 0.58
+
+#: What fraction of a WARM interview the report is — the part the batch API halves.
+#:
+#: 0.80, NOT THE 0.58 THE COST MODEL HEADLINES. That 58% is measured against the COLD
+#: interview ($0.1349 of $0.2309), where the interview plan is also being paid for. Against
+#: the WARM interview — the normal case, where the plan is a cache hit — the report is $0.1233
+#: of $0.1544, because report + cross-questions is the whole of it: $0.1233 + $0.0311.
+#:
+#: Applying the cold share to the warm figure halved 58% instead of 80% and overstated the
+#: daily bill by ~18%. Conservative, and still wrong: a capacity tool that errs safe still
+#: sets budgets to the wrong number.
+REPORT_SHARE_OF_INTERVIEW = 0.1233 / 0.1544
 
 #: [MEASURED] docs/ELEVENLABS-SETUP.md, ~7,800 characters a GD round.
 TTS_USD_PER_GD_ROUND = {"fish": 0.117, "elevenlabs": 1.72, "azure": 0.12, "google": 0.13}
@@ -93,6 +104,120 @@ class Check:
         if self.ok:
             return "PASS"
         return "FAIL" if self.fatal else "WARN"
+
+
+# ─── Per-feature worst case ───────────────────────────────────────────────────
+#
+# THE QUESTION THE MIX SCENARIO DOES NOT ANSWER. `assess()` models a cohort doing broadly what
+# a cohort does — 60% interviewing, 25% in a group discussion, 15% idle. A SCHEDULED ACTIVITY
+# is not that shape: 150 people all starting a group discussion at the same moment puts every
+# one of them on one feature, and the per-user call rate that was a quarter of the load becomes
+# all of it.
+#
+# MEASURED FIGURES ONLY, AND THE REST SAY SO. Four features have per-call token counts in
+# docs/AI-COST-MODEL.md. The others do not, and an unmeasured row reported as PASS would be
+# worse than an absent one — so they are listed with `measured=False` and no verdict.
+
+#: [PUBLISHED] Anthropic Start-tier limits, per model. Rate limits are per-model and not
+#: pooled, so these apply to whatever ANTHROPIC_MODEL names.
+START_TIER = {"rpm": 1_000, "itpm": 2_000_000, "otpm": 400_000}
+
+
+@dataclass(frozen=True)
+class FeatureLoad:
+    """One feature, at the target load, with every user on it at once."""
+
+    feature: str
+    ok: bool
+    measured: bool
+    rpm: float
+    itpm: float
+    otpm: float
+    usd_per_user: float
+    detail: str
+
+
+#: Per-user call shape for the features whose tokens are measured.
+#:
+#: `seconds_between` is how often ONE user triggers the call while active; `calls_per_session`
+#: is how many that user makes in total. Uncached input only — cache reads do not count toward
+#: ITPM (docs/RATE-LIMIT-HEADROOM.md), which is why the GD panel's 2,856-token rulebook is
+#: absent from its input figure.
+_MEASURED_FEATURES = [
+    {
+        "feature": "gd",
+        "label": "Group discussion (panel turns)",
+        "seconds_between": 18.0,
+        "input": 336,
+        "output": 350,
+        "usd_per_user": GD_ROUND_USD,
+    },
+    {
+        "feature": "interview",
+        "label": "Interview (question path)",
+        # One exchange every 90s; a cross-question falls on every third answer, so the
+        # AI-bearing share of exchanges is a third.
+        "seconds_between": 90.0 / (1 / 3),
+        "input": 1_093,
+        "output": 300,
+        "usd_per_user": INTERVIEW_USD,
+    },
+]
+
+#: Features with no measured token figures. Listed rather than omitted, because a capacity
+#: table that silently covers only what was easy to measure reads as complete.
+_UNMEASURED_FEATURES = [
+    ("quiz", "Quiz", "served from the curated banks in app/data first; the AI path only tops up a shortfall"),
+    ("communication", "Communication round", "communication_evaluation + communication_cross_question"),
+    ("coding", "Coding round", "code_analysis + panel_code_review, plus Judge0 for execution"),
+    ("resume", "Resume analysis", "resume_analysis_skills + resume_analysis_projects, 35s budget"),
+]
+
+
+def assess_features(cfg, users: int) -> list[FeatureLoad]:
+    """Every feature at `users` concurrent, as if all of them were on that one feature."""
+    rows: list[FeatureLoad] = []
+
+    for f in _MEASURED_FEATURES:
+        per_second = users / f["seconds_between"]
+        rpm = per_second * 60
+        itpm = per_second * f["input"] * 60
+        otpm = per_second * f["output"] * 60
+        # OTPM is the binding limit on this product — its expensive calls write a lot, and
+        # OTPM is a fifth of ITPM on every tier.
+        worst = max(rpm / START_TIER["rpm"], itpm / START_TIER["itpm"], otpm / START_TIER["otpm"])
+        rows.append(
+            FeatureLoad(
+                feature=f["feature"],
+                ok=worst <= _HEADROOM_WARN_RATIO,
+                measured=True,
+                rpm=rpm,
+                itpm=itpm,
+                otpm=otpm,
+                usd_per_user=f["usd_per_user"],
+                detail=(
+                    f"{f['label']}: {users} users x 1 call / {f['seconds_between']:.0f}s = "
+                    f"{rpm:,.0f} RPM, {itpm:,.0f} ITPM, {otpm:,.0f} OTPM "
+                    f"({100 * worst:.0f}% of the Start tier's tightest limit)"
+                ),
+            )
+        )
+
+    for key, label, why in _UNMEASURED_FEATURES:
+        rows.append(
+            FeatureLoad(
+                feature=key,
+                ok=True,
+                measured=False,
+                rpm=0.0,
+                itpm=0.0,
+                otpm=0.0,
+                usd_per_user=0.0,
+                detail=f"{label}: not measured — {why}. Add token counts to docs/AI-COST-MODEL.md to assess it.",
+            )
+        )
+
+    return rows
 
 
 def assess(cfg, users: int) -> list[Check]:

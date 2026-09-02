@@ -88,7 +88,7 @@ export function MkHero() {
           </p>
         </div>
 
-        {/* The scroll cue. It exists because the section directly below is 360vh of sticky
+        {/* The scroll cue. It exists because the section directly below is 540vh of sticky
             stage: on a phone the hero fills the screen exactly, and without a cue a visitor
             has no way to know that the page has not simply ended. */}
         <div className="flex justify-center pb-6">

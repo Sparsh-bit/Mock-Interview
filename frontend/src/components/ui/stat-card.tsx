@@ -21,12 +21,30 @@ import { fadeUp } from '@/lib/motion';
  * no sessions has no average score, and printing `0%` tells them they scored
  * zero, which is both wrong and demoralising.
  */
+/**
+ * TWO VARIANTS, AND THE DEFAULT IS UNCHANGED.
+ *
+ * `card` is what this component has always rendered and what /analytics, /ai-usage and the
+ * three admin pages still get: a bordered tile with an icon, which is right when four metrics
+ * sit among a dozen other panels and each needs its own edge to be found by.
+ *
+ * `bare` drops the border, the fill and the icon and leaves the number and its caption. It
+ * exists for the dashboard's top row, where four bordered tiles in a row directly under the
+ * page title produced four competing rectangles before the reader had reached anything they
+ * came for. Grouped inside ONE panel with hairlines between them, the same four figures read
+ * as a single summary — which is what they are. The icon goes because at that size it is
+ * decoration: "Total Sessions" is already the label, and a book glyph beside it adds nothing
+ * a reader did not have.
+ *
+ * The prop is opt-in rather than a new default so that no existing caller changes.
+ */
 export function StatCard({
   label,
   value,
   icon,
   sub,
   color = 'blue',
+  variant = 'card',
   className,
 }: {
   label: string;
@@ -35,8 +53,27 @@ export function StatCard({
   icon: React.ReactNode;
   sub?: string;
   color?: IconTileProps['color'];
+  variant?: 'card' | 'bare';
   className?: string;
 }) {
+  if (variant === 'bare') {
+    return (
+      <motion.div variants={fadeUp} className={className}>
+        <span className="block min-w-0 break-words text-[10px] font-semibold uppercase tracking-[0.14em] text-accent-amber-ink/70">
+          {label}
+        </span>
+        {/* Larger than the card variant's 2xl, because with the border and the icon gone the
+            number is the only thing holding the tile together and it has to carry that on its
+            own. Mono and tabular so a row of four aligns on the decimal and does not reflow
+            when a figure ticks over a digit. */}
+        <p className="mt-2 break-words font-mono text-[1.75rem] font-medium leading-none tabular-nums tracking-[-0.03em]">
+          {value}
+        </p>
+        {sub && <p className="mt-1.5 text-xs text-muted-foreground">{sub}</p>}
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div variants={fadeUp} className={className}>
       <Card hoverable className="h-full p-4">

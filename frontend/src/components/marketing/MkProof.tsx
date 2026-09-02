@@ -59,8 +59,8 @@ export function MkProof() {
         <div className="mt-7 grid gap-x-16 gap-y-12 lg:grid-cols-[1.05fr_0.95fr]">
           <div>
             <h2
-              className="max-w-[19ch] text-balance leading-[1.06]"
-              style={{ fontSize: 'var(--mk-h2-xl)' }}
+              className="max-w-[24ch] text-balance leading-[1.08]"
+              style={{ fontSize: 'var(--mk-h2)' }}
             >
               Amazon gives algorithms 45% of the paper. TCS gives aptitude 25%.{' '}
               <span className="mk-turn">Your plan should know the difference.</span>
@@ -78,7 +78,7 @@ export function MkProof() {
             </Link>
           </div>
 
-          <div ref={ref} className="grid gap-8 sm:grid-cols-2 lg:gap-6">
+          <div ref={ref} className="grid gap-8 sm:grid-cols-2 lg:gap-6 lg:pt-2">
             {WEIGHTINGS.map((w) => (
               <div key={w.company}>
                 <p className="font-[family-name:var(--mk-font-display)] text-[1.125rem] text-[var(--mk-ink)]">

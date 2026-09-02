@@ -131,11 +131,23 @@ export default function DashboardPage() {
         <NudgeDeck />
       </motion.div>
 
-      {/* Stats grid — participation, deliberately BELOW the rating. Hours practised
-          and sessions completed measure effort; the rating measures whether the
-          effort worked, and the ordering should say which one matters. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* Participation, deliberately BELOW the rating. Hours practised and sessions completed
+          measure effort; the rating measures whether the effort worked, and the ordering
+          should say which one matters.
+
+          ONE PANEL, FOUR FIGURES — not four panels. These are one summary of one thing and
+          they were drawn as four separate bordered tiles, which put four competing rectangles
+          directly under the page title. Inside a single card with hairlines between them they
+          read as a row of related numbers, which is what they are, and the page gains a piece
+          of structure instead of four.
+
+          `divide-x` only from `sm`: at 320px the grid is two columns and a vertical rule
+          between two cramped figures reads as a table someone forgot to finish. */}
+      <motion.div variants={fadeUp}>
+        <Card className="grid grid-cols-2 gap-y-6 p-5 sm:grid-cols-4 sm:gap-y-0 sm:divide-x sm:divide-border/60">
         <StatCard
+          variant="bare"
+          className="sm:px-5 sm:first:pl-0 sm:last:pr-0"
           label="Total Sessions"
           value={statsLoading ? '…' : (stats?.total_sessions ? String(stats.total_sessions) : '0')}
           icon={<BookOpen className="h-4 w-4" />}
@@ -143,6 +155,8 @@ export default function DashboardPage() {
           color="blue"
         />
         <StatCard
+          variant="bare"
+          className="sm:px-5 sm:first:pl-0 sm:last:pr-0"
           label="Average Score"
           value={statsLoading ? '…' : (stats?.average_score ? `${stats.average_score}/100` : '—')}
           icon={<BarChart2 className="h-4 w-4" />}
@@ -150,6 +164,8 @@ export default function DashboardPage() {
           color="cyan"
         />
         <StatCard
+          variant="bare"
+          className="sm:px-5 sm:first:pl-0 sm:last:pr-0"
           label="Hours Practiced"
           value={statsLoading ? '…' : `${stats?.hours_practiced ?? 0}h`}
           icon={<Clock className="h-4 w-4" />}
@@ -161,6 +177,8 @@ export default function DashboardPage() {
             the single clearest tell that nobody chose the typography. The flame moved into
             the icon tile, which is what the tile is for. */}
         <StatCard
+          variant="bare"
+          className="sm:px-5 sm:first:pl-0 sm:last:pr-0"
           label="Day Streak"
           value={statsLoading ? '…' : String(stats?.streak_days ?? 0)}
           icon={<Flame className="h-4 w-4" />}
@@ -169,7 +187,8 @@ export default function DashboardPage() {
           }
           color="amber"
         />
-      </div>
+        </Card>
+      </motion.div>
 
       {/* Main content grid */}
       <div className="grid gap-4 lg:grid-cols-3">

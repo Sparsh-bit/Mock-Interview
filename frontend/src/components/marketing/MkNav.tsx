@@ -24,7 +24,7 @@ import { NAV_LINKS } from './content';
  *  · Once the page has moved past ~24px it takes a translucent paper fill, a hairline and a
  *    soft shadow, because from that point on there is content sliding under it and text
  *    passing through text is the one thing a floating nav must not allow.
- *  · Over a dark stage it inverts. The film is a 360vh section of near-black; an espresso
+ *  · Over a dark stage it inverts. The film is a 540vh section of near-black; an espresso
  *    wordmark on it is invisible, and a cream pill sitting on it is a hole punched through
  *    the film at its most dramatic moment. So the pill goes glass-on-dark and the type goes
  *    cream, and the transition between the two is slow enough (0.4s) to read as the nav
@@ -111,7 +111,7 @@ export function MkNav() {
         <nav
           data-dark={onDark || undefined}
           className={cn(
-            'pointer-events-auto flex w-full max-w-[var(--mk-max)] items-center gap-3 rounded-[var(--mk-r-pill)] px-3 py-2.5 transition-[background,border-color,box-shadow,backdrop-filter] duration-[400ms] sm:px-4',
+            'pointer-events-auto flex w-full max-w-[var(--mk-max)] items-center gap-3 rounded-[var(--mk-r-pill)] px-3 py-2.5 transition-[background,border-color,box-shadow,backdrop-filter] [transition-duration:400ms] sm:px-4',
             scrolled
               ? 'border border-[var(--mk-border)] bg-[rgb(251_246_236/0.82)] shadow-[var(--mk-shadow-card)] backdrop-blur-xl backdrop-saturate-150'
               : 'border border-transparent bg-transparent',
@@ -132,7 +132,11 @@ export function MkNav() {
             />
             <span
               className={cn(
-                'font-[family-name:var(--mk-font-display)] text-[1.0625rem] font-medium tracking-[-0.015em] transition-colors duration-[400ms]',
+                /* `whitespace-nowrap` is load-bearing at 390px: without it the pill's flex
+                   layout breaks the wordmark after "Interview" and the mark sits beside a
+                   two-line lockup, which is the one place on the site the brand looks
+                   accidental. */
+                'whitespace-nowrap font-[family-name:var(--mk-font-display)] text-[1.0625rem] font-medium tracking-[-0.015em] transition-colors [transition-duration:400ms]',
                 onDark ? 'text-[var(--mk-on-dark-bright)]' : 'text-[var(--mk-ink)]',
               )}
             >

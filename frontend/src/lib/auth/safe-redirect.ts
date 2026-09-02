@@ -20,7 +20,16 @@
  */
 
 /** Where anybody with no valid destination ends up. */
-export const DEFAULT_REDIRECT = '/dashboard';
+/*
+ * `/welcome` and not `/dashboard`: it is the onboarding wizard, and it forwards to the
+ * dashboard by itself for any account that is already set up or has skipped. Sending an
+ * established user through it costs one client-side redirect; sending a new one straight to
+ * the dashboard costs them the whole first session.
+ *
+ * An explicit `?redirectTo=` still wins — somebody deep-linked to a report is going to the
+ * report.
+ */
+export const DEFAULT_REDIRECT = '/welcome';
 
 /**
  * A same-origin path, or `DEFAULT_REDIRECT`.

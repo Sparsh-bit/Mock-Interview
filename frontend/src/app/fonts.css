@@ -1,0 +1,79 @@
+/* ─── THE TWO SELF-HOSTED FACES ──────────────────────────────────────────────
+
+   Fraunces (display) and DM Sans (text), served from `public/fonts/` rather than
+   through `next/font/google` — which is what Inter and JetBrains Mono still use.
+   Three reasons for the split, in the order they matter:
+
+   1. THE BUILD MUST NOT NEED THE NETWORK TO PRODUCE THE RIGHT TYPE.
+      `next/font/google` fetches from fonts.googleapis.com at BUILD time. On a
+      machine or CI runner without egress to it the build fails outright, and
+      that is the good case; the bad case is a build that succeeds against a
+      cached stylesheet for a face that has since changed. This project deploys
+      through `@cloudflare/next-on-pages`, so the build runs somewhere other
+      than a developer's laptop, and a font that only resolves on one of the
+      two is a font that will eventually not resolve.
+
+   2. ONE FEWER ORIGIN ON THE CRITICAL PATH. next/font self-hosts the FILE but
+      the hero headline is still the largest paint on the page, and shipping the
+      face from our own origin removes a connection the browser has to open
+      before it can draw it.
+
+   3. THE VARIABLE CUT IS ONE FILE PER STYLE. `fraunces-latin-wght-normal` is
+      36KB and covers every weight from 100 to 900; the italic is a second 45KB
+      and is genuinely needed, because exactly one clause in every display
+      heading on this site is set in it and a synthetic oblique of a serif is
+      visibly wrong beside the real one. 118KB for all three.
+
+   `font-display: swap` on all three: the fallback stacks in marketing.css and
+   tailwind.config.ts are Georgia for the serif and system-ui for the sans, both
+   of which are metrically close enough that the swap is a change of shape
+   rather than a reflow.
+
+   Latin subset only. If the product ever ships a Devanagari or Cyrillic
+   surface, add the matching subset files here rather than reaching for the full
+   face — the full Fraunces is 280KB.                                        */
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-display: swap;
+  /* The full variable weight range in one file. Declaring the range rather than
+     a single weight is what lets `font-weight: 480` — the value the hero and
+     every page title use — resolve to a real interpolation instead of snapping
+     to 500. */
+  font-weight: 100 900;
+  src: url('/fonts/fraunces-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/fraunces-latin-wght-italic.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 1000;
+  src: url('/fonts/dm-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* The same two variable names `next/font` would have produced, so every use site
+   — marketing.css, tailwind.config.ts's `font-display` family — reads a variable
+   and neither knows nor cares which mechanism defined it. */
+:root {
+  --font-fraunces: 'Fraunces';
+  --font-dm-sans: 'DM Sans';
+}

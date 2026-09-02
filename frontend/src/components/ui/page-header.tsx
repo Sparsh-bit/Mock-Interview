@@ -86,7 +86,20 @@ export function PageHeader({
             {eyebrow}
           </p>
         )}
-        <h1 className="text-[clamp(1.5rem,2.6vw,2rem)] font-medium leading-[1.12] tracking-[-0.03em]">
+        {/*
+          * SET IN THE DISPLAY SERIF, and this one line restyles all fourteen screens.
+          *
+          * The weight drops from `font-medium` (500) to 480 at the same time, which looks
+          * like a rounding error and is not: Fraunces at 500 has noticeably heavier stems
+          * than Inter at 500, so keeping the old weight would have made every page title
+          * heavier than it was rather than differently shaped. 480 lands on the same optical
+          * weight as the sans it replaces.
+          *
+          * Tracking loosens from -0.03em to -0.022em for the same reason — a serif carries
+          * its own spacing and the negative tracking that keeps Inter from looking loose at
+          * display size closes a serif up until the counters fill in.
+          */}
+        <h1 className="font-display text-[clamp(1.5rem,2.6vw,2rem)] font-[480] leading-[1.12] tracking-[-0.022em]">
           {title}
         </h1>
         {description && (

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { Brandmark } from '@/components/brand/Brandmark';
+import { LEGAL_LINKS } from '@/components/layout/SiteFooter';
 import { BRAND } from '@/lib/brand';
 
 import { ROUNDS } from './content';
@@ -35,12 +36,11 @@ const COLUMNS = [
   },
   {
     title: 'Legal',
-    links: [
-      { href: '/terms', label: 'Terms' },
-      { href: '/refund', label: 'Refunds' },
-      { href: '/privacy', label: 'Your data' },
-      { href: '/grievance', label: 'Grievance' },
-    ],
+    /* NOT a copy. `LEGAL_LINKS` is declared once in SiteFooter and `legal-pages.test.ts`
+       checks the four routes against that declaration — a second hand-typed list here would
+       be four legal links that no test can see, which is how one of them ends up reachable
+       from the pricing page and not from the landing page. */
+    links: LEGAL_LINKS,
   },
 ] as const;
 

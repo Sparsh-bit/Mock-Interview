@@ -8,6 +8,7 @@ import { MkHero } from '@/components/marketing/MkHero';
 import { MkNav } from '@/components/marketing/MkNav';
 import { MkPricing } from '@/components/marketing/MkPricing';
 import { MkProof } from '@/components/marketing/MkProof';
+import { MkReel } from '@/components/marketing/MkReel';
 import { MkShowcase } from '@/components/marketing/MkShowcase';
 import { BRAND } from '@/lib/brand';
 
@@ -35,6 +36,9 @@ import { BRAND } from '@/lib/brand';
  *              Deliberately unglamorous, and deliberately immediately after the film, because
  *              that is where a sceptical reader starts looking for the catch.
  *   SHOWCASE   four real surfaces, live rather than screenshotted.
+ *   REEL       the 34-second rendered film. After the showcase and not before it, because a
+ *              3MB video is the heaviest thing on the page and it should be the last thing
+ *              anybody pays for — by this point they have chosen to keep reading.
  *   PRICING    before the close, not after it. A visitor who has read this far has one
  *              question left and it is what it costs; making them scroll past a call to
  *              action to find out is how you lose them at the last step.
@@ -64,6 +68,7 @@ export default function LandingPage() {
         <MkFilm />
         <MkProof />
         <MkShowcase />
+        <MkReel />
         <MkPricing />
         <MkClose />
       </main>

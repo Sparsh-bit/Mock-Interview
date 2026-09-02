@@ -229,7 +229,13 @@ export function AppSidebar({ user }: SidebarProps) {
         {NAV_ITEMS.map(({ group, items: baseItems }) => (
           <div key={group} className="mb-5">
             {!collapsed && (
-              <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
+              /* WARM, NOT GREY. `text-muted-foreground/60` put these at about 3:1 on paper —
+                 legible, and reading as disabled rather than as a heading. The amber ink tone
+                 is 6.4:1 and is the same warm brown the page eyebrows use, so the rail's
+                 section marks and the page's section marks are recognisably one device. It
+                 does NOT spend the amber meaning: these are labels on the furniture, not on a
+                 destination, which is why the rows below them keep their own tones. */
+              <p className="mb-1.5 px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-accent-amber-ink/70">
                 {group}
               </p>
             )}

@@ -237,6 +237,83 @@ class TestThePoolerServerConnectionsAreTheRealCeiling:
         )
 
 
+class TestTheReportShareIsMeasuredAgainstTheRightBaseline:
+    """
+    THE BUG THIS PINS. docs/AI-COST-MODEL.md says "the report is 58% of an interview's cost",
+    and that figure is against the COLD interview: $0.1349 of $0.2309. Against the WARM
+    interview - the normal case, where the interview plan is a cache hit - the report is
+    $0.1233 of $0.1544, which is 80%.
+
+    The preflight prices a warm interview and was applying the cold share to it, so the batch
+    discount came out at half of 58% instead of half of 80%. It overstated the daily bill by
+    about 18%. Conservative, and still wrong: a capacity tool that is wrong in the safe
+    direction still gets budgets set to the wrong number.
+    """
+
+    def test_the_share_is_the_warm_one(self, preflight):
+        # $0.1233 report / $0.1544 warm interview.
+        assert 0.78 <= preflight.REPORT_SHARE_OF_INTERVIEW <= 0.82
+
+    def test_the_measured_parts_of_a_warm_interview_add_up(self, preflight):
+        """
+        A warm interview is report + cross-questions; the plan is a cache hit at ~$0 and
+        question_generation is fallback-only at 0 calls. If these stop summing, one of the
+        figures has drifted from the cost model.
+        """
+        assert abs((0.1233 + 0.0311) - preflight.INTERVIEW_USD) < 0.002
+
+    def test_batching_a_report_halves_the_right_amount(self, preflight):
+        cfg = _cfg()
+        on = _by_name(preflight.assess(cfg, users=100))["ai_daily_budget"].detail
+        # A warm interview is $0.1544, of which the report is $0.1233. Batched, the report
+        # halves: 0.1544 - 0.1233/2 = $0.0927. Plus a $0.142 GD round = $0.2347 each.
+        assert "$0.0927" in on, on
+        assert "$23.47" in on, on
+
+
+class TestEveryFeatureIsAssessedAtTheTargetLoad:
+    """
+    The mix scenario answers "200 people doing broadly what a cohort does". It does NOT answer
+    "150 people all in a group discussion at the same time", which is what a single scheduled
+    activity looks like. Each feature needs its own worst case.
+    """
+
+    def test_the_report_names_every_measured_feature(self, preflight):
+        rows = preflight.assess_features(_cfg(), users=150)
+        keys = {r.feature for r in rows}
+        assert {"interview", "gd", "quiz", "communication"} <= keys
+
+    def test_each_row_reports_rpm_itpm_and_otpm(self, preflight):
+        for row in preflight.assess_features(_cfg(), users=150):
+            assert row.rpm >= 0
+            assert row.otpm >= 0
+            assert row.detail
+
+    def test_a_feature_over_the_tier_is_flagged(self, preflight):
+        """
+        THE VACUITY GUARD. If nothing can ever fail, the table is decoration. At a large enough
+        cohort some feature must exceed the Start tier's 400k OTPM.
+        """
+        rows = preflight.assess_features(_cfg(), users=5000)
+        assert any(not r.ok for r in rows)
+
+    def test_the_target_load_passes_where_it_should(self, preflight):
+        rows = {r.feature: r for r in preflight.assess_features(_cfg(), users=150)}
+        # GD is the heaviest measured per-user feature; it must still clear 150.
+        assert rows["gd"].ok, rows["gd"].detail
+
+    def test_unmeasured_features_say_so_rather_than_guessing(self, preflight):
+        """
+        Several features have no measured token figures. The table must ADMIT that rather than
+        invent numbers - an unmeasured row reported as PASS is worse than an absent one.
+        """
+        rows = preflight.assess_features(_cfg(), users=150)
+        unmeasured = [r for r in rows if r.measured is False]
+        assert unmeasured, "expected at least one honestly-unmeasured feature"
+        for r in unmeasured:
+            assert "not measured" in r.detail.lower()
+
+
 class TestItAgreesWithTheHeadroomAnalysis:
     def test_the_load_model_matches(self, preflight, headroom):
         """

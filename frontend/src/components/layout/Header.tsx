@@ -114,7 +114,21 @@ export function AppHeader({ user }: HeaderProps) {
         <Link href="/dashboard" aria-label={`${BRAND.name} home`} className="lg:hidden">
           <Wordmark collapsed className="pointer-events-none" />
         </Link>
-        <h2 className="truncate text-sm font-semibold tracking-tight">{title}</h2>
+        {/*
+          * A BREADCRUMB, NOT A SECOND TITLE.
+          *
+          * This used to be `text-sm font-semibold` — the same treatment as a card heading, and
+          * one line above a page title that says the same word. Two headings of similar weight
+          * stacked 20px apart is the reason this bar read as clutter rather than as chrome.
+          *
+          * Mono, uppercase, wide-tracked and muted puts it in the register of a location
+          * indicator: it is the answer to "where am I", which is what a persistent bar above a
+          * scrolling page is for, and it no longer competes with the page's own title.
+          */}
+        <p className="truncate font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+          <span className="hidden sm:inline">InterviewOS&nbsp;&nbsp;·&nbsp;&nbsp;</span>
+          <span className="text-foreground">{title}</span>
+        </p>
       </div>
 
       <MobileNav

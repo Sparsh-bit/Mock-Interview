@@ -66,10 +66,28 @@ describe('nothing is an orphan', () => {
   }
 
   it('the footer is actually rendered on the pages a signed-out visitor sees', () => {
-    // A footer component nobody mounts is the orphan problem one level up.
+    /*
+     * A footer component nobody mounts is the orphan problem one level up.
+     *
+     * THERE ARE NOW TWO FOOTERS and both are acceptable here: `SiteFooter` is the product's
+     * (pricing, the legal pages, a shared report) and `MkFooter` is the public site's, which
+     * the landing page renders because a four-column site map is right there and absurd on a
+     * legal page. What is NOT acceptable is a signed-out page with neither.
+     *
+     * The second assertion is the one that keeps this test honest. Accepting either component
+     * would otherwise weaken the guarantee to "some footer exists", and a marketing footer
+     * with its own hand-typed list of legal routes is exactly the orphan this file exists to
+     * prevent — four links that nothing checks. So MkFooter has to take the list from
+     * SiteFooter's `LEGAL_LINKS`, which is the declaration the loop above verifies.
+     */
     for (const page of ['app/page.tsx', 'app/pricing/page.tsx']) {
-      expect(read(page), `${page} does not render the footer`).toMatch(/SiteFooter/);
+      expect(read(page), `${page} renders no footer at all`).toMatch(/SiteFooter|MkFooter/);
     }
+
+    expect(
+      read('components/marketing/MkFooter.tsx'),
+      'MkFooter declares its own legal links instead of importing LEGAL_LINKS from SiteFooter',
+    ).toMatch(/import \{[^}]*\bLEGAL_LINKS\b[^}]*\} from '@\/components\/layout\/SiteFooter'/);
   });
 
   it('every legal page links to the others, so none is a dead end', () => {

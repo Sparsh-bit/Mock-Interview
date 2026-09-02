@@ -190,6 +190,22 @@ const config: Config = {
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-jetbrains-mono)', 'Menlo', 'monospace'],
+        /*
+         * THE DISPLAY FACE. Fraunces, loaded in app/layout.tsx alongside Inter.
+         *
+         * It arrived with the public-site retheme and it is deliberately available inside the
+         * product too, for exactly ONE job: the page title. Every screen in the app is a
+         * dashboard made of white cards on warm paper, and the single cheapest way to make a
+         * dashboard look considered rather than generated is for the largest piece of type on
+         * it to be a serif set at a normal weight. Everything below the title stays Inter,
+         * because a serif at 13px in a table is unreadable and a serif everywhere is a
+         * different product.
+         *
+         * The variable font carries an optical-size axis, so the same file holds its
+         * proportions from a 24px page title to the 100px hero on the landing page. That is
+         * why this costs one file rather than two cuts.
+         */
+        display: ['var(--font-fraunces)', 'Georgia', 'serif'],
       },
       keyframes: {
         'accordion-down': {

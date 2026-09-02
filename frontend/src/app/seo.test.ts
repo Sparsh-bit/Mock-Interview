@@ -19,7 +19,7 @@ import sitemap from './sitemap';
  * needing their own copy of the domain.
  */
 
-const AUTH_ONLY = ['/dashboard', '/settings', '/profile', '/session', '/report', '/admin', '/r/'];
+const AUTH_ONLY = ['/dashboard', '/welcome', '/settings', '/profile', '/session', '/report', '/admin', '/r/'];
 
 describe('robots.txt', () => {
   it('allows crawling and points at the sitemap', () => {

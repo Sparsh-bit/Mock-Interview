@@ -93,9 +93,9 @@
   --mk-font-text: var(--font-dm-sans), 'DM Sans', system-ui, -apple-system, sans-serif;
   --mk-font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', 'Menlo', monospace;
 
-  --mk-display: clamp(2.375rem, 1.08rem + 5.75vw, 6.25rem);
+  --mk-display: clamp(2.375rem, 1.35rem + 4.55vw, 4.75rem);
   --mk-display-2: clamp(2.25rem, 1rem + 4.3vw, 5rem);
-  --mk-h2-xl: clamp(2.125rem, 1.2rem + 2.6vw, 3.625rem);
+  --mk-h2-xl: clamp(2rem, 1.35rem + 1.85vw, 3rem);
   --mk-h2: clamp(2rem, 1.4rem + 1.6vw, 2.75rem);
   --mk-h3: clamp(1.375rem, 1.2rem + 0.55vw, 1.75rem);
   --mk-final: clamp(2.5rem, 1.75rem + 3.35vw, 3.625rem);
@@ -141,10 +141,27 @@
    and size here rather than relying on inheritance — a heading that picks up
    `text-4xl font-semibold` from globals and Fraunces from here is the exact
    combination that reads as a serif trying to be a UI font. */
-.mk h1,
-.mk h2,
-.mk h3,
-.mk .mk-display {
+/* ── A NOTE ON `:where()`, WHICH IS LOAD-BEARING AND LOOKS LIKE A TYPO ─────
+   Every element-targeting rule in this file wraps its scope in `:where()`.
+
+   THE BUG IT FIXES. `.mk p { color: var(--mk-body) }` is specificity (0,1,1) —
+   a class plus an element. Every Tailwind colour utility is (0,1,0). So a
+   paragraph written as `<p className="text-[var(--mk-gold-ink)]">` inside the
+   scope rendered in body brown, and so did every eyebrow, every beat label and
+   every muted caption that happened to be a `<p>`. It is invisible in review
+   because the markup is right; only the paint is wrong.
+
+   `:where()` contributes ZERO specificity, so `:where(.mk) p` is (0,0,1) — an
+   element selector — and loses to any class at all while still beating the
+   `@layer base` defaults in globals.css, because unlayered styles outrank
+   layered ones regardless of specificity. That is exactly the relationship
+   these rules want: a floor for unstyled elements that anything can override.
+
+   The rule of thumb for anything added below: if the selector names an ELEMENT,
+   scope it with `:where()`. If it names a class the markup opts into, do not —
+   that one is meant to win.                                                  */
+:where(.mk) :is(h1, h2, h3),
+.mk-display {
   font-family: var(--mk-font-display);
   font-weight: 480;
   font-optical-sizing: auto;
@@ -152,11 +169,15 @@
   color: var(--mk-ink);
 }
 
-.mk p {
+:where(.mk) p {
   color: var(--mk-body);
 }
 
-.mk em,
+:where(.mk) em {
+  font-style: italic;
+  color: var(--mk-gold-ink);
+}
+
 .mk .mk-turn {
   font-style: italic;
   color: var(--mk-gold-ink);
@@ -164,8 +185,9 @@
 
 /* On the dark stage the gold has room to be the brighter of the two tones —
    #96691E on espresso is 2.2:1 and unreadable. */
+.mk .mk-on-dark .mk-turn,
 .mk-on-dark .mk-turn,
-.mk-on-dark em {
+:where(.mk-on-dark) em {
   color: var(--mk-gold-glow);
 }
 
@@ -336,14 +358,12 @@
   color: var(--mk-on-dark);
 }
 
-.mk-on-dark p,
-.mk-on-dark .mk-body {
+:where(.mk-on-dark) p,
+:where(.mk-on-dark) .mk-body {
   color: var(--mk-on-dark-muted);
 }
 
-.mk-on-dark h1,
-.mk-on-dark h2,
-.mk-on-dark h3 {
+:where(.mk-on-dark) :is(h1, h2, h3) {
   color: var(--mk-on-dark-bright);
 }
 
@@ -510,12 +530,17 @@
   max-width: 34ch;
   font-family: var(--mk-font-display);
   font-size: clamp(1.125rem, 0.9rem + 1.05vw, 1.625rem);
-  font-weight: 480;
+  font-weight: 520;
   line-height: 1.3;
   letter-spacing: -0.015em;
   text-align: center;
-  color: var(--mk-gold-glow);
-  text-shadow: 0 0 14px rgb(231 182 94 / 0.28);
+  /* NOT `--mk-gold-glow`. That token is calibrated for a gold fill on dark — a button, a
+     stroke, a 2px rule — where the mark is solid. This is 26px Fraunces at 520, which is
+     mostly thin stroke and counter, and the same hex reads about a stop darker as type than
+     it does as a fill. A lighter tone here is not an inconsistency with the token; it is what
+     keeps the two looking like the same gold. */
+  color: #f2ce86;
+  text-shadow: 0 0 18px rgb(231 182 94 / 0.22);
 }
 
 .mk-beat.on .mk-beat-label {
@@ -842,9 +867,17 @@
   display: none;
 }
 
+/* Aligns the first card's left edge with the text column above it, and gives the last card
+   the same air on the right. Written as a `max()` of the gutter and the shell's own left
+   offset so it degrades correctly below 1120px, where the shell is already gutter-wide and
+   the two are the same number. The earlier form nested `min()` inside the division and
+   resolved to the fallback at every width — the symptom was a first card flush to the
+   viewport edge while the heading above it sat 200px in. */
 .mk-rail-pad {
-  width: calc((100vw - min(100vw, var(--mk-max))) / 2 + var(--mk-gutter) - 0.75rem);
-  min-width: var(--mk-gutter);
+  width: max(
+    var(--mk-gutter),
+    calc(50vw - (var(--mk-max) / 2) + var(--mk-gutter) - 0.75rem)
+  );
 }
 
 .mk-shotnav {

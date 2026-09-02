@@ -27,6 +27,9 @@ export default function robots(): MetadataRoute.Robots {
       disallow: [
         '/api/',
         '/dashboard',
+        /* The onboarding wizard. Nothing on it is public and an indexed /welcome would rank
+           for the brand name above the landing page it is meant to follow. */
+        '/welcome',
         '/settings',
         '/profile',
         '/achievements',
