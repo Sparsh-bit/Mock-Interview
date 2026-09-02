@@ -7,7 +7,7 @@
  * A duplicate list on this side would drift in the same way the hardcoded one it replaced did.
  */
 export interface Processor {
-  name: string;
+  category: string;
   country: string;
   receives: string;
   purpose: string;

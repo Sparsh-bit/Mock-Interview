@@ -45,9 +45,9 @@ export function DisclosureBody({ disclosure }: { disclosure: Disclosure | null }
         )}
         <ul className="mt-4 space-y-4">
           {disclosure.processors.map((p) => (
-            <li key={p.name} className="rounded-xl border border-border/60 p-4">
+            <li key={p.category} className="rounded-xl border border-border/60 p-4">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-medium text-foreground">{p.name}</span>
+                <span className="font-medium text-foreground">{p.category}</span>
                 <span className="text-xs text-muted-foreground">{p.country}</span>
               </div>
               <p className="mt-2 text-muted-foreground">{p.receives}</p>

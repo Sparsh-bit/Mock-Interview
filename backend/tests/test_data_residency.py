@@ -46,8 +46,14 @@ class TestTheRegionIsConfigurableRatherThanAComment:
         from app.services.legal.disclosure import disclosure
 
         monkeypatch.setattr(settings, "DATA_REGION", "")
+        # SELECTED BY CATEGORY, not by name. The public payload no longer publishes a
+        # supplier's trading name — see test_processors_are_not_named.py — because §5 wants the
+        # purpose and §16 wants the destination country, and neither depends on a brand. The
+        # property under test here is unchanged: DATA_REGION must reach the notice.
         supabase = next(
-            p for p in disclosure()["processors"] if p["name"] == "Supabase"
+            p
+            for p in disclosure()["processors"]
+            if p["category"] == "Database and file storage"
         )
 
         assert "not confirmed" in supabase["country"].lower()
@@ -56,8 +62,14 @@ class TestTheRegionIsConfigurableRatherThanAComment:
         from app.services.legal.disclosure import disclosure
 
         monkeypatch.setattr(settings, "DATA_REGION", "Singapore (ap-southeast-1)")
+        # SELECTED BY CATEGORY, not by name. The public payload no longer publishes a
+        # supplier's trading name — see test_processors_are_not_named.py — because §5 wants the
+        # purpose and §16 wants the destination country, and neither depends on a brand. The
+        # property under test here is unchanged: DATA_REGION must reach the notice.
         supabase = next(
-            p for p in disclosure()["processors"] if p["name"] == "Supabase"
+            p
+            for p in disclosure()["processors"]
+            if p["category"] == "Database and file storage"
         )
 
         assert "Singapore" in supabase["country"]

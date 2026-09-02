@@ -38,7 +38,14 @@ class Processor:
     """One third party that receives personal data, and what it receives."""
 
     key: str
+    #: The trading name. INTERNAL ONLY — it is how these entries are documented and reasoned
+    #: about in code, and it is deliberately NOT part of the public payload. Naming which
+    #: supplier performs a function is a commercial decision, not a legal obligation; §5 wants
+    #: the purpose and §16 wants the destination country, and neither depends on a brand.
     name: str
+    #: What the public disclosure says instead of the name — the FUNCTION, not the supplier.
+    #: Must never narrow to a single identifiable vendor; a test enforces that.
+    category: str
     #: Where the processing happens, in plain words. This is the §16 disclosure.
     country: str
     #: What is actually sent. Specific, because "your data" is not a disclosure.
@@ -53,6 +60,7 @@ class Processor:
 _CATALOGUE: dict[str, Processor] = {
     "anthropic": Processor(
         key="anthropic",
+        category="AI interview services",
         name="Anthropic",
         country="United States",
         receives="Your resume text, your interview answers, and your name",
@@ -60,6 +68,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "glm": Processor(
         key="glm",
+        category="AI interview services",
         name="ZhipuAI (GLM)",
         # NAMED EXPLICITLY. docs/COMPLIANCE.md flags this as the sharpest §16
         # exposure: DPDP permits transfer except to countries the Government
@@ -70,6 +79,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "nvidia": Processor(
         key="nvidia",
+        category="AI interview services",
         name="NVIDIA NIM",
         country="United States",
         receives="Your resume text and your interview answers",
@@ -77,6 +87,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "elevenlabs": Processor(
         key="elevenlabs",
+        category="Speech synthesis",
         name="ElevenLabs",
         country="United States",
         receives="The interviewer's spoken lines. Not your answers, and not your voice",
@@ -84,6 +95,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "fish": Processor(
         key="fish",
+        category="Speech synthesis",
         name="Fish Audio",
         country="Singapore",
         receives="The interviewer's spoken lines. Not your answers, and not your voice",
@@ -91,6 +103,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "judge0": Processor(
         key="judge0",
+        category="Code execution",
         name="Judge0",
         country="United States / European Union",
         receives="The code you submit in a coding round",
@@ -98,6 +111,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "piston": Processor(
         key="piston",
+        category="Code execution",
         name="Piston (self-hosted)",
         country="Wherever this deployment runs it",
         receives="The code you submit in a coding round",
@@ -105,6 +119,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "supabase": Processor(
         key="supabase",
+        category="Database and file storage",
         name="Supabase",
         # Replaced from `settings.DATA_REGION` in `active_processors` when it is set. The
         # literal here is the honest fallback, not a placeholder to be filled in by editing
@@ -115,6 +130,7 @@ _CATALOGUE: dict[str, Processor] = {
     ),
     "razorpay": Processor(
         key="razorpay",
+        category="Payment processing",
         name="Razorpay",
         country="India",
         receives="Your payment details. Card data never reaches this service",
@@ -248,8 +264,10 @@ def disclosure() -> dict:
         "draft": True,
         "processors": [
             {
-                "name": p.name,
-                "country": p.country,
+                # CATEGORY, NOT NAME. See Processor.category — the obligation is the
+                # purpose and the destination country, not the supplier's brand.
+                "category": p.category,
+                            "country": p.country,
                 "receives": p.receives,
                 "purpose": p.purpose,
             }
