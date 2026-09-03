@@ -23,6 +23,28 @@
  * see components/brand/Brandmark.tsx. A name in an image is a name that cannot be renamed.
  */
 
+/**
+ * THE TWO HALVES OF THE WORDMARK, and the reason they are named here rather than in the nav.
+ *
+ * The public header sets the second half in gold - the one piece of gold above the fold that
+ * is not a button, which teaches the colour before the colour is asked to mean "press this".
+ * That needs the name in two pieces, and MkNav had them as two hardcoded string literals.
+ *
+ * WHICH REINTRODUCED EXACTLY THE BUG THIS FILE EXISTS TO PREVENT, and then shipped two more:
+ *
+ *   1. A rename here would have left the header still reading the old name, on the most
+ *      visited surface the product has.
+ *   2. The literals were `'Interview'` and `' OS'` - with a leading space - so the header
+ *      rendered "Interview OS" while every other surface rendered "InterviewOS". The brand
+ *      was spelled two different ways on one page.
+ *   3. The first half alone was hidden below 360px, so a narrow phone got a bare gold "OS".
+ *
+ * `name` is composed FROM these rather than sitting beside them, so the halves cannot drift
+ * out of step with the whole the way two independent literals did. Renaming is still one edit.
+ */
+const NAME_HEAD = 'Interview';
+const NAME_TAIL = 'OS';
+
 export const BRAND = {
   /**
    * The product name.
@@ -31,7 +53,13 @@ export const BRAND = {
    * one of those was a single-line edit here, which is the entire argument for this file. It
    * was originally retyped in 33 places.
    */
-  name: 'InterviewOS',
+  name: `${NAME_HEAD}${NAME_TAIL}`,
+
+  /**
+   * The name pre-split for the two-tone header. `head + tail === name` by construction, and
+   * a test asserts it anyway so a future edit cannot quietly break the identity.
+   */
+  wordmark: { head: NAME_HEAD, tail: NAME_TAIL },
 
   /**
    * What it says under the name. Deliberately about the chair rather than about AI —

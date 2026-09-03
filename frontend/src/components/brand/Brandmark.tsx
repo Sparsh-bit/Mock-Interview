@@ -212,3 +212,32 @@ export function Lockup({
     </span>
   );
 }
+
+/**
+ * The two-tone name, as one component instead of four copies.
+ *
+ * The public site sets the second half of the name in gold. That was written out inline on
+ * four surfaces - the header pill, the mobile drawer, the marketing footer and the welcome
+ * wizard - as two hardcoded literals each, and the duplication did exactly what duplication
+ * does: every copy carried `' OS'` with a LEADING SPACE, so all four rendered "Interview OS"
+ * while the rest of the product rendered "InterviewOS". The brand was spelled two ways.
+ *
+ * One component, reading `BRAND.wordmark`, and a rename or a respacing is one edit.
+ *
+ * IT RETURNS TEXT, NOT A STYLED BOX, on purpose. The four call sites legitimately differ in
+ * size and in base colour - the header flips to a light ink over the dark film, the others do
+ * not - so typography stays with the caller and only the name lives here.
+ *
+ * REQUIRES AN `.mk` ANCESTOR. `--mk-gold` is declared on `.mk` in marketing.css and is never
+ * written to `:root` (see CLAUDE.md), so outside that scope the gold half inherits the parent
+ * colour and the two-tone effect silently disappears. All four call sites are inside `.mk`,
+ * including the welcome wizard, which opts into the marketing scope for this reason.
+ */
+export function TwoToneName() {
+  return (
+    <>
+      {BRAND.wordmark.head}
+      <span className="text-[var(--mk-gold)]">{BRAND.wordmark.tail}</span>
+    </>
+  );
+}

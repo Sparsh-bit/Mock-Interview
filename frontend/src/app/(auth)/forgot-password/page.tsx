@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { scalePop } from '@/lib/motion';
 import { Lockup } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
 
 export const runtime = 'edge';
 const schema = z.object({
@@ -73,7 +74,7 @@ export default function ForgotPasswordPage() {
             heading — it identifies nothing. */}
         <Link
           href="/"
-          aria-label="InterviewOS home"
+          aria-label={`${BRAND.name} home`}
           className="mb-6 block w-fit transition-opacity hover:opacity-70 sm:mb-10"
         >
           <Lockup width={190} priority />

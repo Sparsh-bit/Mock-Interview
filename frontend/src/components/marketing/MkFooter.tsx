@@ -1,6 +1,6 @@
 import Link from 'next/link';
 
-import { Brandmark } from '@/components/brand/Brandmark';
+import { Brandmark, TwoToneName } from '@/components/brand/Brandmark';
 import { LEGAL_LINKS } from '@/components/layout/SiteFooter';
 import { BRAND } from '@/lib/brand';
 
@@ -52,7 +52,7 @@ export function MkFooter() {
           <span className="flex items-center gap-2.5">
             <Brandmark className="h-7 w-7" />
             <span className="font-[family-name:var(--mk-font-display)] text-[1.0625rem] font-medium text-[var(--mk-ink)]">
-              Interview<span className="text-[var(--mk-gold)]"> OS</span>
+              <TwoToneName />
             </span>
           </span>
 
@@ -92,7 +92,9 @@ export function MkFooter() {
       </div>
 
       <div className="mk-shell flex flex-wrap items-center justify-between gap-4 border-t border-[var(--mk-border)] py-6 text-[var(--mk-micro)] text-[var(--mk-muted)]">
-        <span>© 2026 {BRAND.name}</span>
+        {/* The operator, not the product. A copyright is held by a legal entity, and this is
+            the line a visitor reads to find out who is behind the site. */}
+        <span>© 2026 {BRAND.company}</span>
         <span>Built end to end by one developer.</span>
       </div>
     </footer>

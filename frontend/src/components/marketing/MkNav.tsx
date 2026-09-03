@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Menu, X } from 'lucide-react';
 
-import { Brandmark } from '@/components/brand/Brandmark';
+import { Brandmark, TwoToneName } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
 import { cn } from '@/lib/utils';
 
 import { NAV_LINKS } from './content';
@@ -194,7 +195,7 @@ export function MkNav() {
           <Link
             href="/"
             className="group flex items-center gap-2 rounded-[var(--mk-r-pill)] px-1 py-1 sm:gap-2.5 sm:px-1.5"
-            aria-label="InterviewOS — home"
+            aria-label={`${BRAND.name} - home`}
           >
             <Brandmark
               className={cn(
@@ -202,28 +203,34 @@ export function MkNav() {
                 onDark && 'opacity-95',
               )}
             />
+            {/* HIDDEN BELOW 360px, WHERE IT IS THE 20px THAT DOES NOT FIT.
+                At 320 the pill's contents came to 340 and, because the header is `fixed`, the
+                whole page gained a horizontal scrollbar. The wordmark is ~85px of that and the
+                brandmark beside it still identifies the product, so it is the right thing to
+                drop. 360 is the threshold rather than 400 because every current phone - iPhone
+                12 to 16 at 390, Pixel at 393 - sits above it and keeps the full lockup; only
+                the 320px class loses it.
+
+                THE WHOLE WORDMARK GOES, NOT ITS FIRST HALF. `hidden` used to sit on the
+                "Interview" span alone, so a 320px phone did not lose the wordmark - it kept
+                the gold "OS" and lost the product's name, which is worse than showing no name
+                at all. The mark identifies the product on its own; a stray "OS" identifies
+                nothing. */}
             <span
               className={cn(
                 /* `whitespace-nowrap` is load-bearing at 390px: without it the pill's flex
                    layout breaks the wordmark after "Interview" and the mark sits beside a
                    two-line lockup, which is the one place on the site the brand looks
                    accidental. */
-                'whitespace-nowrap font-[family-name:var(--mk-font-display)] text-[0.9375rem] font-medium tracking-[-0.015em] transition-colors [transition-duration:400ms] sm:text-[1.0625rem]',
+                'hidden whitespace-nowrap font-[family-name:var(--mk-font-display)] text-[0.9375rem] font-medium tracking-[-0.015em] transition-colors [transition-duration:400ms] min-[360px]:inline sm:text-[1.0625rem]',
                 onDark ? 'text-[var(--mk-on-dark-bright)]' : 'text-[var(--mk-ink)]',
               )}
             >
-              {/* HIDDEN BELOW 360px, WHERE IT IS THE 20px THAT DOES NOT FIT.
-                  At 320 the pill's contents came to 340 and, because the header is `fixed`,
-                  the whole page gained a horizontal scrollbar. The wordmark is ~85px of that
-                  and the brandmark beside it still identifies the product, so it is the right
-                  thing to drop. 360 is the threshold rather than 400 because every current
-                  phone — iPhone 12–16 at 390, Pixel at 393 — sits above it and keeps the full
-                  lockup; only the 320px class loses it. */}
-              <span className="hidden min-[360px]:inline">Interview</span>
-              {/* The gold half of the wordmark. It is the only gold above the fold that is not
-                  a button, and that is on purpose: it teaches the colour before the colour is
-                  asked to mean "press this". */}
-              <span className="text-[var(--mk-gold)]"> OS</span>
+              {/* The gold second half is the only gold above the fold that is not a button,
+                  and that is on purpose: it teaches the colour before the colour is asked to
+                  mean "press this". Shared with the drawer, the footer and the welcome wizard
+                  so the four cannot spell the brand differently, which they did. */}
+              <TwoToneName />
             </span>
           </Link>
 
@@ -303,8 +310,11 @@ export function MkNav() {
           <div className="flex items-center justify-between px-[var(--mk-gutter)] pt-5">
             <span className="flex items-center gap-2.5">
               <Brandmark className="h-7 w-7" />
+              {/* Same two halves as the header pill, from the same source. This copy had the
+                  identical leading-space bug, so the drawer and the header agreed with each
+                  other and disagreed with the rest of the product. */}
               <span className="font-[family-name:var(--mk-font-display)] text-[1.0625rem] font-medium text-[var(--mk-ink)]">
-                Interview<span className="text-[var(--mk-gold)]"> OS</span>
+                <TwoToneName />
               </span>
             </span>
             <button

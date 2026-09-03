@@ -45,18 +45,27 @@ export function SiteFooter() {
             <span className="h-1.5 w-1.5 rounded-full bg-accent-indigo" />
             {BRAND.name}
           </span>
-          {/* A real address, and a mailto rather than plain text — on a phone, which is where
-              most of this traffic lands, plain text means copying an email by hand. Kept in
-              the footer's own type scale so it reads as contact detail rather than a CTA
-              competing with the buttons above. `normal-case` because an email address in
-              uppercase is not the same address. */}
+          {/* THE SUPPORT MAILBOX, NOT A PERSONAL ONE. This was a hardcoded personal Gmail
+              address, and `SiteFooter` renders on the landing page, the pricing page and all
+              four legal pages - so the document telling a candidate how to raise a grievance
+              gave them somebody's personal inbox as the route. It now reads
+              `BRAND.supportEmail` like every other contact point in the product.
+
+              A mailto rather than plain text: on a phone, which is where most of this traffic
+              lands, plain text means copying an address by hand. Kept in the footer's own type
+              scale so it reads as contact detail rather than a CTA competing with the buttons
+              above. `normal-case` because an email address in uppercase is not the same
+              address. */}
           <a
-            href="mailto:sparsh42005@gmail.com"
+            href={`mailto:${BRAND.supportEmail}`}
             className="normal-case tracking-normal transition-colors hover:text-foreground"
           >
-            sparsh42005@gmail.com
+            {BRAND.supportEmail}
           </a>
-          <span>© 2026</span>
+          {/* The copyright line names the OPERATOR, not the product. A copyright is held by a
+              legal entity, and the footer is where a visitor looks for who they are actually
+              dealing with - the product name is already top-left of this same row. */}
+          <span>© 2026 {BRAND.company}</span>
         </div>
 
         <nav

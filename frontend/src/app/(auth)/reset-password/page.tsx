@@ -15,6 +15,7 @@ import { newPasswordSchema, type NewPasswordForm } from '@/lib/auth/password';
 import { createClient } from '@/lib/supabase/client';
 import { scalePop } from '@/lib/motion';
 import { Lockup } from '@/components/brand/Brandmark';
+import { BRAND } from '@/lib/brand';
 
 export const runtime = 'edge';
 
@@ -127,7 +128,7 @@ export default function ResetPasswordPage() {
             heading — it identifies nothing. */}
         <Link
           href="/"
-          aria-label="InterviewOS home"
+          aria-label={`${BRAND.name} home`}
           className="mb-6 block w-fit transition-opacity hover:opacity-70 sm:mb-10"
         >
           <Lockup width={190} priority />

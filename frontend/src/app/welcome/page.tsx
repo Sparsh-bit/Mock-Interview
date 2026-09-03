@@ -15,7 +15,7 @@ import {
   Upload,
 } from 'lucide-react';
 
-import { Brandmark } from '@/components/brand/Brandmark';
+import { Brandmark, TwoToneName } from '@/components/brand/Brandmark';
 import { ResumeConsentGate } from '@/components/legal/ResumeConsentGate';
 import { Choice, STEP_TITLE_ID, StepHead, StepRail } from '@/components/onboarding/shared';
 import { usePrimaryResume, useRecruiters, useUpdateProfile, useUserProfile } from '@/hooks/useData';
@@ -272,7 +272,7 @@ export default function WelcomePage() {
           <span className="flex items-center gap-2.5">
             <Brandmark className="h-7 w-7" />
             <span className="whitespace-nowrap font-[family-name:var(--mk-font-display)] text-[1.0625rem] font-medium text-[var(--mk-ink)]">
-              Interview<span className="text-[var(--mk-gold)]"> OS</span>
+              <TwoToneName />
             </span>
           </span>
 
