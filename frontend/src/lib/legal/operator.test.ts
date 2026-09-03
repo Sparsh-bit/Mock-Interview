@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { BRAND } from '@/lib/brand';
@@ -71,11 +73,11 @@ describe('the operator is stated once, not scattered', () => {
      * interpolated from BRAND, so a rename is one edit — this reads the module source rather
      * than the rendered strings, because the rendered strings are exactly what interpolation
      * produces and would pass either way.
+     *
+     * Resolved from import.meta.url rather than the cwd, so the test does not depend on which
+     * directory vitest was launched from.
      */
-    const source = String(
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('node:fs').readFileSync('src/lib/legal/policies.ts', 'utf8'),
-    );
+    const source = readFileSync(new URL('./policies.ts', import.meta.url), 'utf8');
     const literal = BRAND.company;
     expect(source.includes(`'${literal}'`)).toBe(false);
     expect(source.includes(`"${literal}"`)).toBe(false);
