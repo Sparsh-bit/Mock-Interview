@@ -49,6 +49,61 @@ if TYPE_CHECKING:
 #: to the ACCOUNT and its free tier, not to the transport.
 BURST_RUNG_PROVIDERS = frozenset({"groq"})
 
+#: Features that try the FREE provider FIRST, before any paid one.
+#:
+#: EVERYTHING ELSE IN THIS MODULE IS ABOUT A LAST RESORT. The rung sits behind both paid
+#: providers and is reached only once they have failed. This list is the opposite: it says a
+#: feature should PREFER the free model on the happy path, because the work is genuinely worth
+#: a small model and buying it from Anthropic every time is waste.
+#:
+#: THE GATE IS THE FEATURE, NOT THE COST TIER, and that is deliberate. `quiz_generation` is
+#: BALANCED rather than CHEAP, so no tier gate could reach it — while `gd_evaluation` and
+#: `communication_evaluation` ARE cheap and must never come first from a free model, because
+#: they put a number on a candidate. The argument above about scoring applies with MORE force
+#: here: "first" means it happens on every request rather than only during an outage.
+#:
+#: WHAT MAKES QUIZ SAFE TO PUT HERE, specifically:
+#:   * A malformed question never reaches a candidate — generate_structured validates against
+#:     the schema and moves to the next provider on failure.
+#:   * api/v1/quiz.py already falls through to the curated banks in app/data when generation
+#:     comes up short, so a throttled free tier degrades to hand-written questions.
+#:   * A quiz question is not a judgement about anybody. Nothing here is stored against a
+#:     candidate or fed into a score.
+#:
+#: KEEP THIS LIST SHORT. A growing free-first list is how quality erodes without anyone
+#: deciding to erode it; a test caps its length so an addition has to be argued for.
+FREE_FIRST_FEATURES: frozenset[str] = frozenset({"quiz_generation"})
+
+
+def prefer_free_first(
+    providers: Sequence[BaseAIProvider],
+    *,
+    feature: str,
+    cost_tier: CostTier,
+) -> list[BaseAIProvider]:
+    """
+    Move the free rung to the front for an allowlisted feature; otherwise return as-is.
+
+    REORDERING RATHER THAN A NEW PARAMETER, because `generate_structured` already walks this
+    list in order and falls through on failure — with retries, backoff, schema validation and
+    usage accounting applied per provider. Putting the free provider first reuses all of it and
+    introduces no new failure path: if Groq is throttled, refuses, or returns something that
+    will not validate, the call proceeds to Anthropic exactly as it does today. A
+    `prefer_provider=` argument would have needed its own fallback logic to duplicate.
+
+    `cost_tier` is accepted but not consulted, and that is on purpose: the signature matches
+    `eligible_providers` so the two policies are called the same way and can be reasoned about
+    together, and a future entry here may well want to consider it.
+    """
+    if feature not in FREE_FIRST_FEATURES:
+        return list(providers)
+    free = [p for p in providers if is_burst_rung(p)]
+    if not free:
+        # No free rung in the chain — the default configuration. A no-op, not an error.
+        return list(providers)
+    paid = [p for p in providers if not is_burst_rung(p)]
+    return free + paid
+
 #: The `context=` values that may fall through to the burst rung.
 #:
 #: DEFAULT DENY. A `context` not on this list cannot reach the rung, so a new call site is

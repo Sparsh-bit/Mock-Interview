@@ -40,6 +40,7 @@ from .burst_rung import (
     eligible_providers,
     is_burst_rung,
     note_rung_request,
+    prefer_free_first,
     rung_has_budget,
 )
 from .json_validator import AIValidationError, JSONValidator
@@ -156,6 +157,15 @@ async def generate_structured(
     providers = eligible_providers(
         get_ai_providers(), feature=context, cost_tier=cost_tier
     )
+
+    # AND THEN THE PREFERENCE, which is the opposite question from the filter above.
+    #
+    # `eligible_providers` asks whether a free model MAY serve this call at all.
+    # `prefer_free_first` asks whether it should serve it FIRST — before anything paid — which
+    # is true for work that is genuinely worth a small model and wasteful to buy every time.
+    # Applied after the filter so a feature can never be promoted into a chain it was just
+    # filtered out of, and so the capacity gate below still applies to it.
+    providers = prefer_free_first(providers, feature=context, cost_tier=cost_tier)
 
     # AND THE CAPACITY GATE, WHICH IS A SEPARATE QUESTION FROM THE POLICY ABOVE.
     #
