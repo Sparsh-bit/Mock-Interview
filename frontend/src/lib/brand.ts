@@ -61,6 +61,25 @@ export const BRAND = {
    * empty until somebody is actually appointed. A role mailbox does not satisfy the statute,
    * so do not point the legal pages here.
    */
+  /**
+   * The operator. Who "we" is in every policy, and the entity a candidate is contracting with.
+   *
+   * WHY THIS IS HERE AND NOT IN THE PROSE. Every policy spoke in the first person — "we will
+   * refund you", "we do not promise" — and nothing in the product said who that was. A refund
+   * promise from an unnamed party is not one anybody can hold, and three separate obligations
+   * land on the same fact: the Consumer Protection (E-Commerce) Rules 2020 require an
+   * e-commerce entity to display its legal name; DPDP's §5 notice is given BY a Data Fiduciary
+   * and has to say which; and a gateway's merchant terms assume the merchant is identifiable
+   * to the payer.
+   *
+   * It sits beside `name` for the reason CLAUDE.md gives for `name` existing here at all: the
+   * product name was written out in 33 files and has been renamed twice. A company name is the
+   * same kind of fact and acquires the same problem the moment it is typed into six documents.
+   *
+   * DISTINCT FROM `name` ON PURPOSE. The product is what is sold; the company is who sells it.
+   * Collapsing them would satisfy a "the operator is named" check while identifying nobody.
+   */
+  company: 'Concilio Solutions',
   supportEmail: 'interview@concilio.solutions',
 } as const;
 

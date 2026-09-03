@@ -24,6 +24,8 @@
  * a short conversation about specific questions rather than a request to read a document.
  */
 
+import { BRAND } from '@/lib/brand';
+
 export interface PolicySection {
   heading: string;
   /** Paragraphs. Rendered in order, plain text — no markup, so nothing can be injected. */
@@ -54,6 +56,13 @@ export const TERMS: Policy = {
   draft: true,
   updated: '2026-08-31',
   sections: [
+    {
+      heading: 'Who provides this service',
+      body: [
+        `This service is operated by ${BRAND.company}. Where these terms say "we" or "us", they mean ${BRAND.company}.`,
+        `Questions about this document, or about the service, go to ${BRAND.supportEmail}. Requests about your personal data have their own route — see the privacy page.`,
+      ],
+    },
     {
       heading: 'What this service is',
       body: [
@@ -137,6 +146,13 @@ export const REFUND: Policy = {
   draft: true,
   updated: '2026-08-31',
   sections: [
+    {
+      heading: 'Who issues the refund',
+      body: [
+        `This service is operated by ${BRAND.company}, and a refund under this policy is issued by ${BRAND.company}.`,
+        `Ask for one at ${BRAND.supportEmail}. Tell us what you bought and when; you do not need to give a reason for anything that is still unused.`,
+      ],
+    },
     {
       heading: 'There is no subscription to cancel',
       body: [
