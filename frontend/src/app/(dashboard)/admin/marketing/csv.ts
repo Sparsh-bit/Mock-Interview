@@ -1,3 +1,4 @@
+import { BRAND } from '@/lib/brand';
 /**
  * The marketing list, as a file — app/(dashboard)/admin/marketing/csv.ts
  *
@@ -241,11 +242,15 @@ export function toCsv(
  * A filename that says what the file is and when it was taken.
  *
  * The date is in it because these get downloaded repeatedly as the drive approaches, and
- * `hotseat-marketing.csv (3)` in a downloads folder is three files nobody can tell apart —
- * while the whole point of the list is that it changes daily.
+ * `marketing.csv (3)` in a downloads folder is three files nobody can tell apart, while the
+ * whole point of the list is that it changes daily.
+ *
+ * THE PREFIX IS DERIVED, NOT TYPED. It was the literal `hotseat-marketing-`, two renames
+ * stale, so the one artefact of this product that leaves the browser and lands in somebody's
+ * filesystem was the one still carrying the old name.
  */
 export function csvFilename(now: Date, scope: string): string {
   const day = now.toISOString().slice(0, 10);
   const suffix = scope && scope !== 'all' ? `-${scope}` : '';
-  return `hotseat-marketing-${day}${suffix}.csv`;
+  return `${BRAND.name.toLowerCase()}-marketing-${day}${suffix}.csv`;
 }

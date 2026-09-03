@@ -49,7 +49,7 @@ jobs:
       - name: Build the production image
         # Loaded into the local daemon rather than pushed. Nothing is published by this
         # workflow; the image exists only to be scanned and is discarded with the runner.
-        run: docker build -t hotseat-backend:scan -f Dockerfile .
+        run: docker build -t interviewos-backend:scan -f Dockerfile .
 
       - name: Scan — report everything, fail on nothing
         # RUNS FIRST AND ALWAYS SUCCEEDS. The gating step below stops at the first HIGH, so
@@ -57,7 +57,7 @@ jobs:
         # is the inventory; the next one is the gate.
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: hotseat-backend:scan
+          image-ref: interviewos-backend:scan
           format: table
           severity: LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
@@ -66,7 +66,7 @@ jobs:
       - name: Scan — fail the build on HIGH or CRITICAL
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: hotseat-backend:scan
+          image-ref: interviewos-backend:scan
           format: table
           severity: HIGH,CRITICAL
           # `ignore-unfixed: true` IS A DELIBERATE NARROWING AND IT IS NOT AN ALLOWLIST.
@@ -92,7 +92,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: hotseat-backend:scan
+          image-ref: interviewos-backend:scan
           format: sarif
           output: trivy.sarif
           severity: MEDIUM,HIGH,CRITICAL

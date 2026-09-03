@@ -142,11 +142,11 @@ This is cheap to fix and is not code: one page, one mailbox, one contact registe
 half-yearly CEO/MD-signed compliance certification since 1 April 2021.
 
 **The obligation binds *Payment System Operators and Providers authorised by RBI* under the
-Payment and Settlement Systems Act 2007. Hotseat is a merchant, not a PSO.** Razorpay is the
+Payment and Settlement Systems Act 2007. Concilio Solutions is a merchant, not a PSO.** Razorpay is the
 authorised payment aggregator and carries the localisation duty, including the rule that data
 processed abroad must be brought back to India within 24 hours and deleted overseas.
 
-**Verdict: very likely not Hotseat's obligation — ✅ by delegation, with one caveat.**
+**Verdict: very likely not Concilio Solutions' obligation — ✅ by delegation, with one caveat.**
 
 Supporting facts, checked in the code rather than assumed:
 

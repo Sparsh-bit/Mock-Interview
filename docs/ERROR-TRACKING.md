@@ -74,7 +74,7 @@ uv run python -c "
 from app.core.observability import init_sentry
 import sentry_sdk
 assert init_sentry(), 'SENTRY_DSN is not set in this environment'
-sentry_sdk.capture_message('hotseat backend error tracking smoke test')
+sentry_sdk.capture_message('interviewos backend error tracking smoke test')
 sentry_sdk.flush(timeout=5)
 print('sent')
 "
@@ -90,7 +90,7 @@ stack frame has a *Local Variables* section.
    It is a **build-time** variable — it is compiled into the bundle, so setting it
    without a rebuild does nothing.
 2. Open the deployed site, and in the console run
-   `throw new Error('hotseat browser error tracking smoke test')`.
+   `throw new Error('interviewos browser error tracking smoke test')`.
 3. The event should appear in the JavaScript project.
 
 **If nothing arrives, check the CSP first.** `connect-src` in `next.config.ts` is

@@ -134,7 +134,7 @@ class TestImageScan:
         """
         raw = _raw("workflows/image-scan.yml")
         assert "docker build" in raw
-        assert "image-ref: hotseat-backend:scan" in raw
+        assert "image-ref: interviewos-backend:scan" in raw
 
     def test_it_builds_from_the_repository_root(self):
         # The Dockerfile copies database/ for the Alembic migrations, so a build context of

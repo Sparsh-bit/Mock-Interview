@@ -1,4 +1,4 @@
-# Hotseat Knowledge Base
+# InterviewOS Knowledge Base
 
 This directory contains curated interview knowledge organized by topic, company, and pattern. It serves as the foundational data source for the Interview Orchestrator.
 

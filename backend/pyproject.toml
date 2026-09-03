@@ -1,7 +1,7 @@
 [project]
-name = "hotseat-backend"
+name = "interviewos-backend"
 version = "0.1.0"
-description = "Hotseat — mock interviews that sound like the real panel"
+description = "InterviewOS - mock interviews that sound like the real panel"
 requires-python = ">=3.11"
 dependencies = [
     # Web Framework

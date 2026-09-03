@@ -180,7 +180,7 @@ export type ErrorInterceptor = (
 export interface ApiClientConfig {
   /**
    * API base URL — no trailing slash.
-   * Example: "https://api.hotseat.app" or "http://localhost:8000"
+   * Example: "https://api.interviewos.dev" or "http://localhost:8000"
    */
   baseUrl: string;
   /**

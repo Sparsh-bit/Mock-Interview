@@ -118,7 +118,9 @@ const NOT_LOADED = new Set([
   'attacker',
   'hotseat-login.example',
   'api.example.com',
-  'api.hotseat.app',
+  // The doc example for `ApiClientConfig.baseUrl`. Renamed from `api.hotseat.app` with the
+  // rest of the stale brand; it is a comment, not a fetch.
+  'api.interviewos.dev',
   // OUR OWN ORIGIN, in both its old and current form. These appear as the fallback for
   // `metadataBase` / `siteUrl()` — used to build canonical, OpenGraph and sitemap URLs, which
   // are strings in markup and an XML file, not fetches. The browser reaches this host as
