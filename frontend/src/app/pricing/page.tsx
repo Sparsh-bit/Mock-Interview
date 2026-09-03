@@ -6,11 +6,9 @@ import { toast } from 'sonner';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { PageHeader } from '@/components/ui/page-header';
 import { Lockup } from '@/components/brand/Brandmark';
 import { BRAND } from '@/lib/brand';
 import { useAuth } from '@/hooks/useAuth';
@@ -68,7 +66,35 @@ const FEATURE_BLURB: Record<string, string> = {
   communication: 'Speak an answer or read a passage; scored on clarity, pace and fillers.',
 };
 
-function ItemCard({
+/**
+ * ONE LINE OF A PRICE LIST — app/pricing/page.tsx
+ *
+ * ── WHY THIS IS A ROW AND NOT A CARD ─────────────────────────────────────────────────────
+ * Every other surface in this product is cards, and for the store that was the wrong shape.
+ * Six tiles in a two-column grid put six prices at six different x-positions, so comparing
+ * them — the only thing anybody is doing on this page — meant reading each box and holding a
+ * number in your head. A price list puts every figure in ONE right-aligned mono column down
+ * the whole page, and the comparison happens without being performed.
+ *
+ * It is also the shape that matches what is being sold. There is no subscription and no tier
+ * to be talked into; there is a tariff, and you buy a line off it. A printed price list on
+ * warm paper says that before a word of copy does — which is why the page keeps the leader
+ * dots, the ruled rows and the small-caps headings rather than borrowing the pricing-table
+ * look of the products this one is deliberately not.
+ *
+ * ── HOW THE BUNDLE ROW IS EMPHASISED, AND WHY IT IS NOT `.lit` ───────────────────────────
+ * One line has to read as the recommended one — a list whose lines all look equal makes the
+ * reader do the arithmetic, and most people will not. But `.lit` is the *card elevation*
+ * class: it lifts a surface off the paper, and there is no card here to lift. Applied to a
+ * row it would put a floating white slab in the middle of a ruled list and break the very
+ * alignment the list exists for.
+ *
+ * So the emphasis is the one a printed tariff actually uses: a soft amber wash and a solid
+ * amber rule down the left edge, which marks the line without moving it off the page. Amber
+ * because in this palette amber means money; indigo would promise the row itself is
+ * clickable, which it is not — the button on it is.
+ */
+function ItemRow({
   item,
   price,
   onBuy,
@@ -79,9 +105,9 @@ function ItemCard({
   /**
    * This item's figure under the applied code, from the server, or null when no code is on.
    *
-   * THE WHOLE POINT OF PASSING IT IN. The tile has to change the moment Apply succeeds and
+   * THE WHOLE POINT OF PASSING IT IN. The row has to change the moment Apply succeeds and
    * change back the moment Remove is pressed, and the only honest way to do that is for the
-   * number to arrive already computed. A tile that worked out its own discount would be a
+   * number to arrive already computed. A row that worked out its own discount would be a
    * second implementation of what money costs, sitting on the one screen that promises it.
    */
   price: ItemPrice | null;
@@ -99,54 +125,89 @@ function ItemCard({
   const nowRupees = discounted ? Math.round(discounted.charged_paise / 100) : item.price_rupees;
 
   return (
-    <Card
-      variant={isBundle ? 'elevated' : 'flat'}
-      padding="md"
-      /*
-       * THE BUNDLE IS THE LIT ONE, and it is the only lit thing on the page — see
-       * docs/DESIGN-LANGUAGE §1. A pricing page whose tiles all look equally recommended
-       * makes the reader do the arithmetic, and most people will not.
-       *
-       * Amber rather than the indigo ring it had: in this palette amber means money and
-       * indigo means "primary action". A ring in the action colour around a tile promises
-       * the tile itself is clickable, which it is not — the button inside it is.
-       */
-      className={cn('flex flex-col gap-4', isBundle && 'lit lit-hover')}
+    <div
+      className={cn(
+        'group relative flex flex-wrap items-baseline gap-x-3 gap-y-3 rounded-r-lg border-l-[3px] px-3 py-4 transition-colors sm:flex-nowrap sm:px-4',
+        isBundle
+          ? 'border-l-accent-amber bg-accent-amber-soft/40'
+          : 'border-l-transparent hover:border-l-border hover:bg-secondary/45',
+      )}
     >
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
+      <div className="min-w-0 basis-full sm:basis-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-foreground">{item.name}</h3>
-          {isBundle && <Badge>Better value</Badge>}
+          {/* A printed mark rather than a pill: small caps, letterspaced, no fill. A filled
+              badge on a row that is already washed amber is the same emphasis said twice. */}
+          {isBundle && (
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-accent-amber-ink">
+              Best value
+            </span>
+          )}
         </div>
-        <p className="text-xs text-muted-foreground">{item.tagline}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{item.tagline}</p>
       </div>
 
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        {/* Monospace, like every other figure in this product. These are numbers a reader
-            compares down a column — the tabular figures keep the rupee amounts aligned, and
-            proportional digits make two prices of the same length different widths. */}
-        <span className="font-mono text-2xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
-          ₹{nowRupees}
-        </span>
+      {/* THE LEADER. A dotted rule running from the name to the figure, sitting on the
+          baseline of both — the device a printed tariff uses, and the reason the eye can
+          track a line across 700px of empty space without losing which price belongs to
+          which item. Hidden below `sm`, where the row stacks and there is no gap to lead
+          across.
+
+          NO `self-end`, AND THAT IS THE WHOLE TRICK. It had one, which pinned the rule to the
+          bottom of the row — so it ran under the tagline while the price sat a line above it,
+          and the two things it was supposed to connect were on different lines. A flex item
+          with no text has no baseline of its own, so `align-items: baseline` aligns its bottom
+          border edge to the row's baseline instead; a 1px-tall span therefore lands exactly on
+          the line the name and the figure are written on. Overriding the alignment is what
+          broke it. */}
+      <span
+        aria-hidden
+        className="hidden h-px flex-1 border-b border-dotted border-foreground/25 transition-colors group-hover:border-foreground/45 sm:block"
+      />
+
+      {/* Fixed width, right-aligned, monospace and tabular — so every figure on the page
+          lands on the same column and the same decimal, whatever the item is called. That
+          alignment is the whole argument for the list. */}
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 sm:w-[9.5rem] sm:flex-none sm:justify-end">
         {discounted && (
-          <span className="text-sm tabular-nums text-muted-foreground line-through">
+          <span className="font-mono text-xs tabular-nums text-muted-foreground line-through">
             ₹{item.price_rupees}
           </span>
         )}
-        {isBundle && !discounted && (
-          <span className="text-xs text-muted-foreground">₹{perUnit} each</span>
-        )}
-        {discounted && (
+        <span className="font-mono text-xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
+          ₹{nowRupees}
+        </span>
+      </div>
+
+      {/* THE PER-UNIT FIGURE AND THE SAVING, in their own column so they cannot push the
+          aligned price column out of true on a long label.
+
+          ON MOBILE IT SHARES A LINE WITH THE PRICE. It used to take a line of its own —
+          `basis-full` — which put "₹40 each" on a row by itself, right-aligned, under a
+          left-aligned figure it was describing. Two numbers about the same thing on two
+          lines at opposite ends of the row read as two separate facts. The price grows to
+          fill instead, so the pair sits on one line: figure left, qualifier right. */}
+      <div className="flex shrink-0 items-baseline justify-end sm:w-[8rem]">
+        {discounted ? (
           <span className="rounded-md bg-accent-emerald-soft px-1.5 py-0.5 text-[11px] font-semibold text-accent-emerald-ink">
             {discounted.is_free
               ? 'Free with your code'
               : `Save ₹${item.price_rupees - nowRupees}`}
           </span>
-        )}
+        ) : isBundle ? (
+          <span className="font-mono text-[11px] tabular-nums text-accent-amber-ink">
+            ₹{perUnit} each
+          </span>
+        ) : null}
       </div>
 
+      {/* WIDE ENOUGH FOR THE LONGEST LABEL, AND `nowrap`. At 7.5rem "Sign up to buy" broke
+          over two lines, which doubled the height of every row on the page for a visitor who
+          is not signed in — the exact reader this page is for. The column is sized to the
+          label rather than the label trimmed to the column, because "Buy" alone to somebody
+          without an account is a button that appears to fail. */}
       <Button
-        className="mt-auto w-full"
+        className="shrink-0 basis-full whitespace-nowrap sm:basis-auto sm:w-[9.25rem]"
         variant={isBundle ? 'primary' : 'outline'}
         disabled={busy}
         onClick={() => onBuy(item.id)}
@@ -159,7 +220,7 @@ function ItemCard({
           'Sign up to buy'
         )}
       </Button>
-    </Card>
+    </div>
   );
 }
 
@@ -399,11 +460,41 @@ export default function StorePage() {
       </header>
 
       <div className="mx-auto w-full max-w-5xl space-y-10 px-6 py-10 sm:px-10 sm:py-14">
-        <PageHeader
-          eyebrow="Plans"
-          title="Buy what you need"
-          description="No subscription. Pay per session, and what you buy never expires."
-        />
+        {/* THE MASTHEAD OF A PRICE LIST, not the header of a dashboard page.
+            Every other route in the product opens with `PageHeader` — eyebrow, title, one
+            line of description — and that component is right for a screen you are passing
+            through on the way to work. This is not one of those. It is the only page whose
+            entire job is a set of figures, so it opens the way a printed tariff opens: a
+            small-caps kicker, the title in the display face, and a ruled strip of terms
+            across the bottom. The three terms are the three questions every candidate asks
+            before reading a single price, answered before they can ask them. */}
+        <header>
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.22em] text-accent-amber-ink">
+            Price list
+          </p>
+          <h1 className="mt-2.5 font-display text-[clamp(1.85rem,4.4vw,2.6rem)] font-[460] leading-[1.08] tracking-[-0.028em] text-foreground">
+            Buy what you need,
+            <span className="block italic text-accent-amber-ink">nothing you don&rsquo;t.</span>
+          </h1>
+          <p className="mt-3.5 max-w-[48ch] text-sm leading-relaxed text-muted-foreground">
+            Every feature has a free trial. After that you buy sessions one at a time or in a
+            pack, and they sit on your account until you use them.
+          </p>
+          <dl className="mt-7 grid grid-cols-1 gap-px overflow-hidden rounded-lg bg-border/70 sm:grid-cols-3">
+            {[
+              ['No subscription', 'Nothing recurring, nothing to cancel.'],
+              ['Never expires', 'Buy in June, use it in December.'],
+              ['INR, GST included', 'The figure below is the figure charged.'],
+            ].map(([term, detail]) => (
+              <div key={term} className="bg-background px-4 py-3">
+                <dt className="font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-foreground">
+                  {term}
+                </dt>
+                <dd className="mt-1 text-xs leading-snug text-muted-foreground">{detail}</dd>
+              </div>
+            ))}
+          </dl>
+        </header>
 
         {/* THE PROMO BOX, FIRST ON THE PAGE.
             Placed once, and now ABOVE the items rather than below them. Two reasons, and
@@ -435,11 +526,15 @@ export default function StorePage() {
              * which is the whole point of scrolling here rather than to the input itself.
              */
             id="apply-offer"
-            className="scroll-mt-24 rounded-2xl border border-border p-4 sm:p-5"
+            /* A DASHED RULE, because this is the one element on the page that is a coupon
+               and not a line of the tariff. The solid-bordered box it replaced looked like
+               another section of the price list, which is exactly what it must not look
+               like — it is the thing you do to the list, not part of it. */
+            className="scroll-mt-24 rounded-xl border border-dashed border-accent-amber/45 bg-accent-amber-soft/25 p-4 sm:p-5"
           >
             <label
               htmlFor="promo"
-              className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              className="mb-2 block font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-amber-ink"
             >
               Have a code?
             </label>
@@ -519,9 +614,11 @@ export default function StorePage() {
             line changes with it; if every allowance goes to zero, the card renders only the
             quizzes, which are genuinely unlimited and are not metered at all. */}
         {!!items?.length && (
-          <Card variant="flat" padding="md">
+          <div className="border-y border-foreground/15 py-3.5">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-              <span className="font-medium text-foreground">Free on every account:</span>
+              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.15em] text-foreground">
+                Free on every account
+              </span>
               {FEATURE_ORDER.map((feature) => {
                 const item = items.find((i) => i.feature === feature);
                 if (!item || item.trial_allowance <= 0) return null;
@@ -541,7 +638,7 @@ export default function StorePage() {
                 Unlimited quizzes
               </span>
             </div>
-          </Card>
+          </div>
         )}
 
         {isLoading && (
@@ -560,30 +657,46 @@ export default function StorePage() {
         )}
 
         {items &&
-          FEATURE_ORDER.filter((f) => items.some((i) => i.feature === f)).map((feature) => {
+          FEATURE_ORDER.filter((f) => items.some((i) => i.feature === f)).map((feature, n) => {
             const forFeature = items
               .filter((i) => i.feature === feature)
               .sort((a, b) => a.price_paise - b.price_paise);
             const left = balance?.features.find((f) => f.feature === feature);
 
             return (
-              <section key={feature} className="space-y-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div>
-                    <h2 className="text-base font-semibold text-foreground">
-                      {FEATURE_HEADING[feature] ?? feature}
-                    </h2>
-                    <p className="text-sm text-muted-foreground">{FEATURE_BLURB[feature]}</p>
-                  </div>
+              <section key={feature}>
+                {/* The heading of a section of the tariff: a numeral, the display face, a
+                    rule under it, and the balance as a mono chip on the same line. Not a card
+                    header — there is no card.
+
+                    THE NUMERAL IS DECORATIVE AND SAYS SO. It carries no information the
+                    heading does not already carry, so it is `aria-hidden`: a screen reader
+                    announcing "zero one Mock interviews" would be reading the typography
+                    aloud. Rendered from the map index rather than written into the content
+                    table, because a hand-written numeral goes wrong the first time a feature
+                    is hidden — the server decides which sections exist, so the count has to
+                    come from what actually rendered. */}
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-foreground/15 pb-2.5">
+                  <h2 className="flex items-baseline gap-3 font-display text-[1.0625rem] font-[520] tracking-[-0.015em] text-foreground">
+                    <span
+                      aria-hidden
+                      className="font-mono text-[11px] font-semibold tabular-nums tracking-[0.1em] text-accent-amber-ink"
+                    >
+                      {String(n + 1).padStart(2, '0')}
+                    </span>
+                    {FEATURE_HEADING[feature] ?? feature}
+                  </h2>
                   {left && (
-                    <span className="text-xs tabular-nums text-muted-foreground">
+                    <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
                       {left.remaining} left on your account
                     </span>
                   )}
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
+                <p className="mt-2 text-sm text-muted-foreground">{FEATURE_BLURB[feature]}</p>
+
+                <div className="mt-2 divide-y divide-border/70">
                   {forFeature.map((item) => (
-                    <ItemCard
+                    <ItemRow
                       key={item.id}
                       item={item}
                       price={priceFor(item.id)}
@@ -635,7 +748,10 @@ export default function StorePage() {
           }}
         />
 
-        <p className="text-xs text-muted-foreground">
+        {/* THE FOOTNOTE OF THE PRINTED SHEET. Ruled off and set small, in the place a
+            tariff puts its terms — not because the terms are unimportant, but because
+            burying them in a paragraph above the prices is how they get skipped. */}
+        <p className="border-t border-foreground/15 pt-4 text-xs leading-relaxed text-muted-foreground">
           Quizzes are unlimited and free on every account. Purchases do not expire. Prices are
           in INR and include GST where applicable.
         </p>

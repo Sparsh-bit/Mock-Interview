@@ -77,47 +77,240 @@ const EASE = [0.16, 1, 0.3, 1] as const;
  * the other.
  */
 const FLOW_TITLE =
-  'mt-2 text-[clamp(1.9rem,3.4vw,2.5rem)] font-medium leading-[1.1] tracking-[-0.03em]';
+  'mt-2 font-display text-[clamp(1.9rem,3.4vw,2.5rem)] font-[480] leading-[1.1] tracking-[-0.022em]';
 
 // ─── Company picker ───────────────────────────────────────────────────────────
 
+/**
+ * WHEN THE DRIVE ACTUALLY RUNS, DRAWN — components/prepare month strip
+ *
+ * `drive_window` is the single most useful fact on this card and it was the one being thrown
+ * away: "Aug – Dec (NQT runs multiple cycles a year)" in a right-aligned `truncate` cell
+ * rendered as "Aug – Dec (NQT runs multiple cycl…", i.e. the parenthetical survived and the
+ * months — the part a candidate is actually scanning for — were what got cut.
+ *
+ * Twelve marks, the drive months lit, the current month ringed. It answers "is this one open
+ * now, and if not how long have I got" without being read at all, which is what a candidate is
+ * doing when they scan nine of these.
+ *
+ * Returns null when the string does not parse. There is no clever fallback on purpose: a strip
+ * that guesses is worse than no strip, because the whole value of the graphic is that it is
+ * trustworthy at a glance. The full text still renders underneath either way.
+ */
+/** Twelve, for the strip. The letters went with the tiles — see MonthStrip. */
+const MONTHS = new Array(12).fill(0);
+const MONTH_INDEX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Which of the twelve months this drive covers. `null` when it cannot be read. */
+function driveMonths(window: string): boolean[] | null {
+  if (/year[-\s]?round/i.test(window)) return new Array(12).fill(true);
+
+  const found = [...window.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/gi)].map(
+    (m) => MONTH_INDEX[m[1].toLowerCase()],
+  );
+  if (found.length < 2) return null;
+
+  const [from, to] = found;
+  const on = new Array(12).fill(false);
+  /* Wrapping windows are the common case, not the edge case — "Sep – Feb" and "Sep – Jan" are
+     two of the four largest recruiters. Walking forward with a modulo handles both directions
+     without a branch. */
+  for (let i = from; ; i = (i + 1) % 12) {
+    on[i] = true;
+    if (i === to) break;
+  }
+  return on;
+}
+
+function MonthStrip({ window: driveWindow, accent }: { window: string; accent: string }) {
+  const on = driveMonths(driveWindow);
+  if (!on) return null;
+  const now = new Date().getMonth();
+
+  /*
+   * A SEGMENTED RULE, NOT TWELVE TILES — and the first attempt was the tiles.
+   *
+   * Eighteen-pixel blocks with month letters in them put a hundred and forty-four coloured
+   * squares on one screen: it moved the rainbow off the avatars, which this redesign had just
+   * fixed, and onto the strips, where it was worse. The letters were 8px and unreadable
+   * anyway, and redundant — the line directly underneath already says "Drive Aug – Dec".
+   *
+   * So the strip carries SHAPE only. Four pixels tall, the drive months filled at 70% and the
+   * rest in the neutral fill, which makes it the same mark as every other rule in this product
+   * — the dash before an eyebrow, the hairline under a section, the ladder bar. Colour on this
+   * page is now spent on exactly one thing per card that carries information: the weight bar.
+   */
+  return (
+    <div aria-hidden className="flex items-center gap-[2px] pb-[5px]">
+      {MONTHS.map((_, i) => (
+        <span
+          key={i}
+          className="relative h-[4px] flex-1 rounded-full"
+          style={{
+            backgroundColor: on[i] ? accent : 'hsl(var(--muted))',
+            opacity: on[i] ? 0.7 : 1,
+          }}
+        >
+          {/* Where you are in the year. The one thing the text line cannot tell you, and the
+              reason the strip is worth drawing at all: "Sep – Jan" means something different
+              in August than it does in December. */}
+          {i === now && (
+            <span className="absolute -bottom-[5px] left-1/2 h-[3px] w-[3px] -translate-x-1/2 rounded-full bg-foreground/45" />
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function CompanyCard({ r, onPick }: { r: Recruiter; onPick: () => void }) {
-  // The company's hue at the palette's saturation and lightness — never the
-  // raw brand hex. See lib/brand-accent.ts for why.
+  /*
+   * The company's hue at the palette's saturation and lightness — never the raw brand hex.
+   * See lib/brand-accent.ts for why.
+   *
+   * WHERE THE COLOUR IS SPENT CHANGED, and that is most of this redesign. It used to be a
+   * 40px square filled at full `brandFill` with white initials, plus a hairline of the same —
+   * so nine cards in a grid put nine saturated blocks on warm paper and the page read as a
+   * colour chart rather than as a list of companies. brand-accent.ts's own docstring names
+   * that exact failure ("twelve full-chroma brand colours on one screen is a rainbow") and the
+   * fill was still loud enough to cause it.
+   *
+   * Now the identity is a SOFT tint with ink initials — the same `-soft`/`-ink` pairing the
+   * rest of the product uses — and full-strength colour is reserved for the one mark that
+   * carries information: the weight bar, whose length is the fact. Colour stopped being
+   * decoration and went back to meaning something.
+   */
   const accent = brandFill(r.accent);
+  const ink = brandInk(r.accent);
+
+  /* The heaviest thing this recruiter tests. It is the page's entire argument — "Amazon gives
+     algorithms 45%, TCS gives aptitude 25%" — so it belongs on the card that makes you choose,
+     not two clicks later inside the plan. */
+  const heaviest = [...(r.topics ?? [])].sort((a, b) => b.weight - a.weight)[0];
+
   return (
     <button
       type="button"
       onClick={onPick}
-      className="group relative overflow-hidden rounded-2xl border border-border bg-surface-elevated p-5 text-left transition-[color,background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-surface-elevated p-5 text-left transition-[color,background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-elev-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
-      {/* A single hairline of the company's colour. The whole card is not tinted —
-          twelve tinted cards in a grid is a colour-chart, not a page. */}
-      <span aria-hidden className="absolute inset-x-0 top-0 h-px" style={{ backgroundColor: accent }} />
+      {/* One hairline of the company's colour, at 40% so nine of them read as edges rather
+          than as stripes. It comes to full strength on hover — the card you are pointing at is
+          the one allowed to be loud. */}
+      <span
+        aria-hidden
+        className="absolute inset-x-0 top-0 h-[2px] opacity-40 transition-opacity duration-200 group-hover:opacity-100"
+        style={{ backgroundColor: accent }}
+      />
 
-      <div className="flex items-start justify-between gap-3">
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white"
-          style={{ backgroundColor: accent }}
+      <div className="flex items-start gap-3">
+        <span
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl font-mono text-[13px] font-bold tracking-tight"
+          /* A 20%-alpha hairline of the same hue, over a 12%-alpha fill. A flat tint at this
+             lightness has no edge against warm paper and the initials float; the inset shadow
+             gives the tile a boundary without adding a second colour or any more saturation.
+             An inset box-shadow rather than Tailwind's `ring`, because the ring colour would
+             have to be injected as a CSS variable through `style` and cast — and a cast on a
+             style object to set one border is a lot of machinery for one border. */
+          style={{
+            backgroundColor: `${accent}1f`,
+            color: ink,
+            boxShadow: `inset 0 0 0 1px ${accent}33`,
+          }}
         >
           {r.name.slice(0, 2).toUpperCase()}
-        </div>
-        <ArrowRight className="mt-1 h-4 w-4 text-muted-foreground/40 transition-[color,background-color,border-color,box-shadow,transform,opacity] group-hover:translate-x-0.5 group-hover:text-foreground" />
+        </span>
+
+        <span className="min-w-0 flex-1">
+          {/* THE DISPLAY FACE, and this is the only place in the product outside a page title
+              that gets it. The rule in tailwind.config.ts is "the largest piece of type on a
+              screen is a serif at a normal weight, everything below it is Inter" — and on this
+              screen the company name IS the largest piece of type that matters, because the
+              whole page is twelve names you are choosing between. Set in Inter semibold it read
+              as a table cell; set in Fraunces it reads as a masthead, which is what a company
+              name on a card you are about to commit to should read as. */}
+          <span className="block truncate font-display text-[1.0625rem] font-[540] leading-tight tracking-[-0.015em]">
+            {r.name}
+          </span>
+          <span className="mt-0.5 block font-mono text-[11px] tabular-nums text-muted-foreground">
+            {r.hires_per_year}
+          </span>
+        </span>
+
+        {/* A real affordance rather than a 4px grey glyph: the disc fills with the company's
+            own colour on hover, so the hit target and the identity are the same object. */}
+        <span
+          className="relative grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full border border-border text-muted-foreground transition-colors duration-200 group-hover:border-transparent group-hover:text-white"
+        >
+          <span
+            aria-hidden
+            className="absolute h-7 w-7 rounded-full opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+            style={{ backgroundColor: accent }}
+          />
+          <ArrowRight className="relative h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-px" strokeWidth={2.2} />
+        </span>
       </div>
 
-      <h3 className="mt-4 text-base font-semibold tracking-[-0.01em]">{r.name}</h3>
-      <p className="mt-0.5 text-xs text-muted-foreground">{r.hires_per_year}</p>
+      {/*
+        * THE FIGURE IS THE SUBJECT OF THE CARD, so it is set like one.
+        *
+        * It used to be a 12px number in the company's ink, right-aligned opposite the topic
+        * name — the same size and weight as the caption under it, in a colour that made it
+        * look like a label rather than a measurement. But this number is the entire reason
+        * the page exists: "Amazon gives algorithms 45%, TCS gives aptitude 25%" is the
+        * comparison a candidate is here to make, and it was the smallest thing on the card.
+        *
+        * Now it is 26px, mono, tabular, and in INK rather than in the brand hue. Ink because
+        * twelve figures in twelve different colours cannot be compared — the eye reads the
+        * colours before the digits — and because the card already spends its colour twice, on
+        * the monogram and on the bar. The bar underneath is the same fact drawn; the digits
+        * are the same fact stated. Neither needs to be coloured to be believed.
+        */}
+      {heaviest && (
+        <div className="mt-5">
+          <div className="flex items-baseline gap-2.5">
+            <span className="mk-num font-mono text-[1.625rem] font-semibold leading-none tabular-nums tracking-[-0.035em] text-foreground">
+              {heaviest.weight}%
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[12px] leading-snug text-muted-foreground">
+              {heaviest.name}
+            </span>
+          </div>
+          {/* Scaled against 50%, not 100% — no single topic on any recruiter's paper exceeds
+              45%, so a /100 bar would render every company as a stub and the comparison this
+              card exists to make would be invisible. */}
+          <div className="mt-3 h-[3px] overflow-hidden rounded-full bg-muted">
+            <span
+              className="block h-full rounded-full"
+              style={{ width: `${Math.min((heaviest.weight / 50) * 100, 100)}%`, backgroundColor: accent }}
+            />
+          </div>
+        </div>
+      )}
 
-      <dl className="mt-4 space-y-1 border-t border-border/60 pt-3 text-[11px]">
-        <div className="flex justify-between gap-3">
-          <dt className="text-muted-foreground">Drive</dt>
-          <dd className="truncate text-right font-medium">{r.drive_window}</dd>
-        </div>
-        <div className="flex justify-between gap-3">
-          <dt className="text-muted-foreground">Programs</dt>
-          <dd className="font-medium tabular-nums">{r.programs.length}</dd>
-        </div>
-      </dl>
+      {/* The programme NAMES, not a count. "3" tells a candidate nothing; "NQT · Ninja ·
+          Digital" is the thing they have actually heard of and are looking for. */}
+      <p className="mt-3.5 truncate text-[11px] text-muted-foreground">
+        {r.programs.map((p) => p.name).join(' · ')}
+      </p>
+
+      {/* Pushed to the bottom so every card in a row ends on the same line whatever the
+          length of the programme list above it.
+
+          RULED OFF FROM WHAT IS ABOVE IT, because the card carries two different kinds of
+          fact and they were running together. Everything above is about the company — who
+          they are, what they weight, which programmes they run. Everything below is about the
+          calendar — when the drive opens and where in the year you are standing. A hairline is
+          the whole separation; a second box would be a card inside a card. */}
+      <div className="mt-auto border-t border-border/70 pt-3.5">
+        <MonthStrip window={r.drive_window} accent={accent} />
+        <p className="mt-2 truncate text-[11px] text-muted-foreground">
+          <span className="text-foreground/70">Drive</span> {r.drive_window}
+        </p>
+      </div>
     </button>
   );
 }
@@ -538,6 +731,47 @@ export default function PreparePage() {
           Pick the company you want an offer from. You get what they actually test, weighted by
           how much it counts, and a plan dated to your drive.
         </p>
+
+        {/* WHAT THE CARDS ARE SHOWING YOU, said once. The month strip is the only unlabelled
+            graphic on this page, and a twelve-mark row means nothing until somebody tells you
+            it is a calendar — after which it never needs explaining again. Counted from the
+            same array the grid renders, so it cannot disagree with what is below it. */}
+        <dl className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border pt-4 text-[11px] text-muted-foreground">
+          <div className="flex items-baseline gap-1.5">
+            <dt className="font-mono text-[13px] font-semibold tabular-nums text-foreground">
+              {recruiters?.length ?? 0}
+            </dt>
+            <dd>campus recruiters</dd>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <dt className="font-mono text-[13px] font-semibold tabular-nums text-foreground">
+              {(recruiters ?? []).reduce((n, r) => n + r.programs.length, 0)}
+            </dt>
+            <dd>programmes</dd>
+          </div>
+          {/* The figure on each card is now the loudest thing in the grid, so it gets the
+              same one-line explanation the month strip gets. Said here rather than repeated as
+              an eyebrow on twelve cards, where it would be the most-printed sentence on the
+              page and the least-read. */}
+          <div className="flex items-baseline gap-1.5">
+            <dt className="font-mono text-[13px] font-semibold tabular-nums text-foreground">%</dt>
+            <dd>is the heaviest topic&rsquo;s share of the paper</dd>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <span aria-hidden className="flex items-center gap-[2px]">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    'h-[4px] w-[7px] rounded-full',
+                    i > 1 && i < 5 ? 'bg-foreground/45' : 'bg-muted',
+                  )}
+                />
+              ))}
+            </span>
+            <span>the filled months are when the drive runs</span>
+          </div>
+        </dl>
       </header>
 
       {TIERS.map(({ key, label, blurb }) => {
@@ -545,12 +779,23 @@ export default function PreparePage() {
         if (!list.length) return null;
         return (
           <section key={key} className="mb-12">
-            <div className="mb-4 flex flex-wrap items-baseline gap-x-3 border-b border-foreground/15 pb-2">
-              <h2 className="text-base font-semibold">{label}</h2>
-              <p className="text-xs text-muted-foreground">{blurb}</p>
-              <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
-                {list.length}
-              </span>
+            {/* The count sits AGAINST the label as a chip, not at the far right edge of a
+                1024px row where it read as a stray digit with nothing to attach to. */}
+            <div className="mb-5 border-b border-border pb-2.5">
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <h2 className="font-display text-[1.0625rem] font-[520] tracking-[-0.015em]">
+                  {label}
+                </h2>
+                {/* A filled grey pill is the shape this product uses for a STATUS — a
+                    balance, a count of things left to do. This is neither; it is a numeral
+                    belonging to the heading beside it, so it is set as one: mono, in the
+                    amber ink, no container. The same treatment the price list gives its
+                    section numerals, for the same reason. */}
+                <span className="font-mono text-[11px] font-semibold tabular-nums text-accent-amber-ink">
+                  {list.length}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{blurb}</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {list.map((r) => (

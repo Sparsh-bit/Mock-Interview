@@ -13,22 +13,50 @@ import { BRAND } from '@/lib/brand';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 import { usePathname } from 'next/navigation';
 
+/**
+ * EVERY SIGNED-IN ROUTE NEEDS A ROW HERE, and half of them were missing.
+ *
+ * `getPageTitle` falls back to `BRAND.name` for anything unlisted, and the breadcrumb renders
+ * as `InterviewOS · <title>` — so on /prepare, /quiz, /gd, /communication and the rest the bar
+ * read "INTERVIEWOS · INTERVIEWOS". The brand name twice, on nine of the fourteen pages.
+ *
+ * It was invisible while the label was a bold heading that looked like a page title; making it
+ * a proper location breadcrumb is what exposed it. Ordered longest-prefix-first below so
+ * `/admin/offers` does not match `/admin`.
+ */
 const ROUTE_LABELS: Record<string, string> = {
+  '/admin/analytics': 'Admin · Analytics',
+  '/admin/marketing': 'Admin · Marketing',
+  '/admin/offers': 'Admin · Offers',
+  '/admin': 'Admin · Users',
+  '/ai-usage': 'AI cost',
   '/dashboard': 'Dashboard',
-  '/interview': 'Interviews',
+  '/prepare': 'Target Company',
+  '/interview': 'Start Interview',
+  '/session': 'Interview',
+  '/quiz': 'Practice Quiz',
+  '/communication': 'Communication',
+  '/gd': 'Group Discussion',
+  '/practice': 'Coding Practice',
   '/report': 'Reports',
   '/tracks': 'Interview Tracks',
   '/analytics': 'Analytics',
-  '/achievements': 'Achievements',
+  '/achievements': 'Standing',
+  '/pricing': 'Plans',
+  '/account': 'Account',
+  '/welcome': 'Set up',
   '/profile': 'Profile',
   '/settings': 'Settings',
 };
 
 function getPageTitle(pathname: string): string {
-  for (const [route, label] of Object.entries(ROUTE_LABELS)) {
-    if (pathname.startsWith(route)) return label;
-  }
-  return BRAND.name;
+  /* LONGEST MATCH WINS, not first. Object key order is an accident of how somebody typed the
+     literal, and relying on it means adding `/admin` above `/admin/offers` silently relabels
+     three pages. Sorting by length makes the table order-independent. */
+  const match = Object.keys(ROUTE_LABELS)
+    .filter((route) => pathname === route || pathname.startsWith(route + '/'))
+    .sort((a, b) => b.length - a.length)[0];
+  return match ? ROUTE_LABELS[match] : BRAND.name;
 }
 
 interface HeaderProps {

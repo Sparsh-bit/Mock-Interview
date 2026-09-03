@@ -50,19 +50,30 @@ describe('clicking the banner reaches the code box', () => {
     expect(PRICING).toContain('id="apply-offer"');
   });
 
+  /*
+   * BOTH OF THESE READ `code(PRICING)`, NOT `PRICING`.
+   *
+   * They scan a fixed window of characters after the anchor, and a window measured in
+   * characters is measured in whatever happens to be written there — so a paragraph added
+   * between `id="apply-offer"` and the className pushed both targets out of range and failed
+   * two passing invariants. That is the same shape as the docstring bug recorded above the
+   * `code()` helper, and it has now happened twice in this file, so the fix is the same:
+   * judge the code and never the prose about it.
+   */
   it('the anchor is offset so its label is not hidden under the header', () => {
     // A bare anchor puts the target flush against the top of the viewport, tucking the
     // "Have a code?" label out of sight — the candidate arrives at an unlabelled input, which
     // defeats the point of scrolling to it.
-    const at = PRICING.indexOf('id="apply-offer"');
-    expect(PRICING.slice(at, at + 260)).toMatch(/scroll-mt-\d+/);
+    const src = code(PRICING);
+    const at = src.indexOf('id="apply-offer"');
+    expect(src.slice(at, at + 260)).toMatch(/scroll-mt-\d+/);
   });
 
   it('the anchor is on the container, not on the input itself', () => {
     // Scrolling to the input alone leaves the label above the fold.
-    const at = PRICING.indexOf('id="apply-offer"');
-    const afterAnchor = PRICING.slice(at, at + 600);
-    expect(afterAnchor).toContain('Have a code?');
+    const src = code(PRICING);
+    const at = src.indexOf('id="apply-offer"');
+    expect(src.slice(at, at + 600)).toContain('Have a code?');
   });
 
   it('the link has an accessible name', () => {
