@@ -47,10 +47,22 @@ export const AI_SURFACE_COUNT = 13;
 /**
  * THE SIX ROUNDS — the film's six beats, and the same six the product actually runs.
  *
- * `tone` is the round's colour in the product's own system (lib/tones.ts), carried here so
- * the film's chips agree with the sidebar a visitor sees ten minutes later. It is the one
- * place the public site borrows the product's six-colour palette rather than the single gold,
- * and it borrows it for exactly the reason the palette exists: these six are a legend.
+ * EACH ROUND USED TO CARRY A `tone` — its colour in the product's own six-colour system
+ * (lib/tones.ts) — on the stated reasoning that "the film's chips agree with the sidebar a
+ * visitor sees ten minutes later". Two things were wrong with that, and the second is why it
+ * is gone rather than corrected:
+ *
+ *   1. Nothing rendered it. No component in `components/marketing/` ever read the field; the
+ *      film's beats are gold on espresso and always were. It was six strings asserting an
+ *      agreement that nothing drew.
+ *   2. Two of the six were already wrong — communication was `coral` here and is `teal` in
+ *      ROUTE_TONE; report was `emerald` here and is `teal` there. Nobody could have noticed,
+ *      because there was no chip to look at.
+ *
+ * Dead data that disagrees with live data is worse than dead data: the next person to need a
+ * round's colour finds this first, it looks authoritative, and the product acquires a second
+ * answer. `lib/tones.ts` is the only answer. `tones.test.ts` now keeps the door shut — if a
+ * `tone` is ever added back it must agree with ROUTE_TONE, and something must render it.
  */
 export const ROUNDS = [
   {
@@ -61,7 +73,6 @@ export const ROUNDS = [
     label: 'It asks a follow-up when your answer is thin',
     blurb:
       'Adaptive questions drawn from real previous-year papers, and a cross-question the moment an answer sounds rehearsed.',
-    tone: 'indigo',
   },
   {
     id: 'gd',
@@ -71,7 +82,6 @@ export const ROUNDS = [
     label: 'Three AI candidates who will talk over you',
     blurb:
       'Eight minutes against three panelists with their own opinions. Stay quiet and they move on without you.',
-    tone: 'plum',
   },
   {
     id: 'coding',
@@ -81,7 +91,6 @@ export const ROUNDS = [
     label: 'It runs your code, then judges the approach',
     blurb:
       'A real compiler, a verdict on complexity — and a flag on work that arrived too clean to have been written here.',
-    tone: 'teal',
   },
   {
     id: 'communication',
@@ -91,7 +100,6 @@ export const ROUNDS = [
     label: 'Every pause and filler, counted',
     blurb:
       'Spoken answers scored on pace, structure and filler. The failure nobody can see in themselves, made a number.',
-    tone: 'coral',
   },
   {
     id: 'quiz',
@@ -101,7 +109,6 @@ export const ROUNDS = [
     label: 'Timed MCQs, fresh or from the bank',
     blurb:
       'Generated for your target company, or drawn from the curated bank. Never charged, on any plan.',
-    tone: 'amber',
   },
   {
     id: 'report',
@@ -111,7 +118,6 @@ export const ROUNDS = [
     label: 'One score, four competencies, every topic ranked',
     blurb:
       'What the panel would have said about you, with the topic to fix first and the hours it will take.',
-    tone: 'emerald',
   },
 ] as const;
 

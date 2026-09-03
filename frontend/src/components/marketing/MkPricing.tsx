@@ -126,9 +126,25 @@ function PlanCard({
         ))}
       </ul>
 
+      {/*
+        * `!whitespace-normal` and an auto height, overriding `.mk-btn`'s `nowrap`.
+        *
+        * THE `!` IS LOAD-BEARING and it is the same ordering trap the `:where()` note in
+        * marketing.css describes. `.mk-btn` and Tailwind's `whitespace-normal` are both
+        * (0,1,0), and marketing.css is imported AFTER globals.css — so the component's own
+        * rule wins and the plain utility silently did nothing. Measured: the card still
+        * overflowed by 20px with `whitespace-normal` applied.
+        *
+        * Nowrap is right for a pill that sizes to its label, and wrong for one stretched to
+        * `w-full` inside a card: at 320px the shell gives the card 280px of content box, and
+        * "See what a session costs" plus 56px of padding needs about 285. The label could not
+        * wrap, so the button pushed the card wider than its parent and the whole page scrolled
+        * sideways. A two-line button on a 320px phone is fine; a horizontally scrolling
+        * pricing section is not.
+        */}
       <Link
         href={cta.href}
-        className={`mk-btn mt-8 w-full ${highlighted ? 'mk-btn-primary' : 'mk-btn-ghost'}`}
+        className={`mk-btn mt-8 h-auto min-h-[3.125rem] w-full !whitespace-normal py-3 text-center leading-snug ${highlighted ? 'mk-btn-primary' : 'mk-btn-ghost'}`}
       >
         {cta.label}
         <ArrowRight className="mk-arrow h-4 w-4" strokeWidth={2.2} />

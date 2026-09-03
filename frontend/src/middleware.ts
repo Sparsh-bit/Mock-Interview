@@ -91,7 +91,18 @@ export async function middleware(request: NextRequest) {
   // Redirect unauthenticated users trying to access protected routes
   if (!user && isProtected(pathname)) {
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirectTo', pathname);
+    /*
+     * `pathname + search`, NOT `pathname`. The query string is frequently the whole point of
+     * the destination: the onboarding wizard's last step hands over
+     * `/interview?company=…&program=…` precisely so nobody picks a company twice, and a report
+     * link carries its tab.
+     *
+     * Dropping it meant a visitor whose session expired between finishing the wizard and
+     * clicking through was sent to a bare `/interview` after logging back in, with the target
+     * they had just chosen silently gone. `safeRedirect` already keeps the query and the hash
+     * on the way back out — it was only ever missing on the way in.
+     */
+    loginUrl.searchParams.set('redirectTo', pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 

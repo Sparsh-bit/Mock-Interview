@@ -338,3 +338,108 @@ function sourceFiles(): string[] {
   walk(join(process.cwd(), 'src'));
   return out;
 }
+
+/* ═══ THE PUBLIC SITE'S PALETTE ══════════════════════════════════════════════
+ *
+ * Everything above measures `globals.css`, which is the signed-in product. The public
+ * surfaces are themed by a second, scoped layer — `src/app/marketing.css`, under `.mk` — and
+ * for its first weeks it was invisible to this file. That mattered more than a coverage gap
+ * usually does, because that stylesheet states its own contrast ratios in prose, and when
+ * they were finally measured THREE OF THEM WERE WRONG: gold-ink was documented at 5.4:1 and
+ * is 4.50 on paper and 4.23 on the recessed band — below AA on live eyebrow text — and bare
+ * gold was documented at 3.1:1 and is 2.56.
+ *
+ * That is exactly the failure this file's own docstring describes: a number in a comment is a
+ * claim, and an unmeasured claim drifts. The tokens were corrected; these assertions are what
+ * stop them drifting back.
+ *
+ * The tokens are HEX rather than the HSL triples globals.css uses, so this needs its own
+ * parser. The duplication is deliberate — converting one file to the other's format to share
+ * a helper would be changing production CSS to suit a test.
+ */
+const MK = readFileSync(join(process.cwd(), 'src/app/marketing.css'), 'utf8');
+
+/** Pull a `--mk-name: #rrggbb;` hex out of the `.mk` block. */
+function mk(name: string): [number, number, number] {
+  const m = MK.match(new RegExp(`--mk-${name}:\\s*#([0-9a-fA-F]{6})`));
+  if (!m) throw new Error(`token --mk-${name} not found in marketing.css`);
+  const h = m[1];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as [number, number, number];
+}
+
+function srgbLuminance([r, g, b]: [number, number, number]): number {
+  const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+function mkRatio(a: string, b: string): number {
+  const [x, y] = [srgbLuminance(mk(a)), srgbLuminance(mk(b))].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+describe('the marketing layer is measured, not asserted in a comment', () => {
+  it('finds the tokens it claims to check', () => {
+    // Same guard as above: a regex that stopped matching would make everything below pass by
+    // throwing nothing.
+    for (const t of ['paper', 'bg', 'ink', 'body', 'muted', 'gold', 'gold-ink', 'gold-graphic'])
+      expect(() => mk(t)).not.toThrow();
+  });
+
+  /*
+   * THE TWO LIGHT GROUNDS. `--mk-paper` is the page and `--mk-bg` is the recessed band that
+   * every other section sits on, and they are different values — so any text tone has to clear
+   * the bar on BOTH. Checking only the page ground is how gold-ink passed review at 4.50 while
+   * failing at 4.23 on half the sections that use it.
+   */
+  const LIGHT_GROUNDS = ['paper', 'bg', 'surface'] as const;
+
+  it.each(['ink', 'body', 'muted', 'gold-ink'])(
+    '--mk-%s carries text on every light ground',
+    (tone) => {
+      for (const ground of LIGHT_GROUNDS) {
+        expect(mkRatio(tone, ground), `--mk-${tone} on --mk-${ground}`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    },
+  );
+
+  it('--mk-gold-graphic clears the 3:1 bar for a mark that carries information', () => {
+    // 1.4.11. The weight bars in MkProof are the case: their length is the fact and there is
+    // no number-only fallback beside them.
+    for (const ground of ['paper', 'bg'] as const) {
+      expect(mkRatio('gold-graphic', ground)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('bare --mk-gold is NOT dark enough for either job, which is why the other two exist', () => {
+    // A guard against somebody "simplifying" the four tones back into one. If this ever passes,
+    // the split has been quietly undone and the eyebrows are failing AA again.
+    expect(mkRatio('gold', 'paper')).toBeLessThan(3);
+  });
+
+  it.each(['on-dark', 'on-dark-muted', 'gold-glow'])(
+    '--mk-%s carries text on the film stage',
+    (tone) => {
+      // The stage is a gradient between these two, so both ends have to hold.
+      for (const ground of ['dark-top', 'dark-bot'] as const) {
+        expect(mkRatio(tone, ground)).toBeGreaterThanOrEqual(4.5);
+      }
+    },
+  );
+
+  it.each([
+    ['good', 'good-bg'],
+    ['bad', 'bad-bg'],
+  ])('--mk-%s reads on its own tinted panel', (ink, bg) => {
+    expect(mkRatio(ink, bg)).toBeGreaterThanOrEqual(4.5);
+    // And on a plain card, where the same two are used for the verdict chips.
+    expect(mkRatio(ink, 'surface')).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('the two light grounds are actually different values', () => {
+    // If they collapse, the band sections stop reading as bands and the whole page flattens —
+    // the same failure globals.css records about its own 98/95/100 ladder.
+    expect(Math.abs(srgbLuminance(mk('paper')) - srgbLuminance(mk('bg')))).toBeGreaterThan(0.005);
+  });
+});

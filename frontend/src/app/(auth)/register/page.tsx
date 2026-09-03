@@ -189,7 +189,7 @@ export default function RegisterPage() {
               tightened; `sm:p-10` keeps the original card from 640px up. */}
           <Card className="border-accent-emerald/20 p-6 sm:p-10">
             <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-accent-emerald-ink" />
-            <h2 className="mb-2 text-xl font-semibold">Check your email</h2>
+            <h2 className="mb-2 font-display text-xl font-[520]">Check your email</h2>
             <p className="text-sm text-muted-foreground">
               We sent a confirmation link to your email. Click it to activate your account.
             </p>
@@ -242,10 +242,16 @@ export default function RegisterPage() {
             <Lockup width={190} priority />
           </Link>
           <div>
-            <h2 className="mb-3 text-3xl font-medium tracking-[-0.03em]">
+            <h2 className="mb-3 font-display text-3xl font-[480] tracking-[-0.022em]">
               Your interview practice
               <br />
-              <span className="gradient-text">starts right now.</span>
+              {/* THE TURN, in the site's own device rather than a gradient. `.gradient-text` is an
+                  indigo→plum sweep, which was the emphasis colour before the retheme and now
+                  collides with gold everywhere else. Every display heading on a public surface
+                  sets exactly one clause in Fraunces italic and gold — the hero, the section
+                  headings, the close, the wizard — and this is the same sentence shape, so it
+                  takes the same treatment. It is also one fewer thing that has to be a gradient. */}
+              <span className="italic text-accent-amber-ink">starts right now.</span>
             </h2>
             <p className="text-sm text-muted-foreground">
               No setup, no subscription. Just you, an AI interviewer, and the feedback you need.
@@ -273,7 +279,7 @@ export default function RegisterPage() {
 
           <div>
             <div className="mb-6">
-              <h1 className="text-3xl font-medium tracking-[-0.03em]">Create your account</h1>
+              <h1 className="font-display text-3xl font-[480] tracking-[-0.022em]">Create your account</h1>
               <p className="mt-1 text-sm text-muted-foreground">Set up your interview profile in under a minute.</p>
             </div>
 

@@ -38,5 +38,18 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(`${origin}/settings`);
+  /*
+   * THE FAILURE PATH GOES TO `/login`, NOT `/settings`.
+   *
+   * We are here because there was no `code`, or because exchanging it failed — an expired or
+   * already-used confirmation link, which is the single most common way this route is reached
+   * by someone who is not signed in. `/settings` is in `PROTECTED_ROUTES`, so middleware
+   * immediately bounced them again to `/login?redirectTo=/settings`: two redirects to reach a
+   * bare login form with no hint that their link was the problem, and then a landing on
+   * Settings rather than the wizard they were headed for.
+   *
+   * `?error=link` lets the login page say what happened. A signed-in visitor who somehow lands
+   * here is sent on by middleware anyway, so this costs them nothing.
+   */
+  return NextResponse.redirect(`${origin}/login?error=link`);
 }

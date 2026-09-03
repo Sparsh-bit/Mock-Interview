@@ -105,11 +105,11 @@ export const viewport: Viewport = {
    *   inputs and the scrollbar were dark-on-light, and on a slow connection the page flashed
    *   a dark ground before the CSS arrived.
    *
-   * #F9F6F0 is `--background` (38 44% 96%) converted to hex. It has to be a literal — this
+   * #FBF6EC is `--background` (40 65.2% 95.5%) converted to hex. It has to be a literal — this
    * object is read at build time and cannot resolve a CSS custom property — so if the ground
    * is ever retoned, retone this with it.
    */
-  themeColor: '#F9F6F0',
+  themeColor: '#FBF6EC',
   colorScheme: 'light',
 };
 

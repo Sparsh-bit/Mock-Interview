@@ -5,6 +5,7 @@ export const runtime = 'edge';
 import Link from 'next/link';
 import { ArrowLeft, Calendar, FileText, TrendingUp } from 'lucide-react';
 
+import { SiteFooter } from '@/components/layout/SiteFooter';
 import { formatDate } from '@/lib/format-date';
 import { scoreBand } from '@/lib/score-bands';
 import { cn } from '@/lib/utils';
@@ -83,7 +84,14 @@ export default function DemoReportPage() {
               <span aria-hidden className="h-px w-3.5 shrink-0 bg-accent-teal" />
               Sample report
             </p>
-            <h1 className="text-3xl font-semibold">{sampleReport.session_name}</h1>
+            {/* The display face, matching `PageHeader` — which every other page in the product
+                uses and this one hand-rolls, because it predates it. The section headings
+                below stay in Inter: a serif at 20px inside a card reads as a pull quote, and
+                the rule is that the display face is for the LARGEST thing on a surface, not
+                for anything that happens to be a heading. */}
+            <h1 className="font-display text-3xl font-[480] tracking-[-0.022em]">
+              {sampleReport.session_name}
+            </h1>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
@@ -280,6 +288,19 @@ export default function DemoReportPage() {
           </Link>
         </div>
       </div>
+
+      {/*
+        * THE FOOTER, WHICH THIS PAGE WAS MISSING ENTIRELY.
+        *
+        * A real orphan, not a cosmetic gap. `/demo` is linked from the public footer as
+        * "Sample report" and from the hero as "See a sample report", so it is one of the most
+        * likely pages for a signed-out visitor to be standing on — and it rendered no footer,
+        * which meant Terms, Refunds, Your data and the grievance contact were unreachable from
+        * it. That is the exact failure `SiteFooter` was extracted from the landing page to fix,
+        * and it survived because `legal-pages.test.ts` checked two hardcoded paths rather than
+        * every public page. It now derives the list, so the next page added cannot repeat this.
+        */}
+      <SiteFooter />
     </div>
   );
 }

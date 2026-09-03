@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -121,5 +121,61 @@ describe('the tone classes are usable as written', () => {
       expect(tone.activeText, name).toMatch(/-ink$/);
       expect(tone.ink, name).toMatch(/-ink$/);
     }
+  });
+});
+
+/**
+ * IF THE PUBLIC SITE EVER BORROWS THE SIX TONES AGAIN, IT HAS TO BORROW THEM CORRECTLY.
+ *
+ * `components/marketing/content.ts` used to give every round in the scroll-film a `tone`, on
+ * the reasoning that "the film's chips agree with the sidebar a visitor sees ten minutes
+ * later" — which is the whole point of the scheme, a colour being a name for a place. Two
+ * problems, and this test is what found them: nothing rendered the field, and two of the six
+ * disagreed with `ROUTE_TONE` anyway (communication was coral against teal, report emerald
+ * against teal). The field is gone.
+ *
+ * This test stays, in a conditional shape, because the field is an obvious thing to add back —
+ * a coloured chip per round is a good idea — and the moment it comes back the agreement has to
+ * hold. With no tones declared it asserts nothing and costs nothing; with tones declared it is
+ * the guard that was missing the first time.
+ */
+describe('the public film agrees with the rail it is advertising', () => {
+  const CONTENT = readFileSync(join(__dirname, '../components/marketing/content.ts'), 'utf8');
+
+  /** Every `href`/`tone` pair in the ROUNDS array, in source order. Empty today, by design. */
+  function filmRounds(): Array<{ href: string; tone: string }> {
+    const out: Array<{ href: string; tone: string }> = [];
+    const rounds = CONTENT.slice(CONTENT.indexOf('export const ROUNDS'));
+    for (const m of rounds.matchAll(/href:\s*'([^']+)'[\s\S]*?tone:\s*'([^']+)'/g)) {
+      out.push({ href: m[1], tone: m[2] });
+    }
+    return out;
+  }
+
+  it('every tone the film declares is a real tone, and matches the route it links to', () => {
+    const rounds = filmRounds();
+    for (const { href, tone } of rounds) {
+      expect(Object.keys(TONES), `${href} uses a tone that does not exist`).toContain(tone);
+      if (href in ROUTE_TONE) {
+        expect(
+          tone,
+          `${href} is ${tone} on the landing page and ${ROUTE_TONE[href]} in the rail`,
+        ).toBe(ROUTE_TONE[href]);
+      }
+    }
+  });
+
+  it('a declared tone is actually rendered by something', () => {
+    /*
+     * The failure that made the field worth deleting: six colour assertions that no component
+     * read, so nothing could have been visibly wrong. If the field returns, a component has to
+     * use it — otherwise it is documentation pretending to be code.
+     */
+    if (filmRounds().length === 0) return;
+    const marketing = join(__dirname, '../components/marketing');
+    const used = readdirSync(marketing)
+      .filter((f) => f.endsWith('.tsx'))
+      .some((f) => /\bround\.tone\b|\btone\s*\]/.test(readFileSync(join(marketing, f), 'utf8')));
+    expect(used, 'content.ts declares round tones that no marketing component renders').toBe(true);
   });
 });

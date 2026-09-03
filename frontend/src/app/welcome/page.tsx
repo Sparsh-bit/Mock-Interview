@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -16,7 +17,7 @@ import {
 
 import { Brandmark } from '@/components/brand/Brandmark';
 import { ResumeConsentGate } from '@/components/legal/ResumeConsentGate';
-import { Choice, StepHead, StepRail } from '@/components/onboarding/shared';
+import { Choice, STEP_TITLE_ID, StepHead, StepRail } from '@/components/onboarding/shared';
 import { usePrimaryResume, useRecruiters, useUpdateProfile, useUserProfile } from '@/hooks/useData';
 import { useResumeUploadFlow, RESUME_MAX_MB } from '@/hooks/useResumeUploadFlow';
 import { cn } from '@/lib/utils';
@@ -108,6 +109,47 @@ const STEPS = [
 export default function WelcomePage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  /*
+   * WHICH WAY THE STEP IS MOVING, so the transition can carry the direction. Forward slides in
+   * from the right and out to the left; Back does the reverse. A wizard whose steps always
+   * enter from the same side reads as four unrelated screens rather than as one flow, and it
+   * gives a visitor no spatial sense of having gone backwards when they press Back.
+   */
+  const [dir, setDir] = useState<1 | -1>(1);
+  const reduced = useReducedMotion();
+
+  /* Every step change goes through here. Two things have to happen on each one and both were
+     missing: the direction has to be recorded, and focus has to move. */
+  const go = useCallback(
+    (next: number) => {
+      setDir((prev) => (next === step ? prev : next > step ? 1 : -1));
+      setStep(next);
+    },
+    [step],
+  );
+
+  /*
+   * FOCUS FOLLOWS THE STEP — AND IT HAS TO WAIT FOR THE TRANSITION.
+   *
+   * Pressing Continue unmounts the button that had focus, so focus fell back to <body>: a
+   * keyboard user was returned to the top of the document and had to tab past the brandmark,
+   * the whole step rail and the Skip link to reach the next step's first field, and a screen
+   * reader announced nothing at all.
+   *
+   * The obvious fix — a `useEffect` on `step` calling `getElementById(...).focus()` — DOES NOT
+   * WORK HERE, and silently: with `AnimatePresence mode="wait"` the outgoing step is still
+   * mounted when `step` changes, so the effect finds the OLD heading, focuses it, and then
+   * that element unmounts a quarter-second later and focus falls back to <body> exactly as
+   * before. Tested: it reported `BODY`.
+   *
+   * So the move is tied to the entering step finishing its animation instead. `initial={false}`
+   * on the AnimatePresence means the first step never animates in, so this never fires on page
+   * load — stealing focus on arrival would be its own bug.
+   */
+  const focusStepTitle = useCallback((definition: unknown) => {
+    if (definition !== 'center') return;
+    document.getElementById(STEP_TITLE_ID)?.focus();
+  }, []);
 
   const { data: profile, isLoading: profileLoading } = useUserProfile();
   const { data: resume, isLoading: resumeLoading } = usePrimaryResume();
@@ -120,17 +162,38 @@ export default function WelcomePage() {
   const [bio, setBio] = useState('');
   const [saving, setSaving] = useState(false);
 
-  /* ALREADY SET UP → STRAIGHT THROUGH. Somebody who signs in on a second device should not be
-     re-onboarded, and somebody who followed a link here by hand should not be trapped. The
-     guard waits for both reads: firing on a half-loaded picture would bounce a fully set-up
-     account back into the wizard for the second it takes the resume query to answer. */
+  /*
+   * ALREADY SET UP → STRAIGHT THROUGH. Somebody who signs in on a second device should not be
+   * re-onboarded, and somebody who followed a link here by hand should not be trapped.
+   *
+   * ── THE DECISION IS TAKEN ONCE, AND THAT IS THE WHOLE POINT ─────────────────────────────
+   * This used to depend on `complete`, recomputed from live React Query data on every render.
+   * Which meant the wizard redirected out of ITSELF: step 1 PATCHes the profile so
+   * `target_company` becomes set, step 2's upload invalidates `['resume']` so `resume` becomes
+   * non-null — and at that moment `complete` flipped true, the effect fired, and the candidate
+   * was thrown to the dashboard having never seen step 3 or step 4. Worse for anyone who
+   * already had a resume: pressing Continue on step 1 ended the flow.
+   *
+   * Steps 3 and 4 are the reason this route exists — step 4 is what puts the two FREE rounds
+   * in front of a new account instead of a 402 — so losing them silently is the most expensive
+   * failure this file could have.
+   *
+   * `decided` latches on the first render where both reads have landed. After that the wizard
+   * owns the page and no amount of data changing underneath it can navigate away.
+   */
   const settled = !profileLoading && !resumeLoading;
-  const complete = Boolean(profile?.target_company) && Boolean(resume);
+  const decided = useRef(false);
+  const [leaving, setLeaving] = useState(false);
   useEffect(() => {
-    if (!settled) return;
+    if (!settled || decided.current) return;
+    decided.current = true;
+    const setUp = Boolean(profile?.target_company) && Boolean(resume);
     const skipped = typeof window !== 'undefined' && readLocal(SKIP_KEY) === '1';
-    if (complete || skipped) router.replace('/dashboard');
-  }, [settled, complete, router]);
+    if (setUp || skipped) {
+      setLeaving(true);
+      router.replace('/dashboard');
+    }
+  }, [settled, profile, resume, router]);
 
   /* Seed from whatever the account already has, so a half-finished setup resumes rather than
      restarts. `target_company` is stored as "Company — Programme"; splitting on the em dash is
@@ -168,7 +231,7 @@ export default function WelcomePage() {
       /* Prefill only — the target itself is saved server-side on the line above, so losing
          this costs a pre-selected chip on the interview form and nothing else. */
       writeLocal(TARGET_KEY, JSON.stringify({ company, program }));
-      setStep(1);
+      go(1);
     } catch {
       toast.error('Could not save your target. Try again.');
     } finally {
@@ -183,18 +246,18 @@ export default function WelcomePage() {
         ...(years !== null ? { experience_years: years } : {}),
         ...(bio.trim() ? { bio: bio.trim() } : {}),
       });
-      setStep(3);
+      go(3);
     } catch {
       /* NOT A BLOCKER. This step is optional by design, and refusing to advance because an
          optional save failed would strand somebody on the least important screen in the flow. */
       toast.error('Could not save that — you can add it later in your profile.');
-      setStep(3);
+      go(3);
     } finally {
       setSaving(false);
     }
   };
 
-  if (!settled || complete) {
+  if (!settled || leaving) {
     return (
       <div className="mk grid min-h-screen place-items-center">
         <Loader2 className="h-5 w-5 animate-spin text-[var(--mk-muted)]" />
@@ -218,7 +281,7 @@ export default function WelcomePage() {
           </p>
 
           <div className="mt-6 hidden lg:block">
-            <StepRail steps={STEPS} current={step} onJump={setStep} />
+            <StepRail steps={STEPS} current={step} onJump={go} />
           </div>
 
           {/* THE EXIT IS ALWAYS VISIBLE. A setup flow with no way out is a wall, and the one
@@ -248,6 +311,41 @@ export default function WelcomePage() {
         </div>
 
         <main className="min-w-0">
+          {/*
+            * THE STEP TRANSITION.
+            *
+            * `mode="wait"` — the outgoing step finishes leaving before the incoming one
+            * starts. The alternative, crossfading them in place, means two steps are in the
+            * DOM together and the taller one dictates the height, so the panel jumps by
+            * whatever the difference is; and with focus moving to the new heading on the same
+            * tick, a screen reader would be landed on a heading inside an element that is
+            * still animating out.
+            *
+            * 0.26s, out-expo, and a 20px slide rather than the usual 24 — this is a form, and
+            * a form that slides far enough to notice reads as slow the third time you see it.
+            * The distance carries the DIRECTION and nothing else.
+            *
+            * Under `prefers-reduced-motion` there is no transition at all: `AnimatePresence`
+            * still keys the steps so focus and mounting behave identically, but the variants
+            * collapse to a plain opacity swap over 0.01s. A wizard is exactly the case that
+            * setting exists for — motion the user did not ask for, on every click, on a
+            * screen they are trying to fill in.
+            */}
+          <AnimatePresence mode="wait" initial={false} custom={dir}>
+            <motion.div
+              key={step}
+              custom={dir}
+              variants={{
+                enter: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * 20 }),
+                center: { opacity: 1, x: 0 },
+                exit: (d: number) => ({ opacity: 0, x: reduced ? 0 : d * -20 }),
+              }}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduced ? 0.01 : 0.26, ease: [0.22, 1, 0.36, 1] }}
+              onAnimationComplete={focusStepTitle}
+            >
           {step === 0 && (
             <TargetStep
               loading={recruitersLoading}
@@ -266,7 +364,7 @@ export default function WelcomePage() {
           )}
 
           {step === 1 && (
-            <ResumeStep resume={resume} onBack={() => setStep(0)} onNext={() => setStep(2)} />
+            <ResumeStep resume={resume} onBack={() => go(0)} onNext={() => go(2)} />
           )}
 
           {step === 2 && (
@@ -276,7 +374,7 @@ export default function WelcomePage() {
               onYears={setYears}
               onBio={setBio}
               saving={saving}
-              onBack={() => setStep(1)}
+              onBack={() => go(1)}
               onNext={saveBackground}
             />
           )}
@@ -284,6 +382,21 @@ export default function WelcomePage() {
           {step === 3 && (
             <ReadyStep company={company} program={program} hasResume={Boolean(resume)} />
           )}
+            </motion.div>
+          </AnimatePresence>
+
+          {/*
+            * WHAT A SCREEN READER HEARS WHEN THE STEP CHANGES.
+            *
+            * Focus moving to the heading announces the new step's title; this announces the
+            * POSITION, which the heading does not carry. Visually hidden rather than absent,
+            * because the same fact is already on screen for sighted users in the mobile
+            * progress line and the desktop rail — this is the third rendering of one fact, for
+            * the one audience the other two do not reach.
+            */}
+          <p aria-live="polite" className="sr-only">
+            Step {step + 1} of {STEPS.length}: {STEPS[step].label}
+          </p>
         </main>
       </div>
     </div>

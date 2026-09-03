@@ -64,14 +64,18 @@ Backend lint/type config: `backend/pyproject.toml` (ruff line-length 100, target
 
 ### Frontend (`frontend/src`, Next.js 15 App Router, React 19, TypeScript)
 
-- Route groups: `app/(auth)` (login/register), `app/(dashboard)` (dashboard, tracks, interview setup, analytics, reports, profile, settings, achievements), `app/(interview)/session` (the live interview-taking flow) — these are separate layouts, not URL segments.
+- Route groups: `app/(auth)` (login/register/forgot/reset), `app/(dashboard)` (dashboard, tracks, interview setup, analytics, reports, profile, settings, achievements), `app/(interview)/session` (the live interview-taking flow) — these are separate layouts, not URL segments. Ungrouped and public: `app/page.tsx` (the marketing landing), `pricing`, `demo`, the four legal pages, `r/[reportId]`, `account/receipt`. Ungrouped and protected: **`app/welcome/`**, the post-signup wizard.
 - **`lib/api/`** — hand-rolled isomorphic `ApiClient` (`client.ts`) used from both Server and Client Components, with pluggable `tokenProvider`, retry/backoff, and interceptor pipeline. `browser.ts` exposes a memoized singleton for Client Components (`getBrowserApiClient()`); a parallel server-side factory exists for Server Components — don't call the browser singleton during SSR. All backend calls should go through this client, not raw `fetch`.
 - **`lib/supabase/`** — Supabase client setup for auth (session/token retrieval feeds the `ApiClient` token provider).
-- **`middleware.ts`** — route protection based on Supabase auth session.
+- **`middleware.ts`** — route protection based on Supabase auth session. **The landing pad for an authenticated visitor is `/welcome`, not `/dashboard`** (same for `lib/auth/safe-redirect.ts`'s `DEFAULT_REDIRECT`): a new account has no resume, no target company and no interview credit, so the dashboard was three dead ends in a row. `/welcome` forwards to the dashboard by itself once setup is done, so an established account pays one client-side redirect.
 - State/data-fetching: TanStack Query wraps the `ApiClient`; don't introduce a second data-fetching layer (e.g. SWR) alongside it.
-- Styling: Tailwind CSS v3 + shadcn/ui conventions, dark-mode-first design system defined in `tailwind.config.ts` / `globals.css`. Framer Motion for animation-heavy surfaces (landing page, dashboard).
+- Styling: Tailwind CSS v3 + shadcn/ui conventions. Framer Motion for animation-heavy surfaces. **There are two scoped design systems and neither is dark** (this line used to say "dark-mode-first"; it has been light since the retheme):
+  - **The product** — `:root` in `src/app/globals.css`. Warm paper `#FBF6EC`, espresso ink, espresso `--primary`, gold `--ring`, and six accent families each bound to one meaning (`src/lib/tones.ts`).
+  - **The public site** — `.mk` in `src/app/marketing.css`, all tokens `--mk-` prefixed and never written to `:root`. One gold accent plus two verdict colours. Applied by wrapping a page in `components/marketing/MarketingShell`; remove the wrapper and the page is the product theme again, with no other edit.
+  - Type: Inter + JetBrains Mono via `next/font/google`; **Fraunces (display) + DM Sans self-hosted** from `public/fonts/` via `src/app/fonts.css` — deliberately not `next/font/google`, so a build with no egress cannot silently ship the fallback face. `font-display` is the Tailwind family and `components/ui/page-header.tsx` puts it on every page title in the app.
+  - Every ratio in both systems is measured by `src/app/theme-contrast.test.ts`. Do not write a contrast number in a comment without adding the assertion — three of them were wrong when the test finally read `marketing.css`.
 - Frontend talks to the backend via `NEXT_PUBLIC_API_URL` (browser) / `INTERNAL_API_URL` (Next.js server-side rewrites in dev); both point at the FastAPI server on port 8000 locally. `next.config.ts` proxies `/api/v1/:path*` to the backend in dev, so client code can call same-origin paths.
-- `components/` is currently thin (only `layout/{Header,Sidebar}.tsx` and `providers.tsx`) — the shadcn/ui component library described in `docs/prompt.md` is aspirational/in-progress, not fully built out yet.
+- `components/` is no longer thin: `ui/` (the shared primitives — `page-header`, `stat-card`, `card`, `button`, `icon-tile`…), `layout/` (`Header`, `Sidebar`, `MobileNav`, `SiteFooter`), `marketing/` (the public site — nav, hero, the scroll-film, showcase, reel, pricing, close, `MkFooter`), `onboarding/`, `brand/`, `legal/`, `billing/`, `report/`, `interview/`, `prep/`, `lightswind-pro/`.
 
 ## Branding
 
@@ -82,6 +86,13 @@ out in 33 files, and it has since been renamed twice.
 `docs/DESIGN-LANGUAGE.md` is what the name means visually and is not optional reading before
 UI work: one lit element per page, heat means difficulty and only difficulty, and the six
 colours each bind to one meaning (`frontend/src/lib/tones.ts`).
+
+**Those three rules describe the SIGNED-IN product.** The public site is a second, scoped
+system and departs from the colour rule on purpose — six information colours on a page whose
+job is to make you want an account is six colours carrying no information, so it uses one gold
+and two verdicts. It has no `.lit` element either; the film is the subject. `marketing.css`
+argues both departures at the top of the file, and `DESIGN-RULES.md` marks which of its rules
+are product-only. Read the stylesheet before changing anything under `components/marketing/`.
 
 **Four things deliberately keep the old name and must not be "fixed":**
 

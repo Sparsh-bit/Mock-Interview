@@ -141,7 +141,7 @@ export default function ResetPasswordPage() {
 
         {ready === false && (
           <div>
-            <h1 className="text-3xl font-medium tracking-[-0.03em]">This link has expired</h1>
+            <h1 className="font-display text-3xl font-[480] tracking-[-0.022em]">This link has expired</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Reset links can only be used once, and they expire. Request a new one and open it
               in the same browser.
@@ -159,7 +159,7 @@ export default function ResetPasswordPage() {
           (done ? (
             <div className="text-center">
               <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-accent-emerald-ink" />
-              <h1 className="mb-2 text-xl font-semibold">Password updated</h1>
+              <h1 className="mb-2 font-display text-xl font-[520]">Password updated</h1>
               <p className="text-sm text-muted-foreground">Taking you to your dashboard…</p>
             </div>
           ) : (
@@ -168,7 +168,7 @@ export default function ResetPasswordPage() {
                 <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                   <Lock className="h-5 w-5" />
                 </div>
-                <h1 className="text-3xl font-medium tracking-[-0.03em]">Choose a new password</h1>
+                <h1 className="font-display text-3xl font-[480] tracking-[-0.022em]">Choose a new password</h1>
                 <p className="mt-2 text-sm text-muted-foreground">
                   At least 8 characters, with one capital letter and one number.
                 </p>

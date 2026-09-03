@@ -100,6 +100,24 @@ describe('viewport units: a ceiling measured in vh can hide things', () => {
    */
   const ALLOWED = new Map<string, string>([
     [
+      'components/marketing/MkFilm.tsx',
+      /*
+       * `height: ${FILM_VH}vh` on the film's scroll track, where FILM_VH is 540.
+       *
+       * SAFE, AND NOT FOR THE USUAL REASON. This is a ceiling in `vh`, which is normally the
+       * exact bug this rule exists to catch — but nothing is laid out inside it. The element
+       * is an empty scroll track whose only child is `position: sticky` at `h-[100svh]`, and
+       * `svh` is the SMALL viewport height, i.e. the viewport with the browser chrome
+       * SHOWING. So the content is measured against the conservative height and the 540vh is
+       * only ever "how far you scroll to get through the film", which is not a box anything
+       * has to fit in.
+       *
+       * If a future edit ever puts content directly in that track rather than in the sticky
+       * child, this exception stops being true and should be removed.
+       */
+      'empty scroll track; all content is in a sticky h-[100svh] child, so nothing is clipped',
+    ],
+    [
       'app/global-error.tsx',
       // Renders outside the app shell with no Tailwind and no theme, as a plain inline style
       // object. It is `minHeight` — a floor — so it is doubly safe.
@@ -114,6 +132,22 @@ describe('viewport units: a ceiling measured in vh can hide things', () => {
       withoutComments(code)
         .split('\n')
         .forEach((line, i) => {
+          /*
+           * A SECOND SHAPE THE LITERAL-DIGIT REGEX CANNOT SEE.
+           *
+           * `height: ${FILM_VH}vh` has no digits before `vh` — the number is a constant
+           * declared 50 lines up — so the scan below walked straight past the single largest
+           * viewport-unit construct in the codebase. Interpolated units are reported as
+           * ceilings because that is what they almost always are, and because the scanner
+           * cannot resolve the constant to tell a floor from a ceiling; a legitimate one goes
+           * in ALLOWED with its reason, like any other exception here.
+           */
+          for (const _ of line.matchAll(/\$\{[^}]+\}vh\b/g)) {
+            const before = line.slice(0, line.indexOf('${'));
+            if (/min-h(?:eight)?\s*:?\s*$/.test(before)) continue;
+            offenders.push(`${path}:${i + 1} (${line.trim().slice(0, 60)})`);
+          }
+
           for (const m of line.matchAll(/(?<![dsl])\b[\w-]*?(\d+)vh\b/g)) {
             // Find the Tailwind utility (or CSS property) this length belongs to.
             const before = line.slice(0, m.index ?? 0);

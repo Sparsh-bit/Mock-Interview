@@ -67,7 +67,7 @@ export default function LoginPage() {
 
         <div>
           <div className="mb-8 border-b border-border pb-6">
-            <h1 className="text-3xl font-medium tracking-[-0.03em]">Sign in</h1>
+            <h1 className="font-display text-3xl font-[480] tracking-[-0.022em]">Sign in</h1>
             <p className="mt-2 text-sm text-muted-foreground">Resume your interview preparation</p>
           </div>
 

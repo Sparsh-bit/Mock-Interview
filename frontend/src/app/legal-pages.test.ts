@@ -80,7 +80,30 @@ describe('nothing is an orphan', () => {
      * prevent — four links that nothing checks. So MkFooter has to take the list from
      * SiteFooter's `LEGAL_LINKS`, which is the declaration the loop above verifies.
      */
-    for (const page of ['app/page.tsx', 'app/pricing/page.tsx']) {
+    /*
+     * DERIVED, NOT A HARDCODED PAIR. This checked `app/page.tsx` and `app/pricing/page.tsx`
+     * and nothing else — and `/demo` shipped with no footer at all for exactly that reason.
+     * It is linked from the public footer as "Sample report" and from the hero, so it is one
+     * of the likeliest pages for a signed-out visitor to be standing on, and all four legal
+     * routes were unreachable from it.
+     *
+     * The list below is every public page that is a page of CONTENT. Deliberately excluded,
+     * each for a reason rather than an oversight:
+     *   · the four auth screens — they carry the privacy notice and terms inline, in the
+     *     consent block, which is a stronger placement than a footer link;
+     *   · `not-found` and `global-error` — a 404 with a site map is a 404 pretending to be a
+     *     page, and the error boundary renders outside the app shell with no components;
+     *   · `r/[reportId]` — a shared report is somebody else's document, and it carries its own
+     *     provenance line instead.
+     */
+    const PUBLIC_CONTENT_PAGES = [
+      'app/page.tsx',
+      'app/demo/page.tsx',
+      'app/pricing/page.tsx',
+      ...LEGAL_ROUTES.map((r) => join('app', r, 'page.tsx')),
+    ];
+
+    for (const page of PUBLIC_CONTENT_PAGES) {
       expect(read(page), `${page} renders no footer at all`).toMatch(/SiteFooter|MkFooter/);
     }
 

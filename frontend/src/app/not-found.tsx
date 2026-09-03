@@ -40,7 +40,7 @@ export default function NotFound() {
           404
         </p>
 
-        <h1 className="mt-3 text-2xl font-medium tracking-[-0.02em]">
+        <h1 className="mt-3 font-display text-2xl font-[480] tracking-[-0.018em]">
           That seat doesn&apos;t exist
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

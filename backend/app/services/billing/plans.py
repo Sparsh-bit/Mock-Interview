@@ -2,9 +2,15 @@
 The trial, and what each thing costs to buy — services/billing/plans.py
 
 THE SINGLE SOURCE OF TRUTH FOR ENTITLEMENT AND PRICE. The enforcement layer, the paywall
-copy, the pricing page and the landing page all read these numbers. There is deliberately no
-second list anywhere: a page that advertises ₹49 while the server charges ₹79 is a refund and
-a support ticket, and that divergence is invisible until a paying customer hits it.
+copy and the pricing page all read these numbers. There is deliberately no second list
+anywhere: a page that advertises ₹49 while the server charges ₹79 is a refund and a support
+ticket, and that divergence is invisible until a paying customer hits it.
+
+The LANDING PAGE is the one surface that deliberately does not read them. It states the
+*shape* of the offer — free tier, pay per session, no subscription — and links to /pricing for
+the figure, because the shape is a product decision that changes rarely and the figure is not.
+`frontend/src/components/marketing/MkPricing.tsx` carries that rule at the top of the file and
+`content.ts` repeats it: no price is typed into a marketing component.
 
 ## No subscription. A trial, then you buy what you use.
 

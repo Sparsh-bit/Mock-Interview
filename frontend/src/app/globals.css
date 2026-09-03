@@ -18,11 +18,39 @@
    around a score. Deriving the interface colour from the imagery is why the
    two now sit together instead of fighting: the photos stop looking pasted on.
 
-   THE GROUND IS WARM, THE CARDS ARE WHITE. A warm paper page (38°) with pure
+   THE GROUND IS WARM, THE CARDS ARE WHITE. A warm paper page (40°) with pure
    white cards floating on it is what produces the sense of a physical surface,
    and it costs one token. Pure white page + grey cards is the inverse and reads
-   flat. Text is ink (228° 24% 13%), never #000 — true black on paper is a thing
+   flat. Text is espresso ink, never #000 — true black on paper is a thing
    screens do and print does not.
+
+   ── THE INK AND THE PRIMARY MOVED, AND HERE IS WHY ────────────────────────
+   The neutrals used to be a COOL family on a warm ground: ink at 228° (#1a1d2b,
+   a blue-black) and muted text at 228° too, with an ink-indigo primary. On its
+   own that reads fine. Beside the public site it did not: the landing page,
+   `/welcome` and the marketing layer are espresso-on-cream, and a visitor who
+   signs up crossed from one hue family to another mid-flow — the join looked
+   like two products stitched together, which is exactly what it was.
+
+   So the NEUTRALS are now one family with the public site — ground #FBF6EC,
+   ink #2E2218, borders and fills all in the 27–40° band — and the ratios are
+   better than before rather than merely equal (foreground on ground went from
+   about 13.0:1 to 14.1:1; muted text from 5.9:1 to 5.9:1).
+
+   `--primary` became espresso and `--ring` became gold. That is the one change
+   here with a MEANING attached rather than a hue: primary used to be the same
+   value as `--accent-indigo`, so "the primary action" and "an interview
+   surface" were literally the same colour and neither could be read as
+   distinct. They are now separable — a filled button is espresso everywhere in
+   the product (matching `.mk-btn-primary` on the public site), gold is focus
+   and emphasis, and indigo goes back to meaning only what tones.ts says it
+   means. docs/DESIGN-LANGUAGE.md §6 is updated to match.
+
+   THE SIX ACCENT FAMILIES BELOW ARE UNCHANGED. They carry information — heat,
+   verdicts, which round you are in — and re-picking them to match a marketing
+   palette would have spent six meanings on a look. Every one of them was
+   re-measured against the new ground by theme-contrast.test.ts rather than by
+   eye.
 
    EVERY ACCENT HAS A JOB. Six colours, each bound to one meaning, so colour
    carries information instead of decorating:
@@ -51,39 +79,39 @@
        the recessed fill is properly recessed, and a white card genuinely lifts off both.
        Checked by theme-contrast.test.ts rather than by eye, because every one of these
        numbers moves a contrast ratio somewhere else. */
-    --background: 38 44% 96%;
+    --background: 40.0 65.2% 95.5%;
     /* warm paper, with the warmth actually visible */
-    --surface: 36 30% 91%;
+    --surface: 39.0 40.0% 90.2%;
     /* recessed / grouped fills — clearly below the ground */
     --surface-elevated: 0 0% 100%;
     /* white cards */
     --surface-overlay: 0 0% 100%;
 
     /* Foreground hierarchy — ink, not black */
-    --foreground: 228 24% 13%;
+    --foreground: 27.3 31.4% 13.7%;
     /* #1a1d2b */
-    --muted: 36 26% 88%;
-    --muted-foreground: 228 12% 40%;
+    --muted: 38.2 37.9% 88.6%;
+    --muted-foreground: 31.0 15.7% 36.3%;
     /* #676b7a — 5.9:1 on paper */
 
     /* Component tokens */
     --card: 0 0% 100%;
-    --card-foreground: 228 24% 13%;
+    --card-foreground: 27.3 31.4% 13.7%;
     --popover: 0 0% 100%;
-    --popover-foreground: 228 24% 13%;
+    --popover-foreground: 27.3 31.4% 13.7%;
 
     /* Brand accent — ink indigo. Deeper and warmer than the stock SaaS blue,
        and it is the navy in the photographs. 7.4:1 on paper. */
-    --primary: 231 48% 45%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 27.3 31.4% 13.7%;
+    --primary-foreground: 40.0 65.2% 95.5%;
 
     /* Secondary — warm fill (secondary buttons/chips) */
-    --secondary: 36 28% 90%;
-    --secondary-foreground: 228 24% 13%;
+    --secondary: 39.0 40.0% 90.2%;
+    --secondary-foreground: 27.3 31.4% 13.7%;
 
     /* Accent (hover fills) */
-    --accent: 36 28% 91%;
-    --accent-foreground: 228 24% 13%;
+    --accent: 38.2 40.7% 89.4%;
+    --accent-foreground: 27.3 31.4% 13.7%;
 
     /* Semantic — bound to the accents below so one meaning has one colour */
     --destructive: 6 72% 44%;
@@ -94,9 +122,9 @@
     --warning-foreground: 0 0% 100%;
 
     /* Borders — warm hairline, so edges read as paper not as grey plastic */
-    --border: 34 24% 83%;
-    --input: 34 24% 80%;
-    --ring: 231 48% 45%;
+    --border: 38.2 34.0% 81.0%;
+    --input: 38.0 31.3% 74.3%;
+    --ring: 37.2 56.3% 50.6%;
 
     /* Radius — Apple card/control curvature (softened/rounder) */
     /* ── Radius ladder ───────────────────────────────────────────────────

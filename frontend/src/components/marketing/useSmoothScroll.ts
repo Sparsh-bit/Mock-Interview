@@ -111,8 +111,25 @@ export function useSmoothScroll(enabled = true) {
 
       const delta = target - current;
       if (Math.abs(delta) < EPSILON) {
+        /*
+         * THE LOOP RETIRES WITHOUT WRITING. It used to `seek(current)` here, and that one line
+         * killed every smooth scroll on the site for about 300ms after any wheel notch.
+         *
+         * `seek` is an INSTANT scroll, and per CSSOM-View an instant scroll aborts an
+         * in-progress smooth scroll on the same box. `onScroll` already yields correctly when
+         * something else takes over — it adopts the new position into `target`/`current` — but
+         * the frame that was already scheduled then found `delta ≈ 0`, took this branch, and
+         * wrote at the position it had just adopted, cancelling the animation it had yielded
+         * to.
+         *
+         * Symptom: wheel once into the film, then click a rail mark (or the hero's scroll cue,
+         * or a nav `#hash` link). The page moved about five pixels and stopped, and the button
+         * looked broken.
+         *
+         * The write was never doing anything anyway: by definition `current` is already where
+         * the page is on this branch. Not writing is both the fix and the simpler code.
+         */
         current = target;
-        seek(current);
         running = false;
         return;
       }
@@ -138,6 +155,17 @@ export function useSmoothScroll(enabled = true) {
 
       const t = e.target as Element | null;
       if (t?.closest?.('[data-native-scroll]')) return;
+
+      /*
+       * A MODAL HAS THE PAGE. The mobile menu locks `body { overflow: hidden }` and marks it;
+       * while that is true the document cannot scroll, so swallowing the wheel here and
+       * advancing `target` anyway built a position the page had never been at — and because no
+       * scroll event fires under a lock, `onScroll` never got the chance to re-sync. Closing
+       * the menu and giving one wheel notch then teleported the page to that fabricated
+       * offset. Standing down is both correct and what the user expects: a wheel over a modal
+       * should do nothing.
+       */
+      if (document.body.dataset.scrollLocked) return;
 
       e.preventDefault();
       target = Math.min(maxScroll(), Math.max(0, target + e.deltaY * MULT));

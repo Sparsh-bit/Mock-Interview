@@ -69,7 +69,17 @@ export function MkShowcase() {
   const sync = useCallback(() => {
     const el = railRef.current;
     if (!el) return;
-    setAtStart(el.scrollLeft < 8);
+    /*
+     * `< 8` was measured against a rail that starts at scrollLeft 0. It does not: `snap-x
+     * snap-mandatory` plus `scroll-padding-inline` parks the rail on its first snap point,
+     * which sits one spacer-width in. So "at the start" was never true, the Previous arrow
+     * rendered enabled at the leftmost position, and clicking it did nothing.
+     *
+     * Comparing against the first card's own offset makes the test independent of how wide the
+     * spacer happens to be at this viewport.
+     */
+    const first = el.querySelector('figure') as HTMLElement | null;
+    setAtStart(el.scrollLeft <= (first ? first.offsetLeft - el.offsetLeft : 0) + 8);
     /* The 8px slack matters: sub-pixel layout means `scrollLeft + clientWidth` frequently
        lands a fraction short of `scrollWidth` at the true end, and without it the right arrow
        never disables on the last card. */
@@ -91,9 +101,17 @@ export function MkShowcase() {
   const nudge = (dir: -1 | 1) => {
     const el = railRef.current;
     if (!el) return;
-    /* Scroll by a card, measured from the first child, rather than by a hard-coded number of
-       pixels — the cards are fluid and a fixed step lands mid-card at most viewport widths. */
-    const card = el.firstElementChild as HTMLElement | null;
+    /*
+     * Scroll by a CARD, measured from a card — not by a hard-coded number of pixels, because
+     * the cards are fluid and a fixed step lands mid-card at most viewport widths.
+     *
+     * THIS READ `firstElementChild`, WHICH IS THE LEADING SPACER, NOT A CARD. The spacer is
+     * ~188px at 1440 and a card is 560, so the step came out at 212px against a 584px gap
+     * between snap points — and because the rail is `snap-mandatory`, the browser then snapped
+     * back to the card it started on. The Next button could not leave the first card at all,
+     * however many times you pressed it.
+     */
+    const card = el.querySelector('figure');
     const step = card ? card.getBoundingClientRect().width + 24 : el.clientWidth * 0.8;
     el.scrollBy({ left: dir * step, behavior: 'smooth' });
   };

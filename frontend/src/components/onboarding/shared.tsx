@@ -73,6 +73,13 @@ export function Choice({
   );
 }
 
+/**
+ * The id the wizard moves focus to on every step change. Exported so the two halves of that
+ * behaviour — the heading that receives focus and the effect that sends it — cannot drift
+ * apart on a rename.
+ */
+export const STEP_TITLE_ID = 'welcome-step-title';
+
 /** The heading block every step opens with. */
 export function StepHead({
   eyebrow,
@@ -88,8 +95,16 @@ export function StepHead({
   return (
     <header className="mb-7">
       <p className="mk-eyebrow">{eyebrow}</p>
+      {/*
+        * `tabIndex={-1}` makes this programmatically focusable without putting it in the tab
+        * order, which is the standard way to land focus on a heading after a view change.
+        * `outline-none` because the focus ring here would be a ring around a heading nobody
+        * clicked — the announcement is the feedback, not a visible ring.
+        */}
       <h1
-        className="mt-4 max-w-[20ch] text-balance leading-[1.1]"
+        id={STEP_TITLE_ID}
+        tabIndex={-1}
+        className="mt-4 max-w-[20ch] text-balance leading-[1.1] outline-none"
         style={{ fontSize: 'var(--mk-h3)' }}
       >
         {title} {turn && <span className="mk-turn">{turn}</span>}

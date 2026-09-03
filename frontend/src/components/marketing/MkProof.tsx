@@ -97,7 +97,11 @@ export function MkProof() {
                       </div>
                       <div className="mt-1.5 h-[3px] w-full rounded-full bg-[rgb(59_43_28/0.1)]">
                         <motion.span
-                          className="block h-full origin-left rounded-full bg-[var(--mk-gold)]"
+                          /* `--mk-gold-graphic`, not `--mk-gold`. This bar IS the fact — its length is
+                             the 45%, and there is no text alternative beside it — so it has to
+                             clear 3:1 against the band it sits on. Bare gold measures 2.6:1 and
+                             cannot; the graphic tone is the same hue darkened until it does. */
+                          className="block h-full origin-left rounded-full bg-[var(--mk-gold-graphic)]"
                           style={{ width: `${row.pct}%` }}
                           initial={reduced ? false : { scaleX: 0 }}
                           animate={inView || reduced ? { scaleX: 1 } : undefined}

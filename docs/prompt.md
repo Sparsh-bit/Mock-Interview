@@ -15,9 +15,11 @@ Unlike standard chatbots or static Q&A banks, InterviewOS is an **interview simu
 The platform follows a modern, scalable architecture designed for production.
 
 **Frontend (Next.js 15 App Router)**
-- **Tech Stack**: React 19, TypeScript, Tailwind CSS (v3), shadcn/ui (design system), Framer Motion (animations).
+- **Tech Stack**: React 19, TypeScript, Tailwind CSS (v3), shadcn/ui conventions, Framer Motion (animations). Four typefaces: Inter + JetBrains Mono via `next/font/google`, and Fraunces (display) + DM Sans self-hosted from `public/fonts/` via `src/app/fonts.css`.
 - **Data Fetching & State**: TanStack Query (React Query) for server state caching, native `fetch` API wrapped in a robust, isomorphic API client (`ApiClient` with interceptors and retry logic).
-- **Styling**: A premium dark-mode-first aesthetic (glassmorphism, gradient text, subtle glows) configured in `tailwind.config.ts` and `globals.css`.
+- **Styling**: **Two scoped systems, both light and both warm.** This line used to read "a premium dark-mode-first aesthetic (glassmorphism, gradient text, subtle glows)" and every clause of it is now false — glassmorphism is banned by name in `frontend/DESIGN-RULES.md`, and the product has had no dark mode since the retheme.
+  - The **signed-in product**: warm paper ground `#FBF6EC`, espresso ink `#2E2218`, espresso primary, gold focus ring, and six accent families each bound to one meaning (`src/lib/tones.ts`). Defined on `:root` in `globals.css`; every ratio pinned by `theme-contrast.test.ts`.
+  - The **public site**: the same ground and ink, one gold accent and two verdict colours, scoped under `.mk` in `src/app/marketing.css` and never written to `:root`. Applied by wrapping a page in `MarketingShell`; remove the wrapper and the page is the product theme again.
 
 **Backend (FastAPI)**
 - **Tech Stack**: Python 3.11+, FastAPI, SQLAlchemy 2.0 (Async), Alembic, Pydantic, Structlog.
@@ -55,11 +57,12 @@ The platform follows a modern, scalable architecture designed for production.
 - **Report & Resume APIs**: Generate report, list/upload resumes.
 
 ### 4. Frontend Foundation & UX (Phase 2)
-- **Design System**: Set up Tailwind config with brand colors, typography (Inter + JetBrains Mono), and custom animations.
+- **Design System**: Tailwind config with the token families, typography (Inter + JetBrains Mono for the interface, Fraunces + DM Sans for display and marketing — `font-display` is the Tailwind family), and custom animations.
 - **API Client**: Built a highly robust, dependency-injected `ApiClient` (`lib/api/`) that works seamlessly across Server Components and Client Components, handling auth headers and retries.
-- **Authentication Flow**: Implemented `middleware.ts` for route protection, `useAuth` hook, and premium UI for Login and Registration pages (with Zod validation).
+- **Authentication Flow**: `middleware.ts` for route protection, `useAuth` hook, and Login/Registration with Zod validation and the three DPDP consents recorded against a version stamp.
+- **Onboarding**: `app/welcome/` — a four-step post-signup wizard (target company and programme → resume, skippable → background → three routes out, the two free ones first). `middleware.ts` and `lib/auth/safe-redirect.ts` land every authenticated visitor here rather than on `/dashboard`; it forwards to the dashboard by itself once the account has a target and a resume, so there is no `onboarding_completed` flag to drift out of sync with the data it describes.
 - **Layouts & Navigation**: Created the authenticated Dashboard layout with a collapsible sidebar (`Sidebar.tsx`) and dynamic header (`Header.tsx`).
-- **Premium Landing Page**: Built a Framer Motion-powered landing page (`page.tsx`) highlighting features, mock interview visualizations, and a modern dark aesthetic.
+- **Landing Page**: `app/page.tsx` is a server component composing eight sections from `components/marketing/`. Its centre is a 540vh sticky, scroll-scrubbed "film" of the six rounds rendered in DOM rather than video (`MkFilm.tsx` + `film-beats.tsx`), plus an embedded 34-second Remotion reel (`MkReel.tsx`, source in `promo/src/landing/`). Cream/espresso/gold, Fraunces display. Every number on it is counted from the repository — see `components/marketing/content.ts`, which is the only place the public site states a fact.
 - **Dashboard**: Created the main dashboard (`dashboard/page.tsx`) showing stats, recent sessions, and available interview tracks.
 
 ---

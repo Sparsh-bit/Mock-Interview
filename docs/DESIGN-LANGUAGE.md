@@ -1,9 +1,26 @@
 # InterviewOS — the design language
 
-`DESIGN-RULES.md` says what *not* to do and holds for every surface. This says what
-*this product is*, now that it has a name that means something. Read both.
+`DESIGN-RULES.md` says what *not* to do. This says what *this product is*, now that
+it has a name that means something. Read both.
 
-- Related: [[REDESIGN]] · [[MISTAKES]] · [[VOICES]] · [[index]]
+**Scope.** Everything below describes the SIGNED-IN product. The public site — the
+landing page, `/welcome`, anything wrapped in `MarketingShell` — is a second,
+scoped system under `.mk` in `src/app/marketing.css`, and it departs from two of
+the rules here on purpose:
+
+- **§1, one lit element.** It has none. On the landing page the film *is* the
+  subject and it occupies a quarter of the page; on `/welcome` the subject is a
+  sequence, and lighting one step of four would be lighting the wrong thing.
+- **§6, six colours.** It uses one gold and two verdicts, for the reason §6 gives
+  rather than against it: colour carries information, and a page with no round to
+  be in and no verdict to report has none to carry.
+
+What the two systems *do* share, and this is the part that matters: the same
+ground, the same espresso ink, the same warm border family, the same mono
+numerals, the same 14px rule before an eyebrow. A visitor crossing from the
+landing page into the dashboard should not be able to name what changed.
+
+- Related: [[REDESIGN]] · [[DESIGN-RULES]] · [[MISTAKES]] · [[VOICES]] · [[index]]
 
 ---
 
@@ -124,7 +141,18 @@ same logo drawn for the size it is used at.
 | navigation rail, drawer, header | `<Wordmark>` (SVG, 22px) | the artwork is illegible here |
 | auth screens, 404, pricing header | `<Lockup>` (artwork, ≥180px) | there is room, and the descriptor is legible from 180px up |
 | loading | `<BrandLoader>` (SVG) | must animate with no JavaScript |
+| public nav, public footer, `/welcome` | `<Brandmark>` (28px) + live text | see below |
 | browser tab | `src/app/icon.png`, `apple-icon.png` | see below |
+
+**The public lockup is set, not drawn**, and it is the one place the mark is
+paired with type rather than shipped as artwork: the 28px `<Brandmark>` beside
+`Interview` in Fraunces with `OS` in `--mk-gold`. It is set because it has to sit
+in a 40px-tall floating pill that inverts over the film's dark stage — artwork at
+that size is illegible and cannot recolour. That gold `OS` is a **logotype**,
+which is why it is allowed to be 2.6:1 when nothing else in the system may be:
+WCAG 1.4.3 exempts brand names, and gold cannot clear the text bar without going
+brown. It is also the reason gold is the first thing you meet above the fold — it
+teaches the colour before the colour is asked to mean "press this".
 
 **Colours are sampled from the artwork**, not chosen beside it — navy `#28344A`,
 flame `#E85A1E → #FBA627`, cone `#FDECD0`, exported as `BRAND_COLORS`. The two
@@ -150,6 +178,27 @@ post running unbroken to the floor. Its typographic equivalent is the **rule**:
 the 14px coloured dash before every page eyebrow, the hairline under a section,
 the ladder bar. Thin, straight, definite.
 
+**Four faces, and each has one job.** Inter is the interface and DM Sans is the
+public site's body — they are never mixed on one surface. JetBrains Mono is every
+score, count, price and duration, with `tabular-nums`, so a number that ticks
+over does not reflow the line it sits on.
+
+**Fraunces is the display face and it is the only thing that crosses the
+boundary.** It sets the hero, every section heading on the public site, and — via
+`font-display` in `tailwind.config.ts` and `components/ui/page-header.tsx` — the
+page title on all fourteen signed-in screens. That single shared face is most of
+why the two systems read as one product. It is a variable serif with an optical
+size axis, so one file holds its proportions from a 24px page title to a 100px
+hero, and it is self-hosted from `public/fonts/` rather than fetched at build
+time.
+
+**The italic is load-bearing.** Exactly one clause per display heading is set in
+Fraunces italic and gold, and that clause is always the *turn* in the sentence —
+the point where the line stops describing and starts arguing. "Practise the real
+thing, *before the real thing.*" If a heading has no turn in it, it gets no
+italic. This is the site's one recurring typographic move; using it twice in a
+heading spends it.
+
 Numbers are the other half. Every score, rating, count, price and duration is
 monospace with `tabular-nums` — these are figures a candidate compares against
 their own from last week, and proportional digits make two numbers of the same
@@ -158,6 +207,17 @@ length different widths.
 ## 6. What each colour owns
 
 Unchanged from DESIGN-RULES. Half the value is that it never moves:
+
+> Two things moved elsewhere and are worth naming here so the table stays
+> trustworthy. **`--primary` is no longer indigo, it is espresso** — it used to be
+> the same value as `--accent-indigo`, so "the primary action" and "an interview
+> surface" were literally one colour and neither could be read as distinct. A
+> filled button is now espresso everywhere in the product, matching
+> `.mk-btn-primary` on the public site, `--ring` is gold, and indigo goes back to
+> meaning only what this table says. **The rail's group labels are warm gold**
+> (`Sidebar.tsx`) — that is a label on the furniture rather than on a
+> destination, which is why it does not spend the amber meaning; it was
+> previously grey at about 3:1 and read as disabled rather than as a heading.
 
 | colour | means |
 | --- | --- |
@@ -202,7 +262,11 @@ Checked page by page in [[REDESIGN]]:
    The full list of pages with no lit element, all deliberate: `settings`,
    `admin`, `admin/analytics`, `admin/marketing`, `admin/offers`, `ai-usage`,
    `prepare` (its timeline carries the structure), `report/[id]/analysis`,
-   `r/[reportId]`, `session/[id]`, the receipt, and the four auth screens.
+   `r/[reportId]`, `session/[id]`, the receipt, the four auth screens, and the
+   two public surfaces — `/` and `/welcome` — for the reasons in the scope note
+   at the top of this file. That list has to stay complete: a page missing from
+   it is an undeclared exception, and `lit-hierarchy.test.ts` enforces a ceiling
+   of one rather than a floor, so nothing will fail to tell you.
 3. **A real empty state** — what to do, in this product's voice, with a route out.
 4. **A real error state** that does not read as zero. `0/100` and "we could not
    load this" are opposite messages, and confusing them has already cost an

@@ -63,15 +63,37 @@
   --mk-on-dark-bright: #f3ead9;
   --mk-on-dark-muted: #b7a88f;
 
-  /* ── The one accent ─────────────────────────────────────────────────────
+  /* ── The one accent, in four tones, and the split is measured ───────────
      Gold does three jobs and no others: the primary action, the film's beat
-     label, and the second half of the wordmark. `--mk-gold` is 3.1:1 on paper
-     and is for fills and strokes only; `--mk-gold-ink` is 5.4:1 and is the
-     only one of the three that may carry text under 18px. Same split, same
-     reason, as the amber pair in globals.css. */
+     label, and the second half of the wordmark.
+     
+     THE NUMBERS IN THIS COMMENT USED TO BE WRONG, which is the whole argument
+     for `theme-contrast.test.ts` existing. It claimed `--mk-gold` was 3.1:1 on
+     paper and `--mk-gold-ink` 5.4:1. Measured: 2.56:1 and 4.50:1 — and on the
+     recessed band `--mk-bg`, where half the eyebrows on the site actually sit,
+     gold-ink came out at 4.23:1, i.e. below AA on live text. A ratio written in
+     a comment is a claim; the test now measures every one of these.
+     
+     Each tone, and the only thing it may do:
+     
+     `--mk-gold`        brand and decorative fills ONLY — the wordmark's second
+                        half (a logotype, exempt from 1.4.3), the gold button's
+                        field (whose own text clears 5:1 on it), the eyebrow's
+                        14px rule. 2.6:1 on paper. It must never be the sole
+                        carrier of information, because it cannot clear 3:1
+                        without going brown.
+     `--mk-gold-graphic` the same hue darkened until it clears 3:1 on BOTH light
+                        grounds, for a mark that IS the information — a bar
+                        whose length is the fact. Duller on purpose; a chart you
+                        cannot see is not a chart.
+     `--mk-gold-ink`    the only tone that may carry text under 18px. Clears 4.5
+                        on paper, on the band and on a white card.
+     `--mk-gold-glow`   the dark-stage tone. 12:1 on the film's ground, where
+                        gold-ink would be 2.2:1 and unreadable. */
   --mk-gold: #c8923a;
+  --mk-gold-graphic: #af7f31;
   --mk-gold-glow: #e7b65e;
-  --mk-gold-ink: #96691e;
+  --mk-gold-ink: #926316;
   --mk-gold-soft: rgb(200 146 58 / 0.14);
   --mk-gold-line: rgb(200 146 58 / 0.5);
 
@@ -379,9 +401,13 @@
   }
 }
 
-/* Sticky film stages set their own scroll padding so a hash link never lands a
-   heading underneath the floating nav. */
-.mk {
+/* ON THE SCROLL CONTAINER, WHICH IS `html` — NOT ON `.mk`.
+   `scroll-padding` only applies to a scroll container, and `.mk` is MarketingShell's plain
+   <div> with no `overflow`. So this declaration sat on an element that never scrolls and did
+   nothing at all: on a phone, clicking "What it measures" landed the section at y=0 and put
+   its gold eyebrow flush under the floating nav pill. Wide viewports hid it, because
+   `.mk-section`'s own padding is larger there — which is why it read as fine in review. */
+html:has(.mk) {
   scroll-padding-top: 6rem;
 }
 

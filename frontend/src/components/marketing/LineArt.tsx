@@ -128,7 +128,14 @@ export function LineArt({ className }: { className?: string }) {
       if (reduced) draw(0);
     };
 
-    const io = new IntersectionObserver(
+    /* Guarded for the same reason as the reel's, and with a sharper consequence here: the
+       constructor runs AFTER the rAF loop has started and BEFORE the cleanup closure is
+       returned, so an unguarded throw both blanks the page and leaks the canvas loop for the
+       life of the document. Without an observer the fan simply runs while mounted. */
+    const io =
+      typeof IntersectionObserver === 'undefined'
+        ? null
+        : new IntersectionObserver(
       ([entry]) => {
         const nowVisible = entry.isIntersecting;
         if (nowVisible === visible) return;
@@ -143,7 +150,7 @@ export function LineArt({ className }: { className?: string }) {
       },
       { rootMargin: '120px' },
     );
-    io.observe(canvas);
+    io?.observe(canvas);
 
     const onVisibility = () => {
       if (reduced) return;
@@ -160,7 +167,7 @@ export function LineArt({ className }: { className?: string }) {
 
     return () => {
       cancelAnimationFrame(frame);
-      io.disconnect();
+      io?.disconnect();
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisibility);
     };

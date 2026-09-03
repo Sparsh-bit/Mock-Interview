@@ -158,9 +158,20 @@ export default function DashboardPage() {
           variant="bare"
           className="sm:px-5 sm:first:pl-0 sm:last:pr-0"
           label="Average Score"
-          value={statsLoading ? '…' : (stats?.average_score ? `${stats.average_score}/100` : '—')}
+          /* `!= null`, not truthiness. A real average of 0 is falsy, so a candidate who had
+             completed sessions and scored zero was shown `—` and told to "complete a session
+             to see" — the one number where the honest answer and the empty state are opposite
+             messages, which is the failure globals.css records about `0/100` versus "we could
+             not load this". */
+          value={
+            statsLoading
+              ? '…'
+              : stats?.average_score != null
+                ? `${stats.average_score}/100`
+                : '—'
+          }
           icon={<BarChart2 className="h-4 w-4" />}
-          sub={stats?.average_score ? 'across all sessions' : 'complete a session to see'}
+          sub={stats?.average_score != null ? 'across all sessions' : 'complete a session to see'}
           color="cyan"
         />
         <StatCard

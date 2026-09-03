@@ -2,8 +2,14 @@
 
 > Product is now **InterviewOS**. See [[DESIGN-LANGUAGE]] for what that means visually.
 
-Every signed-in surface, what it needs, and whether it is done. The landing page is
-deliberately **out of scope** — it stays as it is.
+Every surface, what it needs, and whether it is done.
+
+**This line used to say the landing page was deliberately out of scope and "stays as it is".**
+It no longer is. The public site was rebuilt into a scoped `.mk` layer (cream, espresso, one
+gold, Fraunces) and the signed-in tokens were retoned to the same neutral family, so the two
+halves of the product are now one hue system rather than two. `app/page.tsx`'s own header
+comment cites the old line as the reason the landing page had become "the last surface still
+speaking the old dialect, and the first surface anybody sees".
 
 Two columns matter and they are different questions:
 

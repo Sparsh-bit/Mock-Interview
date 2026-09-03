@@ -50,6 +50,8 @@ export function MkReel() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [autoAllowed, setAutoAllowed] = useState(true);
+  /** Set when the viewer presses pause themselves, so the observer stops overruling them. */
+  const pausedByUser = useRef(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -64,9 +66,20 @@ export function MkReel() {
       return;
     }
 
+    /* No observer, no autoplay — and no crash. A throw inside an effect reaches the nearest
+       error boundary, so an unguarded constructor turns a missing API into a blank page rather
+       than a video that simply waits to be pressed. */
+    if (typeof IntersectionObserver === 'undefined') {
+      setAutoAllowed(false);
+      return;
+    }
+
     const io = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
+          /* A visitor who pressed pause meant it. Scrolling the film out of view and back
+             should not overrule them — autoplay resumes only what autoplay started. */
+          if (pausedByUser.current) return;
           /* play() returns a promise that REJECTS when the browser declines — which it does
              on iOS Low Power Mode, on data-saver, and behind some autoplay settings. Left
              unhandled that is an uncaught rejection in the console of every page load. */
@@ -90,11 +103,13 @@ export function MkReel() {
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
+      pausedByUser.current = false;
       video.play().then(
         () => setPlaying(true),
         () => setPlaying(false),
       );
     } else {
+      pausedByUser.current = true;
       video.pause();
       setPlaying(false);
     }
@@ -164,7 +179,16 @@ export function MkReel() {
               aria-label={playing ? 'Pause the film' : 'Play the film'}
               className={cn(
                 'absolute inset-0 grid place-items-center transition-opacity duration-300',
-                playing && autoAllowed
+                /*
+                 * `playing` ALONE. This also required `autoAllowed`, which is only ever set to
+                 * false and never back — so for every reduced-motion visitor, every data-saver
+                 * visitor, and anyone whose browser refused the first `play()`, pressing the
+                 * button started the film and then left a full-bleed 35% black scrim and a
+                 * 64px disc sitting on top of it for the whole 34 seconds. `autoAllowed`
+                 * describes whether we may START it unprompted; it says nothing about whether
+                 * it is playing now, which is the only thing this overlay should react to.
+                 */
+                playing
                   ? 'bg-transparent opacity-0 focus-visible:opacity-100 group-hover:opacity-100'
                   : 'bg-[rgb(14_11_8/0.35)] opacity-100',
               )}

@@ -102,5 +102,19 @@ knowing about:
 - `backend/knowledge/` — hand-maintained YAML reference data (the recruiter catalogue, study
   subtopics, per-company research) read at runtime.
 
-- [[DESIGN-LANGUAGE]] — what InterviewOS looks like, and why
-- [[REDESIGN]] — page-by-page progress
+## What it looks like, and why
+
+- [[DESIGN-LANGUAGE]] — what InterviewOS *is*, visually: one lit element per page, heat means
+  difficulty and only difficulty, six colours each bound to one meaning. Covers the signed-in
+  product and, since the public rebuild, says where each rule stops applying.
+- [[DESIGN-RULES]] — what *not* to do. Lives at `frontend/DESIGN-RULES.md` rather than in
+  `docs/`, because it is checked while writing components; wikilinks resolve by filename so
+  this link works anyway. It was previously reachable only from [[REDESIGN]], which is how a
+  rules file ends up unread.
+- [[REDESIGN]] — page-by-page progress, now including the public surfaces.
+
+The two design systems are documented in the stylesheets themselves and the notes above point
+at them: `frontend/src/app/globals.css` for the signed-in product, `frontend/src/app/marketing.css`
+for the `.mk`-scoped public layer. Both are measured by `frontend/src/app/theme-contrast.test.ts` —
+a contrast ratio written in a comment is a claim, and three of them were wrong until it read
+both files.
