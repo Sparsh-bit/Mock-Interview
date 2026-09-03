@@ -210,6 +210,23 @@ CACHEABLE_FEATURES: frozenset[str] = frozenset(
         # of users, so once each cell has been filled once it costs nothing forever. Cost per
         # user falls as the user base grows, rather than scaling with it.
         "question_bank",
+        # A pool of quiz questions for one (track, company, topic set).
+        #
+        # THE HEADER OF THIS FILE NAMED THE QUIZ AS AN ARCHETYPE and the note on
+        # `gd_topic_prep` argued against caching it — "unlike a quiz there is no reason to
+        # want a DIFFERENT framing of the same motion next time". Both are right. They only
+        # conflict if the cache stores a QUIZ, so this stores a POOL: generate once, keep the
+        # questions, serve a random subset per request. Cost falls because the model is not
+        # asked again; a retake is still a different quiz because it draws a different subset.
+        #
+        # SAFE TO SHARE FOR THE SAME REASON `question_bank` IS. The generation prompt takes
+        # track_name, topics, count and company and nothing else — no resume, no answers, no
+        # name, no typed focus. CLAUDE.md's tenancy rule holds: nothing derived from one
+        # candidate reaches another.
+        #
+        # DELIBERATELY NOT `quiz_generation`. That name means one call for one request, and
+        # caching it would serve the same quiz back — the thing the objection above was about.
+        "quiz_pool",
     }
 )
 

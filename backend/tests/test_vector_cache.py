@@ -84,6 +84,21 @@ class TestTheTenancyAllowlist:
         and is told in the prompt that the questions must not depend on any particular
         candidate: no resume, no previous answer, no focus concepts.
 
+        `quiz_pool`: a pool of quiz questions for one (track, company, topic set). The key is
+        those three, and they are the WHOLE of the generation prompt — api/v1/quiz.py hands
+        `builder.chat` exactly `track_name`, `topics`, `count` and `company` and nothing else.
+        No resume, no answer, no name, no typed focus. `count` is deliberately not in the key
+        because it does not change what a question IS, only how many are asked for.
+
+        It stores a POOL rather than a quiz, and that is what resolves the objection recorded
+        against caching quizzes at all (see the note on `gd_topic_prep`): a cached QUIZ would
+        serve the same questions back to everybody and to the same candidate on a retake, while
+        a pool is drawn from at random, so cost falls without freshness going with it.
+
+        A row is re-validated on load against `_PickedQuestion` before use — rows outlive
+        deploys, and a row from an older shape would reach a candidate as a broken quiz rather
+        than as an error anybody sees.
+
         The safety rests on the branch that reaches it. `_generate_question` consults this
         pool ONLY when `focus_concepts` is empty — the moment the interview has something
         specific to probe, that question is ABOUT this candidate and goes through the uncached
@@ -94,7 +109,7 @@ class TestTheTenancyAllowlist:
         saturates: once each (role, difficulty) cell is filled it costs nothing forever.
         """
         assert (
-            frozenset({"gd_topic_prep", "study_resources", "question_bank"})
+            frozenset({"gd_topic_prep", "study_resources", "question_bank", "quiz_pool"})
             == CACHEABLE_FEATURES
         )
 
