@@ -1291,6 +1291,36 @@ class Settings(BaseSettings):
     # ── Sentry (error tracking, optional) ─────────────────────────────────
     SENTRY_DSN: str = Field(default="", description="Sentry DSN for error tracking")
 
+    # ── The operator (DPDP §5, and the e-commerce display duty) ───────────
+    #
+    # WHO "WE" IS. Every policy in the product speaks in the first person - "we
+    # will refund you", "we do not promise" - and until this existed, nothing said
+    # who that was. Three obligations land on the same fact:
+    #
+    #   * DPDP's §5 notice is given BY a Data Fiduciary, and a notice that does not
+    #     say which one tells the Data Principal nothing they can act on. The whole
+    #     disclosure payload below is that notice; this is the party issuing it.
+    #   * The Consumer Protection (E-Commerce) Rules 2020 require an e-commerce
+    #     entity to display its legal name.
+    #   * A gateway's merchant terms assume the merchant is identifiable to the payer.
+    #
+    # UNLIKE `DPO_NAME`, THIS HAS A DEFAULT, and the difference is the point. An
+    # unset grievance officer is left visibly empty because inventing a named human
+    # would look like the duty was discharged. The operator is not unknown - it is
+    # the company shipping the software - so defaulting it is honest, and leaving it
+    # blank would only produce a notice issued by nobody.
+    #
+    # This is the operator's LEGAL NAME, not the product's. `APP_NAME` above is the
+    # product. Collapsing the two would satisfy a "the operator is named" check while
+    # identifying nobody. The frontend mirror is `BRAND.company` in lib/brand.ts.
+    OPERATOR_LEGAL_NAME: str = Field(
+        default="Concilio Solutions",
+        description=(
+            "Legal name of the entity operating the service - the Data Fiduciary "
+            "under DPDP and the merchant of record. Not the product name."
+        ),
+    )
+
     # ── Data protection contact (DPDP §8(9)–(10)) ─────────────────────────
     #
     # A NAMED HUMAN, NOT A ROLE MAILBOX. §8(9) asks for the contact of the person

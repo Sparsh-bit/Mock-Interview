@@ -249,6 +249,33 @@ def _grievance_block() -> dict:
     }
 
 
+def _fiduciary_block() -> dict:
+    """
+    Who is giving this notice.
+
+    A DPDP §5 notice is issued BY a Data Fiduciary, and this payload IS that notice, so
+    it has to name one. It previously described what is collected, who processes it, how
+    long it is kept and what rights attach, without ever naming the party responsible for
+    any of it - and you cannot exercise a right against somebody you cannot name.
+
+    NO PLACEHOLDER CHECK, UNLIKE `_grievance_block()`, and the asymmetry is deliberate.
+    An unappointed grievance officer is reported as an honest gap because inventing a
+    named human would look like the duty was discharged. The operator is not unknown: it
+    is the company shipping the software, `OPERATOR_LEGAL_NAME` defaults to it, and a
+    notice issued by nobody is worse than one issued by a name you can look up.
+
+    `product` is carried alongside `name` because a candidate arrives knowing the product
+    and not the company; the notice has to join the two for the identification to land.
+    """
+    from app.core.config import settings  # noqa: PLC0415 - matches this module's convention
+
+    return {
+        "name": settings.OPERATOR_LEGAL_NAME,
+        "product": settings.APP_NAME,
+        "role": "Data Fiduciary",
+    }
+
+
 def disclosure() -> dict:
     """
     The whole disclosure, as the API returns it and the upload screen renders it.
@@ -256,18 +283,20 @@ def disclosure() -> dict:
     `draft` is part of the payload rather than a comment, so the UI cannot show this
     text without also showing that it has not been through a lawyer.
     """
-    # No `settings` import here any more: the only reader of it in this function was the
-    # grievance block, which moved into _grievance_block() so a placeholder contact could be
-    # caught in one place rather than at every call site.
+    # No `settings` import here: everything that reads configuration lives in its own
+    # block - _grievance_block() so a placeholder contact is caught in one place rather
+    # than at every call site, and _fiduciary_block() for the same reason. This function
+    # assembles the notice; it does not read the environment.
     return {
         "notice_version": NOTICE_VERSION,
         "draft": True,
+        "fiduciary": _fiduciary_block(),
         "processors": [
             {
                 # CATEGORY, NOT NAME. See Processor.category — the obligation is the
                 # purpose and the destination country, not the supplier's brand.
                 "category": p.category,
-                            "country": p.country,
+                "country": p.country,
                 "receives": p.receives,
                 "purpose": p.purpose,
             }

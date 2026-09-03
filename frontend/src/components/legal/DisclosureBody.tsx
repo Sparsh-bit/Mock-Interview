@@ -18,7 +18,7 @@ export function DisclosureBody({ disclosure }: { disclosure: Disclosure | null }
     );
   }
 
-  const { grievance } = disclosure;
+  const { grievance, fiduciary } = disclosure;
 
   return (
     <div className="mt-8 space-y-10 text-sm">
@@ -34,6 +34,21 @@ export function DisclosureBody({ disclosure }: { disclosure: Disclosure | null }
           describes our practice; it is not yet our formal privacy policy.
         </p>
       )}
+
+      {/* FIRST, BECAUSE A NOTICE SHOULD SAY WHO IS GIVING IT BEFORE IT SAYS ANYTHING ELSE.
+          This page listed what is collected, who processes it, how long it is kept and what
+          rights attach - without ever naming the party responsible for any of it. Under DPDP
+          the notice is issued BY a Data Fiduciary, and "some unnamed company holds your
+          resume" is not a disclosure a person can act on: you cannot exercise a right against
+          somebody you cannot name. */}
+      <section>
+        <h2 className="text-base font-semibold text-foreground">Who holds your data</h2>
+        <p className="mt-2 leading-relaxed text-muted-foreground">
+          <strong className="text-foreground">{fiduciary.name}</strong> operates{' '}
+          {fiduciary.product} and is the {fiduciary.role} for everything described below. Where
+          this page says &ldquo;we&rdquo;, it means {fiduciary.name}.
+        </p>
+      </section>
 
       <section>
         <h2 className="text-base font-semibold text-foreground">Who processes your data</h2>
