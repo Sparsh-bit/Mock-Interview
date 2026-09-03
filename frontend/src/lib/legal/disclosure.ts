@@ -25,8 +25,15 @@ export interface Disclosure {
    *
    * `product` is carried alongside `name` because a candidate arrives knowing the product
    * and not the company; the notice has to join the two for the identification to land.
+   *
+   * OPTIONAL BECAUSE OF DEPLOY SKEW, not because the notice is optional. The frontend and the
+   * backend deploy independently - Cloudflare and Railway - so for the minutes between one
+   * shipping and the other, a new frontend can be talking to a backend that predates this
+   * field. Typed as required, `DisclosureBody` destructured it and read `.name`, which is a
+   * TypeError, which is a 500 on a legal page. The backend always sends it; the renderer
+   * guards for it.
    */
-  fiduciary: {
+  fiduciary?: {
     name: string;
     product: string;
     role: string;

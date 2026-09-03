@@ -83,3 +83,41 @@ describe('the operator is stated once, not scattered', () => {
     expect(source.includes(`"${literal}"`)).toBe(false);
   });
 });
+
+describe('naming the operator cannot take a legal page down', () => {
+  /*
+   * Source assertions rather than a rendered tree, matching consent.test.ts: the rule is that
+   * something is ABSENT - an unguarded read - and rendering the happy path proves nothing
+   * about the payload shape that arrives during a deploy.
+   */
+  const body = readFileSync(
+    new URL('../../components/legal/DisclosureBody.tsx', import.meta.url),
+    'utf8',
+  );
+
+  it('the fiduciary is rendered behind a guard', () => {
+    /*
+     * The frontend and the backend deploy independently, so for the minutes between one
+     * shipping and the other a new frontend can be talking to a backend that predates the
+     * `fiduciary` field. `DisclosureBody` destructures it and reads `.name`; unguarded, that
+     * is a TypeError, and this component renders the /privacy page and the pre-upload consent
+     * sheet - a 500 on the document that explains how to exercise a data right.
+     */
+    expect(body).toMatch(/\{fiduciary && \(/);
+  });
+
+  it('the type marks it optional, so the guard cannot be removed as dead code', () => {
+    const shape = readFileSync(new URL('./disclosure.ts', import.meta.url), 'utf8');
+    expect(shape).toContain('fiduciary?:');
+  });
+
+  it('the backend still always sends it', () => {
+    // The field is optional to the RENDERER only. If the payload stopped carrying it, the
+    // section would silently vanish rather than fail, so the backend keeps its own test.
+    const server = readFileSync(
+      new URL('../../../../backend/app/services/legal/disclosure.py', import.meta.url),
+      'utf8',
+    );
+    expect(server).toContain('"fiduciary": _fiduciary_block()');
+  });
+});

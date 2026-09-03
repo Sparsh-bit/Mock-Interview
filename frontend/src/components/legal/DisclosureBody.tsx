@@ -41,14 +41,20 @@ export function DisclosureBody({ disclosure }: { disclosure: Disclosure | null }
           the notice is issued BY a Data Fiduciary, and "some unnamed company holds your
           resume" is not a disclosure a person can act on: you cannot exercise a right against
           somebody you cannot name. */}
-      <section>
-        <h2 className="text-base font-semibold text-foreground">Who holds your data</h2>
-        <p className="mt-2 leading-relaxed text-muted-foreground">
-          <strong className="text-foreground">{fiduciary.name}</strong> operates{' '}
-          {fiduciary.product} and is the {fiduciary.role} for everything described below. Where
-          this page says &ldquo;we&rdquo;, it means {fiduciary.name}.
-        </p>
-      </section>
+      {/* GUARDED, BECAUSE THE TWO SIDES DEPLOY SEPARATELY. A frontend that has shipped ahead
+          of the backend receives a payload without this field, and reading through it is a
+          500 on a legal page. Omitting the section degrades to exactly what this page showed
+          before the field existed; crashing does not. */}
+      {fiduciary && (
+        <section>
+          <h2 className="text-base font-semibold text-foreground">Who holds your data</h2>
+          <p className="mt-2 leading-relaxed text-muted-foreground">
+            <strong className="text-foreground">{fiduciary.name}</strong> operates{' '}
+            {fiduciary.product} and is the {fiduciary.role} for everything described below.
+            Where this page says &ldquo;we&rdquo;, it means {fiduciary.name}.
+          </p>
+        </section>
+      )}
 
       <section>
         <h2 className="text-base font-semibold text-foreground">Who processes your data</h2>
