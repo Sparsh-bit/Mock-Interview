@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # VERSION PINNED WITH THE `v` PREFIX, and that is not cosmetic. The first version of
       # this file used `aquasecurity/trivy-action@0.28.0`; that tag does not exist — the
@@ -99,7 +99,7 @@ jobs:
 
       - name: Publish SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
           category: trivy-image
